@@ -1148,3 +1148,30 @@ fn anonymous_class_expr_with_static_private_field_sets_function_name() {
         "static private field storage should still initialize in the comma expression.\nOutput:\n{output}"
     );
 }
+
+/// Counter-regression for `__setFunctionName` over-emission: a class
+/// expression with *only instance-private* members (no static fields, no
+/// static blocks, no static private fields, no decorators) keeps the
+/// engine's automatic assignment-based naming. tsc does not emit the
+/// `__setFunctionName` helper or comma item for this shape, and tsz must
+/// match — neither the helper preamble nor the call should appear.
+#[test]
+fn anonymous_class_expr_instance_private_only_does_not_set_function_name() {
+    let source = r#"const C = class {
+    #field = this.#method();
+    #method() { return 42; }
+    static getInstance() { return new C(); }
+    getField() { return this.#field };
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        !output.contains("__setFunctionName"),
+        "instance-private-only class expression must not emit the `__setFunctionName` helper or call.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C_field = new WeakMap()"),
+        "instance private field WeakMap should still initialize in the comma expression.\nOutput:\n{output}"
+    );
+}

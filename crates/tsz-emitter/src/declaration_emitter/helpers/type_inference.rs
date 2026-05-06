@@ -28,13 +28,13 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 #[derive(Clone, Debug)]
-struct FunctionTypeParamText {
+pub(in crate::declaration_emitter) struct FunctionTypeParamText {
     optional: bool,
     type_text: String,
 }
 
 #[derive(Clone, Debug)]
-struct FunctionTypeTextParts {
+pub(in crate::declaration_emitter) struct FunctionTypeTextParts {
     parameters: Vec<FunctionTypeParamText>,
     return_type: String,
 }
@@ -809,7 +809,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn find_type_alias_type_node_in_arena(
+    pub(in crate::declaration_emitter) fn find_type_alias_type_node_in_arena(
         &self,
         arena: &NodeArena,
         name: &str,
@@ -991,7 +991,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn emit_type_node_text_from_arena(
+    pub(in crate::declaration_emitter) fn emit_type_node_text_from_arena(
         &self,
         source_arena: &NodeArena,
         type_idx: NodeIndex,
@@ -1104,7 +1104,10 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     Some(sym_id)
                 } else {
-                    binder.get_node_symbol(type_idx)
+                    binder.get_node_symbol(type_idx).or_else(|| {
+                        self.identifier_text_from_arena(arena, type_idx)
+                            .and_then(|name| binder.symbols.find_by_name(&name))
+                    })
                 }
             }
             _ => None,
@@ -1172,7 +1175,7 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn type_member_declared_type_annotation_text(
+    pub(in crate::declaration_emitter) fn type_member_declared_type_annotation_text(
         &self,
         type_sym_id: SymbolId,
         member_name: &str,
@@ -1285,6 +1288,37 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
+            if let Some(interface) = source_arena.get_interface(decl_node)
+                && let Some(heritage_clauses) = interface.heritage_clauses.as_ref()
+            {
+                for &heritage_idx in &heritage_clauses.nodes {
+                    let Some(heritage_node) = source_arena.get(heritage_idx) else {
+                        continue;
+                    };
+                    let Some(heritage) = source_arena.get_heritage(heritage_node) else {
+                        continue;
+                    };
+                    for &base_idx in &heritage.types.nodes {
+                        let Some(base_node) = source_arena.get(base_idx) else {
+                            continue;
+                        };
+                        let base_expr = source_arena
+                            .get_expr_type_args(base_node)
+                            .map_or(base_idx, |expr| expr.expression);
+                        let Some(base_sym_id) =
+                            self.declaration_type_symbol_from_type_node(source_arena, base_expr)
+                        else {
+                            continue;
+                        };
+                        if let Some(type_text) =
+                            self.type_member_declared_type_annotation_text(base_sym_id, member_name)
+                        {
+                            return Some(type_text);
+                        }
+                    }
+                }
+            }
+
             None
         })
     }
@@ -1392,7 +1426,10 @@ impl<'a> DeclarationEmitter<'a> {
         result
     }
 
-    fn contains_whole_word_in_text(text: &str, word: &str) -> bool {
+    pub(in crate::declaration_emitter) fn contains_whole_word_in_text(
+        text: &str,
+        word: &str,
+    ) -> bool {
         let bytes = text.as_bytes();
         let word_bytes = word.as_bytes();
         let word_len = word_bytes.len();
@@ -2061,7 +2098,19 @@ impl<'a> DeclarationEmitter<'a> {
                             type_id, 0,
                         ))
                 {
-                    return Some(self.print_type_id_for_inferred_declaration(type_id));
+                    let printed = self.print_type_id_for_inferred_declaration(type_id);
+                    if let Some(call) = self.arena.get_call_expr(expr_node) {
+                        if let Some((alias_name, module_specifier)) =
+                            self.call_receiver_default_import_alias(call.expression)
+                        {
+                            return Some(Self::rewrite_import_type_export_to_default_alias(
+                                &printed,
+                                &alias_name,
+                                &module_specifier,
+                            ));
+                        }
+                    }
+                    return Some(printed);
                 }
                 reused_type_text
             }
@@ -2455,14 +2504,16 @@ impl<'a> DeclarationEmitter<'a> {
         {
             if let Some(type_text) = self.preferred_expression_type_text(initializer) {
                 let type_text = Self::strip_synthetic_anonymous_object_members(&type_text);
-                return self
+                let type_text = self
                     .expand_portable_mapped_object_text_in_current_context(&type_text)
                     .unwrap_or(type_text);
+                return self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
             }
             let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
-            return self
+            let type_text = self
                 .expand_portable_mapped_object_text_in_current_context(&type_text)
                 .unwrap_or(type_text);
+            return self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
         }
 
         if (type_id != tsz_solver::types::TypeId::ANY
@@ -2573,6 +2624,34 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(in crate::declaration_emitter) fn declaration_type_is_uninformative(
+        &self,
+        candidates: &[NodeIndex],
+    ) -> bool {
+        self.get_node_type_or_names(candidates)
+            .is_none_or(|type_id| {
+                type_id == tsz_solver::types::TypeId::ANY
+                    || type_id == tsz_solver::types::TypeId::ERROR
+                    || type_id == tsz_solver::types::TypeId::UNKNOWN
+            })
+    }
+
+    pub(in crate::declaration_emitter) fn as_const_assertion_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::AS_EXPRESSION {
+            return None;
+        }
+        let assertion = self.arena.get_type_assertion(expr_node)?;
+        if !self.type_assertion_is_const(assertion.type_node) {
+            return None;
+        }
+
+        self.const_asserted_expression_type_text(assertion.expression, self.indent_level)
+    }
+
     pub(in crate::declaration_emitter) fn angle_bracket_const_assertion_type_text(
         &self,
         expr_idx: NodeIndex,
@@ -2583,18 +2662,22 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let assertion = self.arena.get_type_assertion(expr_node)?;
-        let asserted_type = self.arena.get(assertion.type_node)?;
-        let is_const_assertion = asserted_type.kind == SyntaxKind::ConstKeyword as u16
-            || self
-                .get_identifier_text(assertion.type_node)
-                .or_else(|| self.emit_type_node_text(assertion.type_node))
-                .as_deref()
-                == Some("const");
-        if !is_const_assertion {
+        if !self.type_assertion_is_const(assertion.type_node) {
             return None;
         }
 
         self.const_asserted_expression_type_text(assertion.expression, self.indent_level)
+    }
+
+    fn type_assertion_is_const(&self, type_node_idx: NodeIndex) -> bool {
+        self.arena
+            .get(type_node_idx)
+            .is_some_and(|asserted_type| asserted_type.kind == SyntaxKind::ConstKeyword as u16)
+            || self
+                .get_identifier_text(type_node_idx)
+                .or_else(|| self.emit_type_node_text(type_node_idx))
+                .as_deref()
+                == Some("const")
     }
 
     fn const_asserted_expression_type_text(
@@ -2655,8 +2738,13 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
+            let element_depth = if element_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                depth
+            } else {
+                depth + 1
+            };
             parts.push(
-                self.const_asserted_expression_type_text(element_idx, depth + 1)
+                self.const_asserted_expression_type_text(element_idx, element_depth)
                     .unwrap_or_else(|| "any".to_string()),
             );
         }
@@ -3156,15 +3244,6 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn is_simple_identifier_text(text: &str) -> bool {
-        let mut chars = text.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        (first == '_' || first == '$' || first.is_ascii_alphabetic())
-            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-    }
-
     pub(in crate::declaration_emitter) fn type_reference_name_text(
         &self,
         name_idx: NodeIndex,
@@ -3178,24 +3257,6 @@ impl<'a> DeclarationEmitter<'a> {
             return self.get_identifier_text(qualified.right);
         }
         None
-    }
-
-    pub(in crate::declaration_emitter) fn serialized_property_name_length(
-        &self,
-        name: &str,
-    ) -> usize {
-        let mut chars = name.chars();
-        let Some(first) = chars.next() else {
-            return 2;
-        };
-        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
-            return name.len() + 2;
-        }
-        if chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()) {
-            name.len()
-        } else {
-            name.len() + 2
-        }
     }
 
     pub(in crate::declaration_emitter) fn skip_parenthesized_expression(
@@ -3499,6 +3560,15 @@ impl<'a> DeclarationEmitter<'a> {
                 return None;
             }
             type_text = Self::replace_whole_words_in_text(&type_text, &type_param_substitutions);
+            if let Some(expanded) =
+                self.event_like_correlated_alias_return_text(source_arena, &type_text, call)
+            {
+                type_text = expanded;
+            } else if let Some(expanded) =
+                Self::expand_tuple_item_lookup_mapped_type_text(&type_text)
+            {
+                type_text = expanded;
+            }
 
             let source_path = self.get_symbol_source_path(sym_id, binder).or_else(|| {
                 self.arena_to_path
@@ -3968,109 +4038,6 @@ impl<'a> DeclarationEmitter<'a> {
             .then_some(name)
     }
 
-    fn infer_call_type_param_substitutions_from_arguments(
-        &self,
-        source_arena: &NodeArena,
-        parameters: &NodeList,
-        call: &tsz_parser::parser::node::CallExprData,
-        type_param_names: &[String],
-    ) -> Vec<(String, String)> {
-        let Some(args) = call.arguments.as_ref() else {
-            return Vec::new();
-        };
-
-        let mut substitutions: Vec<(String, String)> = Vec::new();
-        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
-            let Some(param_node) = source_arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = source_arena.get_parameter(param_node) else {
-                continue;
-            };
-            let Some(param_type_text) = self
-                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
-                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
-            else {
-                continue;
-            };
-            let param_type_text = param_type_text.trim();
-            if !type_param_names
-                .iter()
-                .any(|name| name.as_str() == param_type_text)
-            {
-                continue;
-            }
-            if substitutions
-                .iter()
-                .any(|(name, _)| name.as_str() == param_type_text)
-            {
-                continue;
-            }
-            let Some(arg_type_text) = self.call_argument_type_text_for_substitution(arg_idx) else {
-                continue;
-            };
-            substitutions.push((
-                param_type_text.to_string(),
-                Self::parenthesize_generic_function_type_argument(&arg_type_text),
-            ));
-        }
-
-        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
-            let Some(param_node) = source_arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = source_arena.get_parameter(param_node) else {
-                continue;
-            };
-            let Some(param_type_text) = self
-                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
-                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
-            else {
-                continue;
-            };
-            if !type_param_names
-                .iter()
-                .any(|name| Self::contains_whole_word_in_text(&param_type_text, name))
-            {
-                continue;
-            }
-            let Some(source_function_type) = Self::parse_function_type_text(&param_type_text)
-            else {
-                continue;
-            };
-            let Some(argument_function_type) = self.function_type_parts_for_expression(arg_idx)
-            else {
-                continue;
-            };
-            Self::infer_function_type_substitutions(
-                &source_function_type,
-                &argument_function_type,
-                type_param_names,
-                &mut substitutions,
-            );
-        }
-
-        substitutions
-    }
-
-    fn call_argument_type_text_for_substitution(&self, arg_idx: NodeIndex) -> Option<String> {
-        if let Some(type_text) = self.reference_declared_type_annotation_text(arg_idx) {
-            return Some(type_text);
-        }
-
-        let expr_idx = self.skip_parenthesized_expression(arg_idx)?;
-        let expr_node = self.arena.get(expr_idx)?;
-        if expr_node.kind == SyntaxKind::StringLiteral as u16 {
-            let literal = self.arena.get_literal(expr_node)?;
-            return Some(format!(
-                "\"{}\"",
-                super::escape_string_for_double_quote(literal.text.as_ref())
-            ));
-        }
-
-        self.preferred_expression_type_text(arg_idx)
-    }
-
     pub(in crate::declaration_emitter) fn function_signature_accepts_call_arguments(
         &self,
         source_arena: &NodeArena,
@@ -4127,7 +4094,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn infer_function_type_substitutions(
+    pub(in crate::declaration_emitter) fn infer_function_type_substitutions(
         source: &FunctionTypeTextParts,
         argument: &FunctionTypeTextParts,
         type_param_names: &[String],
@@ -4170,7 +4137,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn function_type_parts_for_expression(
+    pub(in crate::declaration_emitter) fn function_type_parts_for_expression(
         &self,
         expr_idx: NodeIndex,
     ) -> Option<FunctionTypeTextParts> {
@@ -4220,7 +4187,9 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn parse_function_type_text(type_text: &str) -> Option<FunctionTypeTextParts> {
+    pub(in crate::declaration_emitter) fn parse_function_type_text(
+        type_text: &str,
+    ) -> Option<FunctionTypeTextParts> {
         let trimmed = type_text.trim().trim_end_matches(';').trim();
         let arrow_index = Self::find_top_level_arrow(trimmed)?;
         let params_text = trimmed.get(..arrow_index)?.trim();
@@ -4292,7 +4261,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn split_top_level_commas(text: &str) -> Vec<&str> {
+    pub(in crate::declaration_emitter) fn split_top_level_commas(text: &str) -> Vec<&str> {
         let mut parts = Vec::new();
         let mut start = 0usize;
         let mut paren_depth = 0usize;
@@ -4359,7 +4328,9 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn parenthesize_generic_function_type_argument(type_text: &str) -> String {
+    pub(in crate::declaration_emitter) fn parenthesize_generic_function_type_argument(
+        type_text: &str,
+    ) -> String {
         let trimmed = type_text.trim();
         if trimmed.starts_with('<') && trimmed.contains("=>") {
             format!("({trimmed})")
@@ -5362,6 +5333,11 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let body_node = self.arena.get(body_idx)?;
         let block = self.arena.get_block(body_node)?;
+        if let Some(type_text) =
+            self.function_body_numeric_literal_return_union_type_text(&block.statements)
+        {
+            return Some(type_text);
+        }
         let mut preferred = None;
         if self.collect_unique_return_type_text_from_block(&block.statements, &mut preferred) {
             preferred
@@ -5375,6 +5351,12 @@ impl<'a> DeclarationEmitter<'a> {
         source_type_text: &str,
         inferred_return_type: tsz_solver::types::TypeId,
     ) -> bool {
+        if Self::numeric_literal_union_widens_to_number(
+            source_type_text,
+            &self.print_type_id(inferred_return_type),
+        ) {
+            return true;
+        }
         if source_type_text.contains("{\n    new ")
             && source_type_text.contains(" & ")
             && self.print_type_id(inferred_return_type) != source_type_text
@@ -5436,21 +5418,24 @@ impl<'a> DeclarationEmitter<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         source_type_text: &str,
     ) -> String {
+        let source_type_text = self
+            .simplify_uniform_object_keyof_index_access_text(source_type_text)
+            .unwrap_or_else(|| source_type_text.to_string());
         if !source_type_text.contains(": unknown;") {
-            return source_type_text.to_string();
+            return source_type_text;
         }
 
         let Some(class_expr_idx) = self.direct_returned_class_expression(func.body) else {
-            return source_type_text.to_string();
+            return source_type_text;
         };
         let Some(class_node) = self.arena.get(class_expr_idx) else {
-            return source_type_text.to_string();
+            return source_type_text;
         };
         let Some(class) = self.arena.get_class(class_node) else {
-            return source_type_text.to_string();
+            return source_type_text;
         };
 
-        let mut rewritten = source_type_text.to_string();
+        let mut rewritten = source_type_text;
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -5703,6 +5688,19 @@ impl<'a> DeclarationEmitter<'a> {
                     self.collect_unique_return_type_text_from_block(&clause.statements, preferred)
                 })
             }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                self.arena.get_switch(stmt_node).is_some_and(|switch_data| {
+                    self.arena
+                        .get(switch_data.case_block)
+                        .and_then(|case_block_node| self.arena.get_block(case_block_node))
+                        .is_some_and(|block| {
+                            self.collect_unique_return_type_text_from_block(
+                                &block.statements,
+                                preferred,
+                            )
+                        })
+                })
+            }
             _ => true,
         }
     }
@@ -5728,6 +5726,8 @@ impl<'a> DeclarationEmitter<'a> {
             }
             if let Some(type_text) = self
                 .preferred_expression_type_text(var_decl.initializer)
+                .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
+                .or_else(|| self.as_const_assertion_type_text(var_decl.initializer))
                 .or_else(|| self.infer_fallback_type_text_at(var_decl.initializer, 0))
             {
                 return Some(type_text);
@@ -6435,337 +6435,6 @@ impl<'a> DeclarationEmitter<'a> {
             return idx;
         }
         idx
-    }
-
-    pub(in crate::declaration_emitter) fn semantic_simple_enum_access(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
-        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
-        let expr_node = self.arena.get(expr_idx)?;
-        if !self.is_simple_enum_access(expr_node) {
-            return None;
-        }
-
-        let access = self.arena.get_access_expr(expr_node)?;
-        let base_name = self.get_identifier_text(access.expression)?;
-
-        if let Some(binder) = self.binder
-            && let Some(symbol_id) = binder.get_node_symbol(access.expression)
-            && let Some(symbol) = binder.symbols.get(symbol_id)
-            && symbol.flags & tsz_binder::symbol_flags::ENUM != 0
-            && symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0
-        {
-            return Some(expr_idx);
-        }
-
-        let source_file_idx = self.current_source_file_idx?;
-        let source_file_node = self.arena.get(source_file_idx)?;
-        let source_file = self.arena.get_source_file(source_file_node)?;
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
-                continue;
-            }
-            if let Some(enum_data) = self.arena.get_enum(stmt_node)
-                && self.get_identifier_text(enum_data.name).as_deref() == Some(base_name.as_str())
-            {
-                return Some(expr_idx);
-            }
-        }
-        None
-    }
-
-    pub(crate) fn simple_enum_access_member_text(&self, expr_idx: NodeIndex) -> Option<String> {
-        let expr_idx = self.semantic_simple_enum_access(expr_idx)?;
-        let expr_node = self.arena.get(expr_idx)?;
-        let access = self.arena.get_access_expr(expr_node)?;
-        let base_name = self.get_identifier_text(access.expression)?;
-        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let member_name = self.get_identifier_text(access.name_or_argument)?;
-            return Some(format!("{base_name}.{member_name}"));
-        }
-
-        if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            let member_node = self.arena.get(access.name_or_argument)?;
-            let member_text = self.get_source_slice(member_node.pos, member_node.end)?;
-            return Some(format!("{base_name}[{member_text}]"));
-        }
-
-        None
-    }
-
-    pub(crate) fn enum_member_access_initializer_text(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
-        let expr_node = self.arena.get(expr_idx)?;
-        let is_access = expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
-        if !is_access {
-            return None;
-        }
-
-        let binder = self.binder?;
-        let sym_id = self
-            .value_reference_symbol(expr_idx)
-            .or_else(|| self.entity_access_chain_symbol(expr_idx))?;
-        let symbol = binder.symbols.get(sym_id)?;
-        if symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0 {
-            return None;
-        }
-
-        self.get_source_slice_no_semi(expr_node.pos, expr_node.end)
-    }
-
-    fn entity_access_chain_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
-        let binder = self.binder?;
-        let (root_idx, parts) = self.entity_access_chain_parts(expr_idx)?;
-        let root_name = self.get_identifier_text(root_idx)?;
-        let root_sym_id = self.resolve_identifier_symbol(root_idx, &root_name)?;
-        let root_symbol = binder.symbols.get(root_sym_id)?;
-
-        if !parts.is_empty()
-            && root_symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-            && let Some(module_specifier) = root_symbol.import_module.as_deref()
-            && let Some(current_path) = self.current_file_path.as_deref()
-        {
-            for module_path in
-                self.matching_module_export_paths(binder, current_path, module_specifier)
-            {
-                let Some(exports) = binder.module_exports.get(module_path) else {
-                    continue;
-                };
-                let export_name = root_symbol.import_name.as_deref();
-                let (mut current, start_index) = match export_name {
-                    Some("*") | Some("export=") | None => {
-                        let Some(current) = exports.get(&parts[0]) else {
-                            continue;
-                        };
-                        (current, 1)
-                    }
-                    Some(name) => {
-                        let Some(current) = exports.get(name) else {
-                            continue;
-                        };
-                        (current, 0)
-                    }
-                };
-                let mut resolved_all_parts = true;
-                for part in parts.iter().skip(start_index) {
-                    let Some(next) = self.symbol_member(current, part, binder) else {
-                        resolved_all_parts = false;
-                        break;
-                    };
-                    current = next;
-                }
-                if !resolved_all_parts {
-                    continue;
-                }
-                return Some(current);
-            }
-        }
-
-        let mut current = self.resolve_portability_symbol(root_sym_id, binder);
-        for part in parts {
-            current = self.symbol_member(current, &part, binder)?;
-        }
-        Some(current)
-    }
-
-    fn entity_access_chain_parts(&self, expr_idx: NodeIndex) -> Option<(NodeIndex, Vec<String>)> {
-        let mut current = self.skip_parenthesized_non_null_and_comma(expr_idx);
-        let mut reversed_parts = Vec::new();
-
-        for _ in 0..32 {
-            let node = self.arena.get(current)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                reversed_parts.reverse();
-                return Some((current, reversed_parts));
-            }
-
-            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                let access = self.arena.get_access_expr(node)?;
-                reversed_parts.push(self.get_identifier_text(access.name_or_argument)?);
-                current = access.expression;
-                continue;
-            }
-
-            return None;
-        }
-
-        None
-    }
-
-    fn symbol_member(
-        &self,
-        sym_id: SymbolId,
-        member_name: &str,
-        binder: &BinderState,
-    ) -> Option<SymbolId> {
-        let resolved = self.resolve_portability_symbol(sym_id, binder);
-        let symbol = binder.symbols.get(resolved)?;
-        symbol
-            .exports
-            .as_ref()
-            .and_then(|exports| exports.get(member_name))
-            .or_else(|| {
-                symbol
-                    .members
-                    .as_ref()
-                    .and_then(|members| members.get(member_name))
-            })
-    }
-
-    pub(crate) fn simple_const_enum_access_member_text(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
-        let expr_node = self.arena.get(expr_idx)?;
-        if !self.is_simple_enum_access(expr_node) {
-            return None;
-        }
-        let access = self.arena.get_access_expr(expr_node)?;
-        let base_name = self.get_identifier_text(access.expression)?;
-        let is_const_enum = self
-            .current_source_file_idx
-            .and_then(|source_file_idx| self.arena.get(source_file_idx))
-            .and_then(|source_file_node| self.arena.get_source_file(source_file_node))
-            .is_some_and(|source_file| {
-                source_file
-                    .statements
-                    .nodes
-                    .iter()
-                    .any(|&stmt_idx| self.enum_declaration_is_const_named(stmt_idx, &base_name))
-            })
-            || self.arena.nodes.iter().enumerate().any(|(idx, node)| {
-                node.kind == syntax_kind_ext::ENUM_DECLARATION
-                    && self.enum_declaration_is_const_named(NodeIndex(idx as u32), &base_name)
-            });
-
-        if !is_const_enum {
-            return None;
-        }
-
-        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let member_name = self.get_identifier_text(access.name_or_argument)?;
-            return Some(format!("{base_name}.{member_name}"));
-        }
-
-        if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            let member_node = self.arena.get(access.name_or_argument)?;
-            let member_text = self.get_source_slice(member_node.pos, member_node.end)?;
-            return Some(format!("{base_name}[{member_text}]"));
-        }
-
-        None
-    }
-
-    fn enum_declaration_is_const_named(&self, stmt_idx: NodeIndex, base_name: &str) -> bool {
-        let Some(stmt_node) = self.arena.get(stmt_idx) else {
-            return false;
-        };
-        if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
-            return false;
-        }
-        let Some(enum_data) = self.arena.get_enum(stmt_node) else {
-            return false;
-        };
-        self.get_identifier_text(enum_data.name).as_deref() == Some(base_name)
-            && self
-                .arena
-                .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
-    }
-
-    pub(crate) fn simple_enum_access_base_name_text(&self, expr_idx: NodeIndex) -> Option<String> {
-        let expr_idx = self.semantic_simple_enum_access(expr_idx)?;
-        let expr_node = self.arena.get(expr_idx)?;
-        let access = self.arena.get_access_expr(expr_node)?;
-        let base_node = self.arena.get(access.expression)?;
-        self.get_source_slice(base_node.pos, base_node.end)
-    }
-
-    pub(crate) fn const_asserted_enum_access_member_text(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
-        let expr_node = self.arena.get(expr_idx)?;
-        let assertion = self.arena.get_type_assertion(expr_node)?;
-        let type_node = self.arena.get(assertion.type_node)?;
-        let type_text = self.get_source_slice(type_node.pos, type_node.end)?;
-        if type_text != "const" {
-            return None;
-        }
-
-        self.simple_enum_access_member_text(assertion.expression)
-    }
-
-    pub(in crate::declaration_emitter) fn invalid_const_enum_object_access(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> bool {
-        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
-        let Some(expr_node) = self.arena.get(expr_idx) else {
-            return false;
-        };
-        if expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            return false;
-        }
-
-        let Some(access) = self.arena.get_access_expr(expr_node) else {
-            return false;
-        };
-        let Some(base_name) = self.get_identifier_text(access.expression) else {
-            return false;
-        };
-
-        let is_const_enum = if let Some(binder) = self.binder
-            && let Some(symbol_id) = binder.get_node_symbol(access.expression)
-            && let Some(symbol) = binder.symbols.get(symbol_id)
-        {
-            symbol.flags & tsz_binder::symbol_flags::CONST_ENUM != 0
-        } else if let Some(source_file_idx) = self.current_source_file_idx
-            && let Some(source_file_node) = self.arena.get(source_file_idx)
-            && let Some(source_file) = self.arena.get_source_file(source_file_node)
-        {
-            source_file
-                .statements
-                .nodes
-                .iter()
-                .copied()
-                .any(|stmt_idx| {
-                    let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                        return false;
-                    };
-                    if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
-                        return false;
-                    }
-                    let Some(enum_data) = self.arena.get_enum(stmt_node) else {
-                        return false;
-                    };
-                    self.get_identifier_text(enum_data.name).as_deref() == Some(base_name.as_str())
-                        && self
-                            .arena
-                            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
-                })
-        } else {
-            false
-        };
-        if !is_const_enum {
-            return false;
-        }
-
-        let argument_idx = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(access.name_or_argument);
-        self.arena
-            .get(argument_idx)
-            .is_some_and(|arg| arg.kind != SyntaxKind::StringLiteral as u16)
     }
 
     pub(in crate::declaration_emitter) fn object_literal_prefers_syntax_type_text(
@@ -7509,6 +7178,25 @@ mod tests {
         assert_eq!(
             DeclarationEmitter::combine_public_module_specifier("./utils", "./SvgIcon"),
             None
+        );
+    }
+
+    #[test]
+    fn tuple_item_lookup_mapped_type_expands_literal_keys() {
+        let input = r#"{
+    [Item in readonly [{
+    readonly name: "a";
+}, {
+    readonly name: "b";
+}][number] as Item["name"]]: Item;
+}"#;
+
+        assert_eq!(
+            DeclarationEmitter::expand_tuple_item_lookup_mapped_type_text(input),
+            Some(
+                "{\n    a: {\n        readonly name: \"a\";\n    };\n    b: {\n        readonly name: \"b\";\n    };\n}"
+                    .to_string()
+            )
         );
     }
 }

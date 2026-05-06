@@ -86,5 +86,9 @@ path = "tests/expression_with_type_arguments_tests.rs"
 name = "system_using_es_decorator_default_tests"
 path = "tests/system_using_es_decorator_default_tests.rs"
 
+[[test]]
+name = "system_using_default_tracker_tests"
+path = "tests/system_using_default_tracker_tests.rs"
+
 [lints]
 workspace = true

@@ -1636,6 +1636,7 @@ impl<'a> CheckerState<'a> {
                 && self
                     .get_require_module_specifier(var_decl.initializer)
                     .is_some();
+            let mut type_annotation_circular_for_ts2502 = false;
             if var_decl.type_annotation.is_some() && !is_redeclaration_for_ts2502 {
                 let accessor_circular =
                     self.type_literal_has_circular_accessor_reference(var_decl.type_annotation);
@@ -1673,6 +1674,7 @@ impl<'a> CheckerState<'a> {
                         "'{name}' is referenced directly or indirectly in its own type annotation."
                     );
                     self.error_at_node(var_decl.name, &message, 2502);
+                    type_annotation_circular_for_ts2502 = true;
                     final_type = TypeId::ANY;
                 }
             }
@@ -1746,7 +1748,9 @@ impl<'a> CheckerState<'a> {
             // `compute_final_type` may return a cached type for for-in/for-of loops,
             // so we must override that for bare redeclarations.
             let is_in_for_in_or_for_of = self.is_var_decl_in_for_in_or_for_of(decl_idx);
-            let raw_declared_type = if let Some(jsdoc_type) = jsdoc_declared_type {
+            let raw_declared_type = if type_annotation_circular_for_ts2502 {
+                TypeId::ANY
+            } else if let Some(jsdoc_type) = jsdoc_declared_type {
                 jsdoc_type
             } else if var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_none()

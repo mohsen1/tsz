@@ -961,8 +961,29 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
+        // tsc emits `__setFunctionName(temp, "C")` for an anonymous class
+        // expression only when the comma wrapper carries *static* state
+        // (a static field initializer, a static block, or a static
+        // private field that lowers into the same comma). Instance-only
+        // private comma forms — e.g.
+        // `(_a = class { #x; }, _C_x = new WeakMap(), _a)` — keep the
+        // engine's automatic assignment-based naming and tsc does not
+        // emit the helper. Mirror this so the helper inclusion decision
+        // in lowering and the comma-item emission in the printer agree.
+        let has_static_private_member = needs_private_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|m| {
+                    m.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self.arena.get_property_decl(m).is_some_and(|p| {
+                            self.arena.is_static(&p.modifiers)
+                                && is_private_identifier(self.arena, p.name)
+                        })
+                })
+            });
+        let needs_set_function_name_comma_item =
+            needs_static_comma_expr || has_static_private_member;
         let class_expr_set_function_name = class_expr_temp.as_ref().and_then(|_| {
-            if class.name.is_none() {
+            if class.name.is_none() && needs_set_function_name_comma_item {
                 self.resolve_class_expr_binding_name(_idx)
             } else {
                 None

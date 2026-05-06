@@ -382,10 +382,28 @@ impl Server {
             if provider.extract_variable(root, range).is_some() {
                 refactors.push(serde_json::json!({
                     "name": "Extract Symbol",
-                    "description": "Extract expression to variable",
+                    "description": "Extract function",
                     "actions": [{
-                        "name": "constant_extractedConstant",
-                        "description": "Extract to constant in enclosing scope"
+                        "name": "function_scope_0",
+                        "description": "Extract to function in enclosing scope",
+                        "kind": "refactor.extract.function"
+                    }, {
+                        "name": "function_scope_1",
+                        "description": "Extract to function in global scope",
+                        "kind": "refactor.extract.function"
+                    }]
+                }));
+                refactors.push(serde_json::json!({
+                    "name": "Extract Symbol",
+                    "description": "Extract constant",
+                    "actions": [{
+                        "name": "constant_scope_0",
+                        "description": "Extract to constant in enclosing scope",
+                        "kind": "refactor.extract.constant"
+                    }, {
+                        "name": "constant_scope_1",
+                        "description": "Extract to constant in global scope",
+                        "kind": "refactor.extract.constant"
                     }]
                 }));
             }
@@ -599,13 +617,14 @@ impl Server {
     }
 
     fn normalize_module_path(path: &std::path::Path) -> String {
-        let s = path.to_string_lossy();
+        let normalized = Self::normalize_path_string(path);
+        let s = normalized.as_str();
         let s = s
             .strip_suffix(".ts")
             .or_else(|| s.strip_suffix(".tsx"))
             .or_else(|| s.strip_suffix(".js"))
             .or_else(|| s.strip_suffix(".jsx"))
-            .unwrap_or(&s);
+            .unwrap_or(s);
         s.to_string()
     }
 
@@ -1926,12 +1945,29 @@ impl Server {
         request: &TsServerRequest,
     ) -> TsServerResponse {
         let result = (|| -> Option<bool> {
-            // If copiedFromFile is provided and we know that file, we can offer paste edits
+            if let Some(copied_text_span) = request
+                .arguments
+                .get("copiedTextSpan")
+                .and_then(|value| value.as_array())
+            {
+                let file = request
+                    .arguments
+                    .get("file")
+                    .and_then(|value| value.as_str())?;
+                let has_source =
+                    self.open_files.contains_key(file) || std::path::Path::new(file).exists();
+                let has_non_empty_span = copied_text_span.iter().any(|span| {
+                    span.get("length")
+                        .and_then(|value| value.as_u64())
+                        .is_some_and(|length| length > 0)
+                });
+                return Some(has_source && has_non_empty_span);
+            }
+
             let copied_from = request
                 .arguments
                 .get("copiedFromFile")
                 .and_then(|v| v.as_str())?;
-            // Check if we have the source file open or can read it
             if self.open_files.contains_key(copied_from)
                 || std::path::Path::new(copied_from).exists()
             {

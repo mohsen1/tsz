@@ -399,6 +399,11 @@ where
                 })
             }
             Some(TypeData::Application(app_id)) => {
+                if application_base_def_id(db, type_id)
+                    .is_some_and(|def_id| host.is_application_alias_serialization_exempt(def_id))
+                {
+                    return false;
+                }
                 let evaluated = host.evaluate_application_for_serialization(type_id);
                 if application_contains_nonserializable_recursive_alias(db, host, type_id)
                     || (evaluated != type_id
@@ -637,5 +642,57 @@ pub fn is_only_null_or_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool
             members.iter().all(|&m| is_only_null_or_undefined(db, m))
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TypeInterner;
+    use crate::types::SymbolRef;
+
+    struct ExemptApplicationHost {
+        exempt_def_id: DefId,
+        evaluate_calls: usize,
+        resolve_calls: usize,
+    }
+
+    impl TypeResolver for ExemptApplicationHost {
+        fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            None
+        }
+
+        fn resolve_lazy(&self, _def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            None
+        }
+    }
+
+    impl DeclarationTypeCycleHost for ExemptApplicationHost {
+        fn evaluate_application_for_serialization(&mut self, _type_id: TypeId) -> TypeId {
+            self.evaluate_calls += 1;
+            TypeId::ERROR
+        }
+
+        fn is_application_alias_serialization_exempt(&self, base_def_id: DefId) -> bool {
+            base_def_id == self.exempt_def_id
+        }
+    }
+
+    #[test]
+    fn exempt_application_is_not_evaluated_for_declaration_cycle_check() {
+        let interner = TypeInterner::new();
+        let def_id = DefId(1);
+        let app = interner.application(interner.lazy(def_id), vec![TypeId::STRING]);
+        let mut host = ExemptApplicationHost {
+            exempt_def_id: def_id,
+            evaluate_calls: 0,
+            resolve_calls: 0,
+        };
+
+        assert!(!declaration_type_references_cyclic_structure(
+            &interner, &mut host, app
+        ));
+        assert_eq!(host.evaluate_calls, 0);
+        assert_eq!(host.resolve_calls, 0);
     }
 }

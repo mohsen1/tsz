@@ -7605,6 +7605,58 @@ fn compile_resolves_package_imports_array_fallback_after_missing_target() {
 }
 
 #[test]
+fn compile_cross_module_nested_interface_method_checks_optional_argument() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["consumer.ts", "lib.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("lib.ts"),
+        r#"
+export interface IServer {}
+
+export interface IWorkspace {
+  toAbsolutePath(server: IServer): string;
+}
+
+export interface IConfig {
+  workspace: IWorkspace;
+  server?: IServer;
+}
+"#,
+    );
+    write_file(
+        &base.join("consumer.ts"),
+        r#"
+import { IConfig } from "./lib";
+
+declare const cfg: IConfig;
+
+cfg.workspace.toAbsolutePath(cfg.server);
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE),
+        "Expected TS2345 for optional imported nested-interface argument, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_resolves_package_imports_conditional_fallback_after_missing_target() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -14784,6 +14836,60 @@ module.exports = items;
         2,
         "raw string/comment import text must not suppress TS9006, got: {:?}",
         result.diagnostics
+    );
+}
+
+#[test]
+fn checked_js_declaration_emit_self_referential_prototype_method_type_does_not_recurse() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "declaration": true,
+    "outDir": "out",
+    "module": "commonjs",
+    "target": "es2015",
+    "strict": false
+  },
+  "files": ["source.js", "referencer.js"]
+}"#,
+    );
+    write_file(
+        &base.join("source.js"),
+        r#"/** @param {number} len */
+export function Vec(len) {
+  /** @type {number[]} */
+  this.storage = new Array(len);
+}
+
+Vec.prototype = {
+  /** @param {Vec} other */
+  dot(other) {
+    return other.storage.length;
+  }
+};
+"#,
+    );
+    write_file(
+        &base.join("referencer.js"),
+        r#"import { Vec } from "./source";
+export const vec = new Vec(1);
+"#,
+    );
+
+    let args = default_args();
+    compile(&args, base).expect("compile should succeed");
+
+    let dts = std::fs::read_to_string(base.join("out/source.d.ts"))
+        .expect("source declaration should be emitted");
+    assert!(
+        dts.contains("dot(other: Vec): number;"),
+        "expected self-referential prototype method parameter to print by name: {dts}"
     );
 }
 
