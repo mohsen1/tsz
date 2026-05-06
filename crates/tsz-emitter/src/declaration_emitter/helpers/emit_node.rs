@@ -344,6 +344,10 @@ impl<'a> DeclarationEmitter<'a> {
                     && self
                         .js_supported_commonjs_named_export_for_statement(stmt_idx)
                         .is_some())
+                || (stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                    && self
+                        .js_commonjs_define_property_export_for_statement(stmt_idx)
+                        .is_some())
             {
                 has_export = true;
             }
@@ -367,6 +371,9 @@ impl<'a> DeclarationEmitter<'a> {
                     || self.stmt_has_export_modifier(stmt_node)
                     || self
                         .js_supported_commonjs_named_export_for_statement(stmt_idx)
+                        .is_some()
+                    || self
+                        .js_commonjs_define_property_export_for_statement(stmt_idx)
                         .is_some()
             })
         })
