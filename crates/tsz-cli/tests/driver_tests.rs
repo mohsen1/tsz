@@ -14788,6 +14788,60 @@ module.exports = items;
 }
 
 #[test]
+fn checked_js_declaration_emit_self_referential_prototype_method_type_does_not_recurse() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "declaration": true,
+    "outDir": "out",
+    "module": "commonjs",
+    "target": "es2015",
+    "strict": false
+  },
+  "files": ["source.js", "referencer.js"]
+}"#,
+    );
+    write_file(
+        &base.join("source.js"),
+        r#"/** @param {number} len */
+export function Vec(len) {
+  /** @type {number[]} */
+  this.storage = new Array(len);
+}
+
+Vec.prototype = {
+  /** @param {Vec} other */
+  dot(other) {
+    return other.storage.length;
+  }
+};
+"#,
+    );
+    write_file(
+        &base.join("referencer.js"),
+        r#"import { Vec } from "./source";
+export const vec = new Vec(1);
+"#,
+    );
+
+    let args = default_args();
+    compile(&args, base).expect("compile should succeed");
+
+    let dts = std::fs::read_to_string(base.join("out/source.d.ts"))
+        .expect("source declaration should be emitted");
+    assert!(
+        dts.contains("dot(other: Vec): number;"),
+        "expected self-referential prototype method parameter to print by name: {dts}"
+    );
+}
+
+#[test]
 fn bare_import_type_export_equals_class_does_not_report_ts1340() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
