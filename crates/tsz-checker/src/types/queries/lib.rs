@@ -54,6 +54,18 @@ impl<'a> CheckerState<'a> {
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
         use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 
+        if name == "Array"
+            && self.ctx.share_owner_symbol_type_results
+            && !self.lib_name_has_local_augmentation(name)
+            && let Some(ty) = tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types)
+        {
+            let params =
+                tsz_solver::TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
+            if !params.is_empty() {
+                return (Some(ty), params);
+            }
+        }
+
         // Short-circuit via shared cache; skip when this checker locally
         // augments `name` (its merged TypeId would differ from peers').
         let lib_name_locally_augmented = self.lib_name_locally_augmented(name);
@@ -2341,5 +2353,46 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::NodeArena;
+    use tsz_solver::{QueryDatabase, TypeInterner, TypeParamInfo};
+
+    #[test]
+    fn shared_array_resolution_reuses_registered_base_and_params() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let array_base = types.factory().object(Vec::new());
+        let array_param = TypeParamInfo {
+            name: types.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        };
+        types.set_array_base_type(array_base, vec![array_param]);
+
+        let mut checker = CheckerState::new(
+            &arena,
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+        checker.ctx.share_owner_symbol_type_results = true;
+
+        let (resolved, params) = checker.resolve_lib_type_with_params("Array");
+
+        assert_eq!(resolved, Some(array_base));
+        assert_eq!(params, vec![array_param]);
+
+        let (resolved_string, params_string) = checker.resolve_lib_type_with_params("String");
+        assert_eq!(resolved_string, None);
+        assert_eq!(params_string, Vec::<TypeParamInfo>::new());
     }
 }

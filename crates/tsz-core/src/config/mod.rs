@@ -3517,6 +3517,23 @@ fn anchor_inherited_path_options(config: &mut TsConfig, config_path: &Path) {
             *root_dir = normalized.to_string_lossy().into_owned();
         }
     }
+
+    if let Some(type_roots) = opts.type_roots.as_mut() {
+        let parent_abs = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+        for type_root in type_roots {
+            let trimmed = type_root.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let candidate = std::path::Path::new(trimmed);
+            if candidate.is_absolute() {
+                continue;
+            }
+            let joined = parent_abs.join(candidate);
+            let normalized = std::fs::canonicalize(&joined).unwrap_or(joined);
+            *type_root = normalized.to_string_lossy().into_owned();
+        }
+    }
 }
 
 fn anchor_relative_path_option(option: &mut Option<String>, base_dir: &Path) {
@@ -5721,7 +5738,7 @@ mod tests {
     }
 
     #[test]
-    fn test_inherited_scalar_path_options_anchor_at_declaring_config_dir() {
+    fn test_inherited_path_options_anchor_at_declaring_config_dir() {
         let temp = tempdir().expect("create temp dir");
         let base_dir = temp.path().join("base");
         let app_dir = temp.path().join("app");
@@ -5736,7 +5753,8 @@ mod tests {
         "rootDir": "src",
         "outDir": "dist",
         "declarationDir": "types",
-        "tsBuildInfoFile": ".cache/project.tsbuildinfo"
+        "tsBuildInfoFile": ".cache/project.tsbuildinfo",
+        "typeRoots": ["./types"]
     }
 }"#,
         )
@@ -5754,6 +5772,7 @@ mod tests {
 
         let merged = load_tsconfig(&child_path).expect("load child");
         let opts = merged.compiler_options.expect("compiler options merged");
+        let type_roots = opts.type_roots.expect("inherited typeRoots present");
         let expected_base = base_dir
             .canonicalize()
             .expect("canonicalize base")
@@ -5786,6 +5805,17 @@ mod tests {
                 "Inherited {name} must not anchor at the child's directory: {value:?}"
             );
         }
+
+        assert_eq!(type_roots.len(), 1);
+        let type_root = &type_roots[0];
+        assert!(
+            type_root.starts_with(&expected_base),
+            "Inherited typeRoots must anchor at the base config's directory, got {type_root:?}"
+        );
+        assert!(
+            !type_root.starts_with(&unexpected_app),
+            "Inherited typeRoots must not anchor at the child's directory: {type_root:?}"
+        );
     }
 
     #[test]

@@ -155,7 +155,8 @@ impl<'a> CheckerState<'a> {
                     .map(|ident| ident.escaped_text.clone());
             }
             (func, func_name, analysis_expr_idx)
-        } else if let Some(sym_id) = sym_id {
+        } else {
+            let sym_id = sym_id?;
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
             let value_decl = self
                 .checked_js_constructor_value_declaration(
@@ -201,9 +202,11 @@ impl<'a> CheckerState<'a> {
                             .map(|ident| ident.escaped_text.clone())
                     });
                 (func, func_name, var_decl.initializer)
-            } else if let Some(init_expr) =
-                Self::checked_js_constructor_initializer_expression(self.ctx.arena, value_decl)
-            {
+            } else {
+                let init_expr = Self::checked_js_constructor_initializer_expression(
+                    self.ctx.arena,
+                    value_decl,
+                )?;
                 let init_node = self.ctx.arena.get(init_expr)?;
                 if init_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION {
                     return None;
@@ -234,11 +237,7 @@ impl<'a> CheckerState<'a> {
                     .map(|ident| ident.escaped_text.clone())
                     .or_else(|| self.expression_text(value_decl));
                 (func, func_name, owner_idx)
-            } else {
-                return None;
             }
-        } else {
-            return None;
         };
 
         let body_idx = func.body;

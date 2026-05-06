@@ -4553,6 +4553,25 @@ fn collect_direct_base_names(
     names
 }
 
+fn interface_declaration_has_merge_surface(arena: &NodeArena, stmt_idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(stmt_idx) else {
+        return false;
+    };
+    let Some(interface) = arena.get_interface(node) else {
+        return false;
+    };
+
+    !interface.members.nodes.is_empty()
+        || interface
+            .type_parameters
+            .as_ref()
+            .is_some_and(|type_params| !type_params.nodes.is_empty())
+        || interface
+            .heritage_clauses
+            .as_ref()
+            .is_some_and(|heritage| !heritage.nodes.is_empty())
+}
+
 fn collect_user_global_interface_seeds(program: &MergedProgram) -> FxHashSet<String> {
     let mut seeds = FxHashSet::default();
 
@@ -4561,14 +4580,28 @@ fn collect_user_global_interface_seeds(program: &MergedProgram) -> FxHashSet<Str
             && let Some(source_file) = file.arena.get_source_file_at(file.source_file)
         {
             for &stmt_idx in &source_file.statements.nodes {
-                if let Some(name) = interface_name_text(file.arena.as_ref(), stmt_idx) {
+                if interface_declaration_has_merge_surface(file.arena.as_ref(), stmt_idx)
+                    && let Some(name) = interface_name_text(file.arena.as_ref(), stmt_idx)
+                {
                     seeds.insert(name);
                 }
             }
         }
 
-        for name in file.global_augmentations.keys() {
-            seeds.insert(name.clone());
+        for (name, augmentations) in file.global_augmentations.iter() {
+            let affects_interface = augmentations.iter().any(|augmentation| {
+                if (augmentation.flags & crate::binder::symbol_flags::INTERFACE) == 0 {
+                    return true;
+                }
+                let arena = augmentation
+                    .arena
+                    .as_deref()
+                    .unwrap_or_else(|| file.arena.as_ref());
+                interface_declaration_has_merge_surface(arena, augmentation.node)
+            });
+            if affects_interface {
+                seeds.insert(name.clone());
+            }
         }
     }
 

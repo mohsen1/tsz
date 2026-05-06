@@ -175,6 +175,27 @@ pub(crate) fn emit_outputs(
                 &input_path,
             )
         {
+            if is_js_input
+                && js_input_skipped_by_node_modules_depth(
+                    &input_path,
+                    context.options.max_node_module_js_depth,
+                )
+            {
+                let contents = std::fs::read_to_string(&input_path).with_context(|| {
+                    format!("failed to read skipped JS source {}", input_path.display())
+                })?;
+                if js_bundle_path.is_some() {
+                    js_bundle_chunks.push(contents);
+                } else {
+                    outputs.push(OutputFile {
+                        path: js_path,
+                        contents,
+                        source_path: Some(input_path.clone()),
+                    });
+                }
+                continue;
+            }
+
             let mut printer_options = context.options.printer.clone();
             let mut type_only_nodes = context
                 .type_caches
@@ -1588,6 +1609,20 @@ fn js_extension_for(path: &Path, jsx: Option<JsxEmit>) -> Option<&'static str> {
         Some("cjs") => Some("cjs"),
         _ => None,
     }
+}
+
+fn js_input_skipped_by_node_modules_depth(path: &Path, max_depth: u32) -> bool {
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    if !matches!(ext, "js" | "jsx" | "mjs" | "cjs") {
+        return false;
+    }
+    let depth = path
+        .components()
+        .filter(|component| component.as_os_str() == "node_modules")
+        .count() as u32;
+    depth > max_depth
 }
 
 fn build_ambient_global_type_only_names(
