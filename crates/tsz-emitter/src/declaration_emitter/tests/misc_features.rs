@@ -60,6 +60,34 @@ fn test_format_js_number_floats() {
     assert_eq!(DeclarationEmitter::format_js_number(0.5), "0.5");
 }
 
+#[test]
+fn test_large_separated_numeric_literal_declaration_emit() {
+    let output = emit_dts(
+        r#"
+export type X = 0x8000_0000_0000_0000;
+export type Y = 0x7fff_ffff_ffff_ffff;
+export const y: 0x8000_0000_0000_0000 = 0 as any;
+"#,
+    );
+
+    assert!(
+        output.contains("export type X = 9223372036854776000;"),
+        "Expected large separated hex literal type X to use JS number text: {output}"
+    );
+    assert!(
+        output.contains("export type Y = 9223372036854776000;"),
+        "Expected large separated hex literal type Y to use JS number text: {output}"
+    );
+    assert!(
+        output.contains("export declare const y: 9223372036854776000;"),
+        "Expected large separated hex literal annotation to use JS number text: {output}"
+    );
+    assert!(
+        !output.contains("9223372036854775807"),
+        "Declaration output must not saturate through i64::MAX: {output}"
+    );
+}
+
 // =============================================================================
 // 16. Rest Parameters
 // =============================================================================

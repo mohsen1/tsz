@@ -304,14 +304,38 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Skip React import only in classic JSX mode where React must be in scope.
-            // In react-jsx/react-jsxdev modes, the automatic runtime handles the factory,
-            // so an unused React import should be flagged.
-            if name == "React" {
+            // Skip the JSX factory import in classic/preserve JSX mode where the
+            // factory must be in scope (e.g. `import React from "react"` is
+            // referenced implicitly by `React.createElement`/JSX emit).
+            //
+            // The skip is intentionally narrow:
+            //   * only in `react`/`preserve` JSX modes — `react-jsx`/`react-jsxdev`
+            //     use the automatic runtime, so an unused factory import is real;
+            //   * only for import-alias bindings — a local `const React = 1` is
+            //     not a JSX factory dependency and must still report TS6133;
+            //   * only when the binding's name matches the configured factory's
+            //     root (e.g. `React` for `React.createElement`); and
+            //   * only when the current file actually contains JSX, since JSX
+            //     emit/checking is what consumes the factory in the first place.
+            //
+            // This mirrors tsc, which still reports TS6133 for unused locals or
+            // imports named `React` in files without JSX.
+            {
                 use tsz_common::checker_options::JsxMode;
                 let jsx_mode = self.effective_jsx_mode();
-                if jsx_mode == JsxMode::React || jsx_mode == JsxMode::Preserve {
-                    continue;
+                let is_classic_or_preserve = matches!(jsx_mode, JsxMode::React | JsxMode::Preserve);
+                if is_classic_or_preserve && (flags & symbol_flags::ALIAS) != 0 {
+                    let factory_root = self
+                        .ctx
+                        .compiler_options
+                        .jsx_factory
+                        .split('.')
+                        .next()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("React");
+                    if name == factory_root && self.current_file_contains_jsx() {
+                        continue;
+                    }
                 }
             }
 
