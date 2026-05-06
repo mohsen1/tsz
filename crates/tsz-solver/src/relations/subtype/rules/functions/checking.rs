@@ -7,7 +7,7 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::type_param_info;
 use crate::types::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags,
-    ObjectShape, ParamInfo, PropertyInfo, TypeData, TypeId, Visibility,
+    ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, Visibility,
 };
 use crate::visitor::callable_shape_id;
 
@@ -54,6 +54,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let in_bivariant_callback_return_check = self.in_bivariant_callback_return_check;
         self.in_callback_param_check = false;
         self.in_bivariant_callback_return_check = false;
+
+        if source_instantiated.type_params.is_empty()
+            && !target_instantiated.type_params.is_empty()
+            && let Some((hoisted, replacements)) =
+                self.hoist_matching_nonlocal_type_params(&source_instantiated, &target_instantiated)
+        {
+            source_instantiated.type_params = hoisted;
+            for (from, to) in replacements {
+                source_instantiated =
+                    self.replace_function_type_exact(&source_instantiated, from, to);
+            }
+        }
 
         // Generic source vs generic target (same arity): normalize both signatures so they
         // can be compared structurally.
@@ -1048,6 +1060,185 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Clean up type parameter equivalences established in this scope.
         self.type_param_equivalences.truncate(equiv_start);
         result
+    }
+
+    fn hoist_matching_nonlocal_type_params(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+    ) -> Option<(Vec<crate::types::TypeParamInfo>, Vec<(TypeId, TypeId)>)> {
+        let mut source_params = Vec::new();
+        let mut collect_from = |type_id: TypeId| {
+            for ty in crate::visitor::collect_all_types(self.interner, type_id) {
+                let Some(info) = type_param_info(self.interner, ty) else {
+                    continue;
+                };
+                if !source_params
+                    .iter()
+                    .any(|existing: &crate::types::TypeParamInfo| existing.name == info.name)
+                {
+                    source_params.push(info);
+                }
+            }
+        };
+
+        for param in &source.params {
+            collect_from(param.type_id);
+        }
+        if let Some(this_type) = source.this_type {
+            collect_from(this_type);
+        }
+        collect_from(source.return_type);
+        if let Some(predicate) = &source.type_predicate
+            && let Some(predicate_type) = predicate.type_id
+        {
+            collect_from(predicate_type);
+        }
+
+        if source_params.len() != target.type_params.len() {
+            return None;
+        }
+
+        let mut target_to_source = TypeSubstitution::new();
+        let mut hoisted = Vec::with_capacity(target.type_params.len());
+        let mut replacements = Vec::new();
+        for target_tp in &target.type_params {
+            let Some(source_tp) = source_params
+                .iter()
+                .copied()
+                .find(|source_tp| source_tp.name == target_tp.name)
+            else {
+                return None;
+            };
+            target_to_source.insert(target_tp.name, self.interner.type_param(source_tp));
+            hoisted.push(
+                if source_tp.constraint.is_none() && target_tp.constraint.is_some() {
+                    *target_tp
+                } else {
+                    source_tp
+                },
+            );
+        }
+
+        for ((source_tp, hoisted_tp), target_tp) in source_params
+            .iter()
+            .zip(hoisted.iter())
+            .zip(target.type_params.iter())
+        {
+            let source_constraint = source_tp.constraint.unwrap_or(TypeId::UNKNOWN);
+            let target_constraint = target_tp.constraint.map_or(TypeId::UNKNOWN, |constraint| {
+                instantiate_type(self.interner, constraint, &target_to_source)
+            });
+            let constraints_match = self
+                .check_subtype(source_constraint, target_constraint)
+                .is_true()
+                && self
+                    .check_subtype(target_constraint, source_constraint)
+                    .is_true();
+            if constraints_match {
+                continue;
+            }
+
+            if source_tp.constraint.is_none()
+                && target_tp.constraint.is_some()
+                && target_constraint != TypeId::UNKNOWN
+            {
+                replacements.push((target_constraint, self.interner.type_param(*hoisted_tp)));
+                continue;
+            }
+
+            return None;
+        }
+
+        Some((hoisted, replacements))
+    }
+
+    fn replace_function_type_exact(
+        &mut self,
+        shape: &FunctionShape,
+        from: TypeId,
+        to: TypeId,
+    ) -> FunctionShape {
+        FunctionShape {
+            type_params: shape.type_params.clone(),
+            params: shape
+                .params
+                .iter()
+                .map(|param| ParamInfo {
+                    name: param.name,
+                    type_id: self.replace_type_exact(param.type_id, from, to),
+                    optional: param.optional,
+                    rest: param.rest,
+                })
+                .collect(),
+            this_type: shape
+                .this_type
+                .map(|this_type| self.replace_type_exact(this_type, from, to)),
+            return_type: self.replace_type_exact(shape.return_type, from, to),
+            type_predicate: shape.type_predicate.as_ref().map(|predicate| {
+                crate::types::TypePredicate {
+                    asserts: predicate.asserts,
+                    target: predicate.target,
+                    type_id: predicate
+                        .type_id
+                        .map(|ty| self.replace_type_exact(ty, from, to)),
+                    parameter_index: predicate.parameter_index,
+                }
+            }),
+            is_constructor: shape.is_constructor,
+            is_method: shape.is_method,
+        }
+    }
+
+    fn replace_type_exact(&mut self, type_id: TypeId, from: TypeId, to: TypeId) -> TypeId {
+        if type_id == from {
+            return to;
+        }
+        let Some(type_data) = self.interner.lookup(type_id) else {
+            return type_id;
+        };
+        match type_data {
+            TypeData::Array(elem) => {
+                let replaced = self.replace_type_exact(elem, from, to);
+                if replaced == elem {
+                    type_id
+                } else {
+                    self.interner.array(replaced)
+                }
+            }
+            TypeData::Tuple(list_id) => {
+                let elements = self.interner.tuple_list(list_id);
+                let mut changed = false;
+                let replaced = elements
+                    .iter()
+                    .map(|elem| {
+                        let replaced_type = self.replace_type_exact(elem.type_id, from, to);
+                        changed |= replaced_type != elem.type_id;
+                        TupleElement {
+                            type_id: replaced_type,
+                            name: elem.name,
+                            optional: elem.optional,
+                            rest: elem.rest,
+                        }
+                    })
+                    .collect();
+                if changed {
+                    self.interner.tuple(replaced)
+                } else {
+                    type_id
+                }
+            }
+            TypeData::Function(shape_id) => {
+                let shape = self.interner.function_shape(shape_id);
+                let replaced = self.replace_function_type_exact(&shape, from, to);
+                if *shape == replaced {
+                    type_id
+                } else {
+                    self.interner.function(replaced)
+                }
+            }
+            _ => type_id,
+        }
     }
 
     fn is_tuple_list_rest_type(&mut self, type_id: TypeId) -> bool {
