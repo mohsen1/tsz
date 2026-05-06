@@ -2474,13 +2474,13 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(type_text) =
                 self.rewrite_object_literal_computed_member_type_text(initializer, type_id)
         {
-            return type_text;
+            return self.rewrite_exported_import_equals_type_text(type_text);
         }
 
         if let Some(typeof_text) =
             self.typeof_prefix_for_value_entity(initializer, true, Some(type_id))
         {
-            return typeof_text;
+            return self.rewrite_exported_import_equals_type_text(typeof_text);
         }
 
         if (type_id == tsz_solver::types::TypeId::ANY
@@ -2491,7 +2491,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
             && let Some(type_text) = self.preferred_expression_type_text(initializer)
         {
-            return type_text;
+            return self.rewrite_exported_import_equals_type_text(type_text);
         }
 
         if type_id != tsz_solver::types::TypeId::ANY
@@ -2506,13 +2506,17 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_text = self
                     .expand_portable_mapped_object_text_in_current_context(&type_text)
                     .unwrap_or(type_text);
-                return self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
+                let type_text =
+                    self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
+                return self.rewrite_exported_import_equals_type_text(type_text);
             }
             let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
             let type_text = self
                 .expand_portable_mapped_object_text_in_current_context(&type_text)
                 .unwrap_or(type_text);
-            return self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
+            let type_text =
+                self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
+            return self.rewrite_exported_import_equals_type_text(type_text);
         }
 
         if (type_id != tsz_solver::types::TypeId::ANY
@@ -2523,21 +2527,240 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(expanded) =
                 self.expand_portable_mapped_object_text_in_current_context(&type_text)
             {
-                return expanded;
+                return self.rewrite_exported_import_equals_type_text(expanded);
             }
-            return self
+            let type_text = self
                 .enum_value_index_access_alias_type_text(&type_text)
                 .unwrap_or(type_text);
+            return self.rewrite_exported_import_equals_type_text(type_text);
         }
 
         let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
         if let Some(expanded) =
             self.expand_portable_mapped_object_text_in_current_context(&type_text)
         {
-            return expanded;
+            return self.rewrite_exported_import_equals_type_text(expanded);
         }
-        self.enum_value_index_access_alias_type_text(&type_text)
-            .unwrap_or(type_text)
+        let type_text = self
+            .enum_value_index_access_alias_type_text(&type_text)
+            .unwrap_or(type_text);
+        self.rewrite_exported_import_equals_type_text(type_text)
+    }
+
+    fn rewrite_exported_import_equals_type_text(&self, type_text: String) -> String {
+        let aliases = self.exported_import_equals_type_alias_rewrites();
+        if aliases.is_empty() {
+            return type_text;
+        }
+
+        aliases
+            .into_iter()
+            .fold(type_text, |text, (alias, target)| {
+                Self::replace_qualified_type_reference_text(&text, &alias, &target)
+            })
+    }
+
+    fn exported_import_equals_type_alias_rewrites(&self) -> Vec<(String, String)> {
+        let Some(source_file_idx) = self.current_source_file_idx else {
+            return Vec::new();
+        };
+        let Some(source_file_node) = self.arena.get(source_file_idx) else {
+            return Vec::new();
+        };
+        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
+            return Vec::new();
+        };
+
+        let mut aliases = Vec::new();
+        self.collect_exported_import_equals_type_aliases(
+            &source_file.statements,
+            &mut Vec::new(),
+            &mut aliases,
+        );
+        aliases.sort_by_key(|(alias, _)| std::cmp::Reverse(alias.len()));
+        aliases.dedup();
+        aliases
+    }
+
+    fn collect_exported_import_equals_type_aliases(
+        &self,
+        statements: &NodeList,
+        namespace_path: &mut Vec<String>,
+        aliases: &mut Vec<(String, String)>,
+    ) {
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                self.collect_exported_import_equals_type_aliases_in_module(
+                    stmt_node,
+                    namespace_path,
+                    aliases,
+                );
+                continue;
+            }
+
+            if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                self.collect_exported_import_equals_type_alias(
+                    stmt_idx,
+                    namespace_path,
+                    aliases,
+                    false,
+                );
+                continue;
+            }
+
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export_decl) = self.arena.get_export_decl(stmt_node)
+                && let Some(clause_node) = self.arena.get(export_decl.export_clause)
+            {
+                if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    self.collect_exported_import_equals_type_aliases_in_module(
+                        clause_node,
+                        namespace_path,
+                        aliases,
+                    );
+                } else if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                    self.collect_exported_import_equals_type_alias(
+                        export_decl.export_clause,
+                        namespace_path,
+                        aliases,
+                        true,
+                    );
+                }
+            }
+        }
+    }
+
+    fn collect_exported_import_equals_type_aliases_in_module(
+        &self,
+        module_node: &Node,
+        namespace_path: &mut Vec<String>,
+        aliases: &mut Vec<(String, String)>,
+    ) {
+        let Some(module) = self.arena.get_module(module_node) else {
+            return;
+        };
+        let Some(module_name) = self.entity_name_text(module.name) else {
+            return;
+        };
+
+        let old_len = namespace_path.len();
+        namespace_path.extend(module_name.split('.').map(ToString::to_string));
+
+        if let Some(body_node) = self.arena.get(module.body) {
+            if self.arena.get_module(body_node).is_some() {
+                self.collect_exported_import_equals_type_aliases_in_module(
+                    body_node,
+                    namespace_path,
+                    aliases,
+                );
+            } else if let Some(block) = self.arena.get_module_block(body_node)
+                && let Some(statements) = block.statements.as_ref()
+            {
+                self.collect_exported_import_equals_type_aliases(
+                    statements,
+                    namespace_path,
+                    aliases,
+                );
+            }
+        }
+
+        namespace_path.truncate(old_len);
+    }
+
+    fn collect_exported_import_equals_type_alias(
+        &self,
+        import_idx: NodeIndex,
+        namespace_path: &[String],
+        aliases: &mut Vec<(String, String)>,
+        already_exported: bool,
+    ) {
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return;
+        };
+        let Some(import_decl) = self.arena.get_import_decl(import_node) else {
+            return;
+        };
+        if !already_exported
+            && !self
+                .arena
+                .has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword)
+        {
+            return;
+        }
+        let Some(alias_name) = self.get_identifier_text(import_decl.import_clause) else {
+            return;
+        };
+        let Some(target_text) = self.entity_name_text(import_decl.module_specifier) else {
+            return;
+        };
+        if target_text == alias_name
+            || self
+                .arena
+                .get(import_decl.module_specifier)
+                .is_some_and(|node| node.kind == SyntaxKind::StringLiteral as u16)
+        {
+            return;
+        }
+
+        let alias_text = if namespace_path.is_empty() {
+            alias_name
+        } else {
+            format!("{}.{}", namespace_path.join("."), alias_name)
+        };
+        aliases.push((alias_text, target_text));
+    }
+
+    fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.get_identifier_text(idx);
+        }
+        if let Some(qualified) = self.arena.get_qualified_name(node) {
+            let left = self.entity_name_text(qualified.left)?;
+            let right = self.entity_name_text(qualified.right)?;
+            return Some(format!("{left}.{right}"));
+        }
+        if let Some(access) = self.arena.get_access_expr(node) {
+            let left = self.entity_name_text(access.expression)?;
+            let right = self.entity_name_text(access.name_or_argument)?;
+            return Some(format!("{left}.{right}"));
+        }
+        None
+    }
+
+    fn replace_qualified_type_reference_text(type_text: &str, from: &str, to: &str) -> String {
+        let mut out = String::with_capacity(type_text.len());
+        let mut search_start = 0;
+
+        while let Some(relative_idx) = type_text[search_start..].find(from) {
+            let start = search_start + relative_idx;
+            let end = start + from.len();
+            out.push_str(&type_text[search_start..start]);
+            if Self::is_qualified_type_reference_boundary(type_text, start, end) {
+                out.push_str(to);
+            } else {
+                out.push_str(from);
+            }
+            search_start = end;
+        }
+
+        out.push_str(&type_text[search_start..]);
+        out
+    }
+
+    fn is_qualified_type_reference_boundary(type_text: &str, start: usize, end: usize) -> bool {
+        let before = type_text[..start].chars().next_back();
+        let after = type_text[end..].chars().next();
+        !before.is_some_and(Self::is_qualified_type_reference_part)
+            && !after.is_some_and(Self::is_qualified_type_reference_part)
+    }
+
+    const fn is_qualified_type_reference_part(ch: char) -> bool {
+        ch == '.' || ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 
     pub(in crate::declaration_emitter) fn strip_synthetic_anonymous_object_members(
@@ -4598,6 +4821,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let new_expr = self.arena.get_call_expr(expr_node)?;
         let base_text = self.declaration_constructor_expression_text(new_expr.expression)?;
+        let base_text = self.rewrite_exported_import_equals_type_text(base_text);
         let type_args = self.type_argument_list_source_text(new_expr.type_arguments.as_ref());
         if type_args.is_empty() {
             Some(base_text)

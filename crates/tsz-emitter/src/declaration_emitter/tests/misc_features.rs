@@ -391,6 +391,35 @@ fn test_export_equals_import_equals_chain_keeps_namespace_dependency() {
 }
 
 #[test]
+fn test_exported_namespace_import_equals_uses_target_for_outer_inferred_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    export namespace x {
+        export class c {
+            foo(a: number) {
+                return a;
+            }
+        }
+    }
+
+    export namespace m2 {
+        export namespace m3 {
+            export import c = x.c;
+            export var cProp = new c();
+        }
+    }
+
+    export var d = new m2.m3.c();
+    "#,
+    );
+
+    assert!(
+        output.contains("export declare var d: x.c;"),
+        "Expected exported variable to use the import-equals target type: {output}"
+    );
+}
+
+#[test]
 fn test_import_type_with_resolution_mode_attributes_is_preserved() {
     let output = emit_dts_with_usage_analysis(
         r#"
