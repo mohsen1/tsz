@@ -5345,9 +5345,8 @@ mod tests {
         let base_url = opts.base_url.expect("inherited baseUrl present");
 
         // Canonicalize to handle macOS `/var` → `/private/var` symlinks.
-        let canonical_base_dir =
-            std::fs::canonicalize(&base_dir).unwrap_or_else(|_| base_dir.clone());
-        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or_else(|_| app_dir.clone());
+        let canonical_base_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir);
+        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir);
         let canonical_base_url = std::path::Path::new(&base_url)
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(&base_url));
@@ -5450,7 +5449,7 @@ mod tests {
 
         // Canonicalize both sides so symlink-bearing temp paths on macOS
         // (`/var/folders/...` → `/private/var/folders/...`) compare equal.
-        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or_else(|_| app_dir.clone());
+        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir);
         let canonical_base_url = std::path::Path::new(&base_url)
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(&base_url));

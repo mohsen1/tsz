@@ -1205,7 +1205,12 @@ impl<'a> CheckerState<'a> {
 
                 // Resolve the constraint in case it's a Lazy type
                 let constraint = self.resolve_lazy_type(constraint);
-
+                let constraint_name = self.format_type_diagnostic(constraint);
+                let constraint = self
+                    .is_well_known_lib_type_name(&constraint_name)
+                    .then(|| self.resolve_lib_type_by_name(&constraint_name))
+                    .flatten()
+                    .unwrap_or(constraint);
                 if let Some(&arg_idx) = type_args_list.nodes.get(i)
                     && self
                         .type_argument_is_narrowed_by_conditional_true_branch(arg_idx, constraint)
@@ -1234,6 +1239,19 @@ impl<'a> CheckerState<'a> {
                         &subst,
                     )
                 };
+                let primitive_fails_nominal_lib_object =
+                    query::is_primitive_type(self.ctx.types.as_type_database(), type_arg)
+                        && self.is_nominal_lib_object_type_name(&constraint_name);
+                if primitive_fails_nominal_lib_object {
+                    if let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                        self.error_type_constraint_not_satisfied(
+                            type_arg,
+                            instantiated_constraint,
+                            arg_idx,
+                        );
+                    }
+                    continue;
+                }
                 // Skip if the instantiated constraint still contains type parameters.
                 // This avoids false positive TS2344 when the constraint cannot be fully
                 // resolved (e.g., conditional type narrowing contexts like
@@ -1358,7 +1376,6 @@ impl<'a> CheckerState<'a> {
                     is_satisfied = self.is_assignable_to(base, instantiated_constraint)
                         || self.satisfies_array_like_constraint(base, instantiated_constraint);
                 }
-
                 if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
                     if self.type_argument_is_narrowed_by_conditional_true_branch(
                         arg_idx,

@@ -9,6 +9,7 @@
 //! - `inner` — the main `get_type_of_call_expression_inner` implementation
 
 mod inner;
+mod nominal_lib_object_callbacks;
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
