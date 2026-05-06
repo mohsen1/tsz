@@ -1213,21 +1213,10 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
-                // tsc emits TS2792/TS2307 for unresolved value imports under
-                // AMD/System/classic-resolution only when the user has silenced
-                // the TS5107 deprecation diagnostic via `ignoreDeprecations`
-                // (issue #3077). When TS5107 is the visible signal that the
-                // user is in a deprecated mode, the secondary missing-module
-                // diagnostic is suppressed in favor of the deprecation
-                // diagnostic — `ignore_deprecations` flips that suppression.
-                let module_kind = self.ctx.compiler_options.module;
-                let is_system_or_amd = matches!(
-                    module_kind,
-                    tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
-                );
-                let is_classic_style =
-                    is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution;
-                if is_classic_style && !self.ctx.compiler_options.ignore_deprecations {
+                // AMD/System/classic-resolution: tsc only emits the secondary
+                // missing-module diagnostic when TS5107 deprecation is silenced
+                // via `ignoreDeprecations` — issue #3077.
+                if self.deprecated_mode_suppresses_module_not_found() {
                     self.ctx.import_resolution_stack.pop();
                     return;
                 }
@@ -1619,17 +1608,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // AMD/System/classic-resolution: same suppression rule as the
-        // resolution-error branch above (issue #3077). When the user is in a
-        // deprecated mode and has not silenced TS5107, suppress the secondary
-        // missing-module diagnostic in favor of the deprecation.
-        let module_kind = self.ctx.compiler_options.module;
-        let is_system_or_amd = matches!(
-            module_kind,
-            tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
-        );
-        let is_classic_style =
-            is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution;
-        if is_classic_style && !self.ctx.compiler_options.ignore_deprecations {
+        // resolution-error branch above (issue #3077).
+        if self.deprecated_mode_suppresses_module_not_found() {
             self.ctx.import_resolution_stack.pop();
             return;
         }

@@ -1026,15 +1026,7 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            // AMD/System/classic-resolution: suppress missing-module diagnostic
-            // when the deprecation diagnostic (TS5107) is the visible signal
-            // (i.e., user has not set `ignoreDeprecations`). When TS5107 is
-            // silenced, surface TS2792/TS2307 normally — issue #3077.
-            let module_kind = self.ctx.compiler_options.module;
-            let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
-            let is_classic_style =
-                is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution;
-            if is_classic_style && !self.ctx.compiler_options.ignore_deprecations {
+            if self.deprecated_mode_suppresses_module_not_found() {
                 return;
             }
             let mut error_code = error.code;
@@ -1068,15 +1060,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // AMD/System/classic-resolution: same suppression rule as the
-        // resolution-error branch above (issue #3077). Suppress missing-module
-        // diagnostic only when TS5107 deprecation is being emitted; when
-        // `ignoreDeprecations` is set, surface the missing-module diagnostic.
-        let module_kind = self.ctx.compiler_options.module;
-        let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
-        let is_classic_style =
-            is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution;
-        if is_classic_style && !self.ctx.compiler_options.ignore_deprecations {
+        if self.deprecated_mode_suppresses_module_not_found() {
             return;
         }
         if self.ctx.modules_with_ts2307_emitted.contains(&module_key) {

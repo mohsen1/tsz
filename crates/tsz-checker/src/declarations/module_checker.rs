@@ -169,23 +169,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // AMD/System/classic-resolution: tsc suppresses the secondary missing-
-        // module diagnostic in favor of the TS5107 deprecation diagnostic
-        // unless the user has set `ignoreDeprecations` to silence TS5107
-        // (issue #3077). When deprecation is silenced, surface the
-        // missing-module diagnostic; otherwise stay quiet.
-        {
-            let module_kind = self.ctx.compiler_options.module;
-            let is_system_or_amd = matches!(
-                module_kind,
-                tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
-            );
-            let is_classic_style =
-                is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution;
-            if is_classic_style && !self.ctx.compiler_options.ignore_deprecations {
-                self.ctx.import_resolution_stack.pop();
-                return;
-            }
+        // AMD/System/classic-resolution: same suppression rule as imports
+        // (issue #3077) — surface the missing-module diagnostic only when
+        // TS5107 is silenced via `ignoreDeprecations`.
+        if self.deprecated_mode_suppresses_module_not_found() {
+            self.ctx.import_resolution_stack.pop();
+            return;
         }
 
         // Emit module-not-found diagnostic for unresolved export specifiers.
