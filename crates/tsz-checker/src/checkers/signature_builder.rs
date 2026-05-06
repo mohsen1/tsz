@@ -113,6 +113,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if type_predicate.is_none()
+            && method.type_annotation.is_none()
+            && matches!(return_type, TypeId::BOOLEAN | TypeId::UNKNOWN)
+            && method.body.is_some()
+        {
+            self.prewarm_inferred_predicate_operand_types(method.body);
+            let analyzer = self.flow_analyzer();
+            if let Some(pred) = analyzer.try_infer_type_predicate_from_body(
+                method.body,
+                &method.parameters.nodes,
+                &params,
+            ) {
+                type_predicate = Some(pred);
+            }
+        }
+
         // Wrap unannotated generator/async method return types (matching get_type_of_function).
         let has_annotation = method.type_annotation.is_some();
         let is_generator = method.asterisk_token;

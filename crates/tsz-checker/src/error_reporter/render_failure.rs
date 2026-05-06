@@ -9,7 +9,7 @@ use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
-use tsz_solver::TypeId;
+use tsz_solver::{IntrinsicKind, TypeData, TypeId};
 
 use super::assignability::{
     is_builtin_wrapper_name, is_function_type_display, is_object_prototype_method,
@@ -17,6 +17,14 @@ use super::assignability::{
 };
 mod type_mismatch;
 impl<'a> CheckerState<'a> {
+    fn is_object_intrinsic_for_missing_properties(&self, type_id: TypeId) -> bool {
+        type_id == TypeId::OBJECT
+            || matches!(
+                self.ctx.types.lookup(type_id),
+                Some(TypeData::Intrinsic(IntrinsicKind::Object))
+            )
+    }
+
     fn no_union_member_matches_switch_source_display(
         &mut self,
         source: TypeId,
@@ -987,8 +995,9 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> Diagnostic {
+        let source_type_is_object = self.is_object_intrinsic_for_missing_properties(source_type);
         // Primitive sources use TS2322 rather than missing-property wording.
-        let display_src_str = if depth == 0 && source_type != tsz_solver::TypeId::OBJECT {
+        let display_src_str = if depth == 0 && !source_type_is_object {
             self.format_type_for_diagnostic_role(
                 source,
                 DiagnosticTypeDisplayRole::AssignmentSource {
@@ -1008,7 +1017,7 @@ impl<'a> CheckerState<'a> {
         let outer_source_is_primitive =
             crate::query_boundaries::common::is_primitive_type(self.ctx.types, source)
                 || is_primitive_type_name(&display_src_str);
-        let inner_source_type_is_primitive = source_type != tsz_solver::TypeId::OBJECT
+        let inner_source_type_is_primitive = !source_type_is_object
             && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type);
         let is_source_primitive =
             outer_source_is_primitive || (depth > 0 && inner_source_type_is_primitive);
@@ -1744,8 +1753,11 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> Diagnostic {
+        let source_type_is_object = self.is_object_intrinsic_for_missing_properties(source_type);
         // TSC emits TS2322 instead of TS2739/TS2740 when the source is a primitive type.
-        if crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type) {
+        if !source_type_is_object
+            && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type)
+        {
             let src_str = self.format_type_diagnostic(source_type);
             let tgt_str = self.format_type_diagnostic(target_type);
             let message = format_message(
@@ -2001,7 +2013,7 @@ impl<'a> CheckerState<'a> {
                 self.private_or_protected_member_missing_display(source_type, target_type, None)
             {
                 let widened_source = self.widen_type_for_display(source_type);
-                let src_str = if source_type == TypeId::OBJECT {
+                let src_str = if source_type_is_object {
                     "{}".to_string()
                 } else {
                     self.format_type_diagnostic(widened_source)
@@ -2024,7 +2036,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
             let src_str = if depth == 0 {
-                if source_type == TypeId::OBJECT {
+                if source_type_is_object {
                     "{}".to_string()
                 } else {
                     let source_display = self.format_type_for_diagnostic_role(
@@ -2040,7 +2052,7 @@ impl<'a> CheckerState<'a> {
                         source_display,
                     )
                 }
-            } else if source_type == TypeId::OBJECT {
+            } else if source_type_is_object {
                 "{}".to_string()
             } else {
                 let widened_source = self.widen_type_for_display(source_type);
@@ -2080,13 +2092,17 @@ impl<'a> CheckerState<'a> {
                 )
             {
                 let src_str = if depth == 0 {
-                    self.format_type_for_diagnostic_role(
-                        source,
-                        DiagnosticTypeDisplayRole::AssignmentSource {
-                            target,
-                            anchor_idx: idx,
-                        },
-                    )
+                    if source_type_is_object {
+                        "{}".to_string()
+                    } else {
+                        self.format_type_for_diagnostic_role(
+                            source,
+                            DiagnosticTypeDisplayRole::AssignmentSource {
+                                target,
+                                anchor_idx: idx,
+                            },
+                        )
+                    }
                 } else {
                     self.format_type_diagnostic(source_type)
                 };
@@ -2173,7 +2189,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let src_str = if depth == 0 {
-                if source_type == TypeId::OBJECT {
+                if source_type_is_object {
                     "{}".to_string()
                 } else if let Some(base_display) =
                     self.private_identifier_missing_source_base_display(source, filtered_names[0])
@@ -2188,7 +2204,7 @@ impl<'a> CheckerState<'a> {
                         },
                     )
                 }
-            } else if source_type == TypeId::OBJECT {
+            } else if source_type_is_object {
                 "{}".to_string()
             } else {
                 let widened_source = self.widen_type_for_display(source_type);
@@ -2239,7 +2255,9 @@ impl<'a> CheckerState<'a> {
             // `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
             // line 91, where `type NumberToNumber = NumberTo<number>` is
             // displayed as `NumberTo<number>` in the missing-properties source.
-            if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
+            if source_type_is_object {
+                "{}".to_string()
+            } else if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
                 self.format_type_diagnostic(unfolded)
             } else {
                 self.format_type_for_diagnostic_role(
