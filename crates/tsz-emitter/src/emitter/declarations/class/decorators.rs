@@ -128,9 +128,7 @@ impl<'a> Printer<'a> {
             return Some(DecoratorMemberName::Literal(text));
         }
         // Check if it's a computed property name
-        let Some(name_node) = self.arena.get(name_idx) else {
-            return None;
-        };
+        let name_node = self.arena.get(name_idx)?;
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
             && let Some(cp) = self.arena.get_computed_property(name_node)
         {

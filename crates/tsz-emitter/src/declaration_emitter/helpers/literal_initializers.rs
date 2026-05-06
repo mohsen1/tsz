@@ -522,4 +522,16 @@ impl<'a> DeclarationEmitter<'a> {
         }
         text.to_string()
     }
+
+    pub(crate) fn declaration_numeric_literal_text(text: &str, value: Option<f64>) -> String {
+        if text.contains('_') {
+            if let Some(value) = value {
+                Self::format_js_number(value)
+            } else {
+                text.replace('_', "")
+            }
+        } else {
+            text.to_string()
+        }
+    }
 }
