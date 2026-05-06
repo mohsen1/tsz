@@ -572,13 +572,15 @@ impl<'a> Printer<'a> {
             None
         };
 
-        // Save the previous private field map (for nested classes)
-        let prev_private_field_weakmaps = std::mem::take(&mut self.private_field_weakmaps);
+        // Save the previous private-name maps (for nested classes). Private
+        // names are lexically scoped, so nested classes must still be able to
+        // lower accesses to outer private names unless shadowed by their own.
+        let prev_private_field_weakmaps = self.private_field_weakmaps.clone();
         let prev_pending_weakmap_inits = std::mem::take(&mut self.pending_weakmap_inits);
         let prev_pending_static_private_inits =
             std::mem::take(&mut self.pending_static_private_inits);
         let prev_pending_private_class_alias = self.pending_private_class_alias.take();
-        let prev_private_member_info = std::mem::take(&mut self.private_member_info);
+        let prev_private_member_info = self.private_member_info.clone();
         let prev_pending_private_field_constructor_inits =
             std::mem::take(&mut self.pending_private_field_constructor_inits);
         let prev_pending_instances_weakset_add = self.pending_instances_weakset_add.take();
@@ -587,7 +589,7 @@ impl<'a> Printer<'a> {
         let prev_pending_private_accessor_defs =
             std::mem::take(&mut self.pending_private_accessor_defs);
         let prev_private_members_to_skip = std::mem::take(&mut self.private_members_to_skip);
-        let prev_private_static_class_alias = self.private_static_class_alias.take();
+        let prev_private_static_class_alias = self.private_static_class_alias.clone();
 
         let has_any_private_lowering = !private_fields.is_empty()
             || !private_methods.is_empty()
@@ -712,18 +714,19 @@ impl<'a> Printer<'a> {
             for field in &private_fields {
                 self.private_field_weakmaps
                     .insert(field.name.clone(), field.weakmap_name.clone());
-                if field.is_static {
-                    self.private_member_info.insert(
-                        field.name.clone(),
-                        PrivateMemberInfo {
-                            kind: "f",
-                            fn_ref: Some(field.weakmap_name.clone()),
-                            setter_ref: None,
-                            is_static: true,
-                            state_var: private_class_alias.clone(),
+                self.private_member_info.insert(
+                    field.name.clone(),
+                    PrivateMemberInfo {
+                        kind: "f",
+                        fn_ref: field.is_static.then(|| field.weakmap_name.clone()),
+                        setter_ref: None,
+                        state_var: if field.is_static {
+                            private_class_alias.clone()
+                        } else {
+                            None
                         },
-                    );
-                }
+                    },
+                );
             }
 
             // Register methods
@@ -736,7 +739,6 @@ impl<'a> Printer<'a> {
                         kind: "m",
                         fn_ref: Some(method.fn_var_name.clone()),
                         setter_ref: None,
-                        is_static: method.is_static,
                         state_var: if method.is_static {
                             private_class_alias.clone()
                         } else {
@@ -770,7 +772,6 @@ impl<'a> Printer<'a> {
                             .as_ref()
                             .filter(|_| accessor.setter_body.is_some())
                             .cloned(),
-                        is_static: accessor.is_static,
                         state_var: if accessor.is_static {
                             private_class_alias.clone()
                         } else {
@@ -793,7 +794,6 @@ impl<'a> Printer<'a> {
                         kind: "a",
                         fn_ref: Some(accessor.get_var_name.clone()),
                         setter_ref: Some(accessor.set_var_name.clone()),
-                        is_static: accessor.is_static,
                         state_var: if accessor.is_static {
                             private_class_alias.clone()
                         } else {
