@@ -1173,6 +1173,10 @@ pub fn resolve_compiler_options(
     if let Some(check_js) = options.check_js {
         resolved.check_js = check_js;
         resolved.checker.check_js = check_js;
+        if check_js && options.allow_js.is_none() {
+            resolved.allow_js = true;
+            resolved.checker.allow_js = true;
+        }
         if !check_js {
             // Record that `checkJs: false` was explicit, not just the default.
             // This suppresses even the `plainJSErrors` allowlist (TS2451, etc.).
@@ -2036,9 +2040,10 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         }
 
         // TS5052: Option '{0}' cannot be specified without specifying option '{1}'.
-        // `checkJs` requires `allowJs` to be explicitly enabled.
+        // `checkJs` implies `allowJs` unless `allowJs` is explicitly disabled.
         if option_is_truthy(compiler_opts.get("checkJs"))
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "allowJs")
+            && option_key_present_or_invalidated(compiler_opts, &ts5024_keys, "allowJs")
         {
             let msg = format_message(
                 diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
@@ -5803,13 +5808,13 @@ mod tests {
     }
 
     #[test]
-    fn test_ts5052_check_js_requires_allow_js() {
+    fn test_ts5052_not_emitted_when_check_js_implies_allow_js() {
         let source = r#"{"compilerOptions":{"checkJs":true}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-        let count = parsed.diagnostics.iter().filter(|d| d.code == 5052).count();
-        assert_eq!(
-            count, 1,
-            "Expected one TS5052 diagnostic when allowJs is missing, got: {:?}",
+        let has_5052 = parsed.diagnostics.iter().any(|d| d.code == 5052);
+        assert!(
+            !has_5052,
+            "Should not emit TS5052 when checkJs implies allowJs, got: {:?}",
             parsed.diagnostics
         );
     }
@@ -5846,6 +5851,18 @@ mod tests {
 
         assert!(resolved.check_js);
         assert!(resolved.checker.check_js);
+    }
+
+    #[test]
+    fn test_resolve_compiler_options_check_js_implies_allow_js() {
+        let source = r#"{"compilerOptions":{"checkJs":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.check_js);
+        assert!(resolved.checker.check_js);
+        assert!(resolved.allow_js);
+        assert!(resolved.checker.allow_js);
     }
 
     #[test]
