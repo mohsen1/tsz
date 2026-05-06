@@ -17,13 +17,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     return None;
                 }
                 func.type_annotation
-            } else if let Some(method) = self.checker.ctx.arena.get_method_decl(fn_node) {
+            } else {
+                let method = self.checker.ctx.arena.get_method_decl(fn_node)?;
                 if !method.asterisk_token || method.type_annotation.is_none() {
                     return None;
                 }
                 method.type_annotation
-            } else {
-                return None;
             };
 
         // Prefer syntactic extraction from the explicit annotation first.
@@ -106,13 +105,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     return None;
                 }
                 func.type_annotation
-            } else if let Some(method) = self.checker.ctx.arena.get_method_decl(fn_node) {
+            } else {
+                let method = self.checker.ctx.arena.get_method_decl(fn_node)?;
                 if !method.asterisk_token || method.type_annotation.is_none() {
                     return None;
                 }
                 method.type_annotation
-            } else {
-                return None;
             };
         let declared_return_node = self.checker.ctx.arena.get(declared_return_type_node)?;
         if declared_return_node.kind != syntax_kind_ext::TYPE_REFERENCE {
@@ -153,13 +151,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     return None;
                 }
                 func.type_annotation
-            } else if let Some(method) = self.checker.ctx.arena.get_method_decl(fn_node) {
+            } else {
+                let method = self.checker.ctx.arena.get_method_decl(fn_node)?;
                 if !method.asterisk_token || method.type_annotation.is_none() {
                     return None;
                 }
                 method.type_annotation
-            } else {
-                return None;
             };
 
         // Get the declared generator type

@@ -74,6 +74,7 @@ impl<'a> CheckerContext<'a> {
             namespace_member_resolution_cache: RefCell::new(FxHashMap::default()),
             export_equals_named_cache: RefCell::new(FxHashMap::default()),
             nested_namespace_candidates_cache: RefCell::new(FxHashMap::default()),
+            symbol_name_candidates_cache: RefCell::new(FxHashMap::default()),
             lowering_entity_name_resolution_cache: RefCell::new(FxHashMap::default()),
             shared_lib_type_cache: None,
             skip_lib_type_resolution: false,
