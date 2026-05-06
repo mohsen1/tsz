@@ -93,6 +93,7 @@ impl<'a> Printer<'a> {
         self.write("${");
         self.emit_template_span_leading_comments(span);
         self.emit(span.expression);
+        self.emit_template_span_trailing_comments(span);
         if self.template_span_has_closing_brace(span) {
             self.write("}");
         }
@@ -157,10 +158,31 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if gap.contains('\n') || gap.contains('\r') {
-            self.write_line();
+        self.emit_comments_in_range(
+            open_end as u32,
+            expr_node.pos,
+            false,
+            gap.starts_with('\n') || gap.starts_with('\r'),
+        );
+    }
+
+    fn emit_template_span_trailing_comments(
+        &mut self,
+        span: &tsz_parser::parser::node::TemplateSpanData,
+    ) {
+        if self.ctx.options.remove_comments {
+            return;
         }
-        self.emit_unemitted_comments_between(open_end as u32, expr_node.pos);
+
+        let Some(expr_node) = self.arena.get(span.expression) else {
+            return;
+        };
+        let Some(lit_node) = self.arena.get(span.literal) else {
+            return;
+        };
+
+        let expr_token_end = self.find_token_end_before_trivia(expr_node.pos, lit_node.pos);
+        self.emit_comments_in_range(expr_token_end, lit_node.pos, true, true);
     }
 
     fn find_template_substitution_open(text: &str, expr_pos: usize) -> Option<usize> {
@@ -415,6 +437,22 @@ mod tests {
             output.trim(),
             "`hello`;",
             "terminated template should have closing backtick"
+        );
+    }
+
+    #[test]
+    fn template_span_comments_stay_inside_substitution() {
+        let output = emit(
+            "`head${ // single line comment\n10\n}\nmiddle${\n/* Multi-\n * line\n */\n 20\n // closing comment\n}\ntail`;",
+        );
+
+        assert!(
+            output.contains("`head${ // single line comment\n10}\n"),
+            "Line comment after template substitution open should stay on the `${{` line.\nGot: {output}"
+        );
+        assert!(
+            output.contains("20\n// closing comment\n}\ntail`;"),
+            "Trailing comments before template substitution close should stay before `}}`.\nGot: {output}"
         );
     }
 

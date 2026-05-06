@@ -189,6 +189,7 @@ impl<'a> CheckerState<'a> {
         };
 
         for &member_idx in &iface.members.nodes {
+            self.check_styled_component_inner_component_constraint(member_idx);
             self.check_type_member_for_missing_names(member_idx);
             self.check_type_member_for_parameter_properties(member_idx);
             // TS1268: Check index signature parameter types
@@ -204,6 +205,22 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_AN_INTERFACE_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYPE,
                         );
                     }
+                    let (_type_params, type_param_updates) =
+                        self.push_type_parameters(&sig.type_parameters);
+                    if sig.type_annotation.is_some() {
+                        self.check_type_node(sig.type_annotation);
+                        self.get_type_from_type_node(sig.type_annotation);
+                    }
+                    for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                            && param.type_annotation.is_some()
+                        {
+                            self.check_type_node(param.type_annotation);
+                            self.get_type_from_type_node(param.type_annotation);
+                        }
+                    }
+                    self.pop_type_parameters(type_param_updates);
                 }
                 // TS2344: Eagerly resolve set accessor parameter type annotations.
                 // tsc checks all type annotations during declaration checking, even
@@ -232,29 +249,6 @@ impl<'a> CheckerState<'a> {
                 {
                     self.get_type_from_type_node(accessor.type_annotation);
                 }
-                // TS2344: Resolve method signature return type and parameter type
-                // annotations to trigger constraint validation on type references.
-                // Without this, `Inner<W>` in `bar<W extends X>(): Inner<W>` would
-                // never be checked against Inner's constraint.
-                if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
-                    && let Some(sig) = self.ctx.arena.get_signature(member_node)
-                {
-                    let (_type_params, type_param_updates) =
-                        self.push_type_parameters(&sig.type_parameters);
-                    if sig.type_annotation.is_some() {
-                        self.get_type_from_type_node(sig.type_annotation);
-                    }
-                    for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
-                        if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                            && param.type_annotation.is_some()
-                        {
-                            self.get_type_from_type_node(param.type_annotation);
-                        }
-                    }
-                    self.pop_type_parameters(type_param_updates);
-                }
-
                 // TS2526: Find `this` types appearing inside nested type
                 // literals on a property signature annotation and route them
                 // through `get_type_from_type_node` so the THIS_TYPE branch

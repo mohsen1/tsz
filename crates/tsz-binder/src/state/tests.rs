@@ -203,6 +203,41 @@ class C {}
 }
 
 #[test]
+fn jsdoc_import_tag_binds_namespace_alias_split_across_continuation_lines() {
+    // Multi-line `@import` continuation: tsc accepts JSDoc imports whose
+    // clause is broken across the `@import`, namespace, and `from` lines.
+    // Without continuation merging the binder sees an empty rest on the
+    // `@import` line and silently fails to register `types`, which then
+    // surfaces as a TS2304 on every later `types.A` reference.
+    let source = r#"
+/**
+ * @import
+ * * as types
+ * from "./types"
+ */
+class C {}
+"#;
+    let mut parser = ParserState::new("b.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let ns_sym_id = binder
+        .file_locals
+        .get("types")
+        .expect("expected multi-line JSDoc namespace import alias to bind");
+    let ns_sym = binder
+        .symbols
+        .get(ns_sym_id)
+        .expect("expected symbol data for `types`");
+    assert_ne!(ns_sym.flags & symbol_flags::ALIAS, 0);
+    assert!(ns_sym.is_type_only);
+    assert_eq!(ns_sym.import_module.as_deref(), Some("./types"));
+    assert_eq!(ns_sym.import_name.as_deref(), Some("*"));
+}
+
+#[test]
 fn jsdoc_import_tag_binds_string_literal_export_names() {
     let source = r#"
 /**

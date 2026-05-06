@@ -4,7 +4,6 @@ use super::super::DeclarationEmitter;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
-use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn event_like_correlated_alias_return_text(
@@ -229,6 +228,50 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
+            let Some((param_wrapper, param_inner)) =
+                Self::single_generic_type_argument_text(param_type_text.trim())
+            else {
+                continue;
+            };
+            if !type_param_names
+                .iter()
+                .any(|name| name.as_str() == param_inner)
+                || substitutions
+                    .iter()
+                    .any(|(name, _)| name.as_str() == param_inner)
+            {
+                continue;
+            }
+            let Some(arg_type_text) = self.call_argument_type_text_for_substitution(arg_idx) else {
+                continue;
+            };
+            let Some((arg_wrapper, arg_inner)) =
+                Self::single_generic_type_argument_text(arg_type_text.trim())
+            else {
+                continue;
+            };
+            if param_wrapper != arg_wrapper {
+                continue;
+            }
+            substitutions.push((
+                param_inner.to_string(),
+                Self::parenthesize_generic_function_type_argument(arg_inner),
+            ));
+        }
+
+        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(param_type_text) = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+            else {
+                continue;
+            };
             if let Some((param_name, value_text)) = self
                 .infer_single_alias_discriminant_substitution(
                     param_type_text.trim(),
@@ -279,6 +322,35 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         substitutions
+    }
+
+    fn single_generic_type_argument_text(type_text: &str) -> Option<(&str, &str)> {
+        let type_text = type_text.trim();
+        let open = type_text.find('<')?;
+        if !type_text.ends_with('>') {
+            return None;
+        }
+        let wrapper = type_text[..open].trim();
+        if wrapper.is_empty()
+            || wrapper
+                .chars()
+                .any(|ch| !(ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric()))
+        {
+            return None;
+        }
+        let inner = &type_text[open + 1..type_text.len() - 1];
+        let mut depth = 0usize;
+        for ch in inner.chars() {
+            match ch {
+                '<' => depth += 1,
+                '>' => {
+                    depth = depth.checked_sub(1)?;
+                }
+                ',' if depth == 0 => return None,
+                _ => {}
+            }
+        }
+        (depth == 0).then_some((wrapper, inner.trim()))
     }
 
     pub(in crate::declaration_emitter) fn infer_single_alias_discriminant_substitution(
@@ -347,20 +419,16 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(type_text);
         }
 
-        let expr_idx = self.skip_parenthesized_expression(arg_idx)?;
-        let expr_node = self.arena.get(expr_idx)?;
-        if expr_node.kind == SyntaxKind::StringLiteral as u16 {
-            let literal = self.arena.get_literal(expr_node)?;
-            return Some(format!(
-                "\"{}\"",
-                super::escape_string_for_double_quote(literal.text.as_ref())
-            ));
-        }
-
-        self.preferred_expression_type_text(arg_idx)
-            .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
-            .or_else(|| self.as_const_assertion_type_text(arg_idx))
+        // Bare type-parameter inference widens literal arguments (`box(0)` ->
+        // `Box<number>`, not `Box<0>`). Keep literal-preserving paths only for
+        // explicit `as const` or local variable initializers that already carry
+        // literal types.
+        self.as_const_assertion_type_text(arg_idx)
             .or_else(|| self.local_variable_initializer_type_text(arg_idx))
+            .or_else(|| {
+                self.preferred_expression_type_text(arg_idx)
+                    .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
+            })
             .or_else(|| self.infer_fallback_type_text_at(arg_idx, 0))
     }
 }

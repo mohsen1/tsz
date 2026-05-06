@@ -88,6 +88,8 @@ pub struct ModuleResolver {
     allow_js: bool,
     /// Whether to rewrite relative imports with TypeScript extensions during emit.
     rewrite_relative_import_extensions: bool,
+    /// Whether to print TypeScript-style module resolution traces.
+    trace_resolution: bool,
     /// Cache for package.json package type lookups
     package_type_cache: std::cell::RefCell<FxHashMap<PathBuf, Option<PackageType>>>,
     /// Cache of parsed package.json contents keyed by canonical path.
@@ -162,6 +164,7 @@ impl ModuleResolver {
             module_kind: options.printer.module,
             allow_js: options.allow_js,
             rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
+            trace_resolution: options.trace_resolution,
             package_type_cache: std::cell::RefCell::new(FxHashMap::default()),
             package_json_cache: std::cell::RefCell::new(FxHashMap::default()),
             skip_fallback_cache: std::cell::RefCell::new(FxHashMap::default()),
@@ -193,6 +196,7 @@ impl ModuleResolver {
             module_kind: ModuleKind::CommonJS,
             allow_js: false,
             rewrite_relative_import_extensions: false,
+            trace_resolution: false,
             package_type_cache: std::cell::RefCell::new(FxHashMap::default()),
             package_json_cache: std::cell::RefCell::new(FxHashMap::default()),
             skip_fallback_cache: std::cell::RefCell::new(FxHashMap::default()),
@@ -557,6 +561,31 @@ impl ModuleResolver {
         let ambient_match = is_ordinary_bare && is_ambient_module(specifier);
         let containing_is_declaration =
             ModuleExtension::from_path(containing_file).is_declaration();
+        if self.trace_resolution {
+            println!(
+                "======== Resolving module '{}' from '{}'. ========",
+                specifier,
+                containing_file.display()
+            );
+            println!(
+                "Explicitly specified module resolution kind: '{}'.",
+                trace_resolution_name(self.resolution_kind)
+            );
+            if specifier.starts_with('.') || specifier.starts_with('/') {
+                let candidate = if Path::new(specifier).is_absolute() {
+                    PathBuf::from(specifier)
+                } else {
+                    containing_file
+                        .parent()
+                        .unwrap_or_else(|| Path::new(""))
+                        .join(specifier)
+                };
+                println!(
+                    "Loading module as file / folder, candidate module location '{}', target file types: TypeScript, Declaration.",
+                    candidate.display()
+                );
+            }
+        }
 
         // Declaration files frequently stitch together sibling `declare module "..."`
         // blocks with bare imports (for example, react16.d.ts declares both
@@ -597,6 +626,17 @@ impl ModuleResolver {
             request.resolution_mode_override,
         ) {
             Ok(resolved_module) => {
+                if self.trace_resolution {
+                    println!(
+                        "File '{}' exists - use it as a name resolution result.",
+                        resolved_module.resolved_path.display()
+                    );
+                    println!(
+                        "======== Module name '{}' was successfully resolved to '{}'. ========",
+                        specifier,
+                        resolved_module.resolved_path.display()
+                    );
+                }
                 // TS6263: Module resolved to a .d.*.ts arbitrary extension declaration
                 // file but --allowArbitraryExtensions is not set.
                 // Skip this check when the containing file is itself a declaration
@@ -721,6 +761,13 @@ impl ModuleResolver {
 
                     // Trust the fallback resolver's result. The fallback already validated
                     // that the path exists (either in known_files or on filesystem).
+                    if self.trace_resolution {
+                        println!(
+                            "======== Module name '{}' was successfully resolved to '{}'. ========",
+                            specifier,
+                            fallback_path.display()
+                        );
+                    }
                     return ModuleLookupResult::resolved(fallback_path);
                 }
 
@@ -946,6 +993,16 @@ impl ModuleResolver {
     ) {
         let diagnostic = failure.to_diagnostic();
         diagnostics.add(diagnostic);
+    }
+}
+
+const fn trace_resolution_name(resolution: ModuleResolutionKind) -> &'static str {
+    match resolution {
+        ModuleResolutionKind::Classic => "Classic",
+        ModuleResolutionKind::Node => "Node10",
+        ModuleResolutionKind::Node16 => "Node16",
+        ModuleResolutionKind::NodeNext => "NodeNext",
+        ModuleResolutionKind::Bundler => "Bundler",
     }
 }
 

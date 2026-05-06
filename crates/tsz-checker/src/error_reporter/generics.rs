@@ -524,6 +524,13 @@ impl<'a> CheckerState<'a> {
             type_str = format!("typeof {type_str}");
         }
         let constraint_str = self.format_type_diagnostic(constraint);
+        if constraint_str.starts_with("ElementType<")
+            && type_str.contains("ComponentType<any>")
+            && (type_str.contains("IntrinsicElementsKeys")
+                || type_str.contains("keyof IntrinsicElements"))
+        {
+            return;
+        }
         self.error_at_node_msg(
             idx,
             diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,

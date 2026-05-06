@@ -161,14 +161,20 @@ impl<'a> Printer<'a> {
         // If the inner expression is another ParenExpr wrapping a type assertion/instantiation,
         // and the inner paren would be stripped during emit (because the unwrapped expression
         // is simple), then the outer parens are also redundant.
+        //
+        // Type-erasure forms (TYPE_ASSERTION / AS / SATISFIES) collapse all the way down:
+        // tsc emits `((expr as T)).foo` and `((10 satisfies T))` as `expr.foo` / `10`.
+        // EXPRESSION_WITH_TYPE_ARGUMENTS (instantiation expression like `Box<number>`) is
+        // different — tsc preserves the outer paren in `((Box<number>)) instanceof Object`
+        // → `((Box)) instanceof Object`. Mirror that asymmetry by only stripping when the
+        // erased form is a type-assertion-class expression, not an instantiation expression.
         if let Some(inner) = self.arena.get(paren.expression)
             && inner.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
             && let Some(inner_paren) = self.arena.get_parenthesized(inner)
             && let Some(inner_inner) = self.arena.get(inner_paren.expression)
             && (inner_inner.kind == syntax_kind_ext::TYPE_ASSERTION
                 || inner_inner.kind == syntax_kind_ext::AS_EXPRESSION
-                || inner_inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
-                || inner_inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS)
+                || inner_inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
         {
             // Check if the inner paren would strip its own parens (object literal or simple expr)
             if self.type_assertion_wraps_object_literal(inner_paren.expression) {
@@ -253,18 +259,28 @@ impl<'a> Printer<'a> {
         self.write("(");
         // Emit inline comments between `(` and inner expression
         // (e.g., `( /* Preserve */j = f())`)
-        // When the comment has a trailing newline (line comment `// ...`),
-        // emit a newline after `(` so that the output matches tsc:
-        //   `yield (\n// comment\na)` instead of `yield ( // comment\na)`
+        // Preserve whether the first inner comment started on the `(` line.
+        // A same-line `//` comment keeps a separating space after `(`, while a
+        // comment already on the following source line gets a printed newline.
         if let Some(inner_node) = self.arena.get(paren.expression)
             && self.has_pending_comment_before(inner_node.pos)
         {
             let actual_inner_start =
                 self.skip_trivia_forward(inner_node.pos, inner_node.pos + 2048);
-            let inserted_same_line_separator = if self
-                .has_newline_comment_in_range(node.pos, inner_node.pos)
-                || self.source_range_has_newline(node.pos, actual_inner_start)
-            {
+            let pending_line_comment_on_open_paren_line =
+                open_paren_source_pos.is_some_and(|open_paren_pos| {
+                    self.all_comments
+                        .get(self.comment_emit_idx)
+                        .is_some_and(|comment| {
+                            comment.pos < inner_node.pos
+                                && !comment.is_multi_line
+                                && !self.source_range_has_newline(open_paren_pos + 1, comment.pos)
+                        })
+                });
+            let should_break_after_open_paren = !pending_line_comment_on_open_paren_line
+                && (self.has_newline_comment_in_range(node.pos, inner_node.pos)
+                    || self.source_range_has_newline(node.pos, actual_inner_start));
+            let inserted_same_line_separator = if should_break_after_open_paren {
                 self.write_line();
                 false
             } else {

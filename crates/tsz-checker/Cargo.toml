@@ -742,6 +742,10 @@ name = "jsx_pragma_factory_marks_imports_referenced_tests"
 path = "tests/jsx_pragma_factory_marks_imports_referenced_tests.rs"
 
 [[test]]
+name = "jsx_pragma_boundary_tests"
+path = "tests/jsx_pragma_boundary_tests.rs"
+
+[[test]]
 name = "discriminant_narrow_function_lazy_preserved_tests"
 path = "tests/discriminant_narrow_function_lazy_preserved_tests.rs"
 
@@ -772,6 +776,10 @@ path = "tests/unused_internal_name_suppression_tests.rs"
 [[test]]
 name = "unused_catch_binding_tests"
 path = "tests/unused_catch_binding_tests.rs"
+
+[[test]]
+name = "unused_nested_destructured_param_tests"
+path = "tests/unused_nested_destructured_param_tests.rs"
 
 [[test]]
 name = "template_literal_bigint_placeholder_tests"

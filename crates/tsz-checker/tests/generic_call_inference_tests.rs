@@ -2185,6 +2185,23 @@ const arr1: string[] = map(identity)(['a']);
     );
 }
 
+#[test]
+fn pipe_preserves_self_constrained_generic_function_result() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function foo<T extends { value: T }>(x: T): T;
+
+const g10: <T extends { value: T }>(x: T) => T = pipe(foo);
+const g12: <T extends { value: T }>(x: T) => T = pipe(foo, foo);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "pipe(foo) should preserve the self-constrained generic signature. Got: {diags:#?}"
+    );
+}
+
 // ─── Const type parameter inference ─────────────────────────────────
 
 #[test]

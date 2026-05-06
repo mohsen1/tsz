@@ -230,14 +230,15 @@ fn resolve_entity_chain_has_value(
 
 /// Helper function to collect export name from a single declaration node
 /// Walk a qualified `import = X.Y.Z` reference and return true only when the
-/// final identifier `Z` resolves to an *exported* interface or type alias
-/// inside the preceding namespace chain. Non-exported type members are not
-/// reachable from outside the namespace, so tsc keeps the (broken) runtime
-/// emit; mirror that here by returning false for such cases.
+/// final identifier `Z` resolves to an *exported* type-only member inside the
+/// preceding namespace chain. Non-exported type members are not reachable from
+/// outside the namespace, so tsc keeps the (broken) runtime emit; mirror that
+/// here by returning false for such cases.
 pub(crate) fn import_alias_resolves_to_exported_type_only(
     arena: &NodeArena,
     entity_name_idx: NodeIndex,
     statements: &[NodeIndex],
+    preserve_const_enums: bool,
 ) -> bool {
     let mut parts: Vec<String> = Vec::new();
     fn flatten(arena: &NodeArena, idx: NodeIndex, parts: &mut Vec<String>) {
@@ -255,7 +256,103 @@ pub(crate) fn import_alias_resolves_to_exported_type_only(
     if parts.len() < 2 {
         return false;
     }
-    chain_resolves_to_exported_type_only(arena, &parts, statements, false)
+    chain_resolves_to_exported_type_only(arena, &parts, statements, false, preserve_const_enums)
+}
+
+fn import_alias_identifier_resolves_to_exported_type_only_namespace(
+    arena: &NodeArena,
+    entity_name_idx: NodeIndex,
+    statements: &[NodeIndex],
+    preserve_const_enums: bool,
+) -> bool {
+    let Some(alias_target) = get_identifier_text(arena, entity_name_idx) else {
+        return false;
+    };
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        let inner_node = if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            if let Some(ed) = arena.get_export_decl(node)
+                && !ed.is_type_only
+                && ed.module_specifier.is_none()
+            {
+                arena.get(ed.export_clause)
+            } else {
+                None
+            }
+        } else {
+            Some(node)
+        };
+        let Some(inner) = inner_node else {
+            continue;
+        };
+        if inner.kind == syntax_kind_ext::MODULE_DECLARATION
+            && let Some(module) = arena.get_module(inner)
+            && get_identifier_text(arena, module.name).as_deref() == Some(alias_target.as_str())
+            && !super::emit_utils::is_instantiated_module_ext(
+                arena,
+                module.body,
+                preserve_const_enums,
+            )
+            && module_body_has_exported_type_only_member(arena, module.body)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn module_body_has_exported_type_only_member(arena: &NodeArena, module_body: NodeIndex) -> bool {
+    let Some(body_node) = arena.get(module_body) else {
+        return false;
+    };
+    if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+        return arena
+            .get_module(body_node)
+            .is_some_and(|module| module_body_has_exported_type_only_member(arena, module.body));
+    }
+    let Some(block) = arena.get_module_block(body_node) else {
+        return false;
+    };
+    let Some(ref statements) = block.statements else {
+        return false;
+    };
+    statements.nodes.iter().any(|&stmt_idx| {
+        let Some(node) = arena.get(stmt_idx) else {
+            return false;
+        };
+        let (inner_node, has_export_wrapper) = if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            if let Some(ed) = arena.get_export_decl(node)
+                && !ed.is_type_only
+                && ed.module_specifier.is_none()
+            {
+                (arena.get(ed.export_clause), true)
+            } else {
+                (None, false)
+            }
+        } else {
+            (Some(node), false)
+        };
+        let Some(inner) = inner_node else {
+            return false;
+        };
+        match inner.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                has_export_wrapper
+                    || arena.get_interface(inner).is_some_and(|i| {
+                        arena.has_modifier(&i.modifiers, SyntaxKind::ExportKeyword)
+                    })
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                has_export_wrapper
+                    || arena.get_type_alias(inner).is_some_and(|t| {
+                        arena.has_modifier(&t.modifiers, SyntaxKind::ExportKeyword)
+                    })
+            }
+            _ => false,
+        }
+    })
 }
 
 fn chain_resolves_to_exported_type_only(
@@ -263,6 +360,7 @@ fn chain_resolves_to_exported_type_only(
     parts: &[String],
     statements: &[NodeIndex],
     require_export: bool,
+    preserve_const_enums: bool,
 ) -> bool {
     if parts.is_empty() {
         return false;
@@ -333,15 +431,29 @@ fn chain_resolves_to_exported_type_only(
                 if let Some(m) = arena.get_module(inner)
                     && let Some(n) = get_identifier_text(arena, m.name)
                     && n == *target_name
-                    && !rest.is_empty()
                     && (!require_export || has_export_modifier)
-                    && let Some(body) = arena.get(m.body)
-                    && let Some(block) = arena.get_module_block(body)
-                    && let Some(ref stmts) = block.statements
                 {
-                    // Inside the namespace body, members must be exported to
-                    // be reachable from the outer alias chain.
-                    return chain_resolves_to_exported_type_only(arena, rest, &stmts.nodes, true);
+                    if rest.is_empty() {
+                        return !super::emit_utils::is_instantiated_module_ext(
+                            arena,
+                            m.body,
+                            preserve_const_enums,
+                        );
+                    }
+                    if let Some(body) = arena.get(m.body)
+                        && let Some(block) = arena.get_module_block(body)
+                        && let Some(ref stmts) = block.statements
+                    {
+                        // Inside the namespace body, members must be exported to
+                        // be reachable from the outer alias chain.
+                        return chain_resolves_to_exported_type_only(
+                            arena,
+                            rest,
+                            &stmts.nodes,
+                            true,
+                            preserve_const_enums,
+                        );
+                    }
                 }
             }
             _ => {}
@@ -438,19 +550,45 @@ fn collect_export_name_from_declaration(
                 if import_equals_uses_external_module_ref(arena, import_decl.module_specifier) {
                     return;
                 }
+                if arena
+                    .get(import_decl.module_specifier)
+                    .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+                    && !is_import_alias_referencing_value(
+                        arena,
+                        import_decl.module_specifier,
+                        statements,
+                        preserve_const_enums,
+                    )
+                {
+                    return;
+                }
+
                 // For a qualified `export import A = X.Y` chain, the alias
                 // is type-only when *the exported member* `Y` of namespace
                 // `X` is itself an interface or type alias. A non-exported
                 // type member inside `X` cannot be reached from outside, so
                 // tsc resolves the chain to nothing and preserves the
-                // (broken-at-runtime) `exports.A = X.Y;`. Mirror that —
+                // (broken-at-runtime) `exports.A = X.Y;`. Mirror that:
                 // only elide when the inner member is an *exported*
                 // type-only declaration.
                 if import_alias_resolves_to_exported_type_only(
                     arena,
                     import_decl.module_specifier,
                     statements,
+                    preserve_const_enums,
                 ) {
+                    return;
+                }
+                if arena
+                    .get(import_decl.module_specifier)
+                    .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+                    && import_alias_identifier_resolves_to_exported_type_only_namespace(
+                        arena,
+                        import_decl.module_specifier,
+                        statements,
+                        preserve_const_enums,
+                    )
+                {
                     return;
                 }
                 exports.push(name);
@@ -1400,6 +1538,7 @@ pub fn collect_export_names_categorized(
 pub fn collect_inline_exported_var_names(
     arena: &NodeArena,
     statements: &[NodeIndex],
+    preserve_const_enums: bool,
 ) -> Vec<String> {
     let mut names = Vec::new();
     for &stmt_idx in statements {
@@ -1439,6 +1578,17 @@ pub fn collect_inline_exported_var_names(
                 && let Some(import_decl) = arena.get_import_decl(clause_node)
                 && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
             {
+                if import_decl.is_type_only {
+                    continue;
+                }
+                if import_alias_resolves_to_exported_type_only(
+                    arena,
+                    import_decl.module_specifier,
+                    statements,
+                    preserve_const_enums,
+                ) {
+                    continue;
+                }
                 names.push(name);
             }
         }
