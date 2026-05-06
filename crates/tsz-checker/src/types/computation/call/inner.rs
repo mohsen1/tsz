@@ -2217,6 +2217,11 @@ impl<'a> CheckerState<'a> {
                                     self.invalidate_expression_for_contextual_retry(arg_idx);
                                 }
                             }
+                            let instantiated_params = self
+                                .resolve_signature_parameter_type_queries(
+                                    &shape.params,
+                                    &instantiated_params,
+                                );
                             let refreshed_contextual_types = self
                                 .contextual_param_types_from_instantiated_params(
                                     &instantiated_params,
@@ -2537,14 +2542,24 @@ impl<'a> CheckerState<'a> {
                     self.invalidate_expression_for_contextual_retry(arg_idx);
                 }
             }
+            let instantiated_params = call_checker::get_contextual_signature_for_arity(
+                self.ctx.types,
+                callee_type_for_call,
+                args.len(),
+            )
+            .map(|shape| {
+                self.resolve_signature_parameter_type_queries(&shape.params, instantiated_params)
+            })
+            .unwrap_or_else(|| instantiated_params.clone());
             let refreshed_contextual_types = self
-                .contextual_param_types_from_instantiated_params(instantiated_params, args.len())
+                .contextual_param_types_from_instantiated_params(&instantiated_params, args.len())
                 .into_iter()
                 .map(|param_type| {
                     param_type
                         .map(|param_type| self.normalize_contextual_call_param_type(param_type))
                 })
                 .collect::<Vec<_>>();
+            let retry_arg_diag_snap = self.ctx.snapshot_diagnostics();
             arg_types = self.collect_call_argument_types_with_context(
                 args,
                 |i, _arg_count| {
@@ -2558,6 +2573,12 @@ impl<'a> CheckerState<'a> {
                 None,
                 callable_ctx,
             );
+            let retry_has_callback_body_errors =
+                self.overload_candidate_has_callback_body_errors(args, &retry_arg_diag_snap);
+            let retry_has_callback_like_arg = args
+                .iter()
+                .copied()
+                .any(|arg_idx| self.is_callback_like_argument(arg_idx));
 
             let (retry_generic_arg_types, retry_sanitized) =
                 self.sanitize_generic_inference_arg_types(call.expression, args, &arg_types);
@@ -2615,7 +2636,10 @@ impl<'a> CheckerState<'a> {
                     conflicts,
                 );
             }
-            result = if retry_sanitized || needs_real_type_recheck {
+            result = if (retry_sanitized || needs_real_type_recheck)
+                && !retry_has_callback_body_errors
+                && !retry_has_callback_like_arg
+            {
                 if let Some(instantiated_params) = retry.2.as_ref() {
                     self.recheck_generic_call_arguments_with_real_types(
                         retry.0.clone(),
@@ -2864,6 +2888,28 @@ impl<'a> CheckerState<'a> {
             fallback_return, ..
         } = result
             && self.call_is_simple_evolving_array_mutation(call.expression)
+        {
+            result = CallResult::Success(fallback_return);
+        }
+
+        if let CallResult::ArgumentTypeMismatch {
+            index,
+            fallback_return,
+            ..
+        } = result
+            && fallback_return != TypeId::ERROR
+            && let Some(&arg_idx) = args.get(index)
+            && self.is_callback_like_argument(arg_idx)
+            && self
+                .callback_body_spans(arg_idx)
+                .iter()
+                .any(|(start, end)| {
+                    self.ctx.diagnostics.iter().any(|diag| {
+                        matches!(diag.code, 2322 | 2339 | 2345 | 2347 | 2769)
+                            && diag.start >= *start
+                            && diag.start < *end
+                    })
+                })
         {
             result = CallResult::Success(fallback_return);
         }

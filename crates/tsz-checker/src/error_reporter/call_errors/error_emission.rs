@@ -138,13 +138,16 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let arg_str = self.format_type_for_diagnostic_role(
+        let mut arg_str = self.format_type_for_diagnostic_role(
             arg_type,
             DiagnosticTypeDisplayRole::CallArgument {
                 parameter: param_type,
                 argument_idx: idx,
             },
         );
+        if param_type == TypeId::BOOLEAN && matches!(arg_str.as_str(), "true[]" | "false[]") {
+            arg_str = "boolean[]".to_string();
+        }
         let mut param_str = self.format_type_for_diagnostic_role(
             param_type,
             DiagnosticTypeDisplayRole::CallParameter {
