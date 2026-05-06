@@ -523,7 +523,17 @@ impl<'a> TypeFormatter<'a> {
     }
 
     pub(super) fn format_union_origin(&mut self, members: &[TypeId]) -> String {
-        self.format_union_with_source_sort(members, false)
+        let sort_by_source_position = self.union_origin_should_source_sort(members);
+        self.format_union_with_source_sort(members, sort_by_source_position)
+    }
+
+    fn union_origin_should_source_sort(&self, members: &[TypeId]) -> bool {
+        members.iter().all(|&member| {
+            matches!(
+                self.interner.lookup(member),
+                Some(TypeData::Intrinsic(_) | TypeData::Lazy(_))
+            )
+        })
     }
 
     fn format_union_with_source_sort(
