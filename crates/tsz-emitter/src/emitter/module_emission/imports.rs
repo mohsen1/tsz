@@ -1068,7 +1068,24 @@ impl<'a> Printer<'a> {
         };
 
         let has_runtime_value = self.import_decl_has_runtime_value(import);
+        // Script-mode preservation: when the file is not a module and the
+        // alias targets a top-level *interface or type alias* identifier,
+        // tsc preserves `var x = T;` (broken-at-runtime) instead of
+        // eliding. Top-level type-only declarations create a global
+        // identifier that the alias references, so tsc emits the
+        // assignment as written. Non-instantiated namespaces are
+        // different — tsc still elides them to avoid duplicate-`var`
+        // conflicts when the alias name shadows an existing binding
+        // (`var a; namespace M {} import a = M;` elides the alias).
+        let is_simple_identifier_target = module_node.is_identifier();
+        let is_script_mode = !self.ctx.file_is_module
+            && self.ctx.original_module_kind.is_none()
+            && !self.ctx.options.module_detection_force;
+        let target_is_interface_or_type_alias = is_simple_identifier_target
+            && self.identifier_target_is_interface_or_type_alias(import.module_specifier);
+        let script_mode_preserves_alias = is_script_mode && target_is_interface_or_type_alias;
         if !has_runtime_value
+            && !script_mode_preserves_alias
             && (!is_exported_var || module_node.kind == SyntaxKind::Identifier as u16)
         {
             return;
@@ -1087,6 +1104,7 @@ impl<'a> Printer<'a> {
                     self.arena,
                     import.module_specifier,
                     &stmts,
+                    self.ctx.options.preserve_const_enums,
                 )
             {
                 return;
