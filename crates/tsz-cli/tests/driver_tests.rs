@@ -18613,6 +18613,46 @@ before.toFixed();
     );
 }
 
+#[test]
+fn labeled_tuple_optional_marker_after_type_reports_ts5086() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "type T = [a: string?];\n");
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::A_LABELED_TUPLE_ELEMENT_IS_DECLARED_AS_OPTIONAL_WITH_A_QUESTION_MARK_AFTER_THE_N),
+        "Expected TS5086 for optional marker after labeled tuple type, got {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().all(|diag| {
+            diag.code
+                != diagnostic_codes::AT_THE_END_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE
+        }),
+        "Expected no TS17019 JSDoc nullable diagnostic, got {:?}",
+        result.diagnostics
+    );
+}
+
 // TS18003 should be emitted alongside TS5110 when no input files are found
 // and module/moduleResolution are incompatible.
 #[test]

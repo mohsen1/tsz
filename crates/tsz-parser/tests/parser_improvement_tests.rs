@@ -1325,6 +1325,45 @@ type T = [element: string?];
 }
 
 #[test]
+fn named_tuple_member_postfix_question_is_not_jsdoc_nullable() {
+    let source = "type T = [a: string?];";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.iter().all(|d| {
+            d.code
+                != diagnostic_codes::AT_THE_END_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE
+        }),
+        "Expected named tuple member `string?` to avoid TS17019, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn tuple_type_missing_comma_reports_comma_without_bracket_cascade() {
+    let source = "type T = [string number];";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let number_pos = source.find("number").expect("number token") as u32;
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::EXPECTED
+                && d.start == number_pos
+                && d.message == "',' expected."
+        }),
+        "Expected TS1005 ',' expected at `number`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.message != "']' expected."
+            && d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "Expected no bracket/TS1128 cascade, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_empty_element_access_reports_after_open_bracket() {
     let source = r#"
 class Z {
