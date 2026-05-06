@@ -1394,16 +1394,14 @@ impl<'a> CheckerState<'a> {
                     && !(self.is_js_file()
                         && self.ctx.compiler_options.check_js
                         && self.property_access_is_write_target_or_base(idx))
-                {
-                    if let Some(ns_name) = type_only_namespace_access_name
+                    && let Some(ns_name) = type_only_namespace_access_name
                         .or_else(|| self.entity_name_text(access.expression))
-                    {
-                        self.report_wrong_meaning_diagnostic(
-                            &ns_name,
-                            access.expression,
-                            crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
-                        );
-                    }
+                {
+                    self.report_wrong_meaning_diagnostic(
+                        &ns_name,
+                        access.expression,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                    );
                     // tsc does NOT emit TS2693 for the type-only member
                     // when TS2708 was already emitted for the namespace.
                 }
