@@ -213,6 +213,15 @@ impl<'a> DeclarationEmitter<'a> {
                         )
                     }))
             {
+            } else if has_initializer
+                && self
+                    .arena
+                    .get(initializer)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(type_text) = self.preferred_expression_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
             } else if let Some(resolved_type) = self.resolve_declaration_type_text(
                 &[decl_idx, decl_name],
                 has_initializer.then_some(initializer),
