@@ -14,7 +14,7 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{FunctionShape, ParamInfo, SymbolRef, TypeData, TypeId};
+use tsz_solver::{FunctionShape, TypeId};
 
 /// Detect spread marker tuples `[...T]` created by the checker for generic
 /// `TypeParameter` spreads. A spread marker is a 1-element tuple where the single
@@ -112,30 +112,16 @@ fn instantiate_contextual_target_shape_for_return_context(
 impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_signature_parameter_type_queries(
         &mut self,
-        sig_params: &[ParamInfo],
-        instantiated_params: &[ParamInfo],
-    ) -> Vec<ParamInfo> {
-        let mut replacements = FxHashMap::default();
-        for (sig_param, instantiated_param) in sig_params.iter().zip(instantiated_params.iter()) {
-            let Some(name) = sig_param.name else {
-                continue;
-            };
-            replacements.insert(
-                self.ctx.types.resolve_atom_ref(name).to_string(),
-                instantiated_param.type_id,
-            );
-        }
-        if replacements.is_empty() {
+        sig_params: &[tsz_solver::ParamInfo],
+        instantiated_params: &[tsz_solver::ParamInfo],
+    ) -> Vec<tsz_solver::ParamInfo> {
+        let has_rest_function_parameter = sig_params.iter().any(|param| {
+            common::function_shape_for_type(self.ctx.types, param.type_id)
+                .is_some_and(|shape| shape.params.iter().any(|param| param.rest))
+        });
+        if !has_rest_function_parameter {
             return instantiated_params.to_vec();
         }
-        let type_replacements: FxHashMap<_, _> = sig_params
-            .iter()
-            .zip(instantiated_params.iter())
-            .filter_map(|(sig_param, instantiated_param)| {
-                (sig_param.type_id != instantiated_param.type_id)
-                    .then_some((sig_param.type_id, instantiated_param.type_id))
-            })
-            .collect();
 
         let tracked_type_params: FxHashSet<_> = sig_params
             .iter()
@@ -157,239 +143,60 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
-        let mut seen = FxHashSet::default();
-        let bound_replacements = Vec::new();
+
+        let mut replacements = FxHashMap::default();
+        for (sig_param, instantiated_param) in sig_params.iter().zip(instantiated_params.iter()) {
+            if let Some(name) = sig_param.name {
+                let replacement = if parameter_substitution.is_empty() {
+                    instantiated_param.type_id
+                } else {
+                    crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        instantiated_param.type_id,
+                        &parameter_substitution,
+                    )
+                };
+                replacements.insert(
+                    self.ctx.types.resolve_atom_ref(name).to_string(),
+                    replacement,
+                );
+            }
+        }
+
+        if replacements.is_empty() {
+            return instantiated_params.to_vec();
+        }
+
         instantiated_params
             .iter()
             .map(|param| {
                 let mut resolved = *param;
-                if !parameter_substitution.is_empty() {
-                    resolved.type_id = crate::query_boundaries::common::instantiate_type(
-                        self.ctx.types,
-                        resolved.type_id,
-                        &parameter_substitution,
-                    );
-                }
-                resolved.type_id = self.resolve_parameter_type_queries_in_type(
+                resolved.type_id = common::replace_type_queries_and_lazies_with(
+                    self.ctx.types,
                     resolved.type_id,
-                    &replacements,
-                    &parameter_substitution,
-                    &type_replacements,
-                    &bound_replacements,
-                    &mut seen,
+                    |symbol| {
+                        self.ctx
+                            .binder
+                            .symbols
+                            .get(tsz_binder::SymbolId(symbol.0))
+                            .and_then(|symbol| replacements.get(symbol.escaped_name.as_str()))
+                            .copied()
+                    },
+                    |def_id| {
+                        self.ctx.definition_store.get_name(def_id).and_then(|name| {
+                            if tracked_type_params.contains(&name) {
+                                parameter_substitution.get(name)
+                            } else {
+                                replacements
+                                    .get(self.ctx.types.resolve_atom_ref(name).as_ref())
+                                    .copied()
+                            }
+                        })
+                    },
                 );
                 resolved
             })
             .collect()
-    }
-
-    fn symbol_ref_name_for_parameter_type_query(&self, symbol: SymbolRef) -> Option<&str> {
-        self.ctx
-            .binder
-            .symbols
-            .get(tsz_binder::SymbolId(symbol.0))
-            .map(|symbol| symbol.escaped_name.as_str())
-    }
-
-    fn resolve_parameter_type_queries_in_type(
-        &mut self,
-        type_id: TypeId,
-        replacements: &FxHashMap<String, TypeId>,
-        type_param_replacements: &crate::query_boundaries::common::TypeSubstitution,
-        type_replacements: &FxHashMap<TypeId, TypeId>,
-        bound_replacements: &[Option<TypeId>],
-        seen: &mut FxHashSet<TypeId>,
-    ) -> TypeId {
-        if let Some(replacement) = type_replacements.get(&type_id).copied() {
-            return replacement;
-        }
-        if !seen.insert(type_id) {
-            return type_id;
-        }
-
-        let Some(key) = self.ctx.types.lookup(type_id) else {
-            return type_id;
-        };
-        match key {
-            TypeData::TypeParameter(info) => {
-                type_param_replacements.get(info.name).unwrap_or(type_id)
-            }
-            TypeData::BoundParameter(index) => bound_replacements
-                .get(index as usize)
-                .and_then(|replacement| *replacement)
-                .unwrap_or(type_id),
-            TypeData::Lazy(_) => {
-                if let Some(TypeData::Lazy(def_id)) = self.ctx.types.lookup(type_id)
-                    && let Some(name_atom) = self.ctx.definition_store.get_name(def_id)
-                    && let Some(replacement) =
-                        type_param_replacements
-                            .map()
-                            .iter()
-                            .find_map(|(&atom, &replacement)| {
-                                (atom == name_atom).then_some(replacement)
-                            })
-                {
-                    return replacement;
-                }
-                let resolved = self.resolve_lazy_type(type_id);
-                if resolved == type_id {
-                    type_id
-                } else {
-                    self.resolve_parameter_type_queries_in_type(
-                        resolved,
-                        replacements,
-                        type_param_replacements,
-                        type_replacements,
-                        bound_replacements,
-                        seen,
-                    )
-                }
-            }
-            TypeData::TypeQuery(symbol) => self
-                .symbol_ref_name_for_parameter_type_query(symbol)
-                .and_then(|name| replacements.get(name).copied())
-                .unwrap_or(type_id),
-            TypeData::Union(list_id) => {
-                let members = self.ctx.types.type_list(list_id);
-                let rewritten: Vec<_> = members
-                    .iter()
-                    .map(|&member| {
-                        self.resolve_parameter_type_queries_in_type(
-                            member,
-                            replacements,
-                            type_param_replacements,
-                            type_replacements,
-                            bound_replacements,
-                            seen,
-                        )
-                    })
-                    .collect();
-                if members
-                    .iter()
-                    .zip(rewritten.iter())
-                    .all(|(&before, &after)| before == after)
-                {
-                    type_id
-                } else {
-                    self.ctx.types.factory().union_preserve_members(rewritten)
-                }
-            }
-            TypeData::Intersection(list_id) => {
-                let members = self.ctx.types.type_list(list_id);
-                let rewritten: Vec<_> = members
-                    .iter()
-                    .map(|&member| {
-                        self.resolve_parameter_type_queries_in_type(
-                            member,
-                            replacements,
-                            type_param_replacements,
-                            type_replacements,
-                            bound_replacements,
-                            seen,
-                        )
-                    })
-                    .collect();
-                if members
-                    .iter()
-                    .zip(rewritten.iter())
-                    .all(|(&before, &after)| before == after)
-                {
-                    type_id
-                } else {
-                    self.ctx.types.factory().intersection(rewritten)
-                }
-            }
-            TypeData::Function(shape_id) => {
-                let mut shape = self.ctx.types.function_shape(shape_id).as_ref().clone();
-                let mut changed = false;
-                let mut nested_bound_replacements = bound_replacements.to_vec();
-                let type_params_before_retain = shape.type_params.len();
-                shape.type_params.retain(|type_param| {
-                    let replacement = type_param_replacements.get(type_param.name);
-                    nested_bound_replacements.push(replacement);
-                    replacement.is_none()
-                });
-                if shape.type_params.len() != type_params_before_retain {
-                    changed = true;
-                }
-                for param in &mut shape.params {
-                    let rewritten = self.resolve_parameter_type_queries_in_type(
-                        param.type_id,
-                        replacements,
-                        type_param_replacements,
-                        type_replacements,
-                        &nested_bound_replacements,
-                        seen,
-                    );
-                    if rewritten != param.type_id {
-                        param.type_id = rewritten;
-                        changed = true;
-                    }
-                }
-                let return_type = self.resolve_parameter_type_queries_in_type(
-                    shape.return_type,
-                    replacements,
-                    type_param_replacements,
-                    type_replacements,
-                    &nested_bound_replacements,
-                    seen,
-                );
-                if return_type != shape.return_type {
-                    shape.return_type = return_type;
-                    changed = true;
-                }
-                let this_type = shape.this_type.map(|this_type| {
-                    self.resolve_parameter_type_queries_in_type(
-                        this_type,
-                        replacements,
-                        type_param_replacements,
-                        type_replacements,
-                        &nested_bound_replacements,
-                        seen,
-                    )
-                });
-                if this_type != shape.this_type {
-                    shape.this_type = this_type;
-                    changed = true;
-                }
-                if changed {
-                    self.ctx.types.factory().function(shape)
-                } else {
-                    type_id
-                }
-            }
-            TypeData::Application(app_id) => {
-                let app = self.ctx.types.type_application(app_id);
-                let base = self.resolve_parameter_type_queries_in_type(
-                    app.base,
-                    replacements,
-                    type_param_replacements,
-                    type_replacements,
-                    bound_replacements,
-                    seen,
-                );
-                let args: Vec<_> = app
-                    .args
-                    .iter()
-                    .map(|&arg| {
-                        self.resolve_parameter_type_queries_in_type(
-                            arg,
-                            replacements,
-                            type_param_replacements,
-                            type_replacements,
-                            bound_replacements,
-                            seen,
-                        )
-                    })
-                    .collect();
-                if base == app.base && args.iter().zip(app.args.iter()).all(|(&a, &b)| a == b) {
-                    type_id
-                } else {
-                    self.ctx.types.factory().application(base, args)
-                }
-            }
-            _ => type_id,
-        }
     }
 
     fn is_builtin_object_entries_call(&self, callee_expr: NodeIndex) -> bool {
@@ -2281,7 +2088,9 @@ impl<'a> CheckerState<'a> {
                     (Some(shape_param), Some(instantiated_param)) => {
                         let shape_is_genericish =
                             common::contains_infer_types(self.ctx.types, shape_param.0)
-                                || common::contains_type_parameters(self.ctx.types, shape_param.0);
+                                || common::contains_type_parameters(self.ctx.types, shape_param.0)
+                                || !common::collect_type_queries(self.ctx.types, shape_param.0)
+                                    .is_empty();
                         let instantiated_is_concrete =
                             !common::contains_infer_types(self.ctx.types, instantiated_param.0)
                                 && !common::contains_type_parameters(
