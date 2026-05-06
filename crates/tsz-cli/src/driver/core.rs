@@ -3207,6 +3207,7 @@ fn apply_cli_overrides_with_config_options(
 /// a `true` value loaded from `tsconfig.json`. tsc treats `--flag false` as an
 /// explicit disable, so each entry here flips the matching option(s) back to
 /// `false` after config + CLI true-overrides have been applied.
+#[allow(clippy::match_same_arms)]
 fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, args: &CliArgs) {
     if args.explicitly_disabled_bool_flags.is_empty() {
         return;
