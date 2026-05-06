@@ -782,6 +782,10 @@ name = "intersection_index_signature_fingerprint_tests"
 path = "tests/intersection_index_signature_fingerprint_tests.rs"
 
 [[test]]
+name = "type_argument_inference_constraints_fingerprint_tests"
+path = "tests/type_argument_inference_constraints_fingerprint_tests.rs"
+
+[[test]]
 name = "shadowed_symbol_global_tests"
 path = "tests/shadowed_symbol_global_tests.rs"
 
