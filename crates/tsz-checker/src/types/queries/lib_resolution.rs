@@ -1315,8 +1315,6 @@ mod tests {
     use tsz_binder::BinderState;
     use tsz_solver::QueryDatabase;
 
-    // ---- keyword_syntax_to_type_id ----
-
     #[test]
     fn keyword_syntax_maps_string() {
         assert_eq!(
@@ -1415,12 +1413,9 @@ mod tests {
 
     #[test]
     fn keyword_syntax_returns_none_for_non_keyword() {
-        // Use an arbitrary non-keyword kind value
         assert_eq!(keyword_syntax_to_type_id(0), None);
         assert_eq!(keyword_syntax_to_type_id(9999), None);
     }
-
-    // ---- keyword_name_to_type_id ----
 
     #[test]
     fn keyword_name_maps_all_primitives() {
@@ -1445,13 +1440,12 @@ mod tests {
     fn keyword_name_returns_none_for_non_keyword() {
         assert_eq!(keyword_name_to_type_id("Promise"), None);
         assert_eq!(keyword_name_to_type_id("Array"), None);
-        assert_eq!(keyword_name_to_type_id("String"), None); // capital S
+        assert_eq!(keyword_name_to_type_id("String"), None);
         assert_eq!(keyword_name_to_type_id(""), None);
     }
 
     #[test]
     fn keyword_name_and_syntax_agree() {
-        // Verify both mapping functions return the same TypeId for each keyword
         let pairs = [
             ("string", SyntaxKind::StringKeyword),
             ("number", SyntaxKind::NumberKeyword),
@@ -1474,8 +1468,6 @@ mod tests {
             );
         }
     }
-
-    // ---- dedup_decl_arenas ----
 
     #[test]
     fn dedup_empty() {
@@ -1532,8 +1524,6 @@ mod tests {
             "Different indices from same arena should be kept"
         );
     }
-
-    // ---- no_value_resolver ----
 
     #[test]
     fn no_value_resolver_always_returns_none() {

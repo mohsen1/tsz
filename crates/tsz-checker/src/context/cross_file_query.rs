@@ -314,6 +314,7 @@ mod tests {
         let stale_type = TypeId(10_000);
 
         assert!(!crate::query_boundaries::common::type_id_is_known_to_db(
+        assert!(!crate::query_boundaries::common::type_id_is_known_to_db(
             &types, stale_type
         ));
 
