@@ -1612,6 +1612,25 @@ Object.defineProperty(module.exports, "ro", { value: "fixed" });
 }
 
 #[test]
+fn test_js_commonjs_define_property_only_export_marks_public_api() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+Object.defineProperty(exports, "only", { value: 42 });
+var local = 123;
+"#,
+    );
+
+    assert!(
+        output.contains("export const only: number;"),
+        "Expected defineProperty-only CommonJS export declaration: {output}"
+    );
+    assert!(
+        !output.contains("declare var local:"),
+        "Did not expect local declarations to leak from a defineProperty-only module: {output}"
+    );
+}
+
+#[test]
 fn test_js_exports_assignment_marks_same_name_function_exported() {
     let output = emit_js_dts(
         r#"
