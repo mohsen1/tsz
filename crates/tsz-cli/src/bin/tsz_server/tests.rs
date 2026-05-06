@@ -1837,6 +1837,63 @@ fn test_new_commands_are_recognized() {
 }
 
 #[test]
+fn test_full_protocol_dispatcher_commands_are_recognized() {
+    let mut server = make_server();
+    let file = "/full-routes.ts";
+    server.open_files.insert(
+        file.to_string(),
+        [
+            "function add(a: number, b: number) {",
+            "  return a + b;",
+            "}",
+            "add(1, 2);",
+            "const value = add;",
+        ]
+        .join("\n"),
+    );
+
+    let requests = [
+        make_request(
+            "quickinfo-full",
+            serde_json::json!({"file": file, "line": 4, "offset": 1}),
+        ),
+        make_request(
+            "completions-full",
+            serde_json::json!({"file": file, "line": 5, "offset": 15}),
+        ),
+        make_request(
+            "signatureHelp-full",
+            serde_json::json!({"file": file, "line": 4, "offset": 6}),
+        ),
+        make_request(
+            "format-full",
+            serde_json::json!({
+                "file": file,
+                "line": 1,
+                "offset": 1,
+                "options": {
+                    "indentSize": 2,
+                    "tabSize": 2,
+                    "convertTabsToSpaces": true,
+                },
+            }),
+        ),
+        make_request("outliningSpans", serde_json::json!({"file": file})),
+        make_request("fileReferences-full", serde_json::json!({"file": file})),
+        make_request("navbar-full", serde_json::json!({"file": file})),
+    ];
+
+    for req in requests {
+        let command = req.command.clone();
+        let resp = server.handle_tsserver_request(req);
+        assert!(
+            resp.success,
+            "{command} should be routed to a handler, got: {resp:?}"
+        );
+    }
+}
+
+#[test]
 fn test_indentation_returns_absolute_position() {
     let mut server = make_server();
     server.open_files.insert(
