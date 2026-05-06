@@ -405,6 +405,30 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn legacy_decorated_declare_computed_property_emits_decorator_target() {
+        let source = "declare function decorator(target: any, key: any): any;\nconst b = Symbol('b');\nclass Foo {\n    @decorator declare [b]: number;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                target: ScriptTarget::ESNext,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("], Foo.prototype, b, void 0);"),
+            "Legacy decorators on computed declare fields should emit the computed target expression.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn ambient_class_parenthesized_tail_emits_recovered_expression() {
         let source = "declare class foo();\nfunction foo() {}\n";
 
