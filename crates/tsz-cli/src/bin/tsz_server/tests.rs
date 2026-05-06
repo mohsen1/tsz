@@ -100,6 +100,25 @@ fn status_returns_typescript_version_not_tsz_crate_version() {
 }
 
 #[test]
+fn tsserver_exit_request_does_not_write_response() {
+    let mut server = make_server();
+    let request = r#"{"seq":1,"type":"request","command":"exit","arguments":{}}"#;
+    let input = format!("Content-Length: {}\r\n\r\n{}", request.len(), request);
+    let mut stdin = BufReader::new(input.as_bytes());
+    let mut stdout = Vec::new();
+
+    run_tsserver_protocol_with_io(&mut server, &mut stdin, &mut stdout)
+        .expect("exit request should terminate cleanly");
+
+    assert!(
+        stdout.is_empty(),
+        "exit request should not write a tsserver response, got {} bytes: {}",
+        stdout.len(),
+        String::from_utf8_lossy(&stdout)
+    );
+}
+
+#[test]
 fn test_provide_inlay_hints_respects_protocol_start_length_span() {
     let mut server = make_server();
     let source = "function f(value: number) {}\nf(1);\n";
