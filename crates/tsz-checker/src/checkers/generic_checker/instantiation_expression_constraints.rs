@@ -94,12 +94,7 @@ impl<'a> CheckerState<'a> {
         if self.format_type_diagnostic(type_arg).starts_with("typeof ") {
             return true;
         }
-        arg_node.is_some_and(|arg_idx| {
-            self.ctx
-                .arena
-                .get(arg_idx)
-                .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::TYPE_QUERY)
-        })
+        arg_node.is_some_and(|arg_idx| self.is_type_query_node_through_parens(arg_idx))
     }
 
     pub(crate) fn constraint_is_callable_or_constructable(&mut self, constraint: TypeId) -> bool {

@@ -633,6 +633,214 @@ fn test_regex_missing_parenthesis_reports_ts1005_at_regex_end() {
 }
 
 #[test]
+fn test_unterminated_regex_with_angle_text_reports_ts1161() {
+    for source in ["const r = /<x>;\n", "const r = /a<x>;\n"] {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let _root = parser.parse_source_file();
+
+        let diagnostics = parser.get_diagnostics();
+        let ts1161 = diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ts1161.len(),
+            1,
+            "Expected one TS1161 for ordinary regex angle text in {source:?}, got {diagnostics:?}"
+        );
+        assert_eq!(ts1161[0].start, source.find('/').unwrap() as u32);
+    }
+}
+
+#[test]
+fn test_regex_annex_b_diagnostic_positions_match_tsc() {
+    let source = r#"
+const regexes: RegExp[] = [
+  /\q\u\i\c\k\_\f\o\x\-\j\u\m\p\s/,
+  /[\q\u\i\c\k\_\f\o\x\-\j\u\m\p\s]/,
+  /\P[\P\w-_]/,
+
+  // Compare to
+  /\q\u\i\c\k\_\f\o\x\-\j\u\m\p\s/u,
+  /[\q\u\i\c\k\_\f\o\x\-\j\u\m\p\s]/u,
+  /\P[\P\w-_]/u,
+];
+
+const regexesWithBraces: RegExp[] = [
+  /{??/,
+  /{,??/,
+  /{,1??/,
+  /{1??/,
+  /{1,??/,
+  /{1,2??/,
+  /{2,1??/,
+  /{}??/,
+  /{,}??/,
+  /{,1}??/,
+  /{1}??/,
+  /{1,}??/,
+  /{1,2}??/,
+  /{2,1}??/,
+
+  // Compare to
+  /{??/u,
+  /{,??/u,
+  /{,1??/u,
+  /{1??/u,
+  /{1,??/u,
+  /{1,2??/u,
+  /{2,1??/u,
+  /{}??/u,
+  /{,}??/u,
+  /{,1}??/u,
+  /{1}??/u,
+  /{1,}??/u,
+  /{1,2}??/u,
+  /{2,1}??/u,
+];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let line_map = LineMap::build(source);
+
+    let mut fingerprints: Vec<(u32, u32, u32, String)> = diagnostics
+        .iter()
+        .filter(|d| {
+            matches!(
+                d.code,
+                diagnostic_codes::EXPECTED
+                    | diagnostic_codes::INCOMPLETE_QUANTIFIER_DIGIT_EXPECTED
+                    | diagnostic_codes::NUMBERS_OUT_OF_ORDER_IN_QUANTIFIER
+                    | diagnostic_codes::THERE_IS_NOTHING_AVAILABLE_FOR_REPETITION
+                    | diagnostic_codes::THIS_CHARACTER_CANNOT_BE_ESCAPED_IN_A_REGULAR_EXPRESSION
+            )
+        })
+        .map(|d| {
+            let pos = line_map.offset_to_position(d.start, source);
+            (d.code, pos.line + 1, pos.character + 1, d.message.clone())
+        })
+        .collect();
+    fingerprints.sort();
+
+    let mut expected = vec![
+        (diagnostic_codes::EXPECTED, 32, 7, "'}' expected."),
+        (diagnostic_codes::EXPECTED, 33, 6, "'}' expected."),
+        (diagnostic_codes::EXPECTED, 34, 7, "'}' expected."),
+        (diagnostic_codes::EXPECTED, 35, 8, "'}' expected."),
+        (diagnostic_codes::EXPECTED, 36, 8, "'}' expected."),
+        (
+            diagnostic_codes::INCOMPLETE_QUANTIFIER_DIGIT_EXPECTED,
+            32,
+            5,
+            "Incomplete quantifier. Digit expected.",
+        ),
+        (
+            diagnostic_codes::INCOMPLETE_QUANTIFIER_DIGIT_EXPECTED,
+            38,
+            5,
+            "Incomplete quantifier. Digit expected.",
+        ),
+        (
+            diagnostic_codes::INCOMPLETE_QUANTIFIER_DIGIT_EXPECTED,
+            39,
+            5,
+            "Incomplete quantifier. Digit expected.",
+        ),
+        (
+            diagnostic_codes::NUMBERS_OUT_OF_ORDER_IN_QUANTIFIER,
+            27,
+            5,
+            "Numbers out of order in quantifier.",
+        ),
+        (
+            diagnostic_codes::NUMBERS_OUT_OF_ORDER_IN_QUANTIFIER,
+            36,
+            5,
+            "Numbers out of order in quantifier.",
+        ),
+        (
+            diagnostic_codes::NUMBERS_OUT_OF_ORDER_IN_QUANTIFIER,
+            43,
+            5,
+            "Numbers out of order in quantifier.",
+        ),
+    ];
+
+    for (line, column) in [
+        (24, 4),
+        (24, 8),
+        (25, 4),
+        (25, 9),
+        (26, 4),
+        (26, 10),
+        (27, 4),
+        (27, 10),
+        (32, 4),
+        (32, 8),
+        (33, 4),
+        (33, 7),
+        (34, 4),
+        (34, 8),
+        (35, 4),
+        (35, 9),
+        (36, 4),
+        (36, 9),
+        (38, 4),
+        (38, 8),
+        (39, 4),
+        (39, 9),
+        (40, 4),
+        (40, 8),
+        (41, 4),
+        (41, 9),
+        (42, 4),
+        (42, 10),
+        (43, 4),
+        (43, 10),
+    ] {
+        expected.push((
+            diagnostic_codes::THERE_IS_NOTHING_AVAILABLE_FOR_REPETITION,
+            line,
+            column,
+            "There is nothing available for repetition.",
+        ));
+    }
+
+    for (line, column) in [
+        (8, 4),
+        (8, 14),
+        (8, 18),
+        (8, 24),
+        (9, 5),
+        (9, 13),
+        (9, 15),
+        (9, 19),
+        (9, 25),
+    ] {
+        expected.push((
+            diagnostic_codes::THIS_CHARACTER_CANNOT_BE_ESCAPED_IN_A_REGULAR_EXPRESSION,
+            line,
+            column,
+            "This character cannot be escaped in a regular expression.",
+        ));
+    }
+
+    let mut expected: Vec<(u32, u32, u32, String)> = expected
+        .into_iter()
+        .map(|(code, line, column, message)| (code, line, column, message.to_string()))
+        .collect();
+    expected.sort();
+
+    assert_eq!(
+        fingerprints, expected,
+        "Annex B regex diagnostic positions should match tsc, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_parenthesized_conditional_object_literal_true_branch_is_not_treated_as_missing_arrow() {
     let source = r#"
 var value = (Math.random() ? {} : null);

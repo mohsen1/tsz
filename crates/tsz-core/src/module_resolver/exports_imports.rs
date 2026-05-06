@@ -10,7 +10,7 @@ use super::{
 use crate::config::ModuleResolutionKind;
 use crate::module_resolver_helpers::*;
 use crate::span::Span;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Returns true when an exports/imports pattern key literally ends with a
 /// TypeScript source extension. This mirrors tsc's `resolvedUsingTsExtension`
@@ -21,6 +21,20 @@ use std::path::{Path, PathBuf};
 /// situation TS2877 warns about.
 pub(super) fn key_ends_with_ts_extension(key: &str) -> bool {
     key.ends_with(".ts") || key.ends_with(".tsx") || key.ends_with(".mts") || key.ends_with(".cts")
+}
+
+fn package_relative_target_path(package_dir: &Path, target: &str) -> Option<PathBuf> {
+    let rest = target.strip_prefix("./")?;
+    let path = Path::new(target);
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return None;
+    }
+    Some(package_dir.join(rest))
 }
 
 impl ModuleResolver {
@@ -53,7 +67,10 @@ impl ModuleResolver {
                     // it should be resolved as a package (PACKAGE_RESOLVE), not as a
                     // relative path. This supports self-referencing imports like
                     // "#type": "package" where the imports field maps to a package name.
-                    if !target.starts_with("./") && !target.starts_with('/') {
+                    if !target.starts_with("./") {
+                        if target.starts_with('/') || target.starts_with('.') {
+                            continue;
+                        }
                         match self.resolve_bare_specifier(
                             &target,
                             &current,
@@ -71,7 +88,10 @@ impl ModuleResolver {
                     }
 
                     // Resolve the target as a relative path
-                    let resolved_path = current.join(target.trim_start_matches("./"));
+                    let Some(resolved_path) = package_relative_target_path(&current, &target)
+                    else {
+                        continue;
+                    };
 
                     if let Some(resolved) = self.try_file_or_directory(&resolved_path) {
                         return Ok(ResolvedModule {
@@ -285,7 +305,7 @@ impl ModuleResolver {
         match exports {
             PackageExports::String(s) => {
                 if subpath == "." {
-                    let resolved = package_dir.join(s.trim_start_matches("./"));
+                    let resolved = package_relative_target_path(package_dir, s)?;
                     if let Some(r) = self.try_export_target(&resolved) {
                         return Some((r, false));
                     }
@@ -391,7 +411,7 @@ impl ModuleResolver {
     ) -> Option<PathBuf> {
         match value {
             PackageExports::String(s) => {
-                let resolved = package_dir.join(s.trim_start_matches("./"));
+                let resolved = package_relative_target_path(package_dir, s)?;
                 self.try_export_target(&resolved)
             }
             PackageExports::Conditional(cond_entries) => {
