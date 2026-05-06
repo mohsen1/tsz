@@ -16,6 +16,7 @@ use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
+#[derive(Debug)]
 struct Diag {
     code: u32,
     message_text: String,
@@ -135,6 +136,29 @@ fn check_js(source: &str) -> Vec<Diag> {
 
 fn check_js_with_libs(source: &str) -> Vec<Diag> {
     check_js_internal(source, true)
+}
+
+#[test]
+fn test_jsdoc_unknown_intrinsic_does_not_emit_ts2304() {
+    let source = r#"
+/** @type {unknown} */
+let x;
+
+/** @type {{ value: unknown, cb: function(unknown): unknown }} */
+let y;
+
+/** @type {Record<string, unknown>} */
+let z;
+"#;
+    let diagnostics = check_js_with_libs(source);
+    let ts2304_unknown: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2304 && diag.message_text.contains("'unknown'"))
+        .collect();
+    assert!(
+        ts2304_unknown.is_empty(),
+        "JSDoc unknown should resolve as an intrinsic, got: {diagnostics:#?}"
+    );
 }
 
 fn check_js_with_exact_optional(source: &str) -> Vec<Diag> {
