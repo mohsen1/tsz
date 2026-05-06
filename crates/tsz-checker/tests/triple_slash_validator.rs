@@ -131,23 +131,50 @@ fn test_validate_extensionless_references() {
 
     // Test extension-less references
     assert!(
-        validate_reference_path(&source_file, "a"),
+        validate_reference_path(&source_file, "a", false),
         "Should find a.ts"
     );
     assert!(
-        validate_reference_path(&source_file, "b"),
+        validate_reference_path(&source_file, "b", false),
         "Should find b.d.ts"
     );
     assert!(
-        validate_reference_path(&source_file, "c"),
+        validate_reference_path(&source_file, "c", false),
         "Should find c.ts"
     );
     assert!(
-        !validate_reference_path(&source_file, "missing"),
+        !validate_reference_path(&source_file, "missing", false),
         "Should not find missing file"
     );
 
     // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn validate_extensionless_references_probe_js_when_allow_js() {
+    use std::fs;
+
+    let temp_dir = std::env::temp_dir().join("tsz_test_refs_allow_js");
+    let _ = fs::create_dir_all(&temp_dir);
+    fs::write(temp_dir.join("dep.js"), "const value = 1;").unwrap();
+    fs::write(temp_dir.join("view.jsx"), "const view = <div />;").unwrap();
+
+    let source_file = temp_dir.join("main.ts");
+
+    assert!(
+        !validate_reference_path(&source_file, "dep", false),
+        "allowJs=false should not probe .js"
+    );
+    assert!(
+        validate_reference_path(&source_file, "dep", true),
+        "allowJs=true should probe .js"
+    );
+    assert!(
+        validate_reference_path(&source_file, "view", true),
+        "allowJs=true should probe .jsx"
+    );
+
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
@@ -160,7 +187,7 @@ fn validate_reference_path_rejects_empty_path() {
     let source_file = temp_dir.join("index.ts");
 
     assert!(
-        !validate_reference_path(&source_file, ""),
+        !validate_reference_path(&source_file, "", false),
         "empty reference paths should not resolve to the containing directory"
     );
 
@@ -393,10 +420,10 @@ fn validate_reference_path_explicit_extension_only_tries_exact() {
 
     let source_file = temp_dir.join("t.ts");
     // Exact path with .ts extension that exists → true.
-    assert!(validate_reference_path(&source_file, "file.ts"));
+    assert!(validate_reference_path(&source_file, "file.ts", false));
     // Reference with non-existent .js extension — must NOT fall back to
     // `.ts`/`.tsx`/`.d.ts` because the reference already has an extension.
-    assert!(!validate_reference_path(&source_file, "file.js"));
+    assert!(!validate_reference_path(&source_file, "file.js", false));
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
@@ -411,7 +438,7 @@ fn validate_reference_path_returns_false_when_source_has_no_parent() {
     let source_file = PathBuf::from("/");
     // Paths under `/` likely don't exist; just verify the function does not
     // panic and produces a deterministic boolean.
-    let _ = validate_reference_path(&source_file, "non-existent");
+    let _ = validate_reference_path(&source_file, "non-existent", false);
 }
 
 // =========================================================================

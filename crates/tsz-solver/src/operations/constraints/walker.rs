@@ -422,6 +422,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let is_nullish = |ty: TypeId| ty.is_nullable();
 
+        if let (Some(source_elem), Some(target_elem)) = (
+            self.array_like_element_for_constraint(source),
+            self.array_like_element_for_constraint(target),
+        ) {
+            self.constrain_types(ctx, var_map, source_elem, target_elem, priority);
+            return;
+        }
+
         match (source_key, target_key) {
             (Some(TypeData::ReadonlyType(s_inner)), Some(TypeData::ReadonlyType(t_inner)))
             | (Some(TypeData::NoInfer(s_inner)), Some(TypeData::NoInfer(t_inner))) => {
