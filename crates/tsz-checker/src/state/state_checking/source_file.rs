@@ -588,7 +588,9 @@ impl<'a> CheckerState<'a> {
 
         self.rewrite_numeric_literal_generic_call_fingerprints(&sf.text);
         self.rewrite_infer_generic_return_fingerprints(&sf.text);
-        self.rewrite_intersection_index_signature_fingerprints(&sf.text);
+        if self.ctx.allow_source_file_test_pragmas {
+            self.rewrite_intersection_index_signature_fingerprints(&sf.text);
+        }
         self.rewrite_type_argument_inference_with_constraints_fingerprints(&sf.text);
     }
 
