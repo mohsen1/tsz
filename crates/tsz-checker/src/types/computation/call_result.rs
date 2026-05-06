@@ -17,6 +17,7 @@ pub(super) struct CallResultContext<'a> {
     pub(super) args: &'a [NodeIndex],
     pub(super) arg_types: &'a [TypeId],
     pub(super) callee_type: TypeId,
+    pub(super) callee_has_declared_generic_signature: bool,
     pub(super) is_super_call: bool,
     pub(super) is_optional_chain: bool,
     pub(super) allow_contextual_mismatch_deferral: bool,
@@ -472,6 +473,7 @@ impl<'a> CheckerState<'a> {
 
     fn preferred_literal_expected_for_mismatch(
         &self,
+        callee_has_declared_generic_signature: bool,
         arg_types: &[TypeId],
         args: &[NodeIndex],
         actual: TypeId,
@@ -486,6 +488,9 @@ impl<'a> CheckerState<'a> {
         }
         let actual_display_type = common::widen_argument_type_for_display(self.ctx.types, actual);
         if !common::is_primitive_type(self.ctx.types, actual_display_type) {
+            return expected;
+        }
+        if !callee_has_declared_generic_signature {
             return expected;
         }
         arg_types
@@ -606,6 +611,7 @@ impl<'a> CheckerState<'a> {
             args,
             arg_types,
             callee_type,
+            callee_has_declared_generic_signature,
             is_super_call,
             is_optional_chain,
             allow_contextual_mismatch_deferral,
@@ -887,6 +893,7 @@ impl<'a> CheckerState<'a> {
                         .generic_callable_mismatch_display_target(actual, expected)
                         .unwrap_or(expected);
                     self.preferred_literal_expected_for_mismatch(
+                        callee_has_declared_generic_signature,
                         arg_types,
                         args,
                         reported_actual,
