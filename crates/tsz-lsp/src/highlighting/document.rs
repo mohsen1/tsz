@@ -123,13 +123,23 @@ impl<'a> DocumentHighlightProvider<'a> {
         let locations = finder.find_references(root, position)?;
 
         // Convert locations to highlights with AST-based write detection
-        let highlights: Vec<DocumentHighlight> = locations
+        let mut highlights: Vec<DocumentHighlight> = locations
             .into_iter()
             .map(|loc| {
                 let kind = self.detect_access_kind_ast(loc.range, &finder);
                 DocumentHighlight::new(loc.range, kind)
             })
             .collect();
+        let mut seen = Vec::new();
+        highlights.retain(|highlight| {
+            let key = (highlight.range, highlight.kind);
+            if seen.contains(&key) {
+                false
+            } else {
+                seen.push(key);
+                true
+            }
+        });
 
         if highlights.is_empty() {
             None
