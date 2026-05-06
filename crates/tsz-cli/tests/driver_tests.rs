@@ -11033,6 +11033,49 @@ fn compile_missing_file_in_include_pattern_returns_error() {
 }
 
 #[test]
+fn compile_ignore_config_without_files_reports_ts18003_from_discovered_config() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noLib": true
+          }
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.no_emit = true;
+    let compilation = compile(&args, base).expect("Should return Ok with diagnostics");
+
+    let ts18003 = compilation
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 18003)
+        .expect("expected TS18003 diagnostic");
+    let expected_path = base
+        .join("tsconfig.json")
+        .canonicalize()
+        .expect("canonical config path");
+    let expected_path = expected_path.to_string_lossy();
+    assert!(
+        ts18003.message_text.contains(expected_path.as_ref()),
+        "TS18003 should include discovered config path: {}",
+        ts18003.message_text
+    );
+    assert!(
+        ts18003
+            .message_text
+            .contains("Specified 'include' paths were '[\"**/*\"]'"),
+        "TS18003 should use default include paths when --ignoreConfig skips config loading: {}",
+        ts18003.message_text
+    );
+}
+
+#[test]
 fn compile_terminal_include_star_matches_direct_js_file() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
