@@ -905,6 +905,21 @@ fn test_lowering_destructuring_marks_rest_helper() {
     );
 }
 
+#[test]
+fn test_lowering_assignment_object_rest_marks_rest_helper() {
+    let (arena, root) = parse("let bar; ({ ...bar } = {});");
+    let ctx = EmitContext::es6();
+
+    let lowering = LoweringPass::new(&arena, &ctx);
+    let transforms = lowering.run(root);
+
+    let helpers = transforms.helpers();
+    assert!(
+        helpers.rest,
+        "Expected __rest helper for object rest assignment destructuring"
+    );
+}
+
 // =============================================================================
 // first_private_field_op_is_write_only
 // =============================================================================

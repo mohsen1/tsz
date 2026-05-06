@@ -9,7 +9,7 @@ use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_mess
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TupleElement, TypeId};
+use tsz_solver::{ParamInfo, TupleElement, TypeId};
 
 pub(super) struct CallResultContext<'a> {
     pub(super) callee_expr: NodeIndex,
@@ -208,8 +208,14 @@ impl<'a> CheckerState<'a> {
             actual_display = "boolean[]".to_string();
         }
         let mut target_display = self
-            .finite_mapped_parameter_display_type(param_type)
-            .map(|display_type| self.format_type_for_assignability_message(display_type))
+            .constrained_variadic_tuple_parameter_display(param_type, arg_type)
+            .or_else(|| {
+                self.underfilled_generic_variadic_tuple_parameter_display(param_type, arg_type)
+            })
+            .or_else(|| {
+                self.finite_mapped_parameter_display_type(param_type)
+                    .map(|display_type| self.format_type_for_assignability_message(display_type))
+            })
             .unwrap_or_else(|| self.format_type_diagnostic(param_type));
         if target_display.contains("Array<") {
             target_display = Self::normalize_array_generic_to_shorthand(&target_display);
@@ -274,6 +280,7 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
         index: usize,
         actual: TypeId,
+        expected: TypeId,
     ) -> Option<TypeId> {
         let actual_elements = common::tuple_elements(self.ctx.types, actual)?;
         let expanded_args = self.build_expanded_args_for_error(args);
@@ -288,14 +295,25 @@ impl<'a> CheckerState<'a> {
         let mut changed = false;
         let elements: Vec<_> = actual_elements
             .into_iter()
+            .enumerate()
             .zip(rest_args.iter().copied())
-            .map(|(element, arg_idx)| {
-                let type_id = self
-                    .literal_type_from_initializer(arg_idx)
-                    .inspect(|&literal_type| {
-                        changed |= literal_type != element.type_id;
-                    })
-                    .unwrap_or(element.type_id);
+            .map(|((actual_pos, element), arg_idx)| {
+                let expected_element = self.expected_tuple_element_for_aggregate_actual(
+                    expected,
+                    rest_args.len(),
+                    actual_pos,
+                );
+                let should_widen =
+                    expected_element.is_some_and(|ty| common::is_callable_type(self.ctx.types, ty));
+                let type_id = if should_widen {
+                    element.type_id
+                } else {
+                    self.literal_type_from_initializer(arg_idx)
+                        .inspect(|&literal_type| {
+                            changed |= literal_type != element.type_id;
+                        })
+                        .unwrap_or(element.type_id)
+                };
                 TupleElement {
                     type_id,
                     name: element.name,
@@ -306,6 +324,117 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         changed.then(|| self.ctx.types.tuple(elements))
+    }
+
+    fn expected_tuple_element_for_aggregate_actual(
+        &mut self,
+        expected: TypeId,
+        actual_len: usize,
+        actual_pos: usize,
+    ) -> Option<TypeId> {
+        let expected = self.evaluate_type_with_env(expected);
+        let expected = self.resolve_type_for_property_access(expected);
+        let expected = self.resolve_lazy_type(expected);
+        let expected = self.evaluate_application_type(expected);
+        let expected = common::unwrap_readonly(self.ctx.types, expected);
+        let elements = common::tuple_elements(self.ctx.types, expected)?;
+        let rest_index = elements.iter().position(|element| element.rest)?;
+        if actual_pos < rest_index {
+            return elements.get(actual_pos).map(|element| element.type_id);
+        }
+        let tail = &elements[rest_index + 1..];
+        if tail.is_empty() {
+            return None;
+        }
+        let tail_start = actual_len.saturating_sub(tail.len());
+        (actual_pos >= tail_start)
+            .then(|| {
+                tail.get(actual_pos - tail_start)
+                    .map(|element| element.type_id)
+            })
+            .flatten()
+    }
+
+    fn declared_rest_parameter_index_for_call(&self, callee_expr: NodeIndex) -> Option<usize> {
+        let callee_sym = self
+            .resolve_identifier_symbol(callee_expr)
+            .or_else(|| self.resolve_qualified_symbol(callee_expr))?;
+        let callee = self.ctx.binder.get_symbol(callee_sym)?;
+        callee.declarations.iter().copied().find_map(|decl_idx| {
+            let node = self.ctx.arena.get(decl_idx)?;
+            let func = self.ctx.arena.get_function(node)?;
+            func.parameters
+                .nodes
+                .iter()
+                .copied()
+                .enumerate()
+                .find_map(|(index, param_idx)| {
+                    let param_node = self.ctx.arena.get(param_idx)?;
+                    let param = self.ctx.arena.get_parameter(param_node)?;
+                    param.dot_dot_dot_token.then_some(index)
+                })
+        })
+    }
+
+    fn aggregate_actual_after_declared_rest_start(
+        &mut self,
+        actual: TypeId,
+        index: usize,
+        declared_rest_index: usize,
+    ) -> Option<TypeId> {
+        if declared_rest_index <= index {
+            return None;
+        }
+        let drop_count = declared_rest_index - index;
+        let elements = common::tuple_elements(self.ctx.types, actual)?;
+        if drop_count > elements.len() {
+            return None;
+        }
+        Some(self.ctx.types.tuple(elements[drop_count..].to_vec()))
+    }
+
+    fn spread_rest_tuple_diagnostic_types(
+        &mut self,
+        arg_idx: NodeIndex,
+        expected: TypeId,
+    ) -> Option<(TypeId, TypeId)> {
+        let arg_node = self.ctx.arena.get(arg_idx)?;
+        if arg_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
+            return None;
+        }
+        let spread = self.ctx.arena.get_spread(arg_node)?;
+        let mut spread_type = self.get_type_of_node(spread.expression);
+        spread_type = self.resolve_type_for_property_access(spread_type);
+        spread_type = self.resolve_lazy_type(spread_type);
+        spread_type = self.evaluate_application_type(spread_type);
+        common::array_element_type(self.ctx.types, spread_type)?;
+
+        let mut callback_shape =
+            (*common::function_shape_for_type(self.ctx.types, expected)?).clone();
+        let last_param = callback_shape.params.last_mut()?;
+        if !last_param.rest {
+            return None;
+        }
+        *last_param = ParamInfo {
+            type_id: spread_type,
+            ..*last_param
+        };
+        let callback_type = self.ctx.types.factory().function(callback_shape);
+        let expected_tuple = self.ctx.types.tuple(vec![
+            TupleElement {
+                type_id: spread_type,
+                name: None,
+                optional: false,
+                rest: true,
+            },
+            TupleElement {
+                type_id: callback_type,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+        Some((spread_type, expected_tuple))
     }
 
     fn should_attempt_deferred_literal_elaboration(&mut self, expected: TypeId) -> bool {
@@ -707,12 +836,14 @@ impl<'a> CheckerState<'a> {
                         };
                     }
                 }
-                let aggregate_literal_actual =
-                    if self.format_type_diagnostic(expected).contains("<unknown>") {
-                        None
-                    } else {
-                        self.literalized_aggregate_actual_for_call_args(args, index, actual)
-                    };
+                let aggregate_literal_actual = if self
+                    .format_type_diagnostic(expected)
+                    .contains("<unknown>")
+                {
+                    None
+                } else {
+                    self.literalized_aggregate_actual_for_call_args(args, index, actual, expected)
+                };
                 let original_is_spread_marker = arg_types.get(index).is_some_and(|&ty| {
                     common::is_spread_marker_tuple(self.ctx.types.as_type_database(), ty)
                 });
@@ -723,7 +854,7 @@ impl<'a> CheckerState<'a> {
                         .get(index)
                         .copied()
                         .is_none_or(|original| original != actual);
-                let reported_actual = match arg_types.get(index).copied() {
+                let mut reported_actual = match arg_types.get(index).copied() {
                     Some(TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) | None => actual,
                     Some(original) if self.is_spread_argument_marker_type(original) => actual,
                     Some(original)
@@ -733,6 +864,22 @@ impl<'a> CheckerState<'a> {
                         aggregate_literal_actual.unwrap_or(actual)
                     }
                     Some(original) => original,
+                };
+                let aggregate_anchor_override = if aggregate_rest_mismatch {
+                    self.declared_rest_parameter_index_for_call(callee_expr)
+                        .and_then(|rest_index| {
+                            self.aggregate_actual_after_declared_rest_start(
+                                reported_actual,
+                                index,
+                                rest_index,
+                            )
+                            .map(|adjusted| {
+                                reported_actual = adjusted;
+                                args.get(rest_index).copied().unwrap_or(call_idx)
+                            })
+                        })
+                } else {
+                    None
                 };
                 let polymorphic_this_expected = self.polymorphic_this_indexed_conditional_target(
                     callee_type,
@@ -877,17 +1024,30 @@ impl<'a> CheckerState<'a> {
                         actual,
                     );
                     if !suppress_weak && !elaborated {
+                        let spread_rest_tuple_display = (!aggregate_rest_mismatch)
+                            .then(|| {
+                                self.spread_rest_tuple_diagnostic_types(arg_idx, reported_expected)
+                            })
+                            .flatten();
                         if let Some(polymorphic_this_expected) = polymorphic_this_expected {
                             self.error_argument_not_assignable_preserving_param_display(
                                 reported_actual,
                                 polymorphic_this_expected,
                                 arg_idx,
                             );
+                        } else if let Some((spread_actual, spread_expected)) =
+                            spread_rest_tuple_display
+                        {
+                            self.error_argument_not_assignable_at(
+                                spread_actual,
+                                spread_expected,
+                                arg_idx,
+                            );
                         } else if prefer_argument_level_return_mismatch || aggregate_rest_mismatch {
                             self.error_argument_not_assignable_at(
                                 reported_actual,
                                 reported_expected,
-                                arg_idx,
+                                aggregate_anchor_override.unwrap_or(arg_idx),
                             );
                         } else if preserve_type_parameter_expected_display {
                             self.error_argument_not_assignable_preserving_param_display(
@@ -936,7 +1096,7 @@ impl<'a> CheckerState<'a> {
                             self.error_argument_not_assignable_at(
                                 reported_actual,
                                 reported_expected,
-                                call_idx,
+                                aggregate_anchor_override.unwrap_or(call_idx),
                             );
                         } else {
                             let _ = self.check_argument_assignable_or_report(
@@ -979,7 +1139,7 @@ impl<'a> CheckerState<'a> {
                             self.error_argument_not_assignable_at(
                                 reported_actual,
                                 reported_expected,
-                                last_arg,
+                                aggregate_anchor_override.unwrap_or(last_arg),
                             );
                         } else {
                             let _ = self.check_argument_assignable_or_report(
@@ -1003,7 +1163,7 @@ impl<'a> CheckerState<'a> {
                         self.error_argument_not_assignable_at(
                             reported_actual,
                             reported_expected,
-                            call_idx,
+                            aggregate_anchor_override.unwrap_or(call_idx),
                         );
                     } else {
                         let _ = self.check_argument_assignable_or_report(

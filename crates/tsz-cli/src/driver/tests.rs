@@ -388,6 +388,91 @@ fn test_cli_module_resolution_preserves_config_package_json_resolution_false() {
     assert!(!options.resolve_package_json_imports);
 }
 
+/// `--strict false` on the command line must override `strict: true` from
+/// `tsconfig.json`. `preprocess_args` forwards the explicit-false intent
+/// through the hidden `--__explicitly-disabled-bool-flag` side-channel; this
+/// test simulates the post-preprocess args directly. Issue #3861.
+#[test]
+fn test_cli_strict_false_overrides_config_strict_true() {
+    let args = CliArgs::try_parse_from(["tsz", "--__explicitly-disabled-bool-flag=strict"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.strict = true;
+    options.checker.no_implicit_any = true;
+    options.checker.strict_null_checks = true;
+    options.checker.always_strict = true;
+    let config_options = CompilerOptions {
+        strict: Some(true),
+        ..Default::default()
+    };
+    super::apply_cli_overrides_with_config_options(&mut options, &args, Some(&config_options))
+        .expect("apply overrides");
+
+    assert!(
+        !options.checker.strict,
+        "--strict false must flip checker.strict to false"
+    );
+    assert!(
+        !options.checker.no_implicit_any,
+        "--strict false must reset the strict-family expansion"
+    );
+    assert!(!options.checker.strict_null_checks);
+    assert!(!options.checker.always_strict);
+    assert!(!options.printer.always_strict);
+}
+
+#[test]
+fn test_cli_no_emit_false_overrides_config_no_emit_true() {
+    let args = CliArgs::try_parse_from(["tsz", "--__explicitly-disabled-bool-flag=noEmit"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.no_emit = true;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(
+        !options.no_emit,
+        "--noEmit false must flip no_emit to false (issue #3861)"
+    );
+}
+
+#[test]
+fn test_cli_no_unused_locals_false_overrides_config() {
+    let args = CliArgs::try_parse_from(["tsz", "--__explicitly-disabled-bool-flag=noUnusedLocals"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.no_unused_locals = true;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(!options.checker.no_unused_locals);
+}
+
+/// An explicit `--strictNullChecks true` after `--strict false` must still
+/// re-enable strictNullChecks — the `Option<bool>` family override is applied
+/// after the `--strict` expansion/contraction, matching tsc's "individual
+/// flags win" rule. This guards the order between
+/// `apply_explicitly_disabled_bool_flags` and the strict-family CLI overrides.
+#[test]
+fn test_cli_strict_false_then_strict_null_checks_true_keeps_strict_null_checks() {
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--__explicitly-disabled-bool-flag=strict",
+        "--strictNullChecks=true",
+    ])
+    .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.strict = true;
+    options.checker.strict_null_checks = true;
+    options.checker.no_implicit_any = true;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(!options.checker.strict);
+    assert!(!options.checker.no_implicit_any, "expansion still reset");
+    assert!(
+        options.checker.strict_null_checks,
+        "explicit --strictNullChecks true wins over --strict false expansion reset"
+    );
+}
+
 #[test]
 fn test_cli_no_unchecked_side_effect_imports_overrides_config_false() {
     let args =
