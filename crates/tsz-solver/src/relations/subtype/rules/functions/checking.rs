@@ -1062,6 +1062,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         result
     }
 
+    #[allow(clippy::type_complexity)]
     fn hoist_matching_nonlocal_type_params(
         &mut self,
         source: &FunctionShape,
@@ -1103,13 +1104,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut hoisted = Vec::with_capacity(target.type_params.len());
         let mut replacements = Vec::new();
         for target_tp in &target.type_params {
-            let Some(source_tp) = source_params
+            let source_tp = source_params
                 .iter()
                 .copied()
-                .find(|source_tp| source_tp.name == target_tp.name)
-            else {
-                return None;
-            };
+                .find(|source_tp| source_tp.name == target_tp.name)?;
             target_to_source.insert(target_tp.name, self.interner.type_param(source_tp));
             hoisted.push(
                 if source_tp.constraint.is_none() && target_tp.constraint.is_some() {

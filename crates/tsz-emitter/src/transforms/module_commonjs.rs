@@ -429,15 +429,32 @@ fn chain_resolves_to_exported_type_only(
                 if let Some(m) = arena.get_module(inner)
                     && let Some(n) = get_identifier_text(arena, m.name)
                     && n == *target_name
-                    && !rest.is_empty()
                     && (!require_export || has_export_modifier)
-                    && let Some(body) = arena.get(m.body)
-                    && let Some(block) = arena.get_module_block(body)
-                    && let Some(ref stmts) = block.statements
                 {
-                    // Inside the namespace body, members must be exported to
-                    // be reachable from the outer alias chain.
-                    return chain_resolves_to_exported_type_only(arena, rest, &stmts.nodes, true);
+                    if !rest.is_empty()
+                        && let Some(body) = arena.get(m.body)
+                        && let Some(block) = arena.get_module_block(body)
+                        && let Some(ref stmts) = block.statements
+                    {
+                        // Inside the namespace body, members must be exported
+                        // to be reachable from the outer alias chain.
+                        return chain_resolves_to_exported_type_only(
+                            arena,
+                            rest,
+                            &stmts.nodes,
+                            true,
+                        );
+                    }
+                    if rest.is_empty() {
+                        // Innermost name resolves to the namespace itself.
+                        // tsc treats a *non-instantiated* namespace target
+                        // as type-only (its body has no value declarations),
+                        // so the alias should be elided just like an
+                        // interface/type-alias target.
+                        return !super::emit_utils::is_instantiated_module_ext(
+                            arena, m.body, /* preserve_const_enums = */ false,
+                        );
+                    }
                 }
             }
             _ => {}
