@@ -848,6 +848,13 @@ impl<'a> TypePrinter<'a> {
             return "{}".to_string();
         }
 
+        let visible_method_property_names: Vec<_> = shape
+            .properties
+            .iter()
+            .filter(|prop| prop.is_method && !self.property_is_hidden_in_declaration_shape(prop))
+            .map(|prop| prop.name)
+            .collect();
+
         let should_skip_property = |prop: &tsz_solver::types::PropertyInfo| {
             let name = self.resolve_atom(prop.name);
             let redundant_negative_numeric_index_type = shape
@@ -863,8 +870,11 @@ impl<'a> TypePrinter<'a> {
                         && name.parse::<f64>().is_ok()
                         && self.print_type(index_value_type) == self.print_type(prop.type_id)
                 });
+            let duplicate_method_value_property =
+                !prop.is_method && visible_method_property_names.contains(&prop.name);
             self.property_is_hidden_in_declaration_shape(prop)
                 || redundant_negative_numeric
+                || duplicate_method_value_property
                 || matches!(name.as_str(), "" | ":")
                 || self
                     .declaration_property_name_text(prop)
@@ -894,7 +904,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
-                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                let widened = if idx.readonly {
+                    idx.value_type
+                } else {
+                    self.widen_synthesized_method_return_type(idx.value_type)
+                };
                 line.push_str(&format!(
                     "[{}: string]: {};",
                     param,
@@ -912,7 +926,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
-                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                let widened = if idx.readonly {
+                    idx.value_type
+                } else {
+                    self.widen_synthesized_method_return_type(idx.value_type)
+                };
                 line.push_str(&format!(
                     "[{}: number]: {};",
                     param,
@@ -1010,7 +1028,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
-                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                let widened = if idx.readonly {
+                    idx.value_type
+                } else {
+                    self.widen_synthesized_method_return_type(idx.value_type)
+                };
                 member.push_str(&format!(
                     "[{}: string]: {}",
                     param,
@@ -1027,7 +1049,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
-                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                let widened = if idx.readonly {
+                    idx.value_type
+                } else {
+                    self.widen_synthesized_method_return_type(idx.value_type)
+                };
                 member.push_str(&format!(
                     "[{}: number]: {}",
                     param,

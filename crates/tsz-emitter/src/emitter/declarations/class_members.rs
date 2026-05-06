@@ -12,6 +12,24 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     fn emit_class_member_name_preserving_class_expression_name(&mut self, name: NodeIndex) {
+        if self
+            .arena
+            .get(name)
+            .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+            && let Some(ident) = self.arena.get_identifier_at(name)
+        {
+            let private_name = ident.escaped_text.as_str();
+            if private_name.trim_start_matches('#') == "constructor" {
+                if private_name.starts_with('#') {
+                    self.write(private_name);
+                } else {
+                    self.write("#");
+                    self.write(private_name);
+                }
+                return;
+            }
+        }
+
         let prev_alias = self.scoped_class_expression_self_alias.take();
         self.emit(name);
         self.scoped_class_expression_self_alias = prev_alias;

@@ -17,7 +17,8 @@ impl<'a> CheckerContext<'a> {
     /// Returns `None` when:
     /// - the share-owner gate is off (`share_owner_symbol_type_results == false`),
     /// - the bucket has no entry for `(sym_id, file_idx)`, or
-    /// - the cached value is `TypeId::ERROR` / `TypeId::UNKNOWN`.
+    /// - the cached value is `TypeId::ERROR` / `TypeId::UNKNOWN`,
+    /// - the cached non-intrinsic `TypeId` is not interned in this checker.
     pub fn cached_cross_file_symbol_type(
         &self,
         sym_id: SymbolId,
@@ -37,6 +38,9 @@ impl<'a> CheckerContext<'a> {
             cached_type,
             tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
         ) {
+            return None;
+        }
+        if !cached_type.is_intrinsic() && self.types.lookup(cached_type).is_none() {
             return None;
         }
         Some((cached_type, params))
@@ -84,7 +88,8 @@ impl<'a> CheckerContext<'a> {
     /// Returns `None` when:
     /// - the share-owner gate is off,
     /// - the bucket has no entry for `(sym_id, file_idx)`, or
-    /// - the cached value is `TypeId::ERROR` / `TypeId::UNKNOWN`.
+    /// - the cached value is `TypeId::ERROR` / `TypeId::UNKNOWN`,
+    /// - the cached non-intrinsic `TypeId` is not interned in this checker.
     ///
     /// Used by `delegate_cross_arena_interface` (and similar) to skip child
     /// checker construction when a parallel worker has already lowered the
@@ -109,6 +114,9 @@ impl<'a> CheckerContext<'a> {
             cached_type,
             tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
         ) {
+            return None;
+        }
+        if !cached_type.is_intrinsic() && self.types.lookup(cached_type).is_none() {
             return None;
         }
         Some(cached_type)
@@ -160,7 +168,8 @@ impl<'a> CheckerContext<'a> {
     /// Returns `None` when:
     /// - the share-owner gate is off,
     /// - the bucket has no entry for `(file_idx, interface_idx, member_idx)`, or
-    /// - the cached value is `TypeId::ERROR` / `TypeId::UNKNOWN`.
+    /// - the cached value is `TypeId::ERROR` / `TypeId::UNKNOWN`,
+    /// - the cached non-intrinsic `TypeId` is not interned in this checker.
     pub fn cached_cross_file_interface_member_simple_type(
         &self,
         interface_idx: tsz_parser::NodeIndex,
@@ -181,6 +190,9 @@ impl<'a> CheckerContext<'a> {
             cached_type,
             tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
         ) {
+            return None;
+        }
+        if !cached_type.is_intrinsic() && self.types.lookup(cached_type).is_none() {
             return None;
         }
         Some(cached_type)
@@ -229,7 +241,8 @@ impl<'a> CheckerContext<'a> {
     ///
     /// Returns `None` when:
     /// - the share-owner gate is off (`share_owner_symbol_type_results == false`), or
-    /// - the bucket has no entry for `(sym_id, file_idx)`.
+    /// - the bucket has no entry for `(sym_id, file_idx)`, or
+    /// - the cached non-intrinsic `TypeId` is not interned in this checker.
     ///
     /// Note: this helper does **not** filter `TypeId::ERROR` /
     /// `TypeId::UNKNOWN` / `TypeId::ANY`. Class-instance bucket consumers
@@ -247,12 +260,105 @@ impl<'a> CheckerContext<'a> {
         if !self.share_owner_symbol_type_results {
             return None;
         }
-        self.definition_store.get_resolved_cross_file_query(
+        let (cached_type, params) = self.definition_store.get_resolved_cross_file_query(
             crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
             file_idx,
             sym_id.0,
             0,
             0,
-        )
+        )?;
+        if !cached_type.is_intrinsic() && self.types.lookup(cached_type).is_none() {
+            return None;
+        }
+        Some((cached_type, params))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::context::{CheckerContext, CheckerOptions};
+    use tsz_binder::{BinderState, SymbolId};
+    use tsz_parser::parser::{NodeArena, NodeIndex};
+    use tsz_solver::def::DefinitionStore;
+    use tsz_solver::{TypeId, TypeInterner};
+
+    fn shared_context<'a>(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a TypeInterner,
+        store: Arc<DefinitionStore>,
+    ) -> CheckerContext<'a> {
+        let mut ctx = CheckerContext::new_with_shared_def_store(
+            arena,
+            binder,
+            types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+            store,
+        );
+        ctx.share_owner_symbol_type_results = true;
+        ctx
+    }
+
+    #[test]
+    fn cross_file_cache_readers_reject_non_interned_type_ids() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let store = Arc::new(DefinitionStore::new());
+        let ctx = shared_context(&arena, &binder, &types, Arc::clone(&store));
+        let stale_type = TypeId(10_000);
+
+        assert!(types.lookup(stale_type).is_none());
+
+        store.cache_resolved_cross_file_query(
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
+            7,
+            11,
+            0,
+            0,
+            stale_type,
+            Vec::new(),
+        );
+        store.cache_resolved_cross_file_query(
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_TYPE,
+            7,
+            12,
+            0,
+            0,
+            stale_type,
+            Vec::new(),
+        );
+        store.cache_resolved_cross_file_query(
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
+            7,
+            21,
+            22,
+            0,
+            stale_type,
+            Vec::new(),
+        );
+        store.cache_resolved_cross_file_query(
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
+            7,
+            13,
+            0,
+            0,
+            stale_type,
+            Vec::new(),
+        );
+
+        assert_eq!(ctx.cached_cross_file_symbol_type(SymbolId(11), 7), None);
+        assert_eq!(ctx.cached_cross_file_interface_type(SymbolId(12), 7), None);
+        assert_eq!(
+            ctx.cached_cross_file_interface_member_simple_type(NodeIndex(21), NodeIndex(22), 7),
+            None
+        );
+        assert_eq!(
+            ctx.cached_cross_file_class_instance_type(SymbolId(13), 7),
+            None
+        );
     }
 }

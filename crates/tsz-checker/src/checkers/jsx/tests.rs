@@ -1438,6 +1438,63 @@ fn jsx_discriminated_union_props_incompatible_emits_ts2322() {
     );
 }
 
+/// Class component union-props TS2322 should render the synthesized JSX
+/// attributes object as the source, not the component constructor type.
+///
+/// Conformance test: `tsxSpreadAttributesResolution6.tsx`.
+#[test]
+fn jsx_class_union_props_ts2322_uses_attrs_source_display() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicAttributes {}
+            interface IntrinsicClassAttributes<T> {}
+            interface ElementChildrenAttribute { children: {}; }
+            interface IntrinsicElements {}
+        }
+        type ReactNode = string | number | null | undefined;
+        declare class Component<P, S> {
+            constructor(props: P);
+            render(): any;
+            props: P & { children?: ReactNode };
+            state: S;
+        }
+
+        type TextProps = { editable: false }
+                       | { editable: true, onEdit: (newText: string) => void };
+
+        class TextComponent extends Component<TextProps, {}> {
+            render() { return null; }
+        }
+
+        let x = <TextComponent editable={true} />;
+        "#,
+    );
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diagnostics:?}"));
+    assert!(
+        ts2322
+            .message_text
+            .contains("Type '{ editable: true; }' is not assignable to type"),
+        "TS2322 should use the JSX attributes object as source, got: {ts2322:?}"
+    );
+    assert!(
+        !ts2322.message_text.contains("Type 'typeof TextComponent'"),
+        "TS2322 must not use the component constructor as source, got: {ts2322:?}"
+    );
+    assert!(
+        ts2322.message_text.contains("IntrinsicAttributes")
+            && ts2322
+                .message_text
+                .contains("IntrinsicClassAttributes<TextComponent>")
+            && ts2322.message_text.contains("TextProps"),
+        "TS2322 should render the full JSX component target, got: {ts2322:?}"
+    );
+}
+
 /// Multiple JSX children should not emit TS2746 when the children type accepts arrays.
 /// This tests that union types containing an array-like member (e.g. `ReactNode` which
 /// includes `ReactNodeArray`) are correctly recognized as allowing multiple children.

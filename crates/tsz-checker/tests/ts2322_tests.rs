@@ -4687,10 +4687,11 @@ newTextChannel2.phoneNumber = '613-555-1234';
         ts2322.iter().any(
             |(_, message)| message.contains("Type '{ type: T; localChannelId:")
                 && message.contains("}' is not assignable to type 'NewChannel<")
-                && message.contains("ChannelOfType<T, TextChannel>")
-                && message.contains("ChannelOfType<T, EmailChannel>")
+                && message.contains(
+                    "NewChannel<ChannelOfType<T, TextChannel> | ChannelOfType<T, EmailChannel>>"
+                )
         ),
-        "Expected TS2322 to stay on the outer object literal. Got: {diagnostics:?}"
+        "Expected TS2322 to keep the outer object literal and source-order target union. Got: {diagnostics:?}"
     );
     let message = &ts2322[0].1;
     assert!(
@@ -4706,6 +4707,69 @@ newTextChannel2.phoneNumber = '613-555-1234';
             .iter()
             .all(|(_, message)| !message.contains("never[\"type\"]")),
         "Did not expect property-level never[\"type\"] elaboration. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_infinite_constraints_duplicate_value_fingerprints() {
+    let source = r#"
+type AProp<T extends { a: string }> = T
+
+declare function myBug<
+  T extends { [K in keyof T]: T[K] extends AProp<infer U> ? U : never }
+>(arg: T): T
+
+const out = myBug({obj1: {a: "test"}})
+
+type Value<V extends string = string> = Record<"val", V>;
+declare function value<V extends string>(val: V): Value<V>;
+
+declare function ensureNoDuplicates<
+  T extends {
+    [K in keyof T]: Extract<T[K], Value>["val"] extends Extract<T[Exclude<keyof T, K>], Value>["val"]
+      ? never
+      : any
+  }
+>(vals: T): void;
+
+const noError = ensureNoDuplicates({main: value("test"), alternate: value("test2")});
+
+const shouldBeNoError = ensureNoDuplicates({main: value("test")});
+
+const shouldBeError = ensureNoDuplicates({main: value("dup"), alternate: value("dup")});
+"#;
+
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322
+            .iter()
+            .filter(|message| message
+                .contains("Type 'Value<\"dup\">' is not assignable to type 'never'."))
+            .count(),
+        2,
+        "expected two duplicate Value<\"dup\"> TS2322 diagnostics, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|message| !message
+                .contains("Type '{ a: string; }' is not assignable to type 'never'.")),
+        "did not expect recursive AProp inference to produce a false TS2322, got: {diagnostics:?}"
     );
 }
 

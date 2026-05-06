@@ -1290,6 +1290,9 @@ impl<'a> CheckerState<'a> {
         let Some(type_id) = cached else {
             return true;
         };
+        if !type_id.is_intrinsic() && self.ctx.types.lookup(type_id).is_none() {
+            return false;
+        }
         let Some(global_name) = name.strip_suffix("Constructor") else {
             return true;
         };
@@ -1560,6 +1563,10 @@ mod tests {
         assert!(
             checker.cached_lib_type_is_usable("Error", Some(non_constructable)),
             "non-constructor lib cache entries are not filtered by constructability"
+        );
+        assert!(
+            !checker.cached_lib_type_is_usable("Error", Some(TypeId(10_000))),
+            "cached non-intrinsic TypeIds must belong to the current interner"
         );
     }
 }

@@ -1240,12 +1240,17 @@ impl<'a> CheckerState<'a> {
                 // Fall back to assignability for custom array subclasses (e.g.,
                 // `CoolArray<T> extends Array<T>` which is structurally array-like
                 // but not recognized by classify_array_like as a raw Array/Tuple).
-                if !self.is_array_like_type(declared_type) {
+                let array_check_type = resolved;
+                if !self.is_array_like_type(declared_type)
+                    && !self.is_array_like_type(array_check_type)
+                {
                     let factory = self.ctx.types.factory();
                     let any_array = factory.array(TypeId::ANY);
                     let readonly_any_array = factory.readonly_type(any_array);
 
-                    if !self.is_assignable_to(declared_type, readonly_any_array) {
+                    if !self.is_assignable_to(declared_type, readonly_any_array)
+                        && !self.is_assignable_to(array_check_type, readonly_any_array)
+                    {
                         // tsc anchors TS2370 at the parameter (including the
                         // `...` token) rather than at its type annotation or
                         // name.  Use the param node's start position with the

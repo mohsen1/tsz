@@ -98,5 +98,9 @@ path = "tests/parenthesized_type_erasure_tests.rs"
 name = "cjs_arbitrary_module_namespace_identifier_tests"
 path = "tests/cjs_arbitrary_module_namespace_identifier_tests.rs"
 
+[[test]]
+name = "cjs_import_equals_export_tests"
+path = "tests/cjs_import_equals_export_tests.rs"
+
 [lints]
 workspace = true

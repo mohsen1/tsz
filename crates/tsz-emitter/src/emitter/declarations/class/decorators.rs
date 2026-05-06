@@ -6,6 +6,20 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::collect_class_computed_name_this_references;
 use tsz_scanner::SyntaxKind;
 
+enum DecoratorMemberName {
+    Literal(String),
+    Computed { expr: NodeIndex, key: String },
+}
+
+impl DecoratorMemberName {
+    fn dedupe_key(&self) -> String {
+        match self {
+            Self::Literal(text) => text.clone(),
+            Self::Computed { key, .. } => key.clone(),
+        }
+    }
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // Classes — Decorator Helpers
@@ -104,18 +118,18 @@ impl<'a> Printer<'a> {
     /// Get the name of a class member for use in `__decorate` calls.
     /// Handles identifiers, string literals, numeric literals, and computed property
     /// names whose expression is a string literal (e.g. `["method"]`).
-    fn get_decorator_member_name(&self, name_idx: NodeIndex) -> String {
+    fn get_decorator_member_name(&self, name_idx: NodeIndex) -> Option<DecoratorMemberName> {
         if name_idx.is_none() {
-            return String::new();
+            return None;
         }
         // Try identifier first
         let text = self.get_identifier_text_idx(name_idx);
         if !text.is_empty() {
-            return text;
+            return Some(DecoratorMemberName::Literal(text));
         }
         // Check if it's a computed property name
         let Some(name_node) = self.arena.get(name_idx) else {
-            return String::new();
+            return None;
         };
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
             && let Some(cp) = self.arena.get_computed_property(name_node)
@@ -126,24 +140,43 @@ impl<'a> Printer<'a> {
                 if expr_node.kind == SyntaxKind::StringLiteral as u16
                     && let Some(text) = self.arena.get_literal_text(expr_idx)
                 {
-                    return text.to_string();
+                    return Some(DecoratorMemberName::Literal(text.to_string()));
                 }
                 // Numeric literal: [1] → "1"
                 if expr_node.kind == SyntaxKind::NumericLiteral as u16
                     && let Some(text) = self.arena.get_literal_text(expr_idx)
                 {
-                    return text.to_string();
+                    return Some(DecoratorMemberName::Literal(text.to_string()));
                 }
             }
+            let key = {
+                let text = self.get_identifier_text_idx(expr_idx);
+                if text.is_empty() {
+                    format!("computed:{expr_idx:?}")
+                } else {
+                    text
+                }
+            };
+            return Some(DecoratorMemberName::Computed {
+                expr: expr_idx,
+                key,
+            });
         }
         // String/numeric literal directly as property name
         if (name_node.kind == SyntaxKind::StringLiteral as u16
             || name_node.kind == SyntaxKind::NumericLiteral as u16)
             && let Some(text) = self.arena.get_literal_text(name_idx)
         {
-            return text.to_string();
+            return Some(DecoratorMemberName::Literal(text.to_string()));
         }
-        String::new()
+        None
+    }
+
+    fn emit_decorator_member_name(&mut self, member_name: &DecoratorMemberName) {
+        match member_name {
+            DecoratorMemberName::Literal(text) => self.emit_string_literal_text(text),
+            DecoratorMemberName::Computed { expr, .. } => self.emit(*expr),
+        }
     }
 
     /// Collect parameter decorators from a parameter list.
@@ -213,7 +246,7 @@ impl<'a> Printer<'a> {
     /// Returns a string like "String", "Number", "Function", "Object", "void 0", etc.
     /// Uses `self.metadata_class_type_params` for in-scope type parameters; references
     /// to these are serialized as `"Object"` (matching tsc behavior).
-    fn serialize_type_for_metadata(&self, type_idx: NodeIndex) -> String {
+    fn serialize_type_for_metadata(&mut self, type_idx: NodeIndex) -> String {
         let type_param_names = self.metadata_class_type_params.as_deref().unwrap_or(&[]);
         let Some(type_node) = self.arena.get(type_idx) else {
             return "Object".to_string();
@@ -268,6 +301,12 @@ impl<'a> Printer<'a> {
                                 self.commonjs_named_import_substitutions.get(&name)
                         {
                             return substituted.clone();
+                        }
+                        if self.metadata_type_reference_requires_guard(&name) {
+                            let temp = self.make_unique_name_hoisted_assignment();
+                            return format!(
+                                "typeof ({temp} = typeof {name} !== \"undefined\" && {name}) === \"function\" ? {temp} : Object"
+                            );
                         }
                         return name;
                     }
@@ -439,6 +478,12 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn metadata_type_reference_requires_guard(&self, name: &str) -> bool {
+        self.ctx.options.no_lib
+            && self.ctx.options.isolated_modules
+            && !self.ctx.module_state.value_declaration_names.contains(name)
+    }
+
     /// Emit `__metadata("design:type", ...)` for a property.
     /// Caller must have already emitted a trailing comma+newline after decorators.
     fn emit_metadata_for_property(&mut self, type_annotation: NodeIndex) {
@@ -523,7 +568,7 @@ impl<'a> Printer<'a> {
     /// For a rest parameter, serialize the element type of the array type annotation.
     /// e.g., `...args: string[]` → "String", `...args: number[]` → "Number".
     /// If the type is not an array type or has no annotation, returns "Object".
-    fn serialize_rest_param_element_type(&self, type_annotation: NodeIndex) -> String {
+    fn serialize_rest_param_element_type(&mut self, type_annotation: NodeIndex) -> String {
         if let Some(type_node) = self.arena.get(type_annotation)
             && type_node.kind == syntax_kind_ext::ARRAY_TYPE
             && let Some(arr) = self.arena.get_array_type(type_node)
@@ -775,14 +820,14 @@ impl<'a> Printer<'a> {
 
             let is_static = self.arena.is_static(modifiers);
 
-            let member_name = self.get_decorator_member_name(name_idx);
-            if member_name.is_empty() {
+            let Some(member_name) = self.get_decorator_member_name(name_idx) else {
                 continue;
-            }
+            };
+            let member_key = member_name.dedupe_key();
 
             // For getter/setter pairs, tsc emits only one __decorate call
             // for the first accessor that has decorators. Skip the second.
-            if is_accessor && !emitted_accessor_names.insert(member_name.clone()) {
+            if is_accessor && !emitted_accessor_names.insert(member_key) {
                 continue;
             }
 
@@ -868,7 +913,7 @@ impl<'a> Printer<'a> {
                 self.write(".prototype");
             }
             self.write(", ");
-            self.emit_string_literal_text(&member_name);
+            self.emit_decorator_member_name(&member_name);
             if is_property {
                 self.write(", void 0);");
             } else {

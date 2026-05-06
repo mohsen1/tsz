@@ -878,6 +878,7 @@ impl<'a> DeclarationEmitter<'a> {
                             preferred_return.as_deref().unwrap_or(type_text),
                             effective_return_type_id,
                         )
+                        || self.source_return_type_is_function_type_param(func, type_text)
                         || (*substituted_parameter_type_query && !type_text.contains("typeof ")))
                 {
                     self.write(": ");

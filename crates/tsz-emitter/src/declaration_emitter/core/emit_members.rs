@@ -106,6 +106,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         let resolved_computed_name = self.resolved_computed_property_name_text(method.name);
         let is_symbol_computed_name = self.is_symbol_computed_property_name(method.name);
+        let can_emit_computed_method_name =
+            self.computed_method_name_can_preserve_method_syntax(method.name);
+        let computed_name_forces_method_syntax =
+            can_emit_computed_method_name && !method.question_token;
         let computed_key_type = self
             .arena
             .get(method.name)
@@ -124,6 +128,9 @@ impl<'a> DeclarationEmitter<'a> {
             // Well-known symbol names are valid declaration method names even when
             // the symbol expression's type is unavailable in the current cache.
             && !is_symbol_computed_name
+            // Literal/reference computed method names are valid declaration method
+            // names. Keep them as methods unless optional syntax forces a property.
+            && !computed_name_forces_method_syntax
             && (method.question_token || computed_key_requires_property_syntax);
 
         if use_property_syntax {
@@ -220,6 +227,8 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&return_type_text);
+        } else if !is_private && self.method_body_returns_this(method_body) {
+            self.write(": this");
         } else if !is_private
             && let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache)
         {
@@ -309,6 +318,11 @@ impl<'a> DeclarationEmitter<'a> {
         method: &MethodDeclData,
     ) {
         let method_body = method.body;
+        if self.method_body_returns_this(method_body) {
+            self.write("this");
+            return;
+        }
+
         let method_name = method.name;
         if method.type_annotation.is_some() {
             self.emit_type(method.type_annotation);
@@ -381,6 +395,39 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn method_body_returns_this(&self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return false;
+        };
+
+        let mut saw_return_this = false;
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                continue;
+            }
+            let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+                return false;
+            };
+            let Some(expr_idx) = ret.expression.is_some().then_some(ret.expression) else {
+                return false;
+            };
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                return false;
+            };
+            if expr_node.kind != SyntaxKind::ThisKeyword as u16 {
+                return false;
+            }
+            saw_return_this = true;
+        }
+        saw_return_this
+    }
+
     pub(in crate::declaration_emitter) fn write_type_text_with_current_indent(
         &mut self,
         text: &str,
@@ -433,6 +480,29 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         self.get_identifier_text(access.expression).as_deref() == Some("Symbol")
+    }
+
+    fn computed_method_name_can_preserve_method_syntax(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NumericLiteral as u16
+            || expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || expr_node.kind == SyntaxKind::Identifier as u16
+            || expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
     }
 
     pub(in crate::declaration_emitter) fn emit_constructor_declaration(
