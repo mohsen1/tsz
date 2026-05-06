@@ -1064,6 +1064,57 @@ fn test_semantic_diagnostics_respect_inferred_module_none() {
 }
 
 #[test]
+fn test_update_open_changed_files_edits_open_snapshot() {
+    let mut server = make_server();
+    let file = "/a.ts";
+    server
+        .open_files
+        .insert(file.to_string(), "const x: string = \"ok\";".to_string());
+
+    let update_req = make_request(
+        "updateOpen",
+        serde_json::json!({
+            "changedFiles": [{
+                "fileName": file,
+                "textChanges": [{
+                    "start": { "line": 1, "offset": 19 },
+                    "end": { "line": 1, "offset": 23 },
+                    "newText": "1"
+                }]
+            }]
+        }),
+    );
+    let update_resp = server.handle_tsserver_request(update_req);
+    assert!(update_resp.success);
+    assert_eq!(
+        server.open_files.get(file).map(String::as_str),
+        Some("const x: string = 1;"),
+        "updateOpen changedFiles should mutate the open-file snapshot"
+    );
+
+    let diagnostics_req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": file
+        }),
+    );
+    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.get("code").and_then(serde_json::Value::as_u64) == Some(2322)),
+        "semantic diagnostics should use the edited open-file snapshot, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_semantic_diagnostics_skip_inferred_module_none_when_target_supports_imports() {
     let mut server = make_server();
     server.open_files.insert(
