@@ -73,6 +73,13 @@ impl<'a> CheckerState<'a> {
                         .get_property_decl(node)
                         .is_some_and(|prop| prop.initializer.is_some());
                 }
+                // Nested function bodies are checked with their own or lexical `this`;
+                // they are not part of the initializer expression being recovered.
+                syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::FUNCTION_DECLARATION => {
+                    return false;
+                }
                 syntax_kind_ext::METHOD_DECLARATION
                 | syntax_kind_ext::GET_ACCESSOR
                 | syntax_kind_ext::SET_ACCESSOR
