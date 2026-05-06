@@ -2169,8 +2169,11 @@ fn export_conditions(options: &ResolvedCompilerOptions) -> Vec<&'static str> {
     let mut conditions = Vec::new();
     push_condition(&mut conditions, "types");
 
+    // Per tsc 6.0, only Node-targeted resolution kinds get the `node`
+    // condition by default. Bundler mode does NOT default to `browser`;
+    // the user must opt in via `customConditions`.
     match resolution {
-        ModuleResolutionKind::Bundler => push_condition(&mut conditions, "browser"),
+        ModuleResolutionKind::Bundler => {}
         ModuleResolutionKind::Classic
         | ModuleResolutionKind::Node
         | ModuleResolutionKind::Node16
@@ -2219,6 +2222,44 @@ fn push_condition(conditions: &mut Vec<&'static str>, condition: &'static str) {
     if !conditions.contains(&condition) {
         conditions.push(condition);
     }
+}
+
+/// Validates a relative `exports`/`imports` target string per Node.js
+/// PACKAGE_TARGET_RESOLVE.
+///
+/// A valid relative target:
+/// - Starts with `"./"`.
+/// - Contains no `..` path segment (cannot escape the package root).
+/// - Contains no `node_modules` path segment.
+fn is_valid_relative_package_target(target: &str) -> bool {
+    if !target.starts_with("./") {
+        return false;
+    }
+    for segment in target.split('/') {
+        if segment == ".." || segment == "node_modules" {
+            return false;
+        }
+    }
+    true
+}
+
+/// Validates a bare-specifier `imports` target. Bare targets must not be
+/// empty and must not be absolute (Unix `/...`, Windows `\...`/drive paths).
+fn is_valid_bare_imports_target(target: &str) -> bool {
+    if target.is_empty() {
+        return false;
+    }
+    if target.starts_with('/') || target.starts_with('\\') {
+        return false;
+    }
+    if target.starts_with("./") || target.starts_with("../") {
+        return false;
+    }
+    let bytes = target.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' {
+        return false;
+    }
+    true
 }
 
 fn resolve_node_module_specifier(
@@ -2409,13 +2450,16 @@ fn resolve_package_imports_specifier(
             let package_type = package_type_from_json(Some(&package_json));
             for target in resolve_imports_subpath_candidates(imports, module_specifier, &conditions)
             {
-                if (target.starts_with('/') || target.starts_with('.'))
-                    && package_relative_target_path(current, &target).is_none()
-                {
+                let target = target.trim();
+                if target.starts_with("./") {
+                    if package_relative_target_path(current, target).is_none() {
+                        continue;
+                    }
+                } else if !is_valid_bare_imports_target(target) {
                     continue;
                 }
                 if let Some(resolved) =
-                    resolve_package_entry(current, &target, options, package_type, resolution_cache)
+                    resolve_package_entry(current, target, options, package_type, resolution_cache)
                 {
                     return Some(resolved);
                 }
@@ -2424,7 +2468,7 @@ fn resolve_package_imports_specifier(
                 // point to the output directory which doesn't exist at compile time.
                 // Remap back to source files (e.g., "./index.ts").
                 if let Some(resolved) =
-                    try_remap_output_to_source(current, &target, from_file, options)
+                    try_remap_output_to_source(current, target, from_file, options)
                 {
                     return Some(resolved);
                 }
@@ -2740,7 +2784,11 @@ fn resolve_export_entry(
     package_type: Option<PackageType>,
 ) -> Option<PathBuf> {
     let entry = entry.trim();
-    if entry.is_empty() {
+    if !is_valid_relative_package_target(entry) {
+        // Per Node.js PACKAGE_TARGET_RESOLVE, exports targets must be
+        // relative `./...` paths within the package root and must not
+        // contain `..` or `node_modules` segments. Absolute paths and
+        // parent escapes are rejected.
         return None;
     }
     let path = package_relative_target_path(package_root, entry)?;
