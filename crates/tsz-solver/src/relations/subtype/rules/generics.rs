@@ -341,6 +341,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_app = self.interner.type_application(s_app_id);
         let t_app = self.interner.type_application(t_app_id);
 
+        if s_app.args == t_app.args
+            && (s_app.base == t_app.base
+                || self
+                    .shared_application_base_def_id(s_app.base, t_app.base)
+                    .is_some())
+        {
+            return SubtypeResult::True;
+        }
         // Synthetic Promise fallback: when lib resolution cannot find the real Promise
         // symbol, checker-side async lowering uses PROMISE_BASE as the application base.
         // That base has no DefId, variance metadata, or structural body to expand, so the
@@ -441,11 +449,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
                     })
                     .or_else(|| {
-                        crate::relations::variance::compute_type_param_variances_with_resolver(
-                            self.interner,
-                            self.resolver,
-                            def_id,
-                        )
+                        let computed =
+                            crate::relations::variance::compute_type_param_variances_with_resolver(
+                                self.interner,
+                                self.resolver,
+                                def_id,
+                            );
+                        if let (Some(db), Some(variances)) = (self.query_db, computed.as_ref()) {
+                            db.insert_type_param_variance(def_id, variances.clone());
+                        }
+                        computed
                     });
                 if let Some(variances) = variances {
                     // Ensure variance count matches arg count (may differ with defaults)
@@ -710,6 +723,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             (s_app.args.clone(), t_app.args.clone())
         };
 
+        if s_args == t_args {
+            return Some(SubtypeResult::True);
+        }
         use crate::caches::db::QueryDatabase;
         let variances = self
             .resolver
@@ -719,11 +735,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
             })
             .or_else(|| {
-                crate::relations::variance::compute_type_param_variances_with_resolver(
-                    self.interner,
-                    self.resolver,
-                    def_id,
-                )
+                let computed =
+                    crate::relations::variance::compute_type_param_variances_with_resolver(
+                        self.interner,
+                        self.resolver,
+                        def_id,
+                    );
+                if let (Some(db), Some(variances)) = (self.query_db, computed.as_ref()) {
+                    db.insert_type_param_variance(def_id, variances.clone());
+                }
+                computed
             });
         // T<X> <: T<any> is always True when any-propagation is enabled — skip
         // variance computation entirely rather than risking structural expansion.

@@ -1052,6 +1052,9 @@ fn compile_inner(
             .as_ref()
             .and_then(|cfg| cfg.compiler_options.as_ref()),
     )?;
+    let positional_no_config_no_emit =
+        tsconfig_path.is_none() && !args.files.is_empty() && resolved.no_emit;
+
     // Wire removed-but-honored suppress flags from config
     if loaded.suppress_excess_property_errors {
         resolved.checker.suppress_excess_property_errors = true;
@@ -1436,11 +1439,7 @@ fn compile_inner(
         perf_log_phase("parse_no_check", parse_start);
 
         let mut diagnostics = collect_parse_only_no_check_diagnostics(&parse_results, &resolved);
-        if tsconfig_path.is_none()
-            && !args.files.is_empty()
-            && resolved.no_emit
-            && resolved.checker.no_lib
-        {
+        if positional_no_config_no_emit && resolved.checker.no_lib {
             diagnostics.extend(no_lib_core_global_type_diagnostics());
         }
 
@@ -3217,18 +3216,58 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
         return;
     }
     for name in &args.explicitly_disabled_bool_flags {
-        // The empty `"strict"` and `"noErrorTruncation"` arms below are
-        // semantically distinct from each other (one is handled earlier in
-        // the pipeline; the other is a CLI-only display flag that has no
-        // compiler option to toggle), so keep the comments and silence
-        // `clippy::match_same_arms` for this match.
-        #[allow(clippy::match_same_arms)]
-        match name.as_str() {
+        if matches!(
+            name.as_str(),
             // `strict` is handled earlier (just after the `--strict` true
             // expansion) so the strict-family `Option<bool>` overrides that
             // run between can still win over the disable. See the
             // `else if` branch on `args.strict` above.
-            "strict" => {}
+            "strict"
+                // CLI-only display flag; no compiler option to toggle.
+                | "noErrorTruncation"
+                // `inlineSources` has no corresponding `ResolvedCompilerOptions`
+                // field (the CLI flag is parsed for parity but never applied today).
+                | "inlineSources"
+                // Display / build-graph / watch / diagnostic-mode flags don't
+                // round-trip through compiler options; the CLI consumer reads
+                // `args.<field>` directly, so no override is needed here.
+                | "diagnostics"
+                | "extendedDiagnostics"
+                | "explainFiles"
+                | "listFiles"
+                | "listEmittedFiles"
+                | "traceResolution"
+                | "traceDependencies"
+                | "preserveWatchOutput"
+                | "synchronousWatchDirectory"
+                | "watch"
+                | "build"
+                | "build-verbose"
+                | "dry"
+                | "force"
+                | "clean"
+                | "stopBuildOnErrors"
+                | "assumeChangesOnlyAffectDirectDependencies"
+                | "disableReferencedProjectLoad"
+                | "disableSolutionSearching"
+                | "disableSourceOfProjectReferenceRedirect"
+                | "disableSizeLimit"
+                | "init"
+                | "all"
+                | "showConfig"
+                | "ignoreConfig"
+                | "listFilesOnly"
+                | "batch"
+                // Removed/unsupported legacy flags; silently ignore so a leftover
+                // `--foo false` doesn't break compilation.
+                | "keyofStringsOnly"
+                | "noStrictGenericChecks"
+                | "preserveValueImports"
+        ) {
+            continue;
+        }
+
+        match name.as_str() {
             "noEmit" => options.no_emit = false,
             "noEmitOnError" => options.no_emit_on_error = false,
             "noEmitHelpers" => options.printer.no_emit_helpers = false,
@@ -3251,7 +3290,6 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
                 options.checker.no_unchecked_side_effect_imports = false
             }
             "noImplicitUseStrict" => options.checker.no_implicit_use_strict = false,
-            "noErrorTruncation" => { /* CLI-only display flag; no compiler option to toggle */ }
             "exactOptionalPropertyTypes" => options.checker.exact_optional_property_types = false,
             "erasableSyntaxOnly" => options.checker.erasable_syntax_only = false,
             "sound" => options.checker.sound_mode = false,
@@ -3299,10 +3337,6 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
             "emitDeclarationOnly" => options.emit_declaration_only = false,
             "sourceMap" => options.source_map = false,
             "inlineSourceMap" => options.inline_source_map = false,
-            // `inlineSources` has no corresponding `ResolvedCompilerOptions` field
-            // (the CLI flag is parsed for parity but never applied today). Mirror
-            // that — there is nothing to flip back to false.
-            "inlineSources" => {}
             "composite" => options.composite = false,
             "incremental" => options.incremental = false,
             "skipLibCheck" => options.skip_lib_check = false,
@@ -3330,40 +3364,6 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
             "suppressImplicitAnyIndexErrors" => {
                 options.checker.suppress_implicit_any_index_errors = false
             }
-            // Display / build-graph / watch / diagnostic-mode flags don't
-            // round-trip through compiler options — the CLI consumer reads
-            // `args.<field>` directly, so no override is needed here. Listing
-            // them keeps the match exhaustive against the bool-flag set.
-            "diagnostics"
-            | "extendedDiagnostics"
-            | "explainFiles"
-            | "listFiles"
-            | "listEmittedFiles"
-            | "traceResolution"
-            | "traceDependencies"
-            | "preserveWatchOutput"
-            | "synchronousWatchDirectory"
-            | "watch"
-            | "build"
-            | "build-verbose"
-            | "dry"
-            | "force"
-            | "clean"
-            | "stopBuildOnErrors"
-            | "assumeChangesOnlyAffectDirectDependencies"
-            | "disableReferencedProjectLoad"
-            | "disableSolutionSearching"
-            | "disableSourceOfProjectReferenceRedirect"
-            | "disableSizeLimit"
-            | "init"
-            | "all"
-            | "showConfig"
-            | "ignoreConfig"
-            | "listFilesOnly"
-            | "batch" => {}
-            // Removed/unsupported legacy flags — silently ignore so a leftover
-            // `--foo false` doesn't break compilation.
-            "keyofStringsOnly" | "noStrictGenericChecks" | "preserveValueImports" => {}
             _ => {
                 // Unknown name: leave compilation unchanged. The flag is
                 // already validated as a known bool flag in preprocess_args
