@@ -1378,9 +1378,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                // Suppress TS2339/TS2693 when base expression is a property access on an unresolved import
-                // TS2307 was already emitted for the missing module, so we shouldn't
-                // emit additional errors about properties not existing on the import.
+                // TS2307 already covers missing modules; suppress property follow-on noise.
                 if self.is_property_access_on_unresolved_import(access.expression) {
                     return TypeId::ERROR;
                 }
@@ -1397,9 +1395,6 @@ impl<'a> CheckerState<'a> {
                         && self.ctx.compiler_options.check_js
                         && self.property_access_is_write_target_or_base(idx))
                 {
-                    // Emit TS2708 for namespace member access (e.g., ns.Interface())
-                    // This is "Cannot use namespace as a value"
-                    // Get the namespace name from the left side of the access
                     if let Some(ns_name) = type_only_namespace_access_name
                         .or_else(|| self.entity_name_text(access.expression))
                     {
