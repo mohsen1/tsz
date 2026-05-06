@@ -1522,6 +1522,8 @@ impl<'a> Printer<'a> {
                 .collect();
             for name in &self.namespace_current_class_fn_enum_names {
                 local_exports.remove(name);
+                parent_exports.remove(name);
+                ancestor_qualifiers.remove(name);
             }
             if let Some(source_path) = self.current_namespace_source_path.as_ref()
                 && let Some((parent_source_path, _)) = source_path.rsplit_once('.')
@@ -1533,21 +1535,13 @@ impl<'a> Printer<'a> {
                     ancestor_qualifiers.insert(name.clone(), parent_qualifier.clone());
                 }
             }
-            // Merge in exports from prior blocks of the same namespace (cross-block sharing)
-            //
-            // The scope-qualified key distinguishes same-named namespaces at
-            // different scopes (e.g., m1.m2 vs m4.m2). Reopenings at the same
-            // scope share the same parent, so they get the same key.
+            // Merge prior same-scope namespace exports for reopened blocks.
             let class_fn_enum_root_name = if let Some(ref parent) = self.parent_namespace_name {
                 format!("{parent}.{leaf_name}")
             } else {
                 leaf_name.clone()
             };
             if !leaf_name.is_empty() {
-                // Merge prior var exports into local set first: a `var`
-                // declared in an earlier block of the same namespace lives
-                // on the namespace object only (its IIFE has exited), so
-                // any reference here must qualify as `ns.x`.
                 let entry = self
                     .namespace_prior_exports
                     .entry(class_fn_enum_root_name.clone())
@@ -1563,25 +1557,8 @@ impl<'a> Printer<'a> {
                         .extend(local_exports.iter().cloned());
                 }
 
-                // Class/fn/enum names from EARLIER reopenings of this same
-                // namespace must also qualify in this block (their IIFE
-                // has exited too) — but THIS block's own class/fn/enum
-                // declarations stay unqualified, since they're emitted as
-                // locals inside the current IIFE. Tracking these in a
-                // separate map keeps them out of the var-keyed
-                // `namespace_prior_exports` so nested namespaces (which
-                // read parent's var exports as their qualification set)
-                // do NOT see them and keep them unqualified — matching
-                // tsc's reliance on the surrounding IIFE's lexical scope.
-                //
-                // Only merge into local_exports here (so identifier emission
-                // in THIS block sees prior-block class names). The
-                // class_entry.extend(class_fn_enum_names) call that records
-                // THIS block's class/fn/enum names is deferred until AFTER
-                // statement iteration completes (see end of this function),
-                // so that nested namespaces inside this block reading the
-                // parent entry won't see this block's own class/fn/enum
-                // names — those remain in lexical scope and stay unqualified.
+                // Prior class/function/enum exports qualify in reopened blocks;
+                // this block's own declarations are recorded only after emission.
                 let class_entry = self
                     .namespace_prior_class_fn_enum_exports
                     .entry(class_fn_enum_root_name.clone())
@@ -1853,15 +1830,8 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            // Now that statement iteration is complete, record THIS block's
-            // class/fn/enum names so that LATER reopenings of the same
-            // namespace (and nested namespaces inside those later
-            // reopenings) see them as needing qualification. Doing this
-            // AFTER the loop is critical: if we did it before, a nested
-            // namespace inside the current block reading the parent's
-            // class/fn/enum entry would incorrectly see this block's own
-            // class/fn/enum names (which are still in lexical scope as IIFE
-            // locals here) and qualify references that should stay bare.
+            // Record this block's class/fn/enum names only after nested namespaces
+            // have emitted so same-block lexical references stay bare.
             if !leaf_name.is_empty() {
                 if ns_name != leaf_name {
                     self.namespace_prior_class_fn_enum_exports
