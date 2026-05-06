@@ -660,14 +660,11 @@ impl<'a> CheckerState<'a> {
         {
             self.emit_strict_mode_reserved_word_error(var_decl.name, name, true);
         }
-        // TS1100: `eval` or `arguments` used as a variable name in strict mode.
-        // In class bodies, `arguments` is reported as TS1210 instead, so only
-        // emit TS1100 for `eval` there (not `arguments`).
+        // TS1210: `eval` or `arguments` used as a local binding in a class body.
         if !is_ambient
-            && !self.has_syntax_parse_errors()
             && self.is_strict_mode_for_node(var_decl.name)
             && let Some(ref name) = var_name
-            && name.as_str() == "arguments"
+            && crate::state_checking::is_eval_or_arguments(name)
             && in_non_ambient_class
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -685,7 +682,7 @@ impl<'a> CheckerState<'a> {
             && self.is_strict_mode_for_node(var_decl.name)
             && let Some(ref name) = var_name
             && crate::state_checking::is_eval_or_arguments(name)
-            && !(in_non_ambient_class && name.as_str() == "arguments")
+            && !in_non_ambient_class
         {
             self.emit_eval_or_arguments_strict_mode_error(var_decl.name, name);
         }
