@@ -1562,7 +1562,7 @@ impl ParserState {
         if let Some(name_node) = self.arena.get(name)
             && name_node.kind == SyntaxKind::PrivateIdentifier as u16
             && let Some(ident) = self.arena.get_identifier(name_node)
-            && ident.escaped_text == "#constructor"
+            && (ident.escaped_text == "constructor" || ident.escaped_text == "#constructor")
         {
             self.parse_error_at(
                 name_node.pos,
