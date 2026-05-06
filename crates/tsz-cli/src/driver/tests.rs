@@ -2,10 +2,11 @@ use super::FileReadResult;
 use super::check_module_resolution_compatibility;
 use super::check_module_resolution_compatibility_mut;
 use super::compile;
+use super::find_tsconfig;
 use super::no_input_diagnostics_for_config;
 use super::read_source_file;
 use crate::args::CliArgs;
-use crate::config::ResolvedCompilerOptions;
+use crate::config::{CompilerOptions, ResolvedCompilerOptions};
 use clap::Parser;
 use std::fs;
 use std::io::Write;
@@ -66,6 +67,17 @@ const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
                 | 1489
         )
         || matches!(code, 2458 | 2754)
+}
+
+#[test]
+fn find_tsconfig_walks_up_from_project_subdirectory() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let config = dir.path().join("tsconfig.json");
+    fs::write(&config, "{}").expect("write tsconfig");
+    let nested = dir.path().join("packages/zod/src");
+    fs::create_dir_all(&nested).expect("create nested project dir");
+
+    assert_eq!(find_tsconfig(&nested), Some(config));
 }
 
 #[test]
@@ -284,6 +296,66 @@ fn test_invalid_jsx_factory_preserved_verbatim() {
         options.checker.jsx_factory, "my-React-Lib.createElement",
         "Invalid jsxFactory should be preserved (matches tsc reactNamespace behavior)"
     );
+}
+
+#[test]
+fn test_cli_module_resolution_recomputes_package_json_defaults() {
+    let args =
+        CliArgs::try_parse_from(["tsz", "--moduleResolution", "node16", "--module", "node16"])
+            .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert_eq!(
+        options.module_resolution,
+        Some(ModuleResolutionKind::Node16)
+    );
+    assert!(options.resolve_package_json_exports);
+    assert!(options.resolve_package_json_imports);
+    assert!(!options.checker.implied_classic_resolution);
+}
+
+#[test]
+fn test_cli_explicit_package_json_resolution_false_overrides_derived_default() {
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--moduleResolution",
+        "node16",
+        "--module",
+        "node16",
+        "--resolvePackageJsonExports",
+        "false",
+        "--resolvePackageJsonImports",
+        "false",
+    ])
+    .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(!options.resolve_package_json_exports);
+    assert!(!options.resolve_package_json_imports);
+}
+
+#[test]
+fn test_cli_module_resolution_preserves_config_package_json_resolution_false() {
+    let args =
+        CliArgs::try_parse_from(["tsz", "--moduleResolution", "node16", "--module", "node16"])
+            .expect("parse args");
+    let mut options = ResolvedCompilerOptions {
+        resolve_package_json_exports: false,
+        resolve_package_json_imports: false,
+        ..Default::default()
+    };
+    let config_options = CompilerOptions {
+        resolve_package_json_exports: Some(false),
+        resolve_package_json_imports: Some(false),
+        ..Default::default()
+    };
+    super::apply_cli_overrides_with_config_options(&mut options, &args, Some(&config_options))
+        .expect("apply overrides");
+
+    assert!(!options.resolve_package_json_exports);
+    assert!(!options.resolve_package_json_imports);
 }
 
 #[test]

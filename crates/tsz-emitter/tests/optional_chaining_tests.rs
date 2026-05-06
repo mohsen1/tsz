@@ -71,3 +71,16 @@ class Derived extends Base {
         "Single-line body should include inline var declaration.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn concise_arrow_optional_method_call_gets_temp_prologue() {
+    let source = "const typeHandlers = {};\nconst onSomeEvent = (p) => typeHandlers[p.t]?.(p);";
+    let output = emit_es2016(source);
+
+    assert!(
+        output.contains(
+            "const onSomeEvent = (p) => {\n    var _a;\n    return (_a = typeHandlers[p.t]) === null || _a === void 0 ? void 0 : _a.call(typeHandlers, p);\n};"
+        ),
+        "Concise arrow optional-call temp should be declared inside a synthesized block.\nOutput:\n{output}"
+    );
+}
