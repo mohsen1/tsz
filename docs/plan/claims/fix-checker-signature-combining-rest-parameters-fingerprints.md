@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/checker-signature-combining-rest-parameters-fingerprints`
-- **PR**: TBD
+- **PR**: #3642
 - **Status**: claim
 - **Workstream**: 1 (conformance)
 
