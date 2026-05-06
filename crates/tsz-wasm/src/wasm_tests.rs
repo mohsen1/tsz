@@ -354,6 +354,28 @@ fn test_wasm_source_file_factory_contract() {
 }
 
 #[test]
+fn test_source_file_declaration_file_extension_contract() {
+    for file_name in [
+        "index.d.ts",
+        "index.d.mts",
+        "index.d.cts",
+        "style.d.css.ts",
+        "types/INDEX.D.MTS",
+    ] {
+        let source_file = TsSourceFile::new(
+            file_name.to_string(),
+            "declare const value: string;".to_string(),
+        );
+        assert!(source_file.is_declaration_file(), "{file_name}");
+    }
+
+    for file_name in ["index.ts", "index.tsx", "style.css.ts", "index.d.tsx"] {
+        let source_file = TsSourceFile::new(file_name.to_string(), "const value = 1;".to_string());
+        assert!(!source_file.is_declaration_file(), "{file_name}");
+    }
+}
+
+#[test]
 fn test_diagnostic_formatting_contracts() {
     let diagnostic = TsDiagnostic::new(
         Some("mod.ts".to_string()),

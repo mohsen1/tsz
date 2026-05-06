@@ -974,6 +974,31 @@ function format(x) {
 }
 
 #[test]
+fn test_js_function_declaration_emits_constrained_jsdoc_template() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template {string} T
+ * @param {T} x
+ * @returns {T}
+ */
+export function id(x) {
+  return x;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function id<T extends string>(x: T): T;"),
+        "Expected constrained JSDoc template to emit as a type parameter constraint: {output}"
+    );
+    assert!(
+        !output.contains("id<{string}, T>"),
+        "Did not expect braced JSDoc constraint to emit as a fake type parameter: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_exports_fold_into_declarations() {
     let source = r#"
 const x = 1;

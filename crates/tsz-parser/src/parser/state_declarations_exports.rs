@@ -1423,6 +1423,19 @@ impl ParserState {
             .is_some_and(|n| n.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST);
         if init_is_var_decl && self.is_token(SyntaxKind::CloseParenToken) {
             self.parse_expected(SyntaxKind::CommaToken);
+            let statement = self.recover_for_variable_declaration_close_paren_body();
+            let end_pos = self.token_end();
+            return self.arena.add_loop(
+                syntax_kind_ext::FOR_STATEMENT,
+                start_pos,
+                end_pos,
+                LoopData {
+                    initializer,
+                    condition: NodeIndex::NONE,
+                    incrementor: NodeIndex::NONE,
+                    statement,
+                },
+            );
         } else {
             self.parse_expected(SyntaxKind::SemicolonToken);
         }
@@ -1499,6 +1512,61 @@ impl ParserState {
                 condition,
                 incrementor,
                 statement,
+            },
+        )
+    }
+
+    fn recover_for_variable_declaration_close_paren_body(&mut self) -> NodeIndex {
+        self.parse_optional(SyntaxKind::CloseParenToken);
+
+        if !self.is_token(SyntaxKind::OpenBraceToken) {
+            return self.parse_statement();
+        }
+
+        let start_pos = self.token_pos();
+        self.next_token();
+
+        if !matches!(
+            self.token(),
+            SyntaxKind::CloseBraceToken | SyntaxKind::EndOfFileToken
+        ) {
+            if self.is_identifier_or_keyword() {
+                let snapshot = self.scanner.save_state();
+                let current = self.current_token;
+                self.next_token();
+                let identifier_followed_by_call = self.is_token(SyntaxKind::OpenParenToken)
+                    && !self.scanner.has_preceding_line_break();
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                if identifier_followed_by_call {
+                    self.next_token();
+                }
+            }
+            self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+            while !matches!(
+                self.token(),
+                SyntaxKind::CloseBraceToken | SyntaxKind::EndOfFileToken
+            ) {
+                self.next_token();
+            }
+        }
+
+        let end_pos = self.token_end();
+        if self.is_token(SyntaxKind::CloseBraceToken) {
+            self.parse_error_at_current_token(
+                "Expression expected.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            self.next_token();
+        }
+
+        self.arena.add_block(
+            syntax_kind_ext::BLOCK,
+            start_pos,
+            end_pos,
+            BlockData {
+                statements: self.make_node_list(Vec::new()),
+                multi_line: true,
             },
         )
     }

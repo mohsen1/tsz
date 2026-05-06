@@ -32,7 +32,9 @@ use tsz_common::file_extensions::{
     JS_FAMILY_EXTENSIONS, JSON_EXTENSION, TS_FAMILY_EXTENSIONS, is_json_file,
 };
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
-use super::emit::{EmitOutputsContext, emit_outputs, normalize_type_roots, write_outputs};
+use super::emit::{
+    EmitOutputsContext, emit_outputs, normalize_root_dirs, normalize_type_roots, write_outputs,
+};
 pub(crate) use super::emit::{normalize_base_url, normalize_output_dir, normalize_root_dir};
 use super::resolution::{
     ModuleResolutionCache, build_duplicate_package_redirects, canonicalize_or_owned,
@@ -1050,10 +1052,12 @@ fn compile_inner(
     let out_dir = normalize_output_dir(&base_dir, resolved.out_dir.clone());
     let declaration_dir = normalize_output_dir(&base_dir, resolved.declaration_dir.clone());
     let base_url = normalize_base_url(&base_dir, resolved.base_url.clone());
+    let root_dirs = normalize_root_dirs(&base_dir, resolved.root_dirs.clone());
     resolved.root_dir = root_dir.clone();
     resolved.out_dir = out_dir.clone();
     resolved.declaration_dir = declaration_dir.clone();
     resolved.base_url = base_url;
+    resolved.root_dirs = root_dirs;
     resolved.type_roots = normalize_type_roots(&base_dir, resolved.type_roots.clone());
 
     let discovery = build_discovery_options(
@@ -2664,6 +2668,9 @@ fn apply_cli_overrides_with_config_options(
     }
     if let Some(base_url) = args.base_url.as_ref() {
         options.base_url = Some(base_url.clone());
+    }
+    if let Some(root_dirs) = args.root_dirs.as_ref() {
+        options.root_dirs = root_dirs.clone();
     }
     if let Some(declaration_dir) = args.declaration_dir.as_ref() {
         options.declaration_dir = Some(declaration_dir.clone());
