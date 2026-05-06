@@ -2227,7 +2227,7 @@ fn push_condition(conditions: &mut Vec<&'static str>, condition: &'static str) {
 }
 
 /// Validates a relative `exports`/`imports` target string per Node.js
-/// PACKAGE_TARGET_RESOLVE.
+/// `PACKAGE_TARGET_RESOLVE`.
 ///
 /// A valid relative target:
 /// - Starts with `"./"`.

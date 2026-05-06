@@ -94,7 +94,6 @@ where
     };
 
     match value {
-        serde_json::Value::Null => Ok(None),
         serde_json::Value::String(value) => Ok(Some(value)),
         serde_json::Value::Number(number) => {
             let mapped = number

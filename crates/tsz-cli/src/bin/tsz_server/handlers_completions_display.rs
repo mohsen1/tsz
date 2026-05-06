@@ -1058,19 +1058,7 @@ impl Server {
                 "argumentCount": sig_help.argument_count,
             }))
         })();
-        // Always return a body - processResponse asserts !!response.body.
-        // When no signature help is found, return empty items array.
-        // The test-worker converts empty items to undefined.
-        let body = result.unwrap_or_else(|| {
-            serde_json::json!({
-                "items": [],
-                "applicableSpan": { "start": 0, "length": 0 },
-                "selectedItemIndex": 0,
-                "argumentIndex": 0,
-                "argumentCount": 0,
-            })
-        });
-        self.stub_response(seq, request, Some(body))
+        self.stub_response(seq, request, result)
     }
 
     /// Determine the display part kind for a type string.
