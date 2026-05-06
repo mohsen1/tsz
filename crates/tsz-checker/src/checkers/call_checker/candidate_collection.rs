@@ -1013,22 +1013,7 @@ impl<'a> CheckerState<'a> {
         db: &dyn tsz_solver::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
-        use crate::query_boundaries::common;
-
-        if common::readonly_inner_type(db, type_id).is_some() {
-            return false;
-        }
-        if common::array_element_type(db, type_id).is_some() {
-            return true;
-        }
-        if common::tuple_elements(db, type_id).is_some_and(|elements| !elements.is_empty()) {
-            return true;
-        }
-        common::union_members(db, type_id).is_some_and(|members| {
-            members
-                .into_iter()
-                .any(|member| Self::constraint_allows_mutable_array_like(db, member))
-        })
+        crate::query_boundaries::common::constraint_allows_mutable_array_like(db, type_id)
     }
 
     /// Check excess properties on call arguments that are object literals.
