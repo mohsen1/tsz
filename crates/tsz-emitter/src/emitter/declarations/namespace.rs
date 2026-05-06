@@ -1535,6 +1535,10 @@ impl<'a> Printer<'a> {
                     ancestor_qualifiers.insert(name.clone(), parent_qualifier.clone());
                 }
             }
+            for name in &prev_current_class_fn_enum {
+                parent_exports.remove(name);
+                ancestor_qualifiers.remove(name);
+            }
             // Merge prior same-scope namespace exports for reopened blocks.
             let class_fn_enum_root_name = if let Some(ref parent) = self.parent_namespace_name {
                 format!("{parent}.{leaf_name}")
