@@ -95,13 +95,13 @@ impl<'a> DeclarationEmitter<'a> {
         let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?.trim();
         let tuple_start = inner.find("readonly [")?;
         let tuple_body_start = tuple_start + "readonly [".len();
-        let tuple_body_end = inner.find("][number]")?;
+        let tuple_body_end = inner.get(tuple_body_start..)?.find("][number]")? + tuple_body_start;
         let tuple_inner = inner.get(tuple_body_start..tuple_body_end)?;
         let after_number = inner
             .get(tuple_body_end + "][number]".len()..)?
             .trim_start();
-        let after_as_keyword = after_number.strip_prefix("as")?.trim_start();
-        let after_as = after_as_keyword.strip_prefix("Item[")?;
+        let after_as = after_number.strip_prefix("as")?.trim_start();
+        let after_as = after_as.strip_prefix("Item[")?;
         let attr_end = after_as.find(']')?;
         let mut attr_name = after_as
             .get(..attr_end)?
