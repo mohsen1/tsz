@@ -137,6 +137,41 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
+            let indexed_type = factory.index_access(object_type, index_type);
+            let evaluated_indexed_type =
+                if !crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    indexed_type,
+                ) {
+                    Some(
+                        crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
+                            self.ctx.types,
+                            &*self.ctx,
+                            indexed_type,
+                            std::iter::empty(),
+                            false,
+                            self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+                        ),
+                    )
+                } else {
+                    None
+                };
+            if evaluated_indexed_type
+                .as_ref()
+                .is_some_and(|result| result.depth_exceeded)
+            {
+                if let Some(object_node) = self.ctx.arena.get(indexed_access.object_type) {
+                    self.ctx.error(
+                        object_node.pos,
+                        object_node.end - object_node.pos,
+                        crate::diagnostics::diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE
+                            .to_string(),
+                        crate::diagnostics::diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                    );
+                }
+                return TypeId::ERROR;
+            }
+
             // TS2493/TS2339: Check positive out-of-bounds index on tuple/union-of-tuples
             if let Some(inode) = self.ctx.arena.get(indexed_access.index_type)
                 && let Some(index_value) = self
@@ -180,22 +215,58 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
                 // Union of tuples all out of bounds → TS2339
                 // But suppress if object type is ANY/ERROR/conditional/generic (circular reference implicit any)
-                else if object_type != TypeId::ANY
-                    && object_type != TypeId::ERROR
-                    && !crate::query_boundaries::common::is_error_type(self.ctx.types, object_type)
-                    && !crate::query_boundaries::common::is_conditional_type(
-                        self.ctx.types,
-                        object_type,
-                    )
-                    && !crate::query_boundaries::common::is_generic_application(
-                        self.ctx.types,
-                        object_type,
-                    )
-                    && let Some(members) = crate::query_boundaries::common::union_members(
-                        self.ctx.types,
-                        object_for_tuple_check,
-                    )
-                {
+                else if {
+                    let object_is_deferred_or_generic = object_type == TypeId::ANY
+                        || object_type == TypeId::ERROR
+                        || crate::query_boundaries::common::is_error_type(
+                            self.ctx.types,
+                            object_type,
+                        )
+                        || crate::query_boundaries::common::is_conditional_type(
+                            self.ctx.types,
+                            object_type,
+                        )
+                        || crate::query_boundaries::common::is_conditional_type(
+                            self.ctx.types,
+                            object_for_tuple_check,
+                        )
+                        || crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            object_type,
+                        )
+                        || crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            object_for_tuple_check,
+                        )
+                        || crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            object_for_tuple_check,
+                        )
+                        || crate::query_boundaries::common::lazy_def_id(
+                            self.ctx.types,
+                            object_type,
+                        )
+                        .and_then(|def_id| self.ctx.definition_store.get_body(def_id))
+                        .is_some_and(|body| {
+                            crate::query_boundaries::common::is_conditional_type(
+                                self.ctx.types,
+                                body,
+                            ) || crate::query_boundaries::common::is_generic_application(
+                                self.ctx.types,
+                                body,
+                            ) || crate::query_boundaries::common::is_index_access_type(
+                                self.ctx.types,
+                                body,
+                            ) || crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                body,
+                            )
+                        });
+                    !object_is_deferred_or_generic
+                } && let Some(members) = crate::query_boundaries::common::union_members(
+                    self.ctx.types,
+                    object_for_tuple_check,
+                ) {
                     let all_out_of_bounds = !members.is_empty()
                         && members.iter().all(|&m| {
                             if let Some(elems) =
@@ -312,7 +383,29 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     ) || crate::query_boundaries::common::is_generic_application(
                         self.ctx.types,
                         object_type,
+                    ) || crate::query_boundaries::common::is_generic_application(
+                        self.ctx.types,
+                        resolved_object,
                     ) || self.union_contains_application(resolved_object);
+
+                let alias_body_is_deferred =
+                    crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type)
+                        .and_then(|def_id| self.ctx.definition_store.get_body(def_id))
+                        .is_some_and(|body| {
+                            crate::query_boundaries::common::is_conditional_type(
+                                self.ctx.types,
+                                body,
+                            ) || crate::query_boundaries::common::is_generic_application(
+                                self.ctx.types,
+                                body,
+                            ) || crate::query_boundaries::common::is_index_access_type(
+                                self.ctx.types,
+                                body,
+                            ) || crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                body,
+                            )
+                        });
 
                 // Suppress TS2339 when the index type itself contains type parameters.
                 // This handles cases like `Options<State, Actions>[Key]` where Key is a type parameter.
@@ -360,6 +453,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if !is_type_param
                     && !is_error_or_any
                     && !is_generic_application
+                    && !alias_body_is_deferred
                     && !index_has_type_params
                     && !is_lazy_with_potential_generic
                     && !is_conditional
@@ -428,21 +522,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
-            let indexed_type = factory.index_access(object_type, index_type);
-            if !crate::query_boundaries::common::contains_type_parameters(
-                self.ctx.types,
-                indexed_type,
-            ) {
-                let evaluated =
-                    crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
-                        self.ctx.types,
-                        &*self.ctx,
-                        indexed_type,
-                        std::iter::empty(),
-                        false,
-                        self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
-                    )
-                    .result;
+            if let Some(evaluated_result) = evaluated_indexed_type {
+                let evaluated = evaluated_result.result;
                 if evaluated != TypeId::ERROR
                     && evaluated != indexed_type
                     && self.is_full_enum_member_union(evaluated)

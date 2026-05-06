@@ -152,6 +152,44 @@ impl<'a> CheckerState<'a> {
         self.infer_type_appears_as_tuple_rest(cond_extends, cond_true)
     }
 
+    pub(super) fn type_arg_evaluates_to_array_like_infer_result_conditional(
+        &mut self,
+        type_arg: TypeId,
+        inst_constraint: TypeId,
+    ) -> bool {
+        if !self.target_constraint_is_array_like(inst_constraint) {
+            return false;
+        }
+
+        let candidates = [
+            type_arg,
+            self.resolve_lazy_type(type_arg),
+            self.evaluate_type_for_assignability(type_arg),
+        ];
+        candidates.into_iter().any(|candidate| {
+            self.type_is_array_like_infer_result_conditional(candidate, inst_constraint)
+        })
+    }
+
+    fn type_is_array_like_infer_result_conditional(
+        &mut self,
+        type_id: TypeId,
+        inst_constraint: TypeId,
+    ) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let Some((_cond_check, cond_extends, cond_true, cond_false)) =
+            query::full_conditional_type_components(db, type_id)
+        else {
+            return false;
+        };
+        if cond_false != TypeId::NEVER {
+            return false;
+        }
+
+        self.infer_result_satisfies_array_like_constraint(cond_extends, cond_true, inst_constraint)
+            || self.type_is_array_like_infer_result_conditional(cond_true, inst_constraint)
+    }
+
     fn type_is_mapped_key_or_never(&self, type_id: TypeId, key_name: tsz_common::Atom) -> bool {
         if type_id == TypeId::NEVER {
             return true;
