@@ -129,6 +129,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         tsz_solver::visitor::conditional_type_id(interner, base_type).is_none()
+            && !self.type_contains_mapped_type_for_inferred_emit(base_type, interner, 0)
     }
 
     pub(in crate::declaration_emitter) fn should_expand_named_application_for_inferred_declaration(
@@ -140,6 +141,97 @@ impl<'a> DeclarationEmitter<'a> {
         };
         tsz_solver::visitor::application_id(interner, type_id).is_some()
             && !self.should_preserve_named_application_for_inferred_emit(type_id, interner)
+    }
+
+    pub(in crate::declaration_emitter) fn type_text_starts_with_function_local_type_alias(
+        &self,
+        type_text: &str,
+    ) -> bool {
+        let Some(alias_name) = Self::leading_type_reference_name_for_emit(type_text) else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+
+        binder.symbols.iter().any(|symbol| {
+            symbol.escaped_name == alias_name
+                && symbol.flags & symbol_flags::TYPE_ALIAS != 0
+                && self.symbol_is_function_local_type_alias(symbol)
+        })
+    }
+
+    fn leading_type_reference_name_for_emit(type_text: &str) -> Option<&str> {
+        let trimmed = type_text.trim_start();
+        if trimmed.starts_with("import(") || trimmed.starts_with("typeof ") {
+            return None;
+        }
+        let end = trimmed
+            .char_indices()
+            .find_map(|(idx, ch)| {
+                (!(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())).then_some(idx)
+            })
+            .unwrap_or(trimmed.len());
+        if end == 0 {
+            return None;
+        }
+        let name = &trimmed[..end];
+        name.chars()
+            .next()
+            .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
+            .then_some(name)
+    }
+
+    fn type_contains_mapped_type_for_inferred_emit(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        interner: &tsz_solver::TypeInterner,
+        depth: usize,
+    ) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        let Some(type_data) = interner.lookup(type_id) else {
+            return false;
+        };
+
+        match type_data {
+            tsz_solver::types::TypeData::Mapped(_) => true,
+            tsz_solver::types::TypeData::Lazy(def_id) => self
+                .type_cache
+                .as_ref()
+                .and_then(|cache| cache.def_types.get(&def_id.0).copied())
+                .is_some_and(|resolved| {
+                    self.type_contains_mapped_type_for_inferred_emit(resolved, interner, depth + 1)
+                }),
+            tsz_solver::types::TypeData::Application(app_id) => {
+                let app = interner.type_application(app_id);
+                self.type_contains_mapped_type_for_inferred_emit(app.base, interner, depth + 1)
+                    || app.args.iter().copied().any(|arg| {
+                        self.type_contains_mapped_type_for_inferred_emit(arg, interner, depth + 1)
+                    })
+            }
+            tsz_solver::types::TypeData::Union(list_id)
+            | tsz_solver::types::TypeData::Intersection(list_id) => {
+                interner.type_list(list_id).iter().copied().any(|member| {
+                    self.type_contains_mapped_type_for_inferred_emit(member, interner, depth + 1)
+                })
+            }
+            tsz_solver::types::TypeData::Array(elem)
+            | tsz_solver::types::TypeData::ReadonlyType(elem)
+            | tsz_solver::types::TypeData::KeyOf(elem)
+            | tsz_solver::types::TypeData::NoInfer(elem) => {
+                self.type_contains_mapped_type_for_inferred_emit(elem, interner, depth + 1)
+            }
+            tsz_solver::types::TypeData::IndexAccess(object, index) => {
+                self.type_contains_mapped_type_for_inferred_emit(object, interner, depth + 1)
+                    || self.type_contains_mapped_type_for_inferred_emit(index, interner, depth + 1)
+            }
+            tsz_solver::types::TypeData::StringIntrinsic { type_arg, .. } => {
+                self.type_contains_mapped_type_for_inferred_emit(type_arg, interner, depth + 1)
+            }
+            _ => false,
+        }
     }
 
     fn display_alias_for_declaration_emit(
