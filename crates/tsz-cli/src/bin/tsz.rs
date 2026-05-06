@@ -77,6 +77,7 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     }
 
     reject_tsconfig_only_cli_options(&args);
+    reject_build_only_cli_options(&args);
 
     // Handle --showConfig: print resolved configuration
     if args.show_config {
@@ -1671,6 +1672,39 @@ fn reject_tsconfig_only_cli_options(args: &CliArgs) {
                 "error TS6064: Option '{name}' can only be specified in 'tsconfig.json' file or set to 'null' on command line."
             );
             std::process::exit(1);
+        }
+    }
+}
+
+fn reject_build_only_cli_options(args: &CliArgs) {
+    if args.build {
+        return;
+    }
+
+    let explicitly_disabled = |name: &str| {
+        args.explicitly_disabled_bool_flags
+            .iter()
+            .any(|flag| flag == name)
+    };
+
+    for (name, provided) in [
+        (
+            "verbose",
+            args.build_verbose
+                || explicitly_disabled("build-verbose")
+                || explicitly_disabled("verbose"),
+        ),
+        ("dry", args.dry || explicitly_disabled("dry")),
+        ("force", args.force || explicitly_disabled("force")),
+        ("clean", args.clean || explicitly_disabled("clean")),
+        (
+            "stopBuildOnErrors",
+            args.stop_build_on_errors || explicitly_disabled("stopBuildOnErrors"),
+        ),
+    ] {
+        if provided {
+            println!("error TS5093: Compiler option '--{name}' may only be used with '--build'.");
+            std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
         }
     }
 }
