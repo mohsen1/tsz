@@ -568,29 +568,6 @@ impl TypeInterner {
                         return cmp;
                     }
                 }
-                (TypeData::Object(_), TypeData::Object(_))
-                | (TypeData::ObjectWithIndex(_), TypeData::ObjectWithIndex(_))
-                | (TypeData::Object(_), TypeData::ObjectWithIndex(_))
-                | (TypeData::ObjectWithIndex(_), TypeData::Object(_)) => {
-                    // Use pre-fetched symbol/shape data instead of re-looking up
-                    // shapes. Compare option presence as part of the key; falling
-                    // through to allocation order when only one side has a symbol
-                    // can create non-transitive triples with symbol-keyed pairs.
-                    let cmp = Self::compare_optional_u32(a.obj_symbol, b.obj_symbol);
-                    if cmp != Ordering::Equal {
-                        return cmp;
-                    }
-                    let cmp = Self::compare_optional_u32(a.obj_anon_shape, b.obj_anon_shape);
-                    if cmp != Ordering::Equal {
-                        return cmp;
-                    }
-                }
-                (TypeData::Callable(_), TypeData::Callable(_)) => {
-                    let cmp = Self::compare_optional_u32(a.callable_symbol, b.callable_symbol);
-                    if cmp != Ordering::Equal {
-                        return cmp;
-                    }
-                }
                 (TypeData::Application(app1), TypeData::Application(app2)) => {
                     // Keep application ordering total by comparing the stable raw
                     // component key sequence instead of recursing into union-member ordering.
@@ -627,15 +604,6 @@ impl TypeInterner {
         }
 
         a.id.0.cmp(&b.id.0)
-    }
-
-    fn compare_optional_u32(a: Option<u32>, b: Option<u32>) -> std::cmp::Ordering {
-        match (a, b) {
-            (Some(a), Some(b)) => a.cmp(&b),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        }
     }
 
     const fn cached_union_member_rank(member: &CachedUnionMember) -> u8 {
