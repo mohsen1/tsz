@@ -28,6 +28,36 @@ fn emit_es5_with_comments(source: &str) -> String {
     lower_and_print(&parser.arena, root, PrintOptions::es5()).code
 }
 
+#[test]
+fn async_es5_for_loop_captured_let_with_await_uses_loop_generator() {
+    let output = emit_es5(
+        "async function f() {\n\
+             var ar = [];\n\
+             for (let i = 0; i < 1; i++) {\n\
+                 await 1;\n\
+                 ar.push(() => i);\n\
+             }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("var ar, _loop_1, i;"),
+        "Captured loop helper and loop variable should be hoisted.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_loop_1 = function (i)"),
+        "Captured loop body should move into a loop helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [5 /*yield**/, _loop_1(i)];"),
+        "Outer async loop should delegate to the loop helper generator.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("ar.push(function () { return i; });"),
+        "Captured arrow should close over the loop helper parameter.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // Array Destructuring
 // =============================================================================
