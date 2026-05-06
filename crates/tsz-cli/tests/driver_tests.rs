@@ -3644,6 +3644,66 @@ fn compile_no_check_no_emit_is_parse_only() {
 }
 
 #[test]
+fn compile_higher_order_compose_reports_callback_property_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "target": "es2015",
+            "noEmit": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"
+declare class SetOf<A> {
+  transform<B>(transformer: (a: SetOf<A>) => SetOf<B>): SetOf<B>;
+}
+
+declare function compose<A, B, C, D, E>(
+  fnA: (a: SetOf<A>) => SetOf<B>,
+  fnB: (b: SetOf<B>) => SetOf<C>,
+  fnC: (c: SetOf<C>) => SetOf<D>,
+  fnD: (c: SetOf<D>) => SetOf<E>,
+): (x: SetOf<A>) => SetOf<E>;
+
+declare function map<A, B>(fn: (a: A) => B): (s: SetOf<A>) => SetOf<B>;
+declare function filter<A>(predicate: (a: A) => boolean): (s: SetOf<A>) => SetOf<A>;
+
+declare const testSet: SetOf<number>;
+
+testSet.transform(
+  compose(
+    filter(x => x % 1 === 0),
+    map(x => x + x),
+    map(x => 123),
+    map(x => x.toUpperCase())
+  )
+);
+"#,
+    );
+
+    let args = default_args();
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "expected TS2339 for toUpperCase on number from the previous map, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(result.emitted_files.is_empty());
+}
+
+#[test]
 fn compile_promise_is_assignable_to_promise_like_with_default_libs() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
