@@ -444,7 +444,7 @@ fn collect_export_name_from_declaration(
                     && !is_import_alias_referencing_value(
                         arena,
                         import_decl.module_specifier,
-                        _statements,
+                        statements,
                         preserve_const_enums,
                     )
                 {
