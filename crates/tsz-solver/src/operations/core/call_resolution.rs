@@ -555,7 +555,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Shouldn't happen since we iterate up to max_param_count
                 continue;
             } else {
-                param_types_at_pos.sort_unstable_by_key(|id| id.0);
                 self.intersect_union_call_param_types(&param_types_at_pos)
             };
 
@@ -733,7 +732,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             } else if param_types_at_pos.is_empty() {
                 continue;
             } else {
-                param_types_at_pos.sort_unstable_by_key(|id| id.0);
                 let mut result = param_types_at_pos[0];
                 for &pt in &param_types_at_pos[1..] {
                     result = self.interner.intersection2(result, pt);
