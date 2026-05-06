@@ -49,12 +49,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for tp in &func.type_params {
             crate::operations::generic_call::unique_placeholder_name(&mut name_buf);
             let fresh_name = self.interner.intern_string(&name_buf);
-            let fresh_type = self.interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            let fresh_type = self.interner.type_param(TypeParamInfo {
                 name: fresh_name,
                 constraint: None,
                 default: None,
                 is_const: tp.is_const,
-            }));
+            });
             substitution.insert(tp.name, fresh_type);
             fresh_params.push((tp, fresh_name));
         }
