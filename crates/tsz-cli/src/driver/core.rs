@@ -3125,6 +3125,36 @@ fn validate_cli_compiler_option_diagnostics(
             out_file.to_string_lossy().into_owned().into(),
         );
     }
+    if args.declaration {
+        compiler_options.insert("declaration".to_string(), true.into());
+    }
+    if args.emit_declaration_only {
+        compiler_options.insert("emitDeclarationOnly".to_string(), true.into());
+    }
+    if args.declaration_map {
+        compiler_options.insert("declarationMap".to_string(), true.into());
+    }
+    if args.composite {
+        compiler_options.insert("composite".to_string(), true.into());
+    }
+    if args.no_emit {
+        compiler_options.insert("noEmit".to_string(), true.into());
+    }
+    if args.allow_js {
+        compiler_options.insert("allowJs".to_string(), true.into());
+    }
+    if args.experimental_decorators {
+        compiler_options.insert("experimentalDecorators".to_string(), true.into());
+    }
+    if args.emit_decorator_metadata {
+        compiler_options.insert("emitDecoratorMetadata".to_string(), true.into());
+    }
+    if args.isolated_declarations {
+        compiler_options.insert("isolatedDeclarations".to_string(), true.into());
+    }
+    if args.verbatim_module_syntax {
+        compiler_options.insert("verbatimModuleSyntax".to_string(), true.into());
+    }
     if args.downlevel_iteration {
         compiler_options.insert("downlevelIteration".to_string(), true.into());
     }

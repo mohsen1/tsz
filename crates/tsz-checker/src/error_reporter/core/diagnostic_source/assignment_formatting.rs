@@ -43,6 +43,17 @@ impl<'a> CheckerState<'a> {
             return self.format_assignability_type_for_message(source, target);
         }
 
+        if let Some(display) = self.tuple_structural_source_display(source, target) {
+            return display;
+        }
+
+        if let Some(expr_idx) = self.assignment_source_expression(anchor_idx)
+            && let Some(display) =
+                self.array_literal_tuple_source_type_display(expr_idx, source, target)
+        {
+            return display;
+        }
+
         if source == TypeId::UNDEFINED
             && self.ctx.arena.get(anchor_idx).is_some_and(|node| {
                 node.kind == tsz_parser::parser::syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
@@ -86,6 +97,13 @@ impl<'a> CheckerState<'a> {
         {
             let widened = self.widen_type_for_display(source);
             return self.format_assignability_type_for_message(widened, target);
+        }
+
+        if let Some(expr_idx) = self.assignment_source_expression(anchor_idx)
+            && let Some(display) =
+                self.array_literal_tuple_source_type_display(expr_idx, source, target)
+        {
+            return display;
         }
 
         if let Some(display) = self.preferred_evaluated_source_display(source, target) {
@@ -139,6 +157,12 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(display) = self.empty_array_literal_source_type_display(expr_idx) {
+                return display;
+            }
+
+            if let Some(display) =
+                self.array_literal_tuple_source_type_display(expr_idx, source, target)
+            {
                 return display;
             }
 
@@ -295,6 +319,12 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(display) = self.empty_array_literal_source_type_display(expr_idx) {
+                return display;
+            }
+
+            if let Some(display) =
+                self.array_literal_tuple_source_type_display(expr_idx, source, target)
+            {
                 return display;
             }
 

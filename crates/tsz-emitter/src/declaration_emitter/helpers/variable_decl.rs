@@ -193,6 +193,7 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_text = self
                     .expand_portable_mapped_object_text_in_current_context(&type_text)
                     .unwrap_or(type_text);
+                let type_text = Self::normalize_inferred_array_any_text(&type_text);
                 self.write(": ");
                 if keyword == "const"
                     && let Some(formatted) =
@@ -468,6 +469,8 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     selected_type_text
                 };
+                let selected_type_text =
+                    Self::normalize_inferred_array_any_text(&selected_type_text);
                 self.write(": ");
                 self.write(&Self::strip_synthetic_anonymous_object_members(
                     &selected_type_text,
@@ -526,6 +529,14 @@ impl<'a> DeclarationEmitter<'a> {
             current = parent;
         }
         false
+    }
+
+    fn normalize_inferred_array_any_text(type_text: &str) -> String {
+        if type_text.trim() == "Array<any>" {
+            "any[]".to_string()
+        } else {
+            type_text.to_string()
+        }
     }
 
     pub(in crate::declaration_emitter) fn previous_duplicate_variable_declaration_type_text(
