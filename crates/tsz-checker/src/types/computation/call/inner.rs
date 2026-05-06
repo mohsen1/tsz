@@ -2977,4 +2977,319 @@ impl<'a> CheckerState<'a> {
         self.ctx.generic_excess_skip = prev_generic_excess_skip;
         call_result
     }
+
+    fn explicit_identifier_callee_annotation_type(
+        &mut self,
+        callee_expr: NodeIndex,
+    ) -> Option<TypeId> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let callee_node = self.ctx.arena.get(callee_expr)?;
+        if callee_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let initial_sym_id = self
+            .ctx
+            .binder
+            .node_symbols
+            .get(&callee_expr.0)
+            .copied()
+            .or_else(|| self.resolve_identifier_symbol(callee_expr))?;
+        let sym_id = self
+            .ctx
+            .alias_partner_for(self.ctx.binder, initial_sym_id)
+            .unwrap_or(initial_sym_id);
+        let value_declaration = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
+            symbol
+                .value_declaration
+                .is_some()
+                .then_some(symbol.value_declaration)
+                .or_else(|| symbol.declarations.first().copied())
+        })?;
+        let declaration_node = self.ctx.arena.get(value_declaration)?;
+        if declaration_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(declaration_node)?;
+        if var_decl.type_annotation.is_none()
+            || self
+                .find_circular_reference_in_type_node(var_decl.type_annotation, sym_id, false)
+                .is_some()
+        {
+            return None;
+        }
+
+        let annotated_type_node = self.get_type_from_type_node(var_decl.type_annotation);
+        let annotated_type = self.resolve_ref_type(annotated_type_node);
+        if let Some(callable) = self.callable_callee_type_from_candidate(annotated_type) {
+            return Some(callable);
+        }
+
+        if var_decl.initializer.is_some() {
+            let initializer_type = self.get_type_of_node(var_decl.initializer);
+            return self.callable_callee_type_from_candidate(initializer_type);
+        }
+
+        None
+    }
+
+    fn callable_callee_type_from_candidate(&mut self, candidate: TypeId) -> Option<TypeId> {
+        if matches!(candidate, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+
+        let evaluated = self.evaluate_application_type(candidate);
+        let resolved = self.resolve_lazy_type(evaluated);
+        match query::classify_for_call_signatures(self.ctx.types, resolved) {
+            query::CallSignaturesKind::Callable(_)
+            | query::CallSignaturesKind::MultipleSignatures(_) => Some(candidate),
+            query::CallSignaturesKind::NoSignatures => None,
+        }
+    }
+
+    fn report_checked_js_nullable_this_property_method_call(&mut self, callee_expr: NodeIndex) {
+        if !self.is_js_file()
+            || !self.ctx.compiler_options.check_js
+            || !self.ctx.compiler_options.strict_null_checks
+        {
+            return;
+        }
+
+        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
+            return;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return;
+        }
+        let Some(callee_access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return;
+        };
+
+        let receiver_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(callee_access.expression);
+        let Some(receiver_node) = self.ctx.arena.get(receiver_idx) else {
+            return;
+        };
+        if receiver_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return;
+        }
+        let Some(receiver_access) = self.ctx.arena.get_access_expr(receiver_node) else {
+            return;
+        };
+
+        let base_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(receiver_access.expression);
+        if self
+            .ctx
+            .arena
+            .get(base_idx)
+            .is_none_or(|node| node.kind != tsz_scanner::SyntaxKind::ThisKeyword as u16)
+        {
+            return;
+        }
+
+        let receiver_type =
+            if let Some(receiver_type) = self.ctx.node_types.get(&receiver_idx.0).copied() {
+                receiver_type
+            } else {
+                self.get_type_of_node(receiver_idx)
+            };
+        let receiver_type = self.evaluate_type_with_env(receiver_type);
+        let (_, cause) = self.split_nullish_type(receiver_type);
+        let Some(cause) = cause else {
+            return;
+        };
+
+        let Some(receiver_span) = self
+            .ctx
+            .arena
+            .get(receiver_idx)
+            .map(|node| (node.pos, node.end))
+        else {
+            return;
+        };
+
+        let (code, message) = if cause == TypeId::NULL {
+            (
+                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL,
+                crate::diagnostics::diagnostic_messages::OBJECT_IS_POSSIBLY_NULL,
+            )
+        } else if cause == TypeId::UNDEFINED {
+            (
+                diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED,
+                crate::diagnostics::diagnostic_messages::OBJECT_IS_POSSIBLY_UNDEFINED,
+            )
+        } else {
+            (
+                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
+                crate::diagnostics::diagnostic_messages::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
+            )
+        };
+
+        let already_reported = self.ctx.diagnostics.iter().any(|diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL
+                    | diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED
+                    | diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED
+                    | diagnostic_codes::IS_POSSIBLY_NULL
+                    | diagnostic_codes::IS_POSSIBLY_UNDEFINED
+                    | diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED
+            ) && diag.start >= receiver_span.0
+                && diag.start < receiver_span.1
+        });
+        if !already_reported {
+            self.error_at_node(receiver_idx, message, code);
+        }
+    }
+
+    fn emit_nominal_lib_object_callback_return_errors(
+        &mut self,
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+        finalized_contextual_param_types: Option<&[Option<TypeId>]>,
+        base_contextual_param_types: &[Option<TypeId>],
+        callee_shape: Option<&FunctionShape>,
+    ) {
+        for (i, &arg_idx) in args.iter().enumerate() {
+            let Some(return_expr) = self.unannotated_zero_param_callback_return_expression(arg_idx)
+            else {
+                continue;
+            };
+            let Some(body_node) = self.ctx.arena.get(return_expr) else {
+                continue;
+            };
+            if body_node.kind == syntax_kind_ext::BLOCK
+                || self.has_diagnostic_code_within_span(
+                    body_node.pos,
+                    body_node.end,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                )
+            {
+                continue;
+            }
+
+            let mut expected = finalized_contextual_param_types
+                .and_then(|types| types.get(i).copied().flatten())
+                .and_then(|ty| self.nominal_lib_object_callback_return_type(ty))
+                .or_else(|| {
+                    base_contextual_param_types
+                        .get(i)
+                        .copied()
+                        .flatten()
+                        .and_then(|ty| self.nominal_lib_object_callback_return_type(ty))
+                });
+
+            if expected.is_none()
+                && let Some(shape) = callee_shape
+                && let Some(param_type) = shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                    let last = shape.params.last()?;
+                    last.rest.then_some(last.type_id)
+                })
+            {
+                expected = self.nominal_lib_object_callback_return_type(param_type);
+            }
+
+            let Some(expected) = expected else {
+                continue;
+            };
+
+            let Some(actual) = arg_types
+                .get(i)
+                .copied()
+                .and_then(|ty| self.callback_return_type_from_type(ty))
+            else {
+                continue;
+            };
+            if matches!(actual, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                continue;
+            }
+
+            let actual_for_check = common::widen_type(self.ctx.types, actual);
+            if !matches!(
+                actual_for_check,
+                TypeId::STRING
+                    | TypeId::NUMBER
+                    | TypeId::BOOLEAN
+                    | TypeId::BIGINT
+                    | TypeId::SYMBOL
+                    | TypeId::NULL
+                    | TypeId::UNDEFINED
+            ) && !common::is_primitive_type(self.ctx.types, actual_for_check)
+            {
+                continue;
+            }
+            if self.is_assignable_to_with_env(actual_for_check, expected) {
+                continue;
+            }
+
+            let source_display = self.format_type_diagnostic(actual_for_check);
+            let target_display = self.format_type_diagnostic(expected);
+            let message = crate::diagnostics::format_message(
+                crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_display, &target_display],
+            );
+            self.ctx.error(
+                body_node.pos,
+                body_node.end.saturating_sub(body_node.pos),
+                message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
+    }
+
+    fn nominal_lib_object_callback_return_type(&mut self, callback_type: TypeId) -> Option<TypeId> {
+        let callback_shape = call_checker::get_contextual_signature(self.ctx.types, callback_type)
+            .or_else(|| {
+                common::function_shape_for_type(self.ctx.types, callback_type).map(|s| {
+                    let shape = (*s).clone();
+                    FunctionShape {
+                        type_params: shape.type_params,
+                        params: shape.params,
+                        this_type: shape.this_type,
+                        return_type: shape.return_type,
+                        type_predicate: shape.type_predicate,
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
+                    }
+                })
+            })?;
+        self.nominal_lib_object_type(callback_shape.return_type)
+    }
+
+    fn callback_return_type_from_type(&mut self, callback_type: TypeId) -> Option<TypeId> {
+        call_checker::get_contextual_signature(self.ctx.types, callback_type)
+            .map(|shape| shape.return_type)
+            .or_else(|| {
+                common::function_shape_for_type(self.ctx.types, callback_type)
+                    .map(|shape| shape.return_type)
+            })
+    }
+
+    fn nominal_lib_object_type(&mut self, ty: TypeId) -> Option<TypeId> {
+        let ty = if let Some(info) = common::type_param_info(self.ctx.types, ty) {
+            info.constraint?
+        } else {
+            ty
+        };
+        let name = self.format_type_diagnostic(ty);
+        if !matches!(
+            name.as_str(),
+            "Window" | "Document" | "Element" | "HTMLElement" | "Event" | "EventTarget"
+        ) {
+            return None;
+        }
+        let evaluated = self.evaluate_type_with_env(ty);
+        let expected = if evaluated == TypeId::ANY && ty != TypeId::ANY {
+            ty
+        } else {
+            evaluated
+        };
+        (!matches!(expected, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)).then_some(expected)
+    }
 }

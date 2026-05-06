@@ -1197,3 +1197,4 @@ mod constraint_validation;
 mod infer_conditional_constraints;
 mod instantiation_expression_constraints;
 mod mapped_constraint_helpers;
+mod symbol_declaration_helpers;
