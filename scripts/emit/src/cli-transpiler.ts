@@ -81,6 +81,9 @@ interface CompilerFlagOptions {
 // two stay in lockstep — previously the retry path silently dropped
 // --strictNullChecks (and was at structural risk of dropping any future flag).
 function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): void {
+  // alwaysStrict defaults to true in tsz (matching TS6+). For test variants
+  // that explicitly want alwaysStrict=false, we must forward the flag;
+  // dropping it would re-default to true and emit a spurious "use strict".
   if (opts.alwaysStrict !== undefined) {
     args.push('--alwaysStrict', opts.alwaysStrict ? 'true' : 'false');
     if (!opts.alwaysStrict) args.push('--ignoreDeprecations', '6.0');
