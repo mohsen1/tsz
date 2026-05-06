@@ -1575,6 +1575,28 @@ fn test_unrecognized_command() {
     );
 }
 
+#[test]
+fn test_watch_change_is_unrecognized() {
+    let mut server = make_server();
+    let req = make_request(
+        "watchChange",
+        serde_json::json!({
+            "id": 1,
+            "created": ["/tmp/x.ts"],
+            "changed": [],
+            "deleted": [],
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+
+    assert!(!resp.success);
+    assert!(
+        resp.message
+            .unwrap()
+            .contains("Unrecognized command: watchChange")
+    );
+}
+
 /// Helper to validate that a JSON value has valid tsserver start/end spans.
 fn assert_valid_span(value: &serde_json::Value, context: &str) {
     let start = value.get("start");
