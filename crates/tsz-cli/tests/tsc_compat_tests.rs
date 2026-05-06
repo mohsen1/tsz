@@ -2085,6 +2085,46 @@ fn tsc_parity_show_config_node16_resolve_json_false() {
 }
 
 #[test]
+fn show_config_check_js_implied_allow_js_includes_js_files() {
+    let temp = TempDir::new("show_config_checkjs_allowjs_files").expect("temp dir");
+    write_file(&temp.path.join("src/a.js"), "module.exports = 1;\n");
+    write_file(&temp.path.join("src/b.ts"), "const x: number = 1;\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"checkJs":true},"include":["src"]}"#,
+    );
+
+    let output = run_tsz(&temp.path, &["--showConfig"]).expect("tsz should run");
+    let json: serde_json::Value = serde_json::from_str(&output)
+        .unwrap_or_else(|_| panic!("invalid showConfig JSON:\n{output}"));
+    let options = json
+        .get("compilerOptions")
+        .and_then(|value| value.as_object())
+        .unwrap_or_else(|| panic!("missing compilerOptions in showConfig output:\n{output}"));
+    let files: Vec<_> = json
+        .get("files")
+        .and_then(|value| value.as_array())
+        .unwrap_or_else(|| panic!("missing files in showConfig output:\n{output}"))
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+
+    assert_eq!(
+        options.get("allowJs"),
+        Some(&serde_json::Value::Bool(true)),
+        "showConfig should print implied allowJs: {output}"
+    );
+    assert!(
+        files.iter().any(|file| file.ends_with("src/a.js")),
+        "showConfig files should include JS discovered via implied allowJs: {output}"
+    );
+    assert!(
+        files.iter().any(|file| file.ends_with("src/b.ts")),
+        "showConfig files should keep TS files too: {output}"
+    );
+}
+
+#[test]
 fn show_config_rejects_tsconfig_only_cli_options() {
     let temp = TempDir::new("show_config_tsconfig_only_cli_options").expect("temp dir");
     write_file(&temp.path.join("index.ts"), "export {};\n");

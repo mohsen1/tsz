@@ -1932,7 +1932,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     // We need resolved options for file discovery (allow_js, out_dir).
     let resolved = resolve_compiler_options(raw_opts).ok();
-    let allow_js = raw_opts.and_then(|o| o.allow_js).unwrap_or(false) || args.allow_js;
+    let allow_js = resolved.as_ref().is_some_and(|r| r.allow_js) || args.allow_js || args.check_js;
     let out_dir = args
         .out_dir
         .clone()
