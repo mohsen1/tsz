@@ -1475,7 +1475,14 @@ impl<'a> EnumES5Emitter<'a> {
             None => return String::new(),
         };
 
-        let mut printer = IRPrinter::new();
+        // ASTRef nodes (used for string literals to preserve source quote
+        // style) require both arena and source text to print; without them
+        // the printer falls back to "undefined".
+        let arena = self.transformer.arena;
+        let mut printer = match self.transformer.source_text {
+            Some(text) => IRPrinter::with_arena_and_source(arena, text),
+            None => IRPrinter::with_arena(arena),
+        };
         printer.set_indent_level(self.indent_level);
         let result = printer.emit(&ir);
         result.to_string()
