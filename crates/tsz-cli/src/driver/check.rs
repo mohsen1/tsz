@@ -1139,7 +1139,7 @@ pub(super) fn collect_diagnostics(
         project_env.build_global_indices();
     }
     // Build the shared SymbolId→file-index map once; shared via Arc across all checkers.
-    // TODO: build_global_symbol_file_index not yet implemented on ProjectEnv
+    project_env.build_global_symbol_file_index();
 
     // Create a shared DefinitionStore for all parallel checkers.
     // CRITICAL: All parallel checkers MUST share the same DefinitionStore so that
