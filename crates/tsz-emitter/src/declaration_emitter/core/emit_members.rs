@@ -753,7 +753,9 @@ impl<'a> DeclarationEmitter<'a> {
                             // include it (avoid `Type | undefined | undefined`).
                             let full = self.writer.get_output();
                             let type_text = &full[before_type..];
-                            if !type_text.ends_with("| undefined") {
+                            if !type_text.ends_with("| undefined")
+                                && !Self::type_text_has_undefined_branch(type_text)
+                            {
                                 self.write(" | undefined");
                             }
                         }
