@@ -2294,10 +2294,9 @@ impl<'a> CheckerState<'a> {
             member_id
         };
 
-        let resolve_from_exports = |exports: &tsz_binder::SymbolTable,
-                                    visited_aliases: &mut AliasCycleTracker|
+        let resolve_from_export_equals_sym = |export_equals_sym: tsz_binder::SymbolId,
+                                              visited_aliases: &mut AliasCycleTracker|
          -> Option<tsz_binder::SymbolId> {
-            let export_equals_sym = exports.get("export=")?;
             if export_name == "default" {
                 return Some(export_equals_sym);
             }
@@ -2376,6 +2375,12 @@ impl<'a> CheckerState<'a> {
             }
 
             None
+        };
+        let resolve_from_exports = |exports: &tsz_binder::SymbolTable,
+                                    visited_aliases: &mut AliasCycleTracker|
+         -> Option<tsz_binder::SymbolId> {
+            let export_equals_sym = exports.get("export=")?;
+            resolve_from_export_equals_sym(export_equals_sym, visited_aliases)
         };
 
         let candidates = module_specifier_candidates(module_specifier);
@@ -2465,10 +2470,8 @@ impl<'a> CheckerState<'a> {
                     for &(file_idx, export_equals_sym_id) in entries {
                         self.ctx
                             .register_symbol_file_target(export_equals_sym_id, file_idx);
-                        let mut export_equals_only = tsz_binder::SymbolTable::new();
-                        export_equals_only.set("export=".to_string(), export_equals_sym_id);
                         if let Some(sym_id) =
-                            resolve_from_exports(&export_equals_only, visited_aliases)
+                            resolve_from_export_equals_sym(export_equals_sym_id, visited_aliases)
                         {
                             return Some(sym_id);
                         }
