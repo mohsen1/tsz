@@ -81,7 +81,10 @@ interface CompilerFlagOptions {
 // two stay in lockstep — previously the retry path silently dropped
 // --strictNullChecks (and was at structural risk of dropping any future flag).
 function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): void {
-  if (opts.alwaysStrict) args.push('--alwaysStrict', 'true');
+  if (opts.alwaysStrict !== undefined) {
+    args.push('--alwaysStrict', opts.alwaysStrict ? 'true' : 'false');
+    if (!opts.alwaysStrict) args.push('--ignoreDeprecations', '6.0');
+  }
   if (opts.sourceMap) args.push('--sourceMap');
   if (opts.inlineSourceMap) args.push('--inlineSourceMap');
   if (opts.declarationMap) args.push('--declarationMap');
@@ -270,7 +273,7 @@ export class CliTranspiler {
     const {
       sourceFileName,
       declaration = false,
-      alwaysStrict = false,
+      alwaysStrict,
       sourceMap = false,
       inlineSourceMap = false,
       declarationMap = false,
