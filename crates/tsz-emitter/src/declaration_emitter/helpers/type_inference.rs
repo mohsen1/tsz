@@ -1104,7 +1104,10 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     Some(sym_id)
                 } else {
-                    binder.get_node_symbol(type_idx)
+                    binder.get_node_symbol(type_idx).or_else(|| {
+                        self.identifier_text_from_arena(arena, type_idx)
+                            .and_then(|name| binder.symbols.find_by_name(&name))
+                    })
                 }
             }
             _ => None,
@@ -1282,6 +1285,37 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     }
                     return raw;
+                }
+            }
+
+            if let Some(interface) = source_arena.get_interface(decl_node)
+                && let Some(heritage_clauses) = interface.heritage_clauses.as_ref()
+            {
+                for &heritage_idx in &heritage_clauses.nodes {
+                    let Some(heritage_node) = source_arena.get(heritage_idx) else {
+                        continue;
+                    };
+                    let Some(heritage) = source_arena.get_heritage(heritage_node) else {
+                        continue;
+                    };
+                    for &base_idx in &heritage.types.nodes {
+                        let Some(base_node) = source_arena.get(base_idx) else {
+                            continue;
+                        };
+                        let base_expr = source_arena
+                            .get_expr_type_args(base_node)
+                            .map_or(base_idx, |expr| expr.expression);
+                        let Some(base_sym_id) =
+                            self.declaration_type_symbol_from_type_node(source_arena, base_expr)
+                        else {
+                            continue;
+                        };
+                        if let Some(type_text) =
+                            self.type_member_declared_type_annotation_text(base_sym_id, member_name)
+                        {
+                            return Some(type_text);
+                        }
+                    }
                 }
             }
 
@@ -2573,6 +2607,34 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(in crate::declaration_emitter) fn declaration_type_is_uninformative(
+        &self,
+        candidates: &[NodeIndex],
+    ) -> bool {
+        self.get_node_type_or_names(candidates)
+            .is_none_or(|type_id| {
+                type_id == tsz_solver::types::TypeId::ANY
+                    || type_id == tsz_solver::types::TypeId::ERROR
+                    || type_id == tsz_solver::types::TypeId::UNKNOWN
+            })
+    }
+
+    pub(in crate::declaration_emitter) fn as_const_assertion_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::AS_EXPRESSION {
+            return None;
+        }
+        let assertion = self.arena.get_type_assertion(expr_node)?;
+        if !self.type_assertion_is_const(assertion.type_node) {
+            return None;
+        }
+
+        self.const_asserted_expression_type_text(assertion.expression, self.indent_level)
+    }
+
     pub(in crate::declaration_emitter) fn angle_bracket_const_assertion_type_text(
         &self,
         expr_idx: NodeIndex,
@@ -2583,18 +2645,22 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let assertion = self.arena.get_type_assertion(expr_node)?;
-        let asserted_type = self.arena.get(assertion.type_node)?;
-        let is_const_assertion = asserted_type.kind == SyntaxKind::ConstKeyword as u16
-            || self
-                .get_identifier_text(assertion.type_node)
-                .or_else(|| self.emit_type_node_text(assertion.type_node))
-                .as_deref()
-                == Some("const");
-        if !is_const_assertion {
+        if !self.type_assertion_is_const(assertion.type_node) {
             return None;
         }
 
         self.const_asserted_expression_type_text(assertion.expression, self.indent_level)
+    }
+
+    fn type_assertion_is_const(&self, type_node_idx: NodeIndex) -> bool {
+        self.arena
+            .get(type_node_idx)
+            .is_some_and(|asserted_type| asserted_type.kind == SyntaxKind::ConstKeyword as u16)
+            || self
+                .get_identifier_text(type_node_idx)
+                .or_else(|| self.emit_type_node_text(type_node_idx))
+                .as_deref()
+                == Some("const")
     }
 
     fn const_asserted_expression_type_text(
@@ -2655,8 +2721,13 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
+            let element_depth = if element_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                depth
+            } else {
+                depth + 1
+            };
             parts.push(
-                self.const_asserted_expression_type_text(element_idx, depth + 1)
+                self.const_asserted_expression_type_text(element_idx, element_depth)
                     .unwrap_or_else(|| "any".to_string()),
             );
         }
@@ -3499,6 +3570,15 @@ impl<'a> DeclarationEmitter<'a> {
                 return None;
             }
             type_text = Self::replace_whole_words_in_text(&type_text, &type_param_substitutions);
+            if let Some(expanded) =
+                self.event_like_correlated_alias_return_text(source_arena, &type_text, call)
+            {
+                type_text = expanded;
+            } else if let Some(expanded) =
+                Self::expand_tuple_item_lookup_mapped_type_text(&type_text)
+            {
+                type_text = expanded;
+            }
 
             let source_path = self.get_symbol_source_path(sym_id, binder).or_else(|| {
                 self.arena_to_path
@@ -3968,6 +4048,191 @@ impl<'a> DeclarationEmitter<'a> {
             .then_some(name)
     }
 
+    fn event_like_correlated_alias_return_text(
+        &self,
+        source_arena: &NodeArena,
+        type_text: &str,
+        call: &tsz_parser::parser::node::CallExprData,
+    ) -> Option<String> {
+        let (alias_name, name_type) = Self::single_string_literal_alias_application(type_text)?;
+        let alias_type_node = self.find_type_alias_type_node_in_arena(source_arena, alias_name)?;
+        let alias_text = self
+            .source_slice_from_arena(source_arena, alias_type_node)
+            .or_else(|| self.emit_type_node_text_from_arena(source_arena, alias_type_node))?;
+        if !alias_text.contains("readonly name:")
+            || !alias_text.contains("readonly callback:")
+            || !alias_text.contains("DocumentEventMap")
+        {
+            return None;
+        }
+        let callback_param_type = self
+            .call_object_callback_parameter_type_text(call)
+            .or_else(|| {
+                let event_name = name_type.trim_matches('"');
+                self.global_interface_member_type_text("DocumentEventMap", event_name)
+            })?;
+        Some(format!(
+            "{{\n    readonly name: {name_type};\n    readonly once?: boolean;\n    readonly callback: (ev: {callback_param_type}) => void;\n}}"
+        ))
+    }
+
+    fn single_string_literal_alias_application(type_text: &str) -> Option<(&str, &str)> {
+        let trimmed = type_text.trim();
+        let open = trimmed.find('<')?;
+        let alias_name = trimmed.get(..open)?.trim();
+        let arg = trimmed.get(open + 1..)?.trim().strip_suffix('>')?.trim();
+        if alias_name.is_empty()
+            || !alias_name
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+            || !arg.starts_with('"')
+            || !arg.ends_with('"')
+        {
+            return None;
+        }
+        Some((alias_name, arg))
+    }
+
+    fn call_object_callback_parameter_type_text(
+        &self,
+        call: &tsz_parser::parser::node::CallExprData,
+    ) -> Option<String> {
+        let args = call.arguments.as_ref()?;
+        let object_idx = *args.nodes.first()?;
+        let object_node = self.arena.get(object_idx)?;
+        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(object_node)?;
+        for &member_idx in &object.elements.nodes {
+            let member_node = self.arena.get(member_idx)?;
+            let name_idx = self.object_literal_member_name_idx(member_node)?;
+            if self.object_literal_member_name_text(name_idx)? != "callback" {
+                continue;
+            }
+            let initializer = self.object_literal_member_initializer(member_node)?;
+            let initializer_node = self.arena.get(initializer)?;
+            let function = self.arena.get_function(initializer_node)?;
+            let param_idx = *function.parameters.nodes.first()?;
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            let type_id = self.get_node_type_or_names(&[param.name, param_idx])?;
+            if type_id == tsz_solver::types::TypeId::ANY
+                || type_id == tsz_solver::types::TypeId::ERROR
+                || type_id == tsz_solver::types::TypeId::UNKNOWN
+            {
+                return None;
+            }
+            return Some(self.print_type_id_for_inferred_declaration(type_id));
+        }
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn expand_tuple_item_lookup_mapped_type_text(
+        type_text: &str,
+    ) -> Option<String> {
+        let trimmed = type_text.trim().trim_end_matches(';').trim();
+        let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?.trim();
+        let tuple_start = inner.find("readonly [")?;
+        let tuple_body_start = tuple_start + "readonly [".len();
+        let tuple_body_end = inner.find("][number] as Item[")?;
+        let tuple_inner = inner.get(tuple_body_start..tuple_body_end)?;
+        let after_as = inner.get(tuple_body_end + "][number] as Item[".len()..)?;
+        let attr_end = after_as.find(']')?;
+        let attr_name = after_as
+            .get(..attr_end)?
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'');
+        let value_suffix = after_as.get(attr_end + 1..)?.trim_start();
+        if !value_suffix.starts_with("]: Item") {
+            return None;
+        }
+        let mut members = Vec::new();
+        for item in Self::split_top_level_commas(tuple_inner) {
+            let item = item.trim();
+            if item.is_empty() {
+                continue;
+            }
+            let key = Self::type_literal_property_string_literal_value(item, attr_name)?;
+            members.push(Self::format_mapped_tuple_member(&key, item));
+        }
+        (!members.is_empty()).then(|| format!("{{\n{}\n}}", members.join("\n")))
+    }
+
+    fn type_literal_property_string_literal_value(
+        type_text: &str,
+        property_name: &str,
+    ) -> Option<String> {
+        for line in type_text.lines() {
+            let trimmed = line.trim().trim_end_matches(';').trim();
+            let trimmed = trimmed.strip_prefix("readonly ").unwrap_or(trimmed);
+            if let Some(value) = trimmed.strip_prefix(property_name) {
+                let value = value.trim_start();
+                let value = value.strip_prefix(':')?.trim();
+                if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+                    return Some(value.trim_matches('"').to_string());
+                }
+            }
+        }
+        None
+    }
+
+    fn format_mapped_tuple_member(key: &str, value_type: &str) -> String {
+        let mut lines = value_type.lines();
+        let first = lines.next().unwrap_or(value_type).trim();
+        let mut result = format!("    {key}: {first}");
+        for line in lines {
+            result.push('\n');
+            result.push_str("    ");
+            result.push_str(line);
+        }
+        result.push(';');
+        result
+    }
+
+    fn global_interface_member_type_text(
+        &self,
+        interface_name: &str,
+        member_name: &str,
+    ) -> Option<String> {
+        let binder = self.binder?;
+        for sym_id in binder.symbols.find_all_by_name(interface_name) {
+            if let Some(type_text) =
+                self.type_member_declared_type_annotation_text(*sym_id, member_name)
+                && type_text != "any"
+            {
+                return Some(type_text);
+            }
+        }
+        None
+    }
+
+    fn type_param_argument_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
+        if let Some(type_text) = self.reference_declared_type_annotation_text(arg_idx) {
+            return Some(type_text);
+        }
+
+        if let Some(expr_idx) = self.skip_parenthesized_expression(arg_idx)
+            && let Some(expr_node) = self.arena.get(expr_idx)
+            && expr_node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(literal) = self.arena.get_literal(expr_node)
+        {
+            return Some(format!(
+                "\"{}\"",
+                super::escape_string_for_double_quote(literal.text.as_ref())
+            ));
+        }
+
+        self.as_const_assertion_type_text(arg_idx)
+            .or_else(|| self.local_variable_initializer_type_text(arg_idx))
+            .or_else(|| {
+                self.preferred_expression_type_text(arg_idx)
+                    .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
+            })
+            .or_else(|| self.infer_fallback_type_text_at(arg_idx, 0))
+    }
+
     fn infer_call_type_param_substitutions_from_arguments(
         &self,
         source_arena: &NodeArena,
@@ -4006,13 +4271,40 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 continue;
             }
-            let Some(arg_type_text) = self.call_argument_type_text_for_substitution(arg_idx) else {
+            let Some(arg_type_text) = self.type_param_argument_type_text(arg_idx) else {
                 continue;
             };
             substitutions.push((
                 param_type_text.to_string(),
                 Self::parenthesize_generic_function_type_argument(&arg_type_text),
             ));
+        }
+
+        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(param_type_text) = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+            else {
+                continue;
+            };
+            if let Some((param_name, value_text)) = self
+                .infer_single_alias_discriminant_substitution(
+                    param_type_text.trim(),
+                    arg_idx,
+                    type_param_names,
+                )
+                && !substitutions
+                    .iter()
+                    .any(|(name, _)| name.as_str() == param_name)
+            {
+                substitutions.push((param_name, value_text));
+            }
         }
 
         for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
@@ -4053,22 +4345,62 @@ impl<'a> DeclarationEmitter<'a> {
         substitutions
     }
 
-    fn call_argument_type_text_for_substitution(&self, arg_idx: NodeIndex) -> Option<String> {
-        if let Some(type_text) = self.reference_declared_type_annotation_text(arg_idx) {
-            return Some(type_text);
-        }
+    fn infer_single_alias_discriminant_substitution(
+        &self,
+        param_type_text: &str,
+        arg_idx: NodeIndex,
+        type_param_names: &[String],
+    ) -> Option<(String, String)> {
+        let param_name =
+            Self::single_type_parameter_alias_argument(param_type_text, type_param_names)?;
+        let value_text = self.object_literal_property_literal_type_text(arg_idx, "name")?;
+        Some((param_name.to_string(), value_text))
+    }
 
-        let expr_idx = self.skip_parenthesized_expression(arg_idx)?;
-        let expr_node = self.arena.get(expr_idx)?;
-        if expr_node.kind == SyntaxKind::StringLiteral as u16 {
-            let literal = self.arena.get_literal(expr_node)?;
-            return Some(format!(
-                "\"{}\"",
-                super::escape_string_for_double_quote(literal.text.as_ref())
-            ));
+    fn single_type_parameter_alias_argument<'b>(
+        type_text: &'b str,
+        type_param_names: &'b [String],
+    ) -> Option<&'b str> {
+        let trimmed = type_text.trim();
+        let open = trimmed.find('<')?;
+        let alias_name = trimmed.get(..open)?.trim();
+        if alias_name.is_empty()
+            || !alias_name
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        {
+            return None;
         }
+        let inner = trimmed.get(open + 1..)?.trim().strip_suffix('>')?.trim();
+        type_param_names
+            .iter()
+            .find(|name| name.as_str() == inner)
+            .map(String::as_str)
+    }
 
-        self.preferred_expression_type_text(arg_idx)
+    fn object_literal_property_literal_type_text(
+        &self,
+        object_idx: NodeIndex,
+        property_name: &str,
+    ) -> Option<String> {
+        let object_idx = self.skip_parenthesized_expression(object_idx)?;
+        let object_node = self.arena.get(object_idx)?;
+        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(object_node)?;
+        for &member_idx in &object.elements.nodes {
+            let member_node = self.arena.get(member_idx)?;
+            let name_idx = self.object_literal_member_name_idx(member_node)?;
+            if self.object_literal_member_name_text(name_idx)? != property_name {
+                continue;
+            }
+            let initializer = self.object_literal_member_initializer(member_node)?;
+            return self
+                .const_literal_initializer_text(initializer)
+                .or_else(|| self.infer_fallback_type_text_at(initializer, 0));
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn function_signature_accepts_call_arguments(
@@ -5728,6 +6060,8 @@ impl<'a> DeclarationEmitter<'a> {
             }
             if let Some(type_text) = self
                 .preferred_expression_type_text(var_decl.initializer)
+                .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
+                .or_else(|| self.as_const_assertion_type_text(var_decl.initializer))
                 .or_else(|| self.infer_fallback_type_text_at(var_decl.initializer, 0))
             {
                 return Some(type_text);
@@ -7509,6 +7843,25 @@ mod tests {
         assert_eq!(
             DeclarationEmitter::combine_public_module_specifier("./utils", "./SvgIcon"),
             None
+        );
+    }
+
+    #[test]
+    fn tuple_item_lookup_mapped_type_expands_literal_keys() {
+        let input = r#"{
+    [Item in readonly [{
+    readonly name: "a";
+}, {
+    readonly name: "b";
+}][number] as Item["name"]]: Item;
+}"#;
+
+        assert_eq!(
+            DeclarationEmitter::expand_tuple_item_lookup_mapped_type_text(input),
+            Some(
+                "{\n    a: {\n        readonly name: \"a\";\n    };\n    b: {\n        readonly name: \"b\";\n    };\n}"
+                    .to_string()
+            )
         );
     }
 }

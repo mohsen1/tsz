@@ -141,6 +141,12 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if has_initializer
+                && self.declaration_type_is_uninformative(&[decl_idx, decl_name, initializer])
+                && let Some(type_text) = self.as_const_assertion_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
                 && let Some(type_text) = self.angle_bracket_const_assertion_type_text(initializer)
             {
                 self.write(": ");
@@ -192,6 +198,8 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_text = Self::strip_synthetic_anonymous_object_members(&type_text);
                 let type_text = self
                     .expand_portable_mapped_object_text_in_current_context(&type_text)
+                    .unwrap_or(type_text);
+                let type_text = Self::expand_tuple_item_lookup_mapped_type_text(&type_text)
                     .unwrap_or(type_text);
                 let type_text = Self::normalize_inferred_array_any_text(&type_text);
                 self.write(": ");
