@@ -1123,6 +1123,53 @@ fn decorated_class_export_no_duplicate_exports() {
     );
 }
 
+#[test]
+fn cjs_exported_class_with_mixin_heritage_exports_after_outer_class() {
+    let source = r#"export const Mixin = null as any;
+export class Base {}
+export class XmlElement2 extends Mixin(
+    [Base],
+    (base: any) => {
+        class XmlElement2 extends base {
+            num = 0;
+        }
+        return XmlElement2;
+    }) { }
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let return_pos = output
+        .find("return XmlElement2;")
+        .expect("mixin callback should return the local class");
+    let export_pos = output
+        .find("exports.XmlElement2 = XmlElement2;")
+        .expect("outer class export assignment should be emitted");
+
+    assert!(
+        return_pos < export_pos,
+        "Outer class export assignment must not be emitted inside the mixin callback.\nOutput:\n{output}"
+    );
+    let outer_close_pos = output
+        .find("}) {\n}\nexports.XmlElement2 = XmlElement2;")
+        .expect("outer class should close before its export assignment");
+    assert!(
+        return_pos < outer_close_pos && outer_close_pos <= export_pos,
+        "Outer class export assignment should follow the complete class declaration.\nOutput:\n{output}"
+    );
+}
+
 /// When `export = f` is present with `export function f()`, the hoisted
 /// `exports.f = f;` preamble should be suppressed because `module.exports = f`
 /// replaces the entire exports object.

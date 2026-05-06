@@ -428,7 +428,8 @@ impl<'a> Printer<'a> {
                     {
                         // Keep named class export assignment immediately after the class
                         // declaration and before lowered static blocks/IIFEs.
-                        self.pending_commonjs_class_export_name = Some(name);
+                        self.pending_commonjs_class_export_name =
+                            Some((export.export_clause, name));
                         named_export_emitted_with_class = true;
                     }
 
