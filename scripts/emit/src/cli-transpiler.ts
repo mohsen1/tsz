@@ -73,6 +73,7 @@ interface CompilerFlagOptions {
   stripInternal?: boolean;
   outFile?: string;
   outDir?: string;
+  declarationDir?: string;
   rootDir?: string;
 }
 
@@ -123,6 +124,7 @@ function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): v
   if (opts.stripInternal) args.push('--stripInternal');
   if (opts.outFile) args.push('--outFile', opts.outFile.replace(/^[/\\]+/, ''));
   if (opts.outDir) args.push('--outDir', opts.outDir);
+  if (opts.declarationDir) args.push('--declarationDir', opts.declarationDir);
   if (opts.rootDir) args.push('--rootDir', opts.rootDir);
 }
 
@@ -263,6 +265,7 @@ export class CliTranspiler {
       stripInternal?: boolean;
       outFile?: string;
       outDir?: string;
+      declarationDir?: string;
       rootDir?: string;
       sourceFiles?: SourceInputFile[];
       links?: LinkInput[];
@@ -305,6 +308,7 @@ export class CliTranspiler {
       stripInternal = false,
       outFile,
       outDir,
+      declarationDir,
       rootDir,
       sourceFiles,
       links = [],
@@ -369,6 +373,16 @@ export class CliTranspiler {
         }
         return path.join(testDir, outDir.replace(/^[/\\]+/, ''), relStem);
       })();
+      const declarationRelStem = (() => {
+        const declarationOutputDir = declarationDir ?? outDir;
+        if (!declarationOutputDir) return null;
+        const normalizedRoot = rootDir?.replace(/^[/\\]+/, '').replace(/\\/g, '/').replace(/\/+$/, '');
+        let relStem = relName.replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
+        if (normalizedRoot && (relStem === normalizedRoot || relStem.startsWith(`${normalizedRoot}/`))) {
+          relStem = relStem.slice(normalizedRoot.length).replace(/^\/+/, '');
+        }
+        return path.join(testDir, declarationOutputDir.replace(/^[/\\]+/, ''), relStem);
+      })();
       // For TS→JS: .ts→.js, .tsx→.jsx, .mts→.mjs, .cts→.cjs
       // For JS→JS (allowJs): output has same extension as input
       const sourceDefaultJsPath =
@@ -396,10 +410,10 @@ export class CliTranspiler {
         dtsPath: `${stem}.d.ts`,
         dtsCandidates: [
           ...(outputDtsPath ? [outputDtsPath] : []),
-          ...(outputRelStem ? [
-            `${outputRelStem}.d.ts`,
-            `${outputRelStem}.d.mts`,
-            `${outputRelStem}.d.cts`,
+          ...(declarationRelStem ? [
+            `${declarationRelStem}.d.ts`,
+            `${declarationRelStem}.d.mts`,
+            `${declarationRelStem}.d.cts`,
           ] : []),
           `${stem}.d.ts`,
           `${stem}.d.mts`,
@@ -474,6 +488,7 @@ export class CliTranspiler {
         stripInternal,
         outFile,
         outDir,
+        declarationDir,
         rootDir,
       });
       const trailingArgs = ['--target', targetArg, '--module', moduleArg, ...inputFiles];
@@ -566,6 +581,7 @@ export class CliTranspiler {
             stripInternal,
             outFile,
             outDir,
+            declarationDir,
             rootDir,
           });
           retryArgs.push(...trailingArgs);
@@ -768,10 +784,17 @@ export class CliTranspiler {
     const configObject = config as Record<string, unknown>;
     const compilerOptions = configObject.compilerOptions;
     if (!compilerOptions || typeof compilerOptions !== 'object') return;
+    const embeddedCompilerOptions = compilerOptions as Record<string, unknown>;
+    if (
+      typeof embeddedCompilerOptions.baseUrl !== 'string' &&
+      embeddedCompilerOptions.paths === undefined
+    ) {
+      return;
+    }
 
     const rootConfig = {
       ...configObject,
-      compilerOptions: { ...(compilerOptions as Record<string, unknown>) },
+      compilerOptions: { ...embeddedCompilerOptions },
     };
     const rootCompilerOptions = rootConfig.compilerOptions as Record<string, unknown>;
     const configDir = path.posix.dirname(embedded.name.replace(/^\/+/, '').replace(/\\/g, '/'));
