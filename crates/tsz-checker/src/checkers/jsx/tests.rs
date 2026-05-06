@@ -1137,6 +1137,61 @@ fn jsx_library_managed_attributes_preserves_function_default_props_in_jsx() {
 }
 
 #[test]
+fn jsx_library_managed_attributes_function_variable_display_uses_param_props() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type MergePropTypes<P, T> = P;
+        type Defaultize<P, D> = P;
+        declare namespace PropTypes {
+            type InferProps<T> = any;
+        }
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements { div: {}; }
+            interface IntrinsicAttributes {}
+            type LibraryManagedAttributes<C, P> =
+                C extends { propTypes: infer T; defaultProps: infer D; }
+                    ? Defaultize<MergePropTypes<P, PropTypes.InferProps<T>>, D>
+                    : C extends { propTypes: infer T; }
+                        ? MergePropTypes<P, PropTypes.InferProps<T>>
+                        : C extends { defaultProps: infer D; }
+                            ? Defaultize<P, D>
+                            : P;
+        }
+
+        const RenderTitle = ({ title }: { title: string }) => <div />;
+        <RenderTitle />;
+        <RenderTitle excessProp />;
+        "#,
+    );
+    let missing = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected missing title diagnostic");
+    assert!(
+        missing
+            .message_text
+            .contains("required in type '{ title: string; }'"),
+        "expected TS2741 to display the function parameter props type, got: {missing:?}"
+    );
+    let excess = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected excess prop diagnostic");
+    assert!(
+        excess
+            .message_text
+            .contains("IntrinsicAttributes & { title: string; }"),
+        "expected TS2322 to display the function parameter props type, got: {excess:?}"
+    );
+    assert!(
+        !missing.message_text.contains("propTypes: infer T")
+            && !excess.message_text.contains("propTypes: infer T"),
+        "JSX diagnostics should not display the full LibraryManagedAttributes conditional: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsx_generic_class_component_infers_props_from_attributes() {
     let diagnostics = check_jsx_codes(
         r#"
