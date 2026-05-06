@@ -3506,6 +3506,45 @@ fn test_project_info_configured_project_lists_files_and_config_last() {
 }
 
 #[test]
+fn test_project_info_configured_project_expands_include_files() {
+    let mut server = make_server_with_real_libs();
+    let tsconfig_path = "/tests/cases/fourslash/server/tsconfig.json".to_string();
+    server.open_files.insert(
+        tsconfig_path.clone(),
+        r#"{ "include": ["src/**/*.ts"], "compilerOptions": { "lib": ["es5"] } }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/src/a.ts".to_string(),
+        "export const a = 1;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/src/b.ts".to_string(),
+        "export const b = 2;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/other.ts".to_string(),
+        "export const other = 3;\n".to_string(),
+    );
+
+    let (config, files) = server.compute_project_info("/tests/cases/fourslash/server/src/a.ts");
+    assert_eq!(config, tsconfig_path);
+    let non_lib: Vec<&str> = files
+        .iter()
+        .filter(|p| !p.starts_with("/home/src/tslibs/TS/Lib/"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        non_lib,
+        vec![
+            "/tests/cases/fourslash/server/src/a.ts",
+            "/tests/cases/fourslash/server/src/b.ts",
+            "/tests/cases/fourslash/server/tsconfig.json",
+        ],
+        "include glob should add matching project files before the config"
+    );
+}
+
+#[test]
 fn test_project_info_configured_project_excludes_non_existent_files() {
     // tsconfig declares files: [a.ts, c.ts, b.ts]; c.ts is not in open_files
     // so it must be filtered out, preserving the relative order of the rest.
