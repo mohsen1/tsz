@@ -1210,11 +1210,21 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report TS2580/TS2591: Cannot find name 'X' - suggest installing @types/node.
+    ///
+    /// tsc's rule, mirrored here:
+    /// - TS2580 ("Try `npm i --save-dev @types/node`.") when the user has an
+    ///   explicit `types` field — they already manage type roots, so the only
+    ///   missing piece is the install. Conformance tests opt in via
+    ///   `// @types: *`.
+    /// - TS2591 ("...and then add 'node' to the types field in your tsconfig.")
+    ///   otherwise — the user must both install and add `node` to the types
+    ///   field. This is the default fingerprint for tests with no `// @types`
+    ///   directive.
     pub fn error_cannot_find_name_install_node_types(&mut self, name: &str, idx: NodeIndex) {
         let code = if self.use_types_field_missing_global_diagnostics() {
-            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2
-        } else {
             diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE
+        } else {
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2
         };
         self.error_at_node_msg(idx, code, &[name]);
     }
