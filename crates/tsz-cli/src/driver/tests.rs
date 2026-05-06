@@ -421,6 +421,30 @@ fn test_cli_overrides_apply_type_and_declaration_options() {
 }
 
 #[test]
+fn test_cli_overrides_apply_umd_and_synthetic_default_interop_options() {
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--allowUmdGlobalAccess",
+        "--allowSyntheticDefaultImports",
+        "false",
+    ])
+    .expect("parse args");
+    let mut options = ResolvedCompilerOptions {
+        allow_synthetic_default_imports: true,
+        checker: tsz::checker::context::CheckerOptions {
+            allow_synthetic_default_imports: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(options.checker.allow_umd_global_access);
+    assert!(!options.allow_synthetic_default_imports);
+    assert!(!options.checker.allow_synthetic_default_imports);
+}
+
+#[test]
 fn test_compile_invalid_react_namespace_reports_config_error_without_jsx_cascade() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(

@@ -2869,6 +2869,7 @@ impl LspServer {
 // Main
 // =============================================================================
 
+#[allow(clippy::items_after_test_module)]
 fn main() -> Result<()> {
     // Initialize tracing (always stderr — stdout carries LSP JSON-RPC).
     tsz_cli::tracing_config::init_tracing();
