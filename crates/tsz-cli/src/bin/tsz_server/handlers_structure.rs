@@ -4,7 +4,7 @@
 //! outlining spans, brace matching, refactoring stubs, and related commands.
 
 use super::{Server, TsServerRequest, TsServerResponse};
-use tsz::emitter::{ModuleKind, Printer, PrinterOptions};
+use tsz::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
 
 /// `projectInfo`-only view of inferred-project lib/target/noLib settings.
 /// Kept parallel to `Server.inferred_check_options` so we can surface the
@@ -146,10 +146,7 @@ impl Server {
                     libs = Some(parsed);
                 }
             }
-            let target = options
-                .get("target")
-                .and_then(serde_json::Value::as_str)
-                .map(std::string::ToString::to_string);
+            let target = Self::project_info_target_option(options.get("target"));
             let no_lib = options
                 .get("noLib")
                 .and_then(serde_json::Value::as_bool)
@@ -168,6 +165,21 @@ impl Server {
                 .is_some_and(Self::inferred_module_option_is_none);
             self.auto_imports_allowed_for_inferred_projects =
                 Self::inferred_auto_imports_allowed(options);
+        }
+    }
+
+    fn project_info_target_option(value: Option<&serde_json::Value>) -> Option<String> {
+        match value? {
+            serde_json::Value::String(target) => Some(target.clone()),
+            serde_json::Value::Number(number) => {
+                let mapped = number
+                    .as_u64()
+                    .and_then(|value| u32::try_from(value).ok())
+                    .and_then(ScriptTarget::from_ts_numeric)
+                    .map(ScriptTarget::as_ts_str);
+                Some(mapped.map_or_else(|| number.to_string(), str::to_string))
+            }
+            _ => None,
         }
     }
 
@@ -1152,6 +1164,10 @@ impl Server {
     /// Project files are filtered to those present in `open_files` (virtual VFS
     /// membership) to match tsserver's behavior of excluding non-existent files.
     pub(crate) fn compute_project_info(&self, active_file: &str) -> (String, Vec<String>) {
+        if let Some(project_info) = self.external_project_info(active_file) {
+            return project_info;
+        }
+
         let config_file_name = self.find_project_config_file(active_file);
         let (lib_names, no_lib, project_files) = match config_file_name.as_deref() {
             Some(config_path) => self.parse_tsconfig_for_project_info(config_path),
@@ -1175,6 +1191,21 @@ impl Server {
         }
 
         (config_file_name.unwrap_or_default(), file_names)
+    }
+
+    fn external_project_info(&self, active_file: &str) -> Option<(String, Vec<String>)> {
+        let mut projects: Vec<(&String, &Vec<String>)> =
+            self.external_project_files.iter().collect();
+        projects.sort_by_key(|(project_name, _)| *project_name);
+
+        let (project_name, files) = projects
+            .into_iter()
+            .find(|(_, files)| files.iter().any(|file| file == active_file))?;
+        let mut file_names = files.clone();
+        file_names.sort();
+        file_names.dedup();
+
+        Some((project_name.clone(), file_names))
     }
 
     /// Parse a tsconfig (from `open_files` or disk) and return its lib list,
@@ -1811,7 +1842,11 @@ impl Server {
             _ => {}
         }
 
-        self.stub_response(seq, request, None)
+        let body = match request.command.as_str() {
+            "openExternalProject" | "openExternalProjects" => Some(serde_json::json!(true)),
+            _ => None,
+        };
+        self.stub_response(seq, request, body)
     }
 
     pub(crate) fn handle_synchronize_project_list(
