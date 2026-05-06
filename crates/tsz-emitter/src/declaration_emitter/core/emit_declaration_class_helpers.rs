@@ -8,7 +8,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         members: &NodeList,
     ) -> Vec<NodeIndex> {
-        if !self.source_is_js_file {
+        if !self.source_is_js_file && !self.class_members_have_computed_names(members) {
             return members.nodes.clone();
         }
 
@@ -44,7 +44,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         static_members.extend(constructors);
-        static_members.extend(self.js_class_instance_member_emit_order(instance_members));
+        if self.source_is_js_file {
+            static_members.extend(self.js_class_instance_member_emit_order(instance_members));
+        } else {
+            static_members.extend(instance_members);
+        }
         static_members
     }
 
