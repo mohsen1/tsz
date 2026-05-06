@@ -2240,17 +2240,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .iter()
                 .copied()
                 .map(|arg| {
-                    let evaluated =
-                        if self.application_expands_to_conditional_alias_for_return_display(arg) {
-                            self.checker.evaluate_type(arg)
-                        } else {
-                            arg
-                        };
+                    let evaluated = if crate::visitor::conditional_type_id(
+                        self.interner.as_type_database(),
+                        arg,
+                    )
+                    .is_some()
+                        || self.application_expands_to_conditional_alias_for_return_display(arg)
+                    {
+                        self.checker.evaluate_type(arg)
+                    } else {
+                        arg
+                    };
                     changed |= evaluated != arg;
                     evaluated
                 })
                 .collect::<Vec<_>>();
-            if changed {
+            if changed || return_type != raw_return_type {
                 let display_app = self.interner.application(app.base, display_args);
                 self.interner.store_display_alias(return_type, display_app);
                 let evaluated_return = self.checker.evaluate_type(return_type);
