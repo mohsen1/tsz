@@ -407,7 +407,7 @@ fn compile_empty_triple_slash_reference_path_reports_ts6231() {
     assert!(
         diagnostic
             .message_text
-            .contains(&base.to_string_lossy().as_ref()),
+            .contains(base.to_string_lossy().as_ref()),
         "TS6231 should report the containing directory for an empty path: {}",
         diagnostic.message_text
     );
