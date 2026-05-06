@@ -3697,6 +3697,45 @@ fn test_project_info_inferred_project_returns_libs_and_active_file() {
 }
 
 #[test]
+fn test_project_info_inferred_project_uses_numeric_target_for_libs() {
+    let mut server = make_server_with_real_libs();
+    server
+        .open_files
+        .insert("/main.ts".to_string(), "const value = 1;\n".to_string());
+
+    let options_resp = server.handle_tsserver_request(make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({
+            "options": {
+                "target": 99
+            }
+        }),
+    ));
+    assert!(options_resp.success);
+
+    let project_info_resp = server.handle_tsserver_request(make_request(
+        "projectInfo",
+        serde_json::json!({
+            "file": "/main.ts",
+            "needFileNameList": true
+        }),
+    ));
+
+    assert!(project_info_resp.success);
+    let file_names = project_info_resp
+        .body
+        .and_then(|body| body.get("fileNames").cloned())
+        .and_then(|file_names| file_names.as_array().cloned())
+        .expect("projectInfo should include fileNames");
+    assert!(
+        file_names.iter().any(|file| file
+            .as_str()
+            .is_some_and(|path| path.ends_with("lib.esnext.full.d.ts"))),
+        "numeric target 99 should select ESNext libs, got {file_names:?}"
+    );
+}
+
+#[test]
 fn test_project_info_inferred_project_includes_transitive_imports() {
     // b.ts imports ./a — goTo.file("b.ts") should include a.ts first, then b.ts.
     let mut server = make_server_with_real_libs();

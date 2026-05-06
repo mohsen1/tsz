@@ -4,7 +4,7 @@
 //! outlining spans, brace matching, refactoring stubs, and related commands.
 
 use super::{Server, TsServerRequest, TsServerResponse};
-use tsz::emitter::{ModuleKind, Printer, PrinterOptions};
+use tsz::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
 
 /// `projectInfo`-only view of inferred-project lib/target/noLib settings.
 /// Kept parallel to `Server.inferred_check_options` so we can surface the
@@ -146,10 +146,7 @@ impl Server {
                     libs = Some(parsed);
                 }
             }
-            let target = options
-                .get("target")
-                .and_then(serde_json::Value::as_str)
-                .map(std::string::ToString::to_string);
+            let target = Self::project_info_target_option(options.get("target"));
             let no_lib = options
                 .get("noLib")
                 .and_then(serde_json::Value::as_bool)
@@ -168,6 +165,21 @@ impl Server {
                 .is_some_and(Self::inferred_module_option_is_none);
             self.auto_imports_allowed_for_inferred_projects =
                 Self::inferred_auto_imports_allowed(options);
+        }
+    }
+
+    fn project_info_target_option(value: Option<&serde_json::Value>) -> Option<String> {
+        match value? {
+            serde_json::Value::String(target) => Some(target.clone()),
+            serde_json::Value::Number(number) => {
+                let mapped = number
+                    .as_u64()
+                    .and_then(|value| u32::try_from(value).ok())
+                    .and_then(ScriptTarget::from_ts_numeric)
+                    .map(ScriptTarget::as_ts_str);
+                Some(mapped.map_or_else(|| number.to_string(), str::to_string))
+            }
+            _ => None,
         }
     }
 
