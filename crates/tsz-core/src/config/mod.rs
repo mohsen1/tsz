@@ -5224,15 +5224,22 @@ mod tests {
         let opts = merged.compiler_options.expect("compiler options merged");
         let base_url = opts.base_url.expect("inherited baseUrl present");
 
-        let expected = base_dir.to_string_lossy();
+        // Canonicalize to handle macOS `/var` → `/private/var` symlinks.
+        let canonical_base_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir.clone());
+        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir.clone());
+        let canonical_base_url = std::path::Path::new(&base_url)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(&base_url));
+        let expected = canonical_base_dir.to_string_lossy();
+        let actual = canonical_base_url.to_string_lossy();
         assert!(
-            base_url.starts_with(expected.as_ref()),
+            actual.starts_with(expected.as_ref()),
             "Inherited baseUrl must anchor at the base config's directory \
-             (expected prefix {expected:?}, got {base_url:?})"
+             (expected prefix {expected:?}, got {actual:?})"
         );
         assert!(
-            !base_url.starts_with(app_dir.to_string_lossy().as_ref()),
-            "Inherited baseUrl must not anchor at the child's directory: {base_url:?}"
+            !actual.starts_with(canonical_app_dir.to_string_lossy().as_ref()),
+            "Inherited baseUrl must not anchor at the child's directory: {actual:?}"
         );
     }
 
@@ -5320,11 +5327,18 @@ mod tests {
         let opts = merged.compiler_options.expect("compiler options merged");
         let base_url = opts.base_url.expect("baseUrl present");
 
-        let expected_prefix = app_dir.to_string_lossy();
+        // Canonicalize both sides so symlink-bearing temp paths on macOS
+        // (`/var/folders/...` → `/private/var/folders/...`) compare equal.
+        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir.clone());
+        let canonical_base_url = std::path::Path::new(&base_url)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(&base_url));
+        let expected_prefix = canonical_app_dir.to_string_lossy();
+        let actual = canonical_base_url.to_string_lossy();
         assert!(
-            base_url.starts_with(expected_prefix.as_ref()),
+            actual.starts_with(expected_prefix.as_ref()),
             "Child-declared baseUrl must anchor at the child's directory \
-             (expected prefix {expected_prefix:?}, got {base_url:?})"
+             (expected prefix {expected_prefix:?}, got {actual:?})"
         );
     }
 
