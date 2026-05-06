@@ -198,6 +198,7 @@ mod portability_resolve;
 mod returned_function_initializer;
 mod synthetic_dependencies;
 mod type_inference;
+mod type_inference_return_unions;
 mod type_param_rewrite;
 mod type_printing;
 mod type_printing_paths;
