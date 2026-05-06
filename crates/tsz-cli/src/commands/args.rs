@@ -716,6 +716,7 @@ pub struct CliArgs {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Target {
+    Es3,
     Es5,
     #[value(alias = "es6")]
     Es2015,
@@ -736,6 +737,7 @@ pub enum Target {
 impl Target {
     pub const fn to_script_target(self) -> ScriptTarget {
         match self {
+            Self::Es3 => ScriptTarget::ES3,
             Self::Es5 => ScriptTarget::ES5,
             Self::Es2015 => ScriptTarget::ES2015,
             Self::Es2016 => ScriptTarget::ES2016,

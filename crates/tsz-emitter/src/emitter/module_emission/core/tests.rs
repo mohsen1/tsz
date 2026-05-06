@@ -1,5 +1,5 @@
 use crate::context::emit::EmitContext;
-use crate::emitter::{ModuleKind, Printer, PrinterOptions};
+use crate::emitter::{JsxEmit, ModuleKind, Printer, PrinterOptions};
 use crate::lowering::LoweringPass;
 use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
@@ -403,6 +403,47 @@ fn reserved_private_constructor_method_is_not_extracted() {
 }
 
 #[test]
+fn computed_class_member_private_access_inlines_weakmap_init() {
+    let source = r#"let getX: (a: A) => number;
+
+class A {
+    #x = 100;
+    [(getX = (a: A) => a.#x, "_")]() {}
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __classPrivateFieldGet ="),
+        "Computed member names with private reads should request the helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "[(_A_x = new WeakMap(), getX = (a) => __classPrivateFieldGet(a, _A_x, \"f\"), \"_\")]"
+        ),
+        "WeakMap initialization should be sequenced inside the computed member name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n_A_x = new WeakMap();"),
+        "WeakMap initialization should not be emitted again after the class.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_class_super_parameter_skips_user_binding() {
     let source = r#"class Base {}
 
@@ -597,6 +638,41 @@ export async function f() {
     assert!(
         output.contains("return tslib_1;"),
         "Source reads should still use the user binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_import_helpers_jsx_spread_uses_tslib_assign() {
+    let source = r#"declare var React: any;
+declare var o: any;
+export const x = <span {...o} />;
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        jsx: JsxEmit::React,
+        import_helpers: true,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var tslib_1 = require(\"tslib\");"),
+        "JSX spread should request the tslib helper import.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("React.createElement(\"span\", tslib_1.__assign({}, o))"),
+        "ES5 JSX spread should call the imported __assign helper.\nOutput:\n{output}"
     );
 }
 
@@ -1469,5 +1545,85 @@ fn interface_var_member_recovery_emits_var_statement() {
     assert!(
         output.contains("var x;"),
         "Malformed var members in interfaces should recover as a variable statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn exported_alias_to_uninstantiated_namespace_is_elided() {
+    let source = r#"export namespace a {
+    export namespace b {
+        export interface I {
+            foo();
+        }
+    }
+}
+
+export import b = a.b;
+export var x: b.I;
+x.foo();
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::AMD,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.x = void 0;"),
+        "Exported variable should still get the CJS-style initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.b"),
+        "Exported aliases to type-only namespaces should not emit runtime export assignments.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_parameter_decorator_metadata_preserves_return_type_import() {
+    let source = r#"import { Observable } from "./observable";
+declare function whatever(a: any, b: any, c: any): void;
+class Test {
+    foo(@whatever arg: string): Observable<string> {
+        return null!;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2020,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __metadata ="),
+        "Parameter-decorated method metadata should request the __metadata helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const observable_1 = require(\"./observable\");"),
+        "Metadata return type should keep the CommonJS import.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__metadata(\"design:returntype\", observable_1.Observable)"),
+        "Metadata return type should use the CommonJS import substitution.\nOutput:\n{output}"
     );
 }
