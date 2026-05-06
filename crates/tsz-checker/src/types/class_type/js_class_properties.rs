@@ -780,20 +780,29 @@ impl CheckerState<'_> {
             if let Some(property) = properties.get_mut(&name_atom) {
                 if implicit_type == "any[]" {
                     let any_array = self.ctx.types.factory().array(TypeId::ANY);
-                    let is_nullable_array = crate::query_boundaries::common::is_nullish_type(
-                        self.ctx.types.as_type_database(),
-                        property.type_id,
-                    ) && {
-                        let non_nullish = crate::query_boundaries::common::remove_nullish(
-                            self.ctx.types.as_type_database(),
-                            property.type_id,
-                        );
-                        crate::query_boundaries::common::array_element_type(
+                    let nullish_part = if property.type_id.is_nullable() {
+                        Some(property.type_id)
+                    } else {
+                        crate::query_boundaries::common::union_members(
                             self.ctx.types,
-                            non_nullish,
-                        ) == Some(TypeId::ANY)
+                            property.type_id,
+                        )
+                        .and_then(|members| {
+                            let nullish_members: Vec<_> = members
+                                .iter()
+                                .copied()
+                                .filter(|member| member.is_nullable())
+                                .collect();
+                            match nullish_members.as_slice() {
+                                [] => None,
+                                [single] => Some(*single),
+                                _ => Some(self.ctx.types.factory().union(nullish_members)),
+                            }
+                        })
                     };
-                    if !is_nullable_array {
+                    if let Some(nullish_part) = nullish_part {
+                        property.type_id = self.ctx.types.factory().union2(any_array, nullish_part);
+                    } else {
                         property.type_id = any_array;
                         property.write_type = any_array;
                     }

@@ -59,7 +59,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        for name in ["length", "concat", "slice"] {
+        for name in [
+            "length",
+            "concat",
+            "slice",
+            "join",
+            "indexOf",
+            "lastIndexOf",
+            "every",
+        ] {
             if !query::has_property_by_name(db, source, name) {
                 return false;
             }

@@ -729,6 +729,46 @@ pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     }
 }
 
+pub fn contains_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::contains_type_matching(db, type_id, |key| {
+        matches!(key, TypeData::IndexAccess(_, _))
+    })
+}
+
+pub fn index_access_type_arg_alias_hint(
+    db: &dyn TypeDatabase,
+    def_store: &crate::def::DefinitionStore,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    match db.lookup(type_id)? {
+        TypeData::IndexAccess(object_type, _) => {
+            index_access_object_type_arg_alias_hint(db, def_store, object_type)
+        }
+        TypeData::Intersection(list_id) | TypeData::Union(list_id) => db
+            .type_list(list_id)
+            .iter()
+            .find_map(|&member| index_access_type_arg_alias_hint(db, def_store, member)),
+        _ => None,
+    }
+}
+
+fn index_access_object_type_arg_alias_hint(
+    db: &dyn TypeDatabase,
+    def_store: &crate::def::DefinitionStore,
+    object_type: TypeId,
+) -> Option<TypeId> {
+    let app = get_type_application(db, object_type).or_else(|| {
+        db.get_display_alias(object_type)
+            .and_then(|alias| get_type_application(db, alias))
+    })?;
+    let &arg = app.args.first()?;
+    let TypeData::Lazy(def_id) = db.lookup(arg)? else {
+        return None;
+    };
+    let def = def_store.get(def_id)?;
+    (def.kind == crate::def::DefKind::TypeAlias && def.type_params.is_empty()).then_some(arg)
+}
+
 /// Get the operand of a `KeyOf` type. Returns `Some(inner)` for `keyof T`.
 pub fn get_keyof_operand(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     // Fast path: intrinsics aren't `KeyOf(_)`.

@@ -84,6 +84,33 @@ fn test_extract_quoted_attr_basic() {
 }
 
 #[test]
+fn extract_quoted_attr_requires_attribute_name_boundary() {
+    assert_eq!(extract_quoted_attr(r#"notpath="./file.ts""#, "path"), None);
+    assert_eq!(
+        extract_quoted_attr(r#"data-path="./file.ts""#, "path"),
+        None
+    );
+    assert_eq!(
+        extract_quoted_attr(r#"path-extra="./file.ts" path="./real.ts""#, "path"),
+        Some("./real.ts".to_string())
+    );
+}
+
+#[test]
+fn reference_notpath_is_malformed_and_not_extracted() {
+    let source = r#"/// <reference notpath="./extra.d.ts" />"#;
+
+    assert!(
+        extract_reference_paths(source).is_empty(),
+        "notpath must not be treated as a path attribute"
+    );
+
+    let malformed = find_malformed_reference_directives(source);
+    assert_eq!(malformed.len(), 1);
+    assert_eq!(malformed[0].0, 0);
+}
+
+#[test]
 fn test_validate_extensionless_references() {
     use std::fs;
 

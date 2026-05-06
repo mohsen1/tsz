@@ -782,6 +782,22 @@ fn test_collect_module_specifiers_finds_require_with_whitespace_before_paren() {
 }
 
 #[test]
+fn test_collect_module_specifiers_finds_jsdoc_import_tags() {
+    let text = r#"
+// @ts-check
+/** @import { "a,b" as CommaName } from "./dep" */
+/** @type {CommaName} */
+const value = "x";
+"#;
+    let path = Path::new("test.js");
+    let specifiers = collect_module_specifiers_from_text(path, text);
+    assert!(
+        specifiers.contains(&"./dep".to_string()),
+        "Should find JSDoc @import specifier './dep', got: {specifiers:?}"
+    );
+}
+
+#[test]
 fn test_collect_module_specifiers_require_has_correct_kind() {
     use tsz::module_resolver::ImportKind;
     let text = r#"const data = require("./data.json");"#;
@@ -1249,6 +1265,31 @@ fn test_resolve_module_specifier_paths_without_base_url_use_project_base() {
         &known_files,
     );
     assert_eq!(baz, Some(base.join("types/main.d.ts")));
+}
+
+#[test]
+fn test_resolve_module_specifier_root_dirs_overlay() {
+    let base = PathBuf::from("/tmp/tsz-test-rootdirs");
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        root_dirs: vec![base.join("src"), base.join("generated")],
+        ..Default::default()
+    };
+
+    let mut known_files = FxHashSet::default();
+    known_files.insert(base.join("generated/generated.ts"));
+    let mut cache = ModuleResolutionCache::default();
+
+    let resolved = resolve_module_specifier(
+        &base.join("src/main.ts"),
+        "./generated",
+        &options,
+        &base,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(resolved, Some(base.join("generated/generated.ts")));
 }
 
 #[test]
