@@ -626,9 +626,6 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        if self.get_type_of_node(call.expression) != TypeId::ERROR {
-            return false;
-        }
         self.filter_receiver_is_array_like_for_implicit_any(access.expression)
     }
 
