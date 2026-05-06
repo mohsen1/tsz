@@ -2099,6 +2099,9 @@ impl<'a> CheckerState<'a> {
         for (name_pos, name_len, name) in
             Self::malformed_jsdoc_satisfies_unexpected_names(source_text, comment_pos, comment_end)
         {
+            if self.resolve_jsdoc_type_str(&name).is_some() {
+                continue;
+            }
             self.ctx.error(
                 name_pos,
                 name_len,
