@@ -210,6 +210,37 @@ d.b;
     );
 }
 
+#[test]
+fn test_js_constructor_nullable_array_method_call_reports_ts2531() {
+    let source = r#"
+function Installer() {
+    this.twices = [];
+    this.twices = null;
+}
+Installer.prototype.second = function () {
+    this.twices.push(1);
+    if (this.twices != null) {
+        this.twices.push("hi");
+    }
+}
+"#;
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(&diagnostics, 2531),
+        1,
+        "Expected nullable JS constructor property method call to report TS2531 exactly once, got: {diagnostics:?}"
+    );
+}
+
 /// JSDoc @return {x is Type} type predicate → narrowing works
 #[test]
 fn test_jsdoc_return_type_predicate_narrowing() {
