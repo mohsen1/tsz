@@ -150,3 +150,19 @@ fn constructor_type_predicate_return_emits_ts1228() {
         "expected TS1228 for predicate return in constructor type, got {codes:?}"
     );
 }
+
+#[test]
+fn interface_construct_signature_type_predicate_does_not_emit_ts1228() {
+    // Construct signatures inside an interface declaration accept type
+    // predicates as their return type — tsc allows `interface I { new (...): x is T }`
+    // even though the predicate is meaningless at runtime. Only constructor
+    // *type* nodes (`new (...) => x is T`) and class constructor declarations
+    // emit TS1228.
+    let codes = check_source_codes(
+        "interface I { new (p: unknown): p is string; }",
+    );
+    assert!(
+        !codes.contains(&1228),
+        "did not expect TS1228 for predicate return in interface construct signature, got {codes:?}"
+    );
+}
