@@ -529,6 +529,30 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn invalid_var_class_keyword_emits_recovered_class_tail() {
+        let source = "var export;\nvar foo;\nvar class;\nvar bar;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var ;\nclass {\n}\n;\nvar bar;"),
+            "`var class;` should emit tsc's recovered anonymous class tail.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn unmatched_decorator_type_assertion_emits_empty_statement() {
         let source = "@<[[import(obju2c77,\n";
 
