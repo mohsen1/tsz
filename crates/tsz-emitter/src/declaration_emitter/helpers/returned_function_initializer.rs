@@ -149,6 +149,23 @@ impl<'a> DeclarationEmitter<'a> {
         self.source_nested_function_type_text(Some(outer_func), inner_func, &[])
     }
 
+    pub(in crate::declaration_emitter) fn function_body_return_hint(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_body: NodeIndex,
+    ) -> (Option<String>, bool) {
+        let direct_function_return = func_body
+            .is_some()
+            .then(|| self.direct_returned_function_expression_type_text(func))
+            .flatten();
+        let has_direct_function_return = direct_function_return.is_some();
+        (
+            direct_function_return
+                .or_else(|| self.function_body_preferred_return_type_text(func_body)),
+            has_direct_function_return,
+        )
+    }
+
     pub(in crate::declaration_emitter) fn class_property_function_initializer_type_text(
         &self,
         prop_idx: NodeIndex,

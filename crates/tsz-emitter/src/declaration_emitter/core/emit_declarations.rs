@@ -923,14 +923,8 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     return_type_id
                 };
-                let direct_function_return = if func_body.is_some() {
-                    self.direct_returned_function_expression_type_text(func)
-                } else {
-                    None
-                };
-                let preferred_return = direct_function_return
-                    .clone()
-                    .or_else(|| self.function_body_preferred_return_type_text(func_body));
+                let (preferred_return, direct_function_return) =
+                    self.function_body_return_hint(func, func_body);
                 let scoped_preferred_return = preferred_return.as_ref().map(|type_text| {
                     self.function_return_type_text_for_declaration_scope(func, type_text)
                 });
@@ -951,7 +945,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": void");
                 } else if let Some((type_text, substituted_parameter_type_query)) =
                     scoped_preferred_return.as_ref()
-                    && (direct_function_return.is_some()
+                    && (direct_function_return
                         || self.should_prefer_source_return_type_text(
                             preferred_return.as_deref().unwrap_or(type_text),
                             effective_return_type_id,
@@ -1073,9 +1067,7 @@ impl<'a> DeclarationEmitter<'a> {
             } else if func_body.is_some() {
                 if self.body_returns_void(func_body) {
                     self.write(": void");
-                } else if let Some(return_text) = self
-                    .direct_returned_function_expression_type_text(func)
-                    .or_else(|| self.function_body_preferred_return_type_text(func_body))
+                } else if let Some(return_text) = self.function_body_return_hint(func, func_body).0
                 {
                     let (return_text, _) =
                         self.function_return_type_text_for_declaration_scope(func, &return_text);
@@ -1111,10 +1103,7 @@ impl<'a> DeclarationEmitter<'a> {
             // No type cache available, but we can infer from the body
             if self.body_returns_void(func_body) {
                 self.write(": void");
-            } else if let Some(return_text) = self
-                .direct_returned_function_expression_type_text(func)
-                .or_else(|| self.function_body_preferred_return_type_text(func_body))
-            {
+            } else if let Some(return_text) = self.function_body_return_hint(func, func_body).0 {
                 let (return_text, _) =
                     self.function_return_type_text_for_declaration_scope(func, &return_text);
                 if let Some(name_text) = self.get_identifier_text(func_name)
