@@ -349,29 +349,24 @@ impl<'a> DeclarationEmitter<'a> {
         }?;
         let type_text = if std::ptr::eq(source_arena, self.arena) {
             match printed {
-                Some(printed)
-                    if printed != "any"
-                        && let Some(raw_type_text) =
-                            self.local_type_annotation_text(type_annotation)
-                        && Self::type_text_starts_with_string_intrinsic(&raw_type_text) =>
-                {
-                    raw_type_text
-                }
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any"))
+                Some(printed) if printed != "any" => {
+                    let raw_string_intrinsic = self
+                        .local_type_annotation_text(type_annotation)
+                        .filter(|text| Self::type_text_starts_with_string_intrinsic(text));
+                    if let Some(raw_type_text) = raw_string_intrinsic {
+                        raw_type_text
+                    } else if (!printed.contains("any") || type_text.contains("any"))
                         && printed.contains("typeof ")
-                        && !type_text.contains("typeof ") =>
-                {
-                    printed.replace("typeof ", "")
+                        && !type_text.contains("typeof ")
+                    {
+                        printed.replace("typeof ", "")
+                    } else if !printed.contains("any") || type_text.contains("any") {
+                        printed
+                    } else {
+                        type_text
+                    }
                 }
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any")) =>
-                {
-                    printed
-                }
-                _ => type_text,
+                Some(_) | None => type_text,
             }
         } else {
             let rewritten = self.qualify_foreign_imported_names_in_text(source_arena, &type_text);
