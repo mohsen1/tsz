@@ -403,8 +403,8 @@ impl<'a> CheckerState<'a> {
     pub(super) fn extract_jsdoc_satisfies_expression(jsdoc: &str) -> Option<&str> {
         let tag_pos = Self::jsdoc_tag_offset(jsdoc, "satisfies")?;
         let rest = &jsdoc[tag_pos + "@satisfies".len()..];
-        let open = rest.find('{')?;
-        let after_open = &rest[open + 1..];
+        let rest = rest.trim_start();
+        let after_open = rest.strip_prefix('{')?;
         let mut depth = 1usize;
         let mut end_idx = None;
         for (i, ch) in after_open.char_indices() {

@@ -2,6 +2,7 @@
 use crate::parser::test_fixture::parse_source;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::position::LineMap;
 use tsz_scanner::SyntaxKind;
 
 #[test]
@@ -942,5 +943,63 @@ fn parse_for_with_var_decl_init_unterminated_emits_comma_expected_at_close_paren
     assert!(
         semi_at_paren,
         "`for (a) {{}}` (expression init) should still emit `';' expected.` at `)`; got {diags:?}"
+    );
+}
+
+#[test]
+fn parse_for_typed_let_header_recovers_through_block_like_tsc() {
+    let source = "for (let x: y) {\n    z(x);\n}\n";
+    let (parser, _root) = parse_source(source);
+    let line_map = LineMap::build(source);
+
+    let fingerprints: Vec<(u32, u32, u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| {
+            let pos = line_map.offset_to_position(diag.start, source);
+            (
+                diag.code,
+                pos.line + 1,
+                pos.character + 1,
+                diag.message.clone(),
+            )
+        })
+        .collect();
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            1,
+            14,
+            "',' expected.".to_string()
+        )),
+        "expected TS1005 at the malformed header close, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            2,
+            6,
+            "',' expected.".to_string()
+        )),
+        "expected TS1005 at the statement recovered as a declaration tail, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            3,
+            1,
+            "Expression expected.".to_string()
+        )),
+        "expected TS1109 at the block close, got {fingerprints:?}"
+    );
+    assert!(
+        !fingerprints.iter().any(|(code, line, col, message)| {
+            *code == diagnostic_codes::EXPRESSION_EXPECTED
+                && *line == 1
+                && *col == 14
+                && message == "Expression expected."
+        }),
+        "should not emit the old TS1109 at the header close, got {fingerprints:?}"
     );
 }

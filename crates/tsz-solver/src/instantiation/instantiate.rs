@@ -19,7 +19,7 @@ use crate::types::{
     LiteralValue, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
     TypeData, TypeId, TypeParamInfo, TypePredicate,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use tsz_common::interner::Atom;
 
@@ -1826,6 +1826,73 @@ pub fn instantiate_type_cached(
     }
 
     instantiate_type_with_depth_status(interner, type_id, substitution).0
+}
+
+/// Instantiate every type parameter reachable from `type_id` to its constraint.
+///
+/// This is used as an error-recovery surface after failed overload resolution:
+/// tsc keeps the constructor/call fallback type, but the fallback should expose
+/// constrained key types like `object` rather than raw, unresolved parameters
+/// such as `T` or `K`.
+pub fn instantiate_type_params_to_constraints(db: &dyn QueryDatabase, type_id: TypeId) -> TypeId {
+    let mut substitution = TypeSubstitution::new();
+    let mut visited = FxHashSet::default();
+    collect_type_param_constraint_substitutions(
+        db.as_type_database(),
+        type_id,
+        &mut substitution,
+        &mut visited,
+    );
+    if substitution.is_empty() {
+        type_id
+    } else {
+        instantiate_type_cached(db.as_type_database(), Some(db), type_id, &substitution)
+    }
+}
+
+fn collect_type_param_constraint_substitutions(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &mut TypeSubstitution,
+    visited: &mut FxHashSet<TypeId>,
+) {
+    if type_id.is_intrinsic() || !visited.insert(type_id) {
+        return;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+            if let Some(constraint) = info.constraint {
+                substitution.insert(info.name, constraint);
+                collect_type_param_constraint_substitutions(db, constraint, substitution, visited);
+            }
+            if let Some(default) = info.default {
+                collect_type_param_constraint_substitutions(db, default, substitution, visited);
+            }
+        }
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            collect_type_param_constraint_substitutions(db, app.base, substitution, visited);
+            for &arg in &app.args {
+                collect_type_param_constraint_substitutions(db, arg, substitution, visited);
+            }
+        }
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            for member in db.type_list(list_id).iter().copied() {
+                collect_type_param_constraint_substitutions(db, member, substitution, visited);
+            }
+        }
+        Some(
+            TypeData::Array(element) | TypeData::ReadonlyType(element) | TypeData::KeyOf(element),
+        ) => {
+            collect_type_param_constraint_substitutions(db, element, substitution, visited);
+        }
+        Some(TypeData::IndexAccess(object, index)) => {
+            collect_type_param_constraint_substitutions(db, object, substitution, visited);
+            collect_type_param_constraint_substitutions(db, index, substitution, visited);
+        }
+        _ => {}
+    }
 }
 
 /// Instantiate a type while preserving unsubstituted type parameters.

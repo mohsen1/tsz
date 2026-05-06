@@ -80,17 +80,16 @@ impl<'a> CheckerState<'a> {
         (symbol_type != TypeId::ERROR && symbol_type != TypeId::UNKNOWN).then_some(symbol_type)
     }
 
-    pub(crate) fn check_commonjs_export_property_redeclarations(&mut self) {
+    pub(crate) fn check_commonjs_export_property_redeclarations(
+        &mut self,
+        statements: &[NodeIndex],
+    ) {
         if !self.is_js_file() || self.current_source_file_has_esm_syntax() {
             return;
         }
 
-        let Some(source_file) = self.ctx.arena.source_files.first() else {
-            return;
-        };
-
         let mut rhs_expr = None;
-        for (stmt_ordinal, &stmt_idx) in source_file.statements.nodes.iter().enumerate() {
+        for (stmt_ordinal, &stmt_idx) in statements.iter().enumerate() {
             let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
                 continue;
             };
@@ -135,7 +134,7 @@ impl<'a> CheckerState<'a> {
         let mut explicit_exports: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
         let mut root_exports: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
 
-        for &stmt_idx in &source_file.statements.nodes {
+        for &stmt_idx in statements {
             let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
                 continue;
             };
