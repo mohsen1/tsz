@@ -607,7 +607,7 @@ function runWithFiles(ts, input, op, requestedFile, files) {
         kindModifiers: renameInfo.kindModifiers || "",
         triggerSpan: {
           start: trigger.start,
-          length: triggerSpan.length || 0,
+          end: trigger.end,
         },
       };
       if (renameInfo.fileToRename !== undefined) {
