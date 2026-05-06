@@ -184,3 +184,29 @@ function f(obj: string[] | number) {
         "expected concrete `string[]` to be preserved, not collapsed to `any[]`: {msg}"
     );
 }
+
+#[test]
+fn array_isarray_preserves_readonly_generic_array_union_member() {
+    let source = r#"
+interface ReadonlyArray<T> {
+  readonly [n: number]: T;
+}
+declare function expect_never<T extends never>(x: T): void;
+interface TestCase<T extends string | number> {
+  readonly val1: T | ReadonlyArray<T>;
+}
+
+declare const item: TestCase<string | number>;
+
+if (Array.isArray(item.val1)) {
+  expect_never(item.val1);
+}
+"#;
+    let diags = check_strict(source);
+    let ts2345: Vec<&(u32, String)> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Array.isArray should preserve a non-never readonly array branch, got: {diags:?}"
+    );
+}

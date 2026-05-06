@@ -1528,16 +1528,37 @@ impl<'a> CheckerState<'a> {
     /// sources (variable references, type annotations, narrowing) are "non-fresh" and
     /// should NOT be widened.
     ///
+    /// An identifier referring to an unannotated `const` declaration whose initializer
+    /// is itself a fresh literal expression is also treated as fresh: tsc tracks
+    /// such bindings as widening literal types and widens them when copied into a
+    /// mutable binding.
+    ///
     /// ## Examples:
     /// ```typescript
     /// let x = "foo";          // "foo" is fresh → widened to string
     /// let a: "foo" = "foo";
     /// let y = a;              // a's type is non-fresh → y: "foo" (not widened)
     /// let z = a || "bar";     // result from || is non-fresh → z: "foo" (not widened)
+    ///
+    /// const tag = "start";    // unannotated const literal → widening literal type
+    /// let m = tag;            // tag is fresh-by-reference → widened to string
     /// ```
     pub(crate) fn is_fresh_literal_expression(&self, idx: NodeIndex) -> bool {
+        self.is_fresh_literal_expression_inner(idx, 0)
+    }
+
+    fn is_fresh_literal_expression_inner(&self, idx: NodeIndex, depth: u8) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
+
+        // Cycle / runaway-recursion guard. Identifier-following can in principle
+        // reach itself through pathological forward references like
+        // `const a = a;`. Bound the chain so the structural recursion always
+        // terminates.
+        const MAX_FRESH_LITERAL_DEPTH: u8 = 16;
+        if depth > MAX_FRESH_LITERAL_DEPTH {
+            return false;
+        }
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -1561,7 +1582,7 @@ impl<'a> CheckerState<'a> {
         if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
             && let Some(paren) = self.ctx.arena.get_parenthesized(node)
         {
-            return self.is_fresh_literal_expression(paren.expression);
+            return self.is_fresh_literal_expression_inner(paren.expression, depth + 1);
         }
 
         // Prefix unary (+/-) on numeric/bigint literals are fresh
@@ -1570,7 +1591,7 @@ impl<'a> CheckerState<'a> {
         {
             let op = prefix.operator;
             if op == SyntaxKind::PlusToken as u16 || op == SyntaxKind::MinusToken as u16 {
-                return self.is_fresh_literal_expression(prefix.operand);
+                return self.is_fresh_literal_expression_inner(prefix.operand, depth + 1);
             }
         }
 
@@ -1580,8 +1601,8 @@ impl<'a> CheckerState<'a> {
         if kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
             && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
         {
-            return self.is_fresh_literal_expression(cond.when_true)
-                || self.is_fresh_literal_expression(cond.when_false);
+            return self.is_fresh_literal_expression_inner(cond.when_true, depth + 1)
+                || self.is_fresh_literal_expression_inner(cond.when_false, depth + 1);
         }
 
         // Object and array literals need widening (property types get widened)
@@ -1595,6 +1616,23 @@ impl<'a> CheckerState<'a> {
         // but we mark them fresh for consistency
         if kind == syntax_kind_ext::TEMPLATE_EXPRESSION {
             return true;
+        }
+
+        // Identifier referencing an unannotated `const` declaration whose
+        // initializer is itself a fresh literal expression. tsc tracks these
+        // bindings as widening literal types, so copying them into a `let`/`var`
+        // binding must still widen.
+        if kind == SyntaxKind::Identifier as u16
+            && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && let Some(decl_idx) = symbol.primary_declaration()
+            && self.ctx.arena.is_const_variable_declaration(decl_idx)
+            && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+            && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+            && var_decl.type_annotation.is_none()
+            && var_decl.initializer.is_some()
+        {
+            return self.is_fresh_literal_expression_inner(var_decl.initializer, depth + 1);
         }
 
         // Everything else (identifiers, call expressions, binary expressions, etc.)

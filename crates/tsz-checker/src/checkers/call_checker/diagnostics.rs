@@ -77,7 +77,7 @@ impl<'a> CheckerState<'a> {
         2769, // No overload matches this call
     ];
 
-    pub(super) fn overload_candidate_has_callback_body_errors(
+    pub(crate) fn overload_candidate_has_callback_body_errors(
         &self,
         args: &[NodeIndex],
         snap: &crate::context::speculation::DiagnosticSnapshot,

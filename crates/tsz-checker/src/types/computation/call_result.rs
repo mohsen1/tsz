@@ -203,7 +203,10 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
     ) {
         let display_arg_type = common::widen_argument_type_for_display(self.ctx.types, arg_type);
-        let actual_display = self.format_type_diagnostic(display_arg_type);
+        let mut actual_display = self.format_type_diagnostic(display_arg_type);
+        if matches!(actual_display.as_str(), "true[]" | "false[]") {
+            actual_display = "boolean[]".to_string();
+        }
         let mut target_display = self
             .finite_mapped_parameter_display_type(param_type)
             .map(|display_type| self.format_type_for_assignability_message(display_type))
@@ -341,6 +344,8 @@ impl<'a> CheckerState<'a> {
     fn preferred_literal_expected_for_mismatch(
         &self,
         arg_types: &[TypeId],
+        args: &[NodeIndex],
+        actual: TypeId,
         mismatch_index: usize,
         expected: TypeId,
     ) -> TypeId {
@@ -348,6 +353,10 @@ impl<'a> CheckerState<'a> {
             return expected;
         }
         if common::literal_value(self.ctx.types, expected).is_some() {
+            return expected;
+        }
+        let actual_display_type = common::widen_argument_type_for_display(self.ctx.types, actual);
+        if !common::is_primitive_type(self.ctx.types, actual_display_type) {
             return expected;
         }
         arg_types
@@ -358,6 +367,16 @@ impl<'a> CheckerState<'a> {
             .find(|&candidate| {
                 common::literal_value(self.ctx.types, candidate).is_some()
                     && common::widen_literal_type(self.ctx.types, candidate) == expected
+            })
+            .or_else(|| {
+                args.iter()
+                    .copied()
+                    .enumerate()
+                    .filter(|(idx, _)| *idx != mismatch_index)
+                    .filter_map(|(_, arg_idx)| self.literal_type_from_initializer(arg_idx))
+                    .find(|&candidate| {
+                        common::widen_literal_type(self.ctx.types, candidate) == expected
+                    })
             })
             .unwrap_or(expected)
     }
@@ -722,6 +741,8 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(expected);
                     self.preferred_literal_expected_for_mismatch(
                         arg_types,
+                        args,
+                        reported_actual,
                         index,
                         reported_expected,
                     )

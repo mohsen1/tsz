@@ -265,6 +265,68 @@ export {};
 }
 
 #[test]
+fn signature_combining_rest_parameters_5_reports_both_rest_argument_mismatches() {
+    let source = r#"
+declare const test1:
+  | ((...args: [a: string | number, b: number | boolean]) => void)
+  | ((...args: [c: number | boolean, d: string | boolean]) => void);
+
+test1(42, true);
+test1(42, [true]);
+
+declare function test2<
+  A extends readonly unknown[],
+  B extends readonly unknown[],
+>(
+  c: (...args: A) => void,
+  d: (...args: B) => void,
+  e: (arg: typeof c | typeof d) => void,
+): void;
+
+test2(
+  (a: number | boolean, b: string | number) => {},
+  (c: string | boolean, d: number | boolean) => {},
+  (cb) => {
+    cb(true, 42);
+    cb(true, [42]);
+  },
+);
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2345)
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+    assert_eq!(
+        messages.len(),
+        2,
+        "expected two TS2345 diagnostics, got {diagnostics:?}"
+    );
+    assert!(
+        messages.iter().any(|message| message.contains(
+            "Argument of type 'boolean[]' is not assignable to parameter of type 'boolean'."
+        )),
+        "first rest mismatch should widen [true] to boolean[], got {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|message| message.contains(
+            "Argument of type 'number[]' is not assignable to parameter of type 'number'."
+        )),
+        "second rest mismatch should report the nested callback call, got {messages:?}"
+    );
+}
+
+#[test]
 fn alternate_iteration_var_name_does_not_change_invariant() {
     // Ensure the fix is structural, not tied to `T`/`P`/etc. Re-running with
     // a different conditional iteration parameter name must still produce the

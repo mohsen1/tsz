@@ -1103,7 +1103,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.public_api_scope_depth = 0;
         if let Some(state) = &self.source_map_state {
             self.writer.enable_source_map(state.output_name.clone());
-            let content = self.source_map_text.map(std::string::ToString::to_string);
+            let content = state
+                .include_sources_content
+                .then(|| self.source_map_text.map(std::string::ToString::to_string))
+                .flatten();
             self.writer.add_source(state.source_name.clone(), content);
         }
     }
