@@ -922,7 +922,7 @@ impl Server {
             "suggestionDiagnosticsSync" => self.handle_suggestion_diagnostics_sync(seq, &request),
             "geterr" => self.handle_geterr(seq, &request),
             "geterrForProject" => self.handle_geterr_for_project(seq, &request),
-            "navtree" => self.handle_navtree(seq, &request),
+            "navtree" | "navtree-full" => self.handle_navtree(seq, &request),
             "navbar" => self.handle_navbar(seq, &request),
             "navto" | "navTo" | "navto-full" | "navTo-full" => self.handle_navto(seq, &request),
             "documentHighlights" => self.handle_document_highlights(seq, &request),
