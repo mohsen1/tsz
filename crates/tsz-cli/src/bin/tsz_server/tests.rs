@@ -281,6 +281,72 @@ fn implementation_finds_cross_file_class_implementation() {
 }
 
 #[test]
+fn get_paste_edits_uses_locations_and_sibling_import_path() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/source.ts",
+                    "fileContent": "export function helper() {\n  return 1;\n}\nhelper();\n",
+                }),
+            ))
+            .success
+    );
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/target.ts",
+                    "fileContent": "export function run() {\n}\n",
+                }),
+            ))
+            .success
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "getPasteEdits",
+        serde_json::json!({
+            "file": "/src/target.ts",
+            "pastedText": ["helper();"],
+            "pasteLocations": [{
+                "start": { "line": 2, "offset": 1 },
+                "end": { "line": 2, "offset": 1 },
+            }],
+            "copiedFrom": {
+                "file": "/src/source.ts",
+                "spans": [{
+                    "start": { "line": 4, "offset": 1 },
+                    "end": { "line": 4, "offset": 10 },
+                }],
+            },
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("paste edits should return a body");
+    assert_eq!(body["fixId"], "providePostPasteEdits");
+    let changes = body["edits"][0]["textChanges"]
+        .as_array()
+        .expect("textChanges should be an array");
+    assert_eq!(
+        changes[0]["span"],
+        serde_json::json!({ "start": 0, "length": 0 })
+    );
+    assert_eq!(
+        changes[0]["newText"],
+        "import { helper } from \"./source\";\n\n"
+    );
+    assert_eq!(
+        changes[1]["span"],
+        serde_json::json!({ "start": 24, "length": 0 })
+    );
+    assert_eq!(changes[1]["newText"], "helper();");
+}
+
+#[test]
 fn reset_clears_session_state_but_keeps_server_alive() {
     let mut server = make_server();
     server

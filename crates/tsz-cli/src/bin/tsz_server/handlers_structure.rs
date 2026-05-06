@@ -2015,8 +2015,18 @@ impl Server {
                 .arguments
                 .get("pastedText")
                 .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|v| v.as_str())?;
+                .and_then(|arr| {
+                    let texts = arr
+                        .iter()
+                        .filter_map(|value| value.as_str())
+                        .collect::<Vec<_>>();
+                    (!texts.is_empty()).then_some(texts)
+                })?;
+            let pasted_text_joined = pasted_text.join("\n");
+            let paste_locations = request
+                .arguments
+                .get("pasteLocations")
+                .and_then(|value| value.as_array());
 
             let copied_from = request
                 .arguments
@@ -2081,7 +2091,7 @@ impl Server {
             let mut names_to_import: Vec<String> = Vec::new();
             for export_name in &source_exports {
                 // Check if the export name appears in pasted code
-                if !pasted_text.contains(export_name.as_str()) {
+                if !pasted_text_joined.contains(export_name.as_str()) {
                     continue;
                 }
                 // Check if the target already imports/declares it
@@ -2111,17 +2121,11 @@ impl Server {
             names_to_import.dedup();
 
             // Compute relative import path from target to source
-            let import_path = Self::compute_relative_import(
-                std::path::Path::new(target_file),
-                std::path::Path::new(copied_from),
-            );
-
-            // Build import statement
-            let import_text = format!(
-                "import {{ {} }} from \"{}\";\n",
-                names_to_import.join(", "),
-                import_path
-            );
+            let target_dir = std::path::Path::new(target_file)
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(""));
+            let import_path =
+                Self::compute_relative_import(target_dir, std::path::Path::new(copied_from));
 
             // Find insertion point: after last import line, or at top of file
             let mut insert_line = 0u32;
@@ -2132,18 +2136,55 @@ impl Server {
                 }
             }
 
-            let text_change = serde_json::json!({
-                "start": { "line": insert_line + 1, "offset": 1 },
-                "end": { "line": insert_line + 1, "offset": 1 },
+            // Build import statement
+            let import_suffix = if insert_line == 0 { "\n\n" } else { "\n" };
+            let import_text = format!(
+                "import {{ {} }} from \"{}\";{}",
+                names_to_import.join(", "),
+                import_path,
+                import_suffix
+            );
+            let line_map = LineMap::build(&target_content);
+            let import_offset = line_map.position_to_offset(
+                Position {
+                    line: insert_line,
+                    character: 0,
+                },
+                &target_content,
+            )?;
+            let mut text_changes = vec![serde_json::json!({
+                "span": { "start": import_offset, "length": 0 },
                 "newText": import_text
-            });
+            })];
+
+            if let Some(paste_locations) = paste_locations {
+                for (index, location) in paste_locations.iter().enumerate() {
+                    let start = location.get("start")?;
+                    let start_line = start.get("line")?.as_u64()? as u32;
+                    let start_offset = start.get("offset")?.as_u64()? as u32;
+                    let start_pos = Position {
+                        line: start_line.saturating_sub(1),
+                        character: start_offset.saturating_sub(1),
+                    };
+                    let start_offset = line_map.position_to_offset(start_pos, &target_content)?;
+                    let new_text = pasted_text
+                        .get(index)
+                        .or_else(|| pasted_text.first())
+                        .copied()
+                        .unwrap_or("");
+                    text_changes.push(serde_json::json!({
+                        "span": { "start": start_offset, "length": 0 },
+                        "newText": new_text
+                    }));
+                }
+            }
 
             Some(serde_json::json!({
                 "edits": [{
                     "fileName": target_file,
-                    "textChanges": [text_change]
+                    "textChanges": text_changes
                 }],
-                "fixId": "paste"
+                "fixId": "providePostPasteEdits"
             }))
         })();
 
