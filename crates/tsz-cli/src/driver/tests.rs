@@ -425,8 +425,10 @@ fn test_cli_strict_false_overrides_config_strict_true() {
 fn test_cli_no_emit_false_overrides_config_no_emit_true() {
     let args = CliArgs::try_parse_from(["tsz", "--__explicitly-disabled-bool-flag=noEmit"])
         .expect("parse args");
-    let mut options = ResolvedCompilerOptions::default();
-    options.no_emit = true;
+    let mut options = ResolvedCompilerOptions {
+        no_emit: true,
+        ..Default::default()
+    };
     super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
 
     assert!(
