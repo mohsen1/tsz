@@ -1428,23 +1428,17 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TS1093: Check for @return/@returns tag with type annotation on constructor.
-        // We must skip @returns tags that appear after @callback or @typedef, since
-        // those tags create nested type definitions whose @returns belong to the
-        // callback/typedef, not to the constructor itself.
-        let nested_scope_start = ["callback", "typedef"]
-            .iter()
-            .filter_map(|t| Self::jsdoc_tag_offset(raw_comment, t))
-            .min();
+        // A preceding @callback creates a nested function type whose return tag
+        // belongs to that callback. A plain @typedef does not consume later
+        // constructor-level return tags.
+        let callback_scope_start = Self::jsdoc_tag_offset(raw_comment, "callback");
 
         for tag in ["returns", "return"] {
             if let Some(tag_offset) = Self::jsdoc_tag_offset(raw_comment, tag) {
-                let tag_len = 1 + tag.len();
-                if let Some(scope_start) = nested_scope_start
-                    && tag_offset > scope_start
-                {
+                if callback_scope_start.is_some_and(|scope_start| tag_offset > scope_start) {
                     continue;
                 }
+                let tag_len = tag.len() + 1;
                 let rest = &raw_comment[tag_offset + tag_len..];
                 let trimmed = rest.trim_start();
                 if trimmed.starts_with('{') {
@@ -1463,7 +1457,6 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-
     fn is_accessor_circular_reference(
         &self,
         type_node_idx: NodeIndex,
