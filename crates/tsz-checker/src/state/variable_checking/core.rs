@@ -32,7 +32,13 @@ impl<'a> CheckerState<'a> {
                     (annotation_type, evaluated_type, resolved_type),
                     (TypeId::UNKNOWN, _, _) | (_, TypeId::UNKNOWN, _) | (_, _, TypeId::UNKNOWN)
                 );
+            let indexed_access_any_fallback = node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+                && matches!(
+                    (annotation_type, evaluated_type, resolved_type),
+                    (TypeId::ANY, _, _) | (_, TypeId::ANY, _) | (_, _, TypeId::ANY)
+                );
             return is_unresolved_indexed_access
+                || indexed_access_any_fallback
                 || matches!(annotation_type, TypeId::ERROR)
                 || matches!(evaluated_type, TypeId::ERROR)
                 || matches!(resolved_type, TypeId::ERROR)
