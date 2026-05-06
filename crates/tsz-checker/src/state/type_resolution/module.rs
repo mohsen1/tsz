@@ -2089,10 +2089,6 @@ impl<'a> CheckerState<'a> {
             .ctx
             .resolve_import_target_from_file(self.ctx.current_file_idx, module_specifier)
             .or_else(|| self.ctx.resolve_import_target(module_specifier));
-        if target_idx.is_some_and(|idx| self.source_file_idx_is_js_with_esm_syntax(idx)) {
-            return false;
-        }
-
         if self
             .resolve_js_export_surface_for_module(module_specifier, Some(self.ctx.current_file_idx))
             .is_some_and(|surface| surface.has_commonjs_exports)
@@ -2113,6 +2109,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if file_name.ends_with(".mjs") || file_name.ends_with(".mts") {
+            return false;
+        }
+        if self.source_file_idx_is_js_with_esm_syntax(target_idx) {
             return false;
         }
 

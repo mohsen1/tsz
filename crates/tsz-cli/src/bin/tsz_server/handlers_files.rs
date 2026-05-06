@@ -49,6 +49,38 @@ impl Server {
         }
     }
 
+    pub(crate) fn handle_save_to(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let success = (|| -> Option<()> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let tmpfile = request.arguments.get("tmpfile")?.as_str()?;
+            let content = self
+                .open_files
+                .get(file)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(file).ok())?;
+            if let Some(parent) = std::path::Path::new(tmpfile).parent() {
+                std::fs::create_dir_all(parent).ok()?;
+            }
+            std::fs::write(tmpfile, content).ok()?;
+            Some(())
+        })()
+        .is_some();
+
+        TsServerResponse {
+            seq,
+            msg_type: "response".to_string(),
+            command: request.command.clone(),
+            request_seq: request.seq,
+            success,
+            message: None,
+            body: None,
+        }
+    }
+
     pub(crate) fn handle_change(
         &mut self,
         seq: u64,

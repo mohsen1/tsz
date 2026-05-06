@@ -135,6 +135,10 @@ impl<'a> Printer<'a> {
         self.write_space();
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
+        let prev_pending_function_body_parameters = std::mem::replace(
+            &mut self.pending_function_body_parameters,
+            func.parameters.nodes.clone(),
+        );
         // Don't increment again — already incremented before parameter emission
 
         // Push temp scope and block scope for function body.
@@ -165,6 +169,7 @@ impl<'a> Printer<'a> {
         self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
+        self.pending_function_body_parameters = prev_pending_function_body_parameters;
         self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
 
@@ -623,9 +628,36 @@ impl<'a> Printer<'a> {
         source
             .lines()
             .map(str::trim)
-            .filter(|line| self.is_recoverable_interface_return_statement(line))
-            .map(str::to_string)
+            .filter_map(|line| {
+                self.recover_interface_var_statement(line).or_else(|| {
+                    self.is_recoverable_interface_return_statement(line)
+                        .then(|| line.to_string())
+                })
+            })
             .collect()
+    }
+
+    fn recover_interface_var_statement(&self, line: &str) -> Option<String> {
+        let rest = line.strip_prefix("var ")?;
+        let rest = rest.trim_start();
+        let mut end = 0usize;
+        for (idx, ch) in rest.char_indices() {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+                end = idx + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if end == 0 {
+            return None;
+        }
+
+        let after_name = rest[end..].trim_start();
+        if !matches!(after_name.as_bytes().first(), Some(b':' | b';' | b',')) {
+            return None;
+        }
+
+        Some(format!("var {};", &rest[..end]))
     }
 
     fn is_recoverable_interface_return_statement(&self, line: &str) -> bool {

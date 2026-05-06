@@ -1264,7 +1264,11 @@ impl<'a> ConstAssertionVisitor<'a> {
                 let const_elements: Vec<TupleElement> = elements
                     .iter()
                     .map(|elem| {
-                        let const_type = self.apply_const_assertion(elem.type_id);
+                        let const_type = if elem.rest {
+                            self.apply_const_assertion_to_tuple_rest_type(elem.type_id)
+                        } else {
+                            self.apply_const_assertion(elem.type_id)
+                        };
                         TupleElement {
                             type_id: const_type,
                             name: elem.name,
@@ -1374,7 +1378,7 @@ impl<'a> ConstAssertionVisitor<'a> {
                     .iter()
                     .map(|&m| self.apply_const_assertion(m))
                     .collect();
-                self.db.union(const_members)
+                self.db.union_preserve_members(const_members)
             }
 
             // Intersections: Recursively apply to all members
@@ -1393,5 +1397,14 @@ impl<'a> ConstAssertionVisitor<'a> {
 
         self.guard.leave(type_id);
         result
+    }
+
+    fn apply_const_assertion_to_tuple_rest_type(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(TypeData::Array(element_type)) = self.db.lookup(type_id) {
+            let const_element = self.apply_const_assertion(element_type);
+            self.db.array(const_element)
+        } else {
+            self.apply_const_assertion(type_id)
+        }
     }
 }

@@ -956,6 +956,14 @@ impl<'a> CheckerState<'a> {
         if func.is_async || has_jsdoc_return {
             return;
         }
+        // Generator functions wrap the body's `return` value in `Generator<Y, R, N>`,
+        // so the function's actual return type is never `any` even when R is `any`
+        // or undefined. tsc therefore does not emit TS7010/TS7011 for unannotated
+        // generator declarations; the implicit-any signal surfaces via TS7055
+        // (yield) or TS7025 (Generator type unresolved) instead.
+        if func.asterisk_token {
+            return;
+        }
         let func_name = self.get_function_name_from_node(func_idx);
         let name_node = func.name.into_option();
         let has_wrapped_circular_return = !has_type_annotation

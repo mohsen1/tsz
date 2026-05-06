@@ -758,6 +758,129 @@ class C {
     );
 }
 
+/// Regression for issue #3067: a user-authored public property whose name
+/// happens to start with `__private_brand` must not be filtered out of
+/// missing-property diagnostics. Internal brand markers minted by the
+/// checker have the form `__private_brand_<u32>` / `__private_brand_node_<u32>`,
+/// so a user property like `__private_brand_value` is structurally distinct.
+///
+/// Expected: same TS2741 missing-property diagnostic as TypeScript reports,
+/// naming `__private_brand_value` as the missing property.
+#[test]
+fn test_user_property_with_private_brand_prefix_emits_ts2741() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+interface NeedsBrandPrefix {
+    __private_brand_value: string;
+    visible: number;
+}
+const missing: NeedsBrandPrefix = {
+    visible: 1,
+};
+missing;
+"#,
+    );
+
+    let ts2741: Vec<_> = diagnostics.iter().filter(|d| d.code == 2741).collect();
+    assert_eq!(
+        ts2741.len(),
+        1,
+        "Expected exactly one TS2741 naming the missing user-authored \
+         `__private_brand_value` property. Got: {diagnostics:?}"
+    );
+    let msg = &ts2741[0].message_text;
+    assert!(
+        msg.contains("__private_brand_value"),
+        "TS2741 message must name the missing user property. Got: {msg:?}"
+    );
+
+    // The diagnostic must not be downgraded to a generic TS2322 for this
+    // assignment (we want the specific TS2741, not the fallback).
+    let ts2322 = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322, 0,
+        "Must not emit a generic TS2322 alongside the TS2741 for a user \
+         property whose name happens to share the brand prefix. Got: {diagnostics:?}"
+    );
+}
+
+/// Control for #3067: ordinary user property names continue to receive
+/// TS2741 detail (this passed before the fix; covered to lock the baseline).
+#[test]
+fn test_user_property_ordinary_name_emits_ts2741() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+interface NeedsPlainPrefix {
+    ordinary_missing: string;
+    visible: number;
+}
+const plain: NeedsPlainPrefix = {
+    visible: 1,
+};
+plain;
+"#,
+    );
+
+    let ts2741: Vec<_> = diagnostics.iter().filter(|d| d.code == 2741).collect();
+    assert_eq!(
+        ts2741.len(),
+        1,
+        "Expected one TS2741 naming `ordinary_missing`. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2741[0].message_text.contains("ordinary_missing"),
+        "TS2741 must name the missing user property. Got: {:?}",
+        ts2741[0].message_text,
+    );
+}
+
+/// Control for #3067: real synthetic private-brand internals from a class
+/// with private members must NOT be rendered as a user-required missing
+/// property. The mismatch should still be reported (a class with private
+/// members is not assignable from a plain object literal), but the
+/// diagnostic must not name `__private_brand_<sym_id>` as a missing user
+/// property.
+#[test]
+fn test_synthetic_private_brand_internals_not_rendered_as_user_property() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class HasPrivate {
+    #secret: number = 1;
+    visible: number = 0;
+}
+const fake: HasPrivate = { visible: 1 };
+fake;
+"#,
+    );
+
+    // The assignment must be rejected — class with private members cannot be
+    // satisfied by a plain object literal.
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected an assignability diagnostic, got none."
+    );
+
+    // Synthetic brand atoms must never leak into rendered diagnostics, even
+    // when the brand happens to be the only "missing" structural piece.
+    for d in &diagnostics {
+        assert!(
+            !d.message_text.contains("__private_brand"),
+            "Synthetic brand marker leaked into diagnostic message: {:?}",
+            d.message_text
+        );
+    }
+
+    // And no TS2741 should name a synthetic brand as a missing user property.
+    let bad_ts2741 = diagnostics
+        .iter()
+        .any(|d| d.code == 2741 && d.message_text.contains("__private_brand"));
+    assert!(
+        !bad_ts2741,
+        "TS2741 must not surface a synthetic brand atom as a user property. \
+         Got: {diagnostics:?}"
+    );
+}
+
 /// No errors for valid `#field in expr` with non-class RHS types.
 /// tsc does NOT require the RHS to be assignable to the declaring class type.
 #[test]

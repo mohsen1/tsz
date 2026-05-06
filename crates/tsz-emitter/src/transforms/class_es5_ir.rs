@@ -3163,9 +3163,9 @@ fn collect_accessor_pairs(
             let entry = accessor_map.entry(name).or_insert((None, None));
 
             if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                entry.0 = Some(member_idx);
+                entry.0.get_or_insert(member_idx);
             } else {
-                entry.1 = Some(member_idx);
+                entry.1.get_or_insert(member_idx);
             }
         }
     }

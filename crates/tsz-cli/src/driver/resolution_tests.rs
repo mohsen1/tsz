@@ -1288,6 +1288,68 @@ fn test_resolve_module_specifier_paths_without_base_url_use_project_base() {
 }
 
 #[test]
+fn test_path_mapping_selection_cache_preserves_sorted_precedence() {
+    let mut raw_paths = FxHashMap::default();
+    raw_paths.insert("*".to_string(), vec!["fallback/*".to_string()]);
+    raw_paths.insert("@scope/pkg/*".to_string(), vec!["wildcard/*".to_string()]);
+    raw_paths.insert(
+        "@scope/pkg/foo".to_string(),
+        vec!["exact/foo.ts".to_string()],
+    );
+    for i in 0..64 {
+        raw_paths.insert(format!("@scope/pkg-{i}/*"), vec![format!("pkg-{i}/*")]);
+    }
+
+    let compiler_options = CompilerOptions {
+        paths: Some(raw_paths),
+        module_resolution: Some("bundler".to_string()),
+        module: Some("es2015".to_string()),
+        ..Default::default()
+    };
+    let options =
+        resolve_compiler_options(Some(&compiler_options)).expect("resolve compiler options");
+
+    let base = PathBuf::from("/tmp/tsz-test-path-mapping-cache");
+    let mut known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    known_files.insert(base.join("exact/foo.ts"));
+    known_files.insert(base.join("wildcard/foo.ts"));
+    known_files.insert(base.join("fallback/@scope/pkg/foo.ts"));
+
+    let mut cache = ModuleResolutionCache::default();
+    let resolved = resolve_module_specifier(
+        &base.join("src/main.ts"),
+        "@scope/pkg/foo",
+        &options,
+        &base,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(resolved, Some(base.join("exact/foo.ts")));
+    let cached = cache
+        .path_mapping_by_specifier
+        .get("@scope/pkg/foo")
+        .and_then(Option::as_ref)
+        .expect("path mapping selection should be cached");
+    assert_eq!(
+        options.paths.as_ref().unwrap()[cached.0].pattern,
+        "@scope/pkg/foo",
+        "exact mapping should win over wildcard mappings before caching"
+    );
+
+    let resolved_again = resolve_module_specifier(
+        &base.join("src/other.ts"),
+        "@scope/pkg/foo",
+        &options,
+        &base,
+        &mut cache,
+        &known_files,
+    );
+    assert_eq!(resolved_again, Some(base.join("exact/foo.ts")));
+    assert_eq!(cache.path_mapping_by_specifier.len(), 1);
+}
+
+#[test]
 fn test_resolve_module_specifier_root_dirs_overlay() {
     let base = PathBuf::from("/tmp/tsz-test-rootdirs");
     let options = ResolvedCompilerOptions {

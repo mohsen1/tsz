@@ -343,13 +343,26 @@ impl<'a> CheckerState<'a> {
                 use tsz_solver::{IndexSignature, ObjectShape};
 
                 if !string_index_types.is_empty() {
-                    string_index_types.extend(properties.iter().map(|prop| prop.type_id));
+                    let prop_types = properties.iter().map(|prop| prop.type_id);
+                    if self.ctx.in_const_assertion {
+                        string_index_types = prop_types.chain(string_index_types).collect();
+                    } else {
+                        string_index_types.extend(prop_types);
+                    }
                 }
 
                 let string_index = if !string_index_types.is_empty() {
+                    let value_type = if self.ctx.in_const_assertion {
+                        self.ctx
+                            .types
+                            .factory()
+                            .union_preserve_members(string_index_types)
+                    } else {
+                        self.ctx.types.factory().union(string_index_types)
+                    };
                     Some(IndexSignature {
                         key_type: TypeId::STRING,
-                        value_type: self.ctx.types.factory().union(string_index_types),
+                        value_type,
                         readonly: false,
                         param_name: None,
                     })
@@ -358,9 +371,17 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let number_index = if !number_index_types.is_empty() {
+                    let value_type = if self.ctx.in_const_assertion {
+                        self.ctx
+                            .types
+                            .factory()
+                            .union_preserve_members(number_index_types)
+                    } else {
+                        self.ctx.types.factory().union(number_index_types)
+                    };
                     Some(IndexSignature {
                         key_type: TypeId::NUMBER,
-                        value_type: self.ctx.types.factory().union(number_index_types),
+                        value_type,
                         readonly: false,
                         param_name: None,
                     })

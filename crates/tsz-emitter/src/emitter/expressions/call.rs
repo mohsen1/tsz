@@ -118,6 +118,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_erased_object_literal_access_call(node, call.expression, &call.arguments) {
+            return;
+        }
+
         // Private field call lowering:
         // `this.#fn(args)` → `__classPrivateFieldGet(this, _C_fn, "f").call(this, args)`
         // `this.#method(args)` → `__classPrivateFieldGet(this, _C_instances, "m", _C_method).call(this, args)`
@@ -437,6 +441,70 @@ impl<'a> Printer<'a> {
         // Map the closing `)` to its source position
         self.map_closing_paren(node);
         self.write(")");
+    }
+
+    fn emit_erased_object_literal_access_call(
+        &mut self,
+        call_node: &Node,
+        callee: NodeIndex,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        let Some((object_expr, dot_base, property_name)) =
+            self.erased_object_literal_access_parts(callee)
+        else {
+            return false;
+        };
+
+        self.write("(");
+        self.emit(object_expr);
+        self.write_dot_token(dot_base);
+        self.emit_property_name_without_import_substitution(property_name);
+        self.emit_call_arguments(call_node, args.as_ref());
+        self.write(")");
+        true
+    }
+
+    pub(in crate::emitter) fn is_erased_object_literal_access_call_expression(
+        &self,
+        call_idx: NodeIndex,
+    ) -> bool {
+        let Some(call_node) = self.arena.get(call_idx) else {
+            return false;
+        };
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.arena.get_call_expr(call_node) else {
+            return false;
+        };
+        self.erased_object_literal_access_parts(call.expression)
+            .is_some()
+    }
+
+    fn erased_object_literal_access_parts(
+        &self,
+        callee: NodeIndex,
+    ) -> Option<(NodeIndex, NodeIndex, NodeIndex)> {
+        let callee_node = self.arena.get(callee)?;
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(callee_node)?;
+        let base_node = self.arena.get(access.expression)?;
+        if base_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return None;
+        }
+        let paren = self.arena.get_parenthesized(base_node)?;
+        let inner = self.arena.get(paren.expression)?;
+        let inner_is_erasable = inner.kind == syntax_kind_ext::TYPE_ASSERTION
+            || inner.kind == syntax_kind_ext::AS_EXPRESSION
+            || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            || inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS;
+        if !inner_is_erasable || !self.type_assertion_wraps_object_literal(paren.expression) {
+            return None;
+        }
+
+        Some((paren.expression, access.expression, access.name_or_argument))
     }
 
     fn emit_call_arguments(&mut self, node: &Node, args: Option<&tsz_parser::parser::NodeList>) {

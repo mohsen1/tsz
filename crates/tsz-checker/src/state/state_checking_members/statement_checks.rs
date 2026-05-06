@@ -345,10 +345,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Like TSC's grammarErrorOnNode, suppress all grammar errors (TS1105, TS1107, TS1116)
-        // for break/continue when the file has parser-generated syntax errors.
-        // TSC checks hasParseDiagnostics(sourceFile) at file level — not node level.
-        if self.has_syntax_parse_errors() {
+        if self.node_span_contains_parse_error(stmt_idx) {
             return;
         }
 
@@ -430,10 +427,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Like TSC's grammarErrorOnNode, suppress grammar errors (TS1104, TS1107, TS1115)
-        // for continue when the file has parser-generated syntax errors.
-        // TSC checks hasParseDiagnostics(sourceFile) at file level — not node level.
-        if self.has_syntax_parse_errors() {
+        if self.node_span_contains_parse_error(stmt_idx) {
             return;
         }
 
