@@ -3,23 +3,27 @@
 - **Date**: 2026-05-06
 - **Branch**: `fix/checker-tsx-spread-attributes-resolution6-fingerprint`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
 
-Fix the fingerprint-only conformance drift in
+Fixes the fingerprint-only conformance drift in
 `TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution6.tsx`.
-The error-code set already matches `tsc` (`TS2322`), so this slice will focus
-on the diagnostic anchor or message rendering path for JSX spread attribute
-assignability.
+The error-code set already matched `tsc` (`TS2322`), but the JSX union-props
+diagnostic rendered the component constructor as the source and expanded the
+class props union instead of using the synthesized attributes object and JSX
+component target display.
 
 ## Files Touched
 
-- TBD
+- `crates/tsz-checker/src/checkers/jsx/diagnostics.rs`
+- `crates/tsz-checker/src/checkers/jsx/props/resolution.rs`
+- `crates/tsz-checker/src/checkers/jsx/tests.rs`
 
 ## Verification
 
-- `cargo nextest run` for the owning crate test added with the fix.
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --lib jsx_class_union_props_ts2322_uses_attrs_source_display`
 - `./scripts/conformance/conformance.sh run --filter "tsxSpreadAttributesResolution6" --verbose`
 - `./scripts/conformance/conformance.sh run --max 200`
