@@ -161,14 +161,20 @@ impl<'a> Printer<'a> {
         // If the inner expression is another ParenExpr wrapping a type assertion/instantiation,
         // and the inner paren would be stripped during emit (because the unwrapped expression
         // is simple), then the outer parens are also redundant.
+        //
+        // Type-erasure forms (TYPE_ASSERTION / AS / SATISFIES) collapse all the way down:
+        // tsc emits `((expr as T)).foo` and `((10 satisfies T))` as `expr.foo` / `10`.
+        // EXPRESSION_WITH_TYPE_ARGUMENTS (instantiation expression like `Box<number>`) is
+        // different — tsc preserves the outer paren in `((Box<number>)) instanceof Object`
+        // → `((Box)) instanceof Object`. Mirror that asymmetry by only stripping when the
+        // erased form is a type-assertion-class expression, not an instantiation expression.
         if let Some(inner) = self.arena.get(paren.expression)
             && inner.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
             && let Some(inner_paren) = self.arena.get_parenthesized(inner)
             && let Some(inner_inner) = self.arena.get(inner_paren.expression)
             && (inner_inner.kind == syntax_kind_ext::TYPE_ASSERTION
                 || inner_inner.kind == syntax_kind_ext::AS_EXPRESSION
-                || inner_inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
-                || inner_inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS)
+                || inner_inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
         {
             // Check if the inner paren would strip its own parens (object literal or simple expr)
             if self.type_assertion_wraps_object_literal(inner_paren.expression) {

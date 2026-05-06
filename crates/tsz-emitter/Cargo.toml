@@ -90,5 +90,9 @@ path = "tests/system_using_es_decorator_default_tests.rs"
 name = "system_using_default_tracker_tests"
 path = "tests/system_using_default_tracker_tests.rs"
 
+[[test]]
+name = "parenthesized_type_erasure_tests"
+path = "tests/parenthesized_type_erasure_tests.rs"
+
 [lints]
 workspace = true
