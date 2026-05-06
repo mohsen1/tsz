@@ -239,6 +239,19 @@ impl<'a> Printer<'a> {
                     .get(*name as usize)
                     .map(|id| id.escaped_text.clone())
                     .unwrap_or_default();
+                if self
+                    .ctx
+                    .module_state
+                    .iife_exported_names
+                    .contains(&name_str)
+                    || self
+                        .ctx
+                        .module_state
+                        .inline_exported_names
+                        .contains(&name_str)
+                {
+                    continue;
+                }
                 self.write_export_binding_start(&name_str);
                 self.write_identifier_by_id(*name);
                 self.write_export_binding_end();
