@@ -3,7 +3,7 @@
 - **Date**: 2026-05-06
 - **Branch**: `fix/jsx-element-type-regression-20260506-183000`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: implemented; awaiting PR
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
@@ -18,9 +18,14 @@ set.
 
 ## Files Touched
 
-- TBD after investigation.
+- `crates/tsz-checker/src/checkers/jsx/diagnostics.rs`
+- `crates/tsz-checker/src/checkers/jsx/props/validation.rs`
+- `crates/tsz-checker/src/checkers/jsx/tests.rs`
 
 ## Verification
 
-- Focused Rust regression in the owning JSX checker path.
+- `cargo fmt --check`
+- `CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=.target/nextest-local cargo nextest run -p tsz-checker --lib -E 'test(jsx_library_managed_attributes_function_variable_display_uses_param_props)'`
 - `./scripts/conformance/conformance.sh run --filter "jsxElementType" --verbose`
+- Pre-commit hook: clippy, wasm rustc warnings gate, architecture guardrails,
+  and 15,899 nextest tests.
