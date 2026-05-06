@@ -24,6 +24,7 @@
 
 use crate::types::{ObjectFlags, ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
 use dashmap::{DashMap, DashSet};
+use rustc_hash::FxBuildHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -37,6 +38,8 @@ static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
 type CrossFileQueryCacheKey = (u8, u32, u32, u32, u64);
 type CrossFileQueryCacheValue = (TypeId, Arc<Vec<TypeParamInfo>>);
+type DefDashMap<K, V> = DashMap<K, V, FxBuildHasher>;
+type DefDashSet<K> = DashSet<K, FxBuildHasher>;
 
 // =============================================================================
 // DefId - Solver-Owned Definition Identifier
@@ -434,7 +437,7 @@ pub struct DefinitionStore {
     instance_id: u64,
 
     /// `DefId` -> `DefinitionInfo` mapping
-    definitions: DashMap<DefId, DefinitionInfo>,
+    definitions: DefDashMap<DefId, DefinitionInfo>,
 
     /// Next available `DefId`
     next_id: AtomicU32,
@@ -444,7 +447,7 @@ pub struct DefinitionStore {
     /// When a class/interface instance type is computed, the checker registers it here
     /// so the `TypeFormatter` can display the class/interface name instead of expanding
     /// the structural form (e.g., show "A" instead of "{ a: string }").
-    type_to_def: DashMap<TypeId, DefId>,
+    type_to_def: DefDashMap<TypeId, DefId>,
 
     /// Authoritative `(SymbolId, file_idx)` -> `DefId` index.
     ///
@@ -457,7 +460,7 @@ pub struct DefinitionStore {
     /// The per-context `symbol_to_def` map is retained as a thin local cache for
     /// backward compatibility and to avoid `DashMap` overhead on repeated lookups
     /// within the same context.
-    symbol_def_index: DashMap<(u32, u32), DefId>,
+    symbol_def_index: DefDashMap<(u32, u32), DefId>,
 
     /// Reverse index: `SymbolId` (raw u32) -> `DefId` (file-agnostic).
     ///
@@ -468,7 +471,7 @@ pub struct DefinitionStore {
     /// to look up the definition name and type parameters.
     ///
     /// Replaces the O(N) linear scan in the previous `find_def_by_symbol`.
-    symbol_only_index: DashMap<u32, DefId>,
+    symbol_only_index: DefDashMap<u32, DefId>,
 
     /// Reverse index: body `TypeId` -> `DefId` for non-generic type aliases.
     ///
@@ -477,14 +480,14 @@ pub struct DefinitionStore {
     /// O(N) linear scan over all definitions. This is used by the `TypeFormatter`
     /// and error reporters to display alias names (e.g., "Color") instead of
     /// structural expansions (e.g., "{ r: number; g: number; b: number }").
-    body_to_alias: DashMap<TypeId, DefId>,
+    body_to_alias: DefDashMap<TypeId, DefId>,
 
     /// Set of body `TypeId`s that were produced by type-level computation
     /// (intersection reduction, conditional evaluation) and should NOT be
     /// used to display alias names. tsc does not preserve alias names for
     /// such computed types (e.g., `type T2 = T1 & ("a"|"b")` evaluates to
     /// `"a"|"b"` but tsc shows the expanded union, not `T2`).
-    computed_alias_bodies: DashSet<TypeId>,
+    computed_alias_bodies: DefDashSet<TypeId>,
 
     /// Reverse index: `file_id` -> `Vec<DefId>` for per-file definition lookups.
     ///
@@ -493,7 +496,7 @@ pub struct DefinitionStore {
     /// which is the foundation for incremental invalidation: when a file changes,
     /// we can instantly find all `DefId`s that need to be refreshed without
     /// scanning the entire definition store.
-    file_to_defs: DashMap<u32, Vec<DefId>>,
+    file_to_defs: DefDashMap<u32, Vec<DefId>>,
 
     /// Reverse index: `ObjectShape` hash -> `DefId` for shape-based lookups.
     ///
@@ -506,7 +509,7 @@ pub struct DefinitionStore {
     /// Keyed by a 64-bit `FxHash` of the `ObjectShape`. Hash collisions are
     /// theoretically possible but astronomically unlikely with `FxHash`, and the
     /// formatter use case is best-effort diagnostic naming.
-    shape_to_def: DashMap<u64, DefId>,
+    shape_to_def: DefDashMap<u64, DefId>,
 
     /// Reverse index: Class `DefId` -> `ClassConstructor` `DefId`.
     ///
@@ -515,7 +518,7 @@ pub struct DefinitionStore {
     /// Enables O(1) lookup of the constructor companion for a class, so the
     /// checker can reuse the pre-populated identity instead of creating a new
     /// `DefId` on demand during type checking.
-    class_to_constructor: DashMap<DefId, DefId>,
+    class_to_constructor: DefDashMap<DefId, DefId>,
 
     /// Reverse index: `Atom` (name) -> `Vec<DefId>` for name-based lookups.
     ///
@@ -527,18 +530,18 @@ pub struct DefinitionStore {
     ///
     /// Multiple definitions may share the same name (e.g., interface merging,
     /// or same-named types in different files), so the value is a `Vec<DefId>`.
-    name_to_defs: DashMap<Atom, Vec<DefId>>,
+    name_to_defs: DefDashMap<Atom, Vec<DefId>>,
 
     /// Thread-safe cache for cross-file checker queries (interface lowering,
     /// class instance type, interface member simple types, symbol type),
     /// keyed by `(kind, file_idx, primary, secondary, args_hash)`. The
     /// `SYMBOL_TYPE` bucket replaces the previous standalone
     /// `resolved_symbol_types` map.
-    resolved_cross_file_queries: DashMap<CrossFileQueryCacheKey, CrossFileQueryCacheValue>,
+    resolved_cross_file_queries: DefDashMap<CrossFileQueryCacheKey, CrossFileQueryCacheValue>,
 
     /// Per-file mutual exclusion locks for cross-file type delegation.
     /// Prevents concurrent delegation to the same target file.
-    file_delegation_locks: DashMap<usize, Arc<Mutex<()>>>,
+    file_delegation_locks: DefDashMap<usize, Arc<Mutex<()>>>,
 
     /// Flag indicating that cross-batch heritage resolution and DefId population
     /// have already been completed. When `true`, `apply_to` skips the expensive
@@ -550,7 +553,7 @@ pub struct DefinitionStore {
     fully_populated: std::sync::atomic::AtomicBool,
 
     /// Set of `DefId`s detected as circular type aliases (shared across checkers).
-    circular_def_ids: DashSet<DefId>,
+    circular_def_ids: DefDashSet<DefId>,
 }
 
 // =============================================================================
@@ -704,21 +707,27 @@ impl DefinitionStore {
         let file_capacity = file_count.max(4);
         Self {
             instance_id,
-            definitions: DashMap::with_capacity(id_capacity),
+            definitions: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             next_id: AtomicU32::new(DefId::FIRST_VALID),
-            type_to_def: DashMap::new(),
-            symbol_def_index: DashMap::with_capacity(id_capacity),
-            symbol_only_index: DashMap::with_capacity(id_capacity),
-            body_to_alias: DashMap::new(),
-            computed_alias_bodies: DashSet::new(),
-            shape_to_def: DashMap::new(),
-            file_to_defs: DashMap::with_capacity(file_capacity),
-            class_to_constructor: DashMap::with_capacity(id_capacity / 2),
-            name_to_defs: DashMap::with_capacity(id_capacity),
-            resolved_cross_file_queries: DashMap::new(),
-            file_delegation_locks: DashMap::new(),
+            type_to_def: DefDashMap::default(),
+            symbol_def_index: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
+            symbol_only_index: DefDashMap::with_capacity_and_hasher(
+                id_capacity,
+                Default::default(),
+            ),
+            body_to_alias: DefDashMap::default(),
+            computed_alias_bodies: DefDashSet::default(),
+            shape_to_def: DefDashMap::default(),
+            file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
+            class_to_constructor: DefDashMap::with_capacity_and_hasher(
+                id_capacity / 2,
+                Default::default(),
+            ),
+            name_to_defs: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
+            resolved_cross_file_queries: DefDashMap::default(),
+            file_delegation_locks: DefDashMap::default(),
             fully_populated: std::sync::atomic::AtomicBool::new(false),
-            circular_def_ids: DashSet::new(),
+            circular_def_ids: DefDashSet::default(),
         }
     }
 
@@ -789,9 +798,13 @@ impl DefinitionStore {
     /// using the symbol's raw id and its `decl_file_idx`. The composite key ensures
     /// that the same `SymbolId(u32)` from different binders maps to different `DefIds`.
     pub fn register_symbol_mapping(&self, symbol_id: u32, file_idx: u32, def_id: DefId) {
-        self.symbol_def_index.insert((symbol_id, file_idx), def_id);
+        self.register_symbol_file_mapping(symbol_id, file_idx, def_id);
         // Also maintain the file-agnostic index (keeps the first registered DefId).
         self.symbol_only_index.entry(symbol_id).or_insert(def_id);
+    }
+
+    fn register_symbol_file_mapping(&self, symbol_id: u32, file_idx: u32, def_id: DefId) {
+        self.symbol_def_index.insert((symbol_id, file_idx), def_id);
     }
 
     /// Look up a `DefId` by `(SymbolId, file_idx)`.
@@ -1691,7 +1704,10 @@ impl DefinitionStore {
             };
 
             let def_id = store.register(info);
-            store.register_symbol_mapping(sym_id.0, entry.file_id, def_id);
+            // `register(info)` already populated the file-agnostic `symbol_only_index`
+            // from `info.symbol_id`; the bulk path only needs the composite
+            // `(SymbolId, file_id)` index used by checker lookups.
+            store.register_symbol_file_mapping(sym_id.0, entry.file_id, def_id);
 
             // For classes, create a ClassConstructor companion DefId.
             if kind == DefKind::Class {
