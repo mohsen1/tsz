@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/thisless-functions-ts18046-regression-20260506-165500`
-- **PR**: TBD
+- **PR**: #4160
 - **Status**: ready
 - **Workstream**: 1 (Conformance fixes)
 
