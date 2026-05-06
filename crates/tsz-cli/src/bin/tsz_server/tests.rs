@@ -142,6 +142,33 @@ fn file_rename_updates_extensionless_relative_import() {
 }
 
 #[test]
+fn prepare_paste_edits_accepts_protocol_copied_text_span() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/source.ts",
+                    "fileContent": "export function helper() { return 1; }\n",
+                }),
+            ))
+            .success
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "preparePasteEdits",
+        serde_json::json!({
+            "file": "/src/source.ts",
+            "copiedTextSpan": [{ "start": 0, "length": 38 }],
+        }),
+    ));
+
+    assert!(response.success);
+    assert_eq!(response.body, Some(serde_json::json!(true)));
+}
+
+#[test]
 fn reset_clears_session_state_but_keeps_server_alive() {
     let mut server = make_server();
     server
