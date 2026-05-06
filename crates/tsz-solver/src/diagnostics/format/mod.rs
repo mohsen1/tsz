@@ -608,7 +608,7 @@ impl<'a> TypeFormatter<'a> {
     /// Preserve enough generic alias context for very long TS2339 receiver types
     /// while still eliding nested structural object branches.
     pub const fn with_long_property_receiver_display(mut self) -> Self {
-        self.max_depth = 64;
+        self.max_depth = 192;
         self.long_property_receiver_display = true;
         self
     }

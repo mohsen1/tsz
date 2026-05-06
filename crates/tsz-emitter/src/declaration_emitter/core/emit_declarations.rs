@@ -1345,7 +1345,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         members: &tsz_parser::parser::NodeList,
     ) -> Vec<NodeIndex> {
-        if !self.source_is_js_file {
+        if !self.source_is_js_file && !self.class_members_have_computed_names(members) {
             return members.nodes.clone();
         }
 

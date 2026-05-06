@@ -287,6 +287,21 @@ type Cache<QR> = {
 }
 
 #[test]
+fn typeof_globalthis_does_not_satisfy_arbitrary_required_constraint() {
+    let diags = check_source_diagnostics(
+        r#"
+type Need<T extends { definitelyMissing: string }> = T;
+type Bad = Need<typeof globalThis>;
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|diag| diag.code == 2344),
+        "Expected TS2344 for typeof globalThis missing required constraint property, got: {diags:?}"
+    );
+}
+
+#[test]
 fn ts2635_instantiation_expression_displays_evaluated_indexed_parameter_type() {
     let diags = check_source_diagnostics(
         r#"

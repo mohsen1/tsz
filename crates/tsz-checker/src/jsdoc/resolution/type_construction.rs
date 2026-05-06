@@ -1603,7 +1603,15 @@ impl<'a> CheckerState<'a> {
                 TypeId::BOOLEAN
             }
         } else if let Some(ref ret_expr) = cb.return_type {
+            let ret_expr = ret_expr.trim();
             self.jsdoc_type_from_expression(ret_expr)
+                .or_else(|| {
+                    if ret_expr.starts_with('{') && ret_expr.ends_with('}') {
+                        self.parse_jsdoc_object_literal_type(ret_expr)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(TypeId::ANY)
         } else {
             TypeId::VOID
