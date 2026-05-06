@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/bundler-import-ts-extensions-extra-ts2307-20260506-151625`
-- **PR**: TBD
+- **PR**: #4124
 - **Status**: ready
 - **Workstream**: 1 (Conformance fixes)
 
