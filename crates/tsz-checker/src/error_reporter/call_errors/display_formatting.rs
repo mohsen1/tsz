@@ -775,10 +775,9 @@ impl<'a> CheckerState<'a> {
         for tp in &raw_sig.type_params {
             if let Some(&replacement) = replacements.get(&tp.name) {
                 type_args.push(replacement);
-            } else if let Some(constraint) = tp.constraint {
-                type_args.push(self.evaluate_type_for_assignability(constraint));
             } else {
-                return None;
+                let constraint = tp.constraint?;
+                type_args.push(self.evaluate_type_for_assignability(constraint));
             }
         }
 

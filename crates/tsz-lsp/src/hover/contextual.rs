@@ -538,11 +538,10 @@ impl<'a> HoverProvider<'a> {
             let contextual_param_idx =
                 if let Some(fn_type) = self.arena.get_function_type(contextual_node) {
                     *fn_type.parameters.nodes.get(param_index)?
-                } else if let Some(signature) = self.arena.get_signature(contextual_node) {
+                } else {
+                    let signature = self.arena.get_signature(contextual_node)?;
                     let params = signature.parameters.as_ref()?;
                     *params.nodes.get(param_index)?
-                } else {
-                    return None;
                 };
             let contextual_param_node = self.arena.get(contextual_param_idx)?;
             let contextual_param = self.arena.get_parameter(contextual_param_node)?;
