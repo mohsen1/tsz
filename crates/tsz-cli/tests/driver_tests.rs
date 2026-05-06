@@ -13570,6 +13570,59 @@ export function getSecond(arr: number[]): number {
 }
 
 #[test]
+fn compile_es5_downlevel_iteration_array_rest_reads_full_iterator() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "lib": ["es2015", "dom"],
+            "downlevelIteration": true,
+            "ignoreDeprecations": "6.0",
+            "outDir": "dist"
+          },
+          "files": ["src/rest.ts"]
+        }"#,
+    );
+
+    write_file(
+        &base.join("src/rest.ts"),
+        r#"
+const iter: any = new Set([1, 2]);
+const [first, ...rest] = iter;
+console.log(first, rest.join(","));
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Should compile without errors: {:?}",
+        result.diagnostics
+    );
+
+    let js = std::fs::read_to_string(base.join("dist/src/rest.js")).expect("read js");
+    assert!(
+        js.contains("__read(iter)"),
+        "array rest binding should read the full iterator: {js}"
+    );
+    assert!(
+        !js.contains("__read(iter, 1)"),
+        "array rest binding must not truncate the iterator read: {js}"
+    );
+    assert!(
+        js.contains("rest = _a.slice(1)") || js.contains("rest = _b.slice(1)"),
+        "array rest binding should slice after the fixed element: {js}"
+    );
+}
+
+#[test]
 fn compile_destructuring_with_defaults() {
     // Test destructuring with default values
     let temp = TempDir::new().expect("temp dir");
