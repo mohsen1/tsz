@@ -708,6 +708,12 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             // Function <: Callable
             self.checker
                 .check_function_to_callable_subtype(FunctionShapeId(shape_id), t_callable_id)
+        } else if self.target == TypeId::FUNCTION
+            || self.checker.is_function_interface_structural(self.target)
+        {
+            // Function expressions are assignable to the global `Function` interface.
+            // Avoid expanding and comparing every `Function` interface member.
+            SubtypeResult::True
         } else {
             // Trace: Function source doesn't match non-function target
             if let Some(tracer) = &mut self.checker.tracer
@@ -737,6 +743,11 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             // Callable <: Function
             self.checker
                 .check_callable_to_function_subtype(CallableShapeId(shape_id), t_fn_id)
+        } else if self.target == TypeId::FUNCTION
+            || self.checker.is_function_interface_structural(self.target)
+        {
+            // Callable object types are assignable to the global `Function` interface.
+            SubtypeResult::True
         } else if let Some(t_shape_id) = object_shape_id(self.checker.interner, self.target) {
             // Callable <: Object — check callable's properties against object's required properties.
             // This handles cases like Array<T> (a Callable) being assigned to ConcatArray<T> (an Object).
@@ -1099,5 +1110,57 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     }
     fn visit_error(&mut self) -> Self::Output {
         SubtypeResult::False
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TypeInterner;
+    use crate::types::{CallSignature, CallableShape, FunctionShape, PropertyInfo};
+
+    fn structural_function_interface(interner: &TypeInterner) -> TypeId {
+        interner.object(vec![
+            PropertyInfo::new(interner.intern_string("apply"), TypeId::FUNCTION),
+            PropertyInfo::new(interner.intern_string("call"), TypeId::FUNCTION),
+            PropertyInfo::new(interner.intern_string("bind"), TypeId::FUNCTION),
+        ])
+    }
+
+    #[test]
+    fn visitor_accepts_function_shape_as_structural_function_interface() {
+        let interner = TypeInterner::new();
+        let source = interner.function(FunctionShape::new(vec![], TypeId::VOID));
+        let target = structural_function_interface(&interner);
+        let shape_id = function_shape_id(&interner, source).expect("function shape");
+
+        let mut checker = SubtypeChecker::new(&interner);
+        let mut visitor = SubtypeVisitor {
+            checker: &mut checker,
+            source,
+            target,
+        };
+
+        assert_eq!(visitor.visit_function(shape_id.0), SubtypeResult::True);
+    }
+
+    #[test]
+    fn visitor_accepts_callable_shape_as_structural_function_interface() {
+        let interner = TypeInterner::new();
+        let source = interner.callable(CallableShape {
+            call_signatures: vec![CallSignature::new(vec![], TypeId::VOID)],
+            ..Default::default()
+        });
+        let target = structural_function_interface(&interner);
+        let shape_id = callable_shape_id(&interner, source).expect("callable shape");
+
+        let mut checker = SubtypeChecker::new(&interner);
+        let mut visitor = SubtypeVisitor {
+            checker: &mut checker,
+            source,
+            target,
+        };
+
+        assert_eq!(visitor.visit_callable(shape_id.0), SubtypeResult::True);
     }
 }
