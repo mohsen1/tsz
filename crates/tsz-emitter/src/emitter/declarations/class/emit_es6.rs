@@ -3560,8 +3560,38 @@ impl<'a> Printer<'a> {
 
         let mut depth = 0_i32;
         let mut recovered = Vec::new();
+        let mut pending_empty_enum: Option<(String, bool)> = None;
+        let mut pending_empty_class: Option<(String, bool)> = None;
         for line in source.lines() {
             let trimmed = line.trim();
+            if let Some((class_name, has_body)) = pending_empty_class.as_mut() {
+                if depth == 2 && trimmed == "}" {
+                    if !*has_body {
+                        recovered.push(format!("class {class_name} {{"));
+                        recovered.push("}".to_string());
+                    }
+                    pending_empty_class = None;
+                } else if depth >= 2 && !trimmed.is_empty() {
+                    *has_body = true;
+                }
+            }
+            if let Some((enum_name, has_body)) = pending_empty_enum.as_mut() {
+                if depth == 2 && trimmed == "}" {
+                    if !*has_body {
+                        let declaration = if self.in_namespace_iife && !self.ctx.target_es5 {
+                            "let"
+                        } else {
+                            "var"
+                        };
+                        recovered.push(format!("{declaration} {enum_name};"));
+                        recovered.push(format!("(function ({enum_name}) {{"));
+                        recovered.push(format!("}})({enum_name} || ({enum_name} = {{}}));"));
+                    }
+                    pending_empty_enum = None;
+                } else if depth >= 2 && !trimmed.is_empty() {
+                    *has_body = true;
+                }
+            }
             if depth == 1
                 && (trimmed.starts_with("function ")
                     || (trimmed.starts_with("var ")
@@ -3569,6 +3599,14 @@ impl<'a> Printer<'a> {
                         && !trimmed.contains("()")))
             {
                 recovered.push(trimmed.replace("{}", "{ }"));
+            } else if depth == 1
+                && let Some(enum_name) = self.recovered_class_body_empty_enum_name(trimmed)
+            {
+                pending_empty_enum = Some((enum_name, false));
+            } else if depth == 1
+                && let Some(class_name) = self.recovered_class_body_empty_class_name(trimmed)
+            {
+                pending_empty_class = Some((class_name, false));
             } else if depth == 1
                 && let Some(stmt) = self.recovered_public_class_block(trimmed)
             {
@@ -3583,6 +3621,32 @@ impl<'a> Printer<'a> {
             }
         }
         recovered
+    }
+
+    fn recovered_class_body_empty_enum_name(&self, trimmed: &str) -> Option<String> {
+        let rest = trimmed.strip_prefix("enum ")?;
+        let name: String = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+            .collect();
+        if name.is_empty() {
+            return None;
+        }
+        let after_name = rest.get(name.len()..)?.trim_start();
+        (after_name == "{").then_some(name)
+    }
+
+    fn recovered_class_body_empty_class_name(&self, trimmed: &str) -> Option<String> {
+        let rest = trimmed.strip_prefix("class ")?;
+        let name: String = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+            .collect();
+        if name.is_empty() {
+            return None;
+        }
+        let after_name = rest.get(name.len()..)?.trim_start();
+        (after_name == "{").then_some(name)
     }
 
     fn class_has_recovered_void_extends(&self, heritage_clauses: &Option<NodeList>) -> bool {

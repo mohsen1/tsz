@@ -560,6 +560,30 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn invalid_var_class_keyword_emits_recovered_class_tail() {
+        let source = "var export;\nvar foo;\nvar class;\nvar bar;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var ;\nclass {\n}\n;\nvar bar;"),
+            "`var class;` should emit tsc's recovered anonymous class tail.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn unmatched_decorator_type_assertion_emits_empty_statement() {
         let source = "@<[[import(obju2c77,\n";
 
@@ -584,6 +608,62 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
             output.trim_end(),
             "\"use strict\";\n;",
             "Malformed decorator type assertion should preserve tsc's recovered empty statement.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn recovered_class_member_enum_emits_after_class() {
+        let source = "namespace M {\n    class C {\n\n    enum E {\n    }\n}\n";
+
+        let mut parser = ParserState::new(
+            "parserErrorRecovery_ClassElement2.ts".to_string(),
+            source.to_string(),
+        );
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "    class C {\n    }\n    let E;\n    (function (E) {\n    })(E || (E = {}));"
+            ),
+            "Recovered enum class member should emit as a sibling after the class.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn recovered_nested_class_emits_after_class() {
+        let source = "class C {\n\n// Classes can't be nested.  So we should bail out of parsing here and recover\n// this as a source unit element.\nclass D {\n}";
+
+        let mut parser = ParserState::new(
+            "parserErrorRecovery_ClassElement1.ts".to_string(),
+            source.to_string(),
+        );
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("class D {\n}"),
+            "Recovered nested class should emit as a sibling after the outer class.\nOutput:\n{output}"
         );
     }
 

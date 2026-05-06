@@ -114,6 +114,35 @@ fn with_lib_contexts(source: &str, file_name: &str, options: CheckerOptions) -> 
         .collect()
 }
 
+fn with_lib_contexts_and_positions(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message_text.clone()))
+        .collect()
+}
+
 /// Helper function to check if a diagnostic with a specific code was emitted
 fn has_error_with_code(source: &str, code: u32) -> bool {
     with_lib_contexts(source, "test.ts", CheckerOptions::default())
@@ -5008,6 +5037,69 @@ function f(obj: { a?: string, b?: string | undefined }) {
             .iter()
             .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected direct undefined exact-optional write to avoid TS2322 fallback, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn exact_optional_property_presence_narrows_self_assignment_source() {
+    let source = r#"
+function f(obj: { a?: string, b?: string | undefined }) {
+    if ("a" in obj) {
+        obj.a = obj.a;
+    }
+    else {
+        obj.a = obj.a;
+    }
+    if (obj.hasOwnProperty("a")) {
+        obj.a = obj.a;
+    }
+    else {
+        obj.a = obj.a;
+    }
+    if ("b" in obj) {
+        obj.b = obj.b;
+    }
+    else {
+        obj.b = obj.b;
+    }
+}
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts_and_positions(source, "test.ts", options);
+    let ts2412: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _, _)| {
+            *code
+                == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD_2
+        })
+        .collect();
+
+    assert_eq!(
+        ts2412.len(),
+        2,
+        "Expected TS2412 only for absent exact-optional property reads, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2412.iter().all(|(_, _, message)| message
+            .contains("Type 'undefined' is not assignable to type 'string'")),
+        "Expected absent-branch TS2412 to report `undefined`, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2412
+            .iter()
+            .all(|(_, _, message)| !message.contains("string | undefined")),
+        "Expected present/absent exact-optional narrowing to avoid `string | undefined`, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _, _)| *code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected present-branch self-assignments to avoid TS2322 fallback, got: {diagnostics:#?}"
     );
 }
 

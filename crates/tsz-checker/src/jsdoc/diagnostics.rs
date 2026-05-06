@@ -1144,9 +1144,9 @@ impl<'a> CheckerState<'a> {
                 }
                 let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
                 self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
-                let unresolved_type = self.resolve_jsdoc_type_str(simple_expr).is_none_or(|ty| {
-                    ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
-                });
+                let unresolved_type = self
+                    .resolve_jsdoc_type_str(simple_expr)
+                    .is_none_or(|ty| self.jsdoc_resolved_type_is_unresolved(simple_expr, ty));
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                 if Self::is_simple_type_name(simple_expr) && unresolved_type {
                     if let Some(angle_idx) = Self::find_top_level_char(simple_expr, '<')
@@ -1745,9 +1745,7 @@ impl<'a> CheckerState<'a> {
                 let resolved = self.resolve_jsdoc_type_str(expr);
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                 let unresolved = resolved.is_none()
-                    || resolved.is_some_and(|ty| {
-                        ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
-                    });
+                    || resolved.is_some_and(|ty| self.jsdoc_resolved_type_is_unresolved(expr, ty));
 
                 if let Some((module_specifier, _segments)) =
                     Self::parse_jsdoc_typeof_import_query(expr)

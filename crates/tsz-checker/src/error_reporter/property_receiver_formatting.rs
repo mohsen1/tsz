@@ -1,7 +1,11 @@
 pub(super) fn elide_long_property_receiver_object_literals(display: String) -> String {
-    if !display.starts_with("Omit<") {
+    let preserve_count = if display.starts_with("Omit<") {
+        3
+    } else if display.starts_with("merge<") {
+        5
+    } else {
         return display;
-    }
+    };
 
     let chars: Vec<char> = display.chars().collect();
     let mut out = String::with_capacity(display.len());
@@ -28,7 +32,7 @@ pub(super) fn elide_long_property_receiver_object_literals(display: String) -> S
         }
 
         object_count += 1;
-        if object_count > 3 {
+        if object_count > preserve_count {
             out.push_str("{ ...; }");
         } else {
             out.extend(chars[start..idx].iter());

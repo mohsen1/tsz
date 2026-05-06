@@ -189,6 +189,34 @@ f("hello");
 }
 
 #[test]
+fn argument_mismatch_display_uses_declared_parameter_not_sibling_literal() {
+    let source = r#"
+function foo(a: string, b?: number) {}
+foo(1, "bar");
+"#;
+    let diags = get_diagnostics(source);
+    let messages: Vec<_> = diags
+        .iter()
+        .filter_map(|(code, message)| (*code == 2345).then_some(message.as_str()))
+        .collect();
+    assert_eq!(
+        messages.len(),
+        1,
+        "Expected one TS2345 for the first argument. Diagnostics: {diags:?}"
+    );
+    let message = messages[0];
+    assert!(
+        message
+            .contains("Argument of type 'number' is not assignable to parameter of type 'string'."),
+        "TS2345 should use the declared parameter type, not the sibling string literal. Got: {message:?}"
+    );
+    assert!(
+        !message.contains("parameter of type '\"bar\"'"),
+        "Sibling argument literals must not repaint non-generic parameter display. Got: {message:?}"
+    );
+}
+
+#[test]
 fn argument_subtype_no_error() {
     let source = r#"
 function f(x: number | string): void {}
