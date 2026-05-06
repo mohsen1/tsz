@@ -7,7 +7,7 @@
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-use tsz_binder::{ModuleAugmentation, SymbolId};
+use tsz_binder::{ModuleAugmentation, SymbolId, SymbolTable};
 
 /// Represents a failed module resolution with specific error details.
 #[derive(Clone, Debug)]
@@ -47,6 +47,9 @@ pub type ModuleExportsIndexMap = FxHashMap<String, ModuleExportsByName>;
 /// Global cross-binder index: module specifier → export name → list of
 /// `(file_idx, SymbolId)` where the export is declared.
 pub type GlobalModuleExportsIndex = Arc<ModuleExportsIndexMap>;
+
+/// Per-checker cache: module specifier → resolved cross-file namespace exports.
+pub type NamespaceExportsCache = FxHashMap<String, Option<SymbolTable>>;
 
 /// Global cross-binder index: module specifier → list of `(file_idx, augmentation)`
 /// entries that contribute to that module's merged type.

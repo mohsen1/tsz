@@ -393,6 +393,10 @@ pub struct CheckerContext<'a> {
     /// declaration-file interface/type lowering.
     pub lowering_entity_name_resolution_cache: RefCell<FxHashMap<String, Option<DefId>>>,
 
+    /// Per-checker cache for cross-file namespace export resolution.
+    /// Keyed by module specifier and stores both hits and misses.
+    pub namespace_exports_cache: RefCell<NamespaceExportsCache>,
+
     /// Shared lib type resolution cache across parallel file checks.
     /// Uses `DashMap` for thread-safe concurrent access.
     pub shared_lib_type_cache: Option<Arc<dashmap::DashMap<String, Option<TypeId>>>>,
