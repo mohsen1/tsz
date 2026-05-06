@@ -304,7 +304,11 @@ impl<'a> Printer<'a> {
             }
 
             if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                let before_len = self.writer.len();
                 self.emit_exported_import_equals_declaration(clause_node);
+                if self.writer.len() == before_len {
+                    return;
+                }
                 if !self.ctx.module_state.has_export_assignment
                     && let Some(import_decl) = self.arena.get_import_decl(clause_node)
                 {

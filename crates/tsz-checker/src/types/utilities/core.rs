@@ -7,6 +7,7 @@ use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, node::PropertyDeclData};
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 /// Result from resolving literal string keys against an object type.
@@ -1232,7 +1233,7 @@ impl<'a> CheckerState<'a> {
         params: &[NodeIndex],
         param_types: &[Option<TypeId>],
     ) {
-        use crate::query_boundaries::state::checking as query;
+        use crate::query_boundaries::state::checking as state_query;
 
         for (i, &param_idx) in params.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
@@ -1250,6 +1251,26 @@ impl<'a> CheckerState<'a> {
             if !is_binding_pattern {
                 continue;
             }
+            let Some(pattern_data) = self.ctx.arena.get_binding_pattern(name_node) else {
+                continue;
+            };
+            let direct_identifier_count = pattern_data
+                .elements
+                .nodes
+                .iter()
+                .filter_map(|&element_idx| self.ctx.arena.get(element_idx))
+                .filter_map(|element_node| self.ctx.arena.get_binding_element(element_node))
+                .filter(|element| {
+                    self.ctx
+                        .arena
+                        .get(element.name)
+                        .is_some_and(|name| name.kind == SyntaxKind::Identifier as u16)
+                })
+                .take(2)
+                .count();
+            if direct_identifier_count < 2 {
+                continue;
+            }
 
             let Some(param_type) = param_types.get(i).and_then(|t| *t) else {
                 continue;
@@ -1257,15 +1278,18 @@ impl<'a> CheckerState<'a> {
             if param_type == TypeId::UNKNOWN || param_type == TypeId::ERROR {
                 continue;
             }
+            if !self.destructured_param_type_may_resolve_to_union(param_type, 0) {
+                continue;
+            }
 
             let mut resolved_for_union = self.evaluate_type_with_env(param_type);
-            if query::union_members(self.ctx.types, resolved_for_union).is_none()
+            if state_query::union_members(self.ctx.types, resolved_for_union).is_none()
                 && let Some(constraint) =
-                    query::type_parameter_constraint(self.ctx.types, resolved_for_union)
+                    state_query::type_parameter_constraint(self.ctx.types, resolved_for_union)
             {
                 resolved_for_union = self.evaluate_type_with_env(constraint);
             }
-            if query::union_members(self.ctx.types, resolved_for_union).is_none() {
+            if state_query::union_members(self.ctx.types, resolved_for_union).is_none() {
                 continue;
             }
 
@@ -1277,6 +1301,78 @@ impl<'a> CheckerState<'a> {
                 true,
                 name_node.kind,
             );
+        }
+    }
+
+    fn destructured_param_type_may_resolve_to_union(&self, type_id: TypeId, depth: u8) -> bool {
+        if crate::query_boundaries::common::union_members(self.ctx.types, type_id).is_some() {
+            return true;
+        }
+        if depth >= 4 {
+            return true;
+        }
+
+        let cached_eval = self.ctx.env_eval_cache.borrow().get(&type_id).copied();
+        if let Some(cached) = cached_eval
+            && cached.result != type_id
+        {
+            return self.destructured_param_type_may_resolve_to_union(cached.result, depth + 1);
+        }
+
+        if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id) {
+            return self.lazy_def_may_resolve_to_union(def_id, depth + 1);
+        }
+
+        match query::classify_for_evaluation(self.ctx.types, type_id) {
+            query::EvaluationNeeded::Application { .. } => {
+                let Some(app) = query::type_application(self.ctx.types, type_id) else {
+                    return true;
+                };
+                if let Some(def_id) = query::lazy_def_id(self.ctx.types, app.base) {
+                    return self.lazy_def_may_resolve_to_union(def_id, depth + 1);
+                }
+                true
+            }
+            query::EvaluationNeeded::TypeParameter {
+                constraint: Some(constraint),
+            } => self.destructured_param_type_may_resolve_to_union(constraint, depth + 1),
+            query::EvaluationNeeded::Readonly(inner) => {
+                self.destructured_param_type_may_resolve_to_union(inner, depth + 1)
+            }
+            query::EvaluationNeeded::Intersection(members) => members.iter().any(|&member| {
+                self.destructured_param_type_may_resolve_to_union(member, depth + 1)
+            }),
+            query::EvaluationNeeded::Union(_)
+            | query::EvaluationNeeded::IndexAccess { .. }
+            | query::EvaluationNeeded::KeyOf(_)
+            | query::EvaluationNeeded::Mapped { .. }
+            | query::EvaluationNeeded::Conditional { .. }
+            | query::EvaluationNeeded::TypeQuery(_)
+            | query::EvaluationNeeded::SymbolRef(_) => true,
+            query::EvaluationNeeded::TypeParameter { constraint: None }
+            | query::EvaluationNeeded::Resolved(_)
+            | query::EvaluationNeeded::Callable(_)
+            | query::EvaluationNeeded::Function(_) => false,
+        }
+    }
+
+    fn lazy_def_may_resolve_to_union(&self, def_id: tsz_solver::DefId, depth: u8) -> bool {
+        match self.ctx.definition_store.get_kind(def_id) {
+            Some(tsz_solver::def::DefKind::TypeAlias) => self
+                .ctx
+                .definition_store
+                .get_body(def_id)
+                .is_none_or(|body| self.destructured_param_type_may_resolve_to_union(body, depth)),
+            Some(
+                tsz_solver::def::DefKind::Interface
+                | tsz_solver::def::DefKind::Class
+                | tsz_solver::def::DefKind::ClassConstructor
+                | tsz_solver::def::DefKind::Enum
+                | tsz_solver::def::DefKind::Namespace
+                | tsz_solver::def::DefKind::Function
+                | tsz_solver::def::DefKind::Variable,
+            ) => false,
+            None => true,
         }
     }
 

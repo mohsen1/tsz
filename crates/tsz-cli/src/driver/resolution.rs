@@ -769,11 +769,11 @@ pub(crate) fn collect_module_specifiers(
     Option<tsz::module_resolver::ImportingModuleKind>,
 )> {
     use tsz::module_resolver::ImportKind;
-    let mut specifiers = Vec::new();
 
     let Some(source) = arena.get_source_file_at(source_file) else {
-        return specifiers;
+        return Vec::new();
     };
+    let mut specifiers = Vec::with_capacity(source.statements.nodes.len().min(64));
 
     // Helper to strip surrounding quotes from a module specifier
     let strip_quotes =
@@ -2227,7 +2227,7 @@ fn push_condition(conditions: &mut Vec<&'static str>, condition: &'static str) {
 }
 
 /// Validates a relative `exports`/`imports` target string per Node.js
-/// PACKAGE_TARGET_RESOLVE.
+/// `PACKAGE_TARGET_RESOLVE`.
 ///
 /// A valid relative target:
 /// - Starts with `"./"`.
