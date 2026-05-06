@@ -100,6 +100,25 @@ fn status_returns_typescript_version_not_tsz_crate_version() {
 }
 
 #[test]
+fn tsserver_exit_request_does_not_write_response() {
+    let mut server = make_server();
+    let request = r#"{"seq":1,"type":"request","command":"exit","arguments":{}}"#;
+    let input = format!("Content-Length: {}\r\n\r\n{}", request.len(), request);
+    let mut stdin = BufReader::new(input.as_bytes());
+    let mut stdout = Vec::new();
+
+    run_tsserver_protocol_with_io(&mut server, &mut stdin, &mut stdout)
+        .expect("exit request should terminate cleanly");
+
+    assert!(
+        stdout.is_empty(),
+        "exit request should not write a tsserver response, got {} bytes: {}",
+        stdout.len(),
+        String::from_utf8_lossy(&stdout)
+    );
+}
+
+#[test]
 fn test_provide_inlay_hints_respects_protocol_start_length_span() {
     let mut server = make_server();
     let source = "function f(value: number) {}\nf(1);\n";
@@ -531,6 +550,7 @@ fn test_synchronize_project_list_reports_external_project_files() {
         }),
     ));
     assert!(open_response.success);
+    assert_eq!(open_response.body, Some(serde_json::json!(true)));
 
     let response = server.handle_tsserver_request(make_request(
         "synchronizeProjectList",
@@ -557,6 +577,53 @@ fn test_synchronize_project_list_reports_external_project_files() {
             }],
             "projectErrors": [],
         }]))
+    );
+}
+
+#[test]
+fn project_info_uses_external_project_identity_and_files() {
+    let mut server = make_server();
+    let open_response = server.handle_tsserver_request(make_request(
+        "openExternalProject",
+        serde_json::json!({
+            "projectFileName": "/workspace/external-project",
+            "rootFiles": [
+                {
+                    "fileName": "/workspace/main.ts",
+                    "content": "export const main = 1;\n",
+                },
+                {
+                    "fileName": "/workspace/dep.ts",
+                    "content": "export const dep = 1;\n",
+                },
+            ],
+            "options": {
+                "target": 1,
+                "module": 1,
+            },
+        }),
+    ));
+    assert!(open_response.success);
+    assert_eq!(open_response.body, Some(serde_json::json!(true)));
+
+    let response = server.handle_tsserver_request(make_request(
+        "projectInfo",
+        serde_json::json!({
+            "file": "/workspace/main.ts",
+            "needFileNameList": true,
+        }),
+    ));
+
+    assert!(response.success);
+    assert_eq!(
+        response.body,
+        Some(serde_json::json!({
+            "configFileName": "/workspace/external-project",
+            "fileNames": [
+                "/workspace/dep.ts",
+                "/workspace/main.ts",
+            ],
+        }))
     );
 }
 
@@ -3761,6 +3828,45 @@ fn test_project_info_inferred_project_returns_libs_and_active_file() {
     assert!(
         !files.iter().any(|p| p.ends_with("/b.ts")),
         "b.ts must not appear when active file is a.ts, got {files:?}"
+    );
+}
+
+#[test]
+fn test_project_info_inferred_project_uses_numeric_target_for_libs() {
+    let mut server = make_server_with_real_libs();
+    server
+        .open_files
+        .insert("/main.ts".to_string(), "const value = 1;\n".to_string());
+
+    let options_resp = server.handle_tsserver_request(make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({
+            "options": {
+                "target": 99
+            }
+        }),
+    ));
+    assert!(options_resp.success);
+
+    let project_info_resp = server.handle_tsserver_request(make_request(
+        "projectInfo",
+        serde_json::json!({
+            "file": "/main.ts",
+            "needFileNameList": true
+        }),
+    ));
+
+    assert!(project_info_resp.success);
+    let file_names = project_info_resp
+        .body
+        .and_then(|body| body.get("fileNames").cloned())
+        .and_then(|file_names| file_names.as_array().cloned())
+        .expect("projectInfo should include fileNames");
+    assert!(
+        file_names.iter().any(|file| file
+            .as_str()
+            .is_some_and(|path| path.ends_with("lib.esnext.full.d.ts"))),
+        "numeric target 99 should select ESNext libs, got {file_names:?}"
     );
 }
 
