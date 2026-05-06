@@ -4791,6 +4791,55 @@ u2.email = e;
 }
 
 #[test]
+fn exact_optional_property_direct_undefined_write_uses_ts2412() {
+    let source = r#"
+function f(obj: { a?: string, b?: string | undefined }) {
+    let a = obj.a;
+    let b = obj.b;
+    obj.a = "hello";
+    obj.b = "hello";
+    obj.a = undefined;
+    obj.b = undefined;
+}
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        emit_declarations: true,
+        strict: true,
+        strict_null_checks: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|(code, _)| {
+                *code
+                    == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD_2
+            })
+            .count(),
+        1,
+        "Expected one TS2412 for direct undefined write to exact-optional property, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code
+                == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD_2
+                && message.contains("Type 'undefined' is not assignable to type 'string'")
+        }),
+        "Expected TS2412 to report the offending undefined source, got: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected direct undefined exact-optional write to avoid TS2322 fallback, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn exact_optional_property_object_message_preserves_optional_target_surface() {
     let source = r#"
 const x: { foo?: number } = { foo: undefined };
