@@ -186,6 +186,8 @@ pub(crate) fn emit_outputs(
             );
             printer_options.type_only_nodes = std::sync::Arc::new(type_only_nodes);
 
+            printer_options.no_lib = context.options.checker.no_lib;
+            printer_options.isolated_modules = context.options.checker.isolated_modules;
             // Wire JSX options from resolved compiler options to printer
             if let Some(jsx) = context.options.jsx {
                 printer_options.jsx = config_jsx_to_emitter_jsx(jsx);

@@ -119,6 +119,10 @@ pub struct PrinterOptions {
     pub legacy_decorators: bool,
     /// Emit design-type metadata for decorated declarations (`__metadata` style)
     pub emit_decorator_metadata: bool,
+    /// True when emitting without default library declarations.
+    pub no_lib: bool,
+    /// True when `--isolatedModules` is enabled.
+    pub isolated_modules: bool,
     /// Emit interop helpers (`__importStar`, `__importDefault`) for CJS/ESM interop
     pub es_module_interop: bool,
     /// When true, treat all non-declaration files as modules (moduleDetection=force)
@@ -197,6 +201,8 @@ impl Default for PrinterOptions {
             use_define_for_class_fields: false,
             legacy_decorators: false,
             emit_decorator_metadata: false,
+            no_lib: false,
+            isolated_modules: false,
             es_module_interop: false,
             module_detection_force: false,
             module_detection_legacy: false,

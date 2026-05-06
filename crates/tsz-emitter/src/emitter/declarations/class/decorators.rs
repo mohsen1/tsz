@@ -213,7 +213,7 @@ impl<'a> Printer<'a> {
     /// Returns a string like "String", "Number", "Function", "Object", "void 0", etc.
     /// Uses `self.metadata_class_type_params` for in-scope type parameters; references
     /// to these are serialized as `"Object"` (matching tsc behavior).
-    fn serialize_type_for_metadata(&self, type_idx: NodeIndex) -> String {
+    fn serialize_type_for_metadata(&mut self, type_idx: NodeIndex) -> String {
         let type_param_names = self.metadata_class_type_params.as_deref().unwrap_or(&[]);
         let Some(type_node) = self.arena.get(type_idx) else {
             return "Object".to_string();
@@ -268,6 +268,12 @@ impl<'a> Printer<'a> {
                                 self.commonjs_named_import_substitutions.get(&name)
                         {
                             return substituted.clone();
+                        }
+                        if self.metadata_type_reference_requires_guard(&name) {
+                            let temp = self.make_unique_name_hoisted_assignment();
+                            return format!(
+                                "typeof ({temp} = typeof {name} !== \"undefined\" && {name}) === \"function\" ? {temp} : Object"
+                            );
                         }
                         return name;
                     }
@@ -439,6 +445,12 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn metadata_type_reference_requires_guard(&self, name: &str) -> bool {
+        self.ctx.options.no_lib
+            && self.ctx.options.isolated_modules
+            && !self.ctx.module_state.value_declaration_names.contains(name)
+    }
+
     /// Emit `__metadata("design:type", ...)` for a property.
     /// Caller must have already emitted a trailing comma+newline after decorators.
     fn emit_metadata_for_property(&mut self, type_annotation: NodeIndex) {
@@ -523,7 +535,7 @@ impl<'a> Printer<'a> {
     /// For a rest parameter, serialize the element type of the array type annotation.
     /// e.g., `...args: string[]` → "String", `...args: number[]` → "Number".
     /// If the type is not an array type or has no annotation, returns "Object".
-    fn serialize_rest_param_element_type(&self, type_annotation: NodeIndex) -> String {
+    fn serialize_rest_param_element_type(&mut self, type_annotation: NodeIndex) -> String {
         if let Some(type_node) = self.arena.get(type_annotation)
             && type_node.kind == syntax_kind_ext::ARRAY_TYPE
             && let Some(arr) = self.arena.get_array_type(type_node)
