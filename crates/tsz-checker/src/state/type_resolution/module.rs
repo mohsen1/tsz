@@ -2261,6 +2261,15 @@ impl<'a> CheckerState<'a> {
                 return member_id;
             };
             if (member_symbol.flags
+                & (symbol_flags::CLASS
+                    | symbol_flags::FUNCTION
+                    | symbol_flags::VARIABLE
+                    | symbol_flags::ENUM))
+                != 0
+            {
+                return member_id;
+            }
+            if (member_symbol.flags
                 & (symbol_flags::MODULE
                     | symbol_flags::NAMESPACE_MODULE
                     | symbol_flags::VALUE_MODULE))
