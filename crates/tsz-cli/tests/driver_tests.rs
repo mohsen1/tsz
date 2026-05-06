@@ -15744,6 +15744,32 @@ window.localStorage;
 }
 
 #[test]
+fn script_empty_html_element_interface_augments_dom_global() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "interface HTMLElement {}\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "script HTMLElement interface should augment lib.dom without diagnostics, got: {result:?}"
+    );
+}
+
+#[test]
 fn types_entry_resolves_direct_declaration_file_from_type_root() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
