@@ -29,6 +29,31 @@ pub(crate) fn is_numeric_property_name(interner: &dyn TypeDatabase, name: Atom) 
     is_numeric_literal_name(prop_name.as_ref())
 }
 
+/// Returns `true` if `name` is a synthetic private-brand marker that the
+/// checker mints for nominal class typing.
+///
+/// Synthetic brands are minted by the checker's class-type construction with
+/// exactly one of these structural forms (where `<digits>` is the decimal
+/// representation of a `SymbolId` or `NodeIndex` `u32`):
+///
+/// * `__private_brand_<digits>`
+/// * `__private_brand_node_<digits>`
+///
+/// This deliberately rejects names like `__private_brand_value` —
+/// user-authored properties that happen to share the textual prefix must not
+/// be filtered out of diagnostics, type printing, or property listings as if
+/// they were internal markers (see issue #3067). The check is structural in
+/// the sense that it parses the suffix back to the integer that the brand
+/// factory writes; an arbitrary user identifier cannot collide unless it is
+/// spelled to look exactly like a generated SymbolId/NodeIndex literal.
+pub fn is_synthetic_private_brand_name(name: &str) -> bool {
+    let Some(suffix) = name.strip_prefix("__private_brand_") else {
+        return false;
+    };
+    let digits = suffix.strip_prefix("node_").unwrap_or(suffix);
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// Checks if a string represents a numeric literal name.
 ///
 /// Returns `true` for:
