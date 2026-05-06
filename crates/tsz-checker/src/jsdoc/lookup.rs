@@ -131,6 +131,44 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    pub(crate) fn source_file_has_jsdoc_typedef_namespace_root(
+        source_file: &SourceFileData,
+        name: &str,
+    ) -> bool {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        if source_file.comments.is_empty() {
+            return false;
+        }
+
+        let text = &source_file.text;
+        if !text.contains("@namespace")
+            && !text.contains("@typedef")
+            && !text.contains("@callback")
+            && !text.contains("@import")
+        {
+            return false;
+        }
+        if !text.contains(name) {
+            return false;
+        }
+
+        let namespace_tag = format!("@namespace {name}");
+        let namespace_prefix = format!("{name}.");
+        source_file.comments.iter().any(|comment| {
+            if !is_jsdoc_comment(comment, text) {
+                return false;
+            }
+            let content = get_jsdoc_content(comment, text);
+            content.contains(&namespace_tag)
+                || Self::parse_jsdoc_typedefs(&content)
+                    .iter()
+                    .any(|(typedef_name, _)| {
+                        typedef_name == name || typedef_name.starts_with(&namespace_prefix)
+                    })
+        })
+    }
+
     /// Whether the JS module resolved from `module_name` declares a top-level
     /// JSDoc `@typedef Name` matching `typedef_name`.
     ///
