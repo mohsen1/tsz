@@ -4,7 +4,7 @@
 //! outlining spans, brace matching, refactoring stubs, and related commands.
 
 use super::{Server, TsServerRequest, TsServerResponse};
-use tsz::emitter::Printer;
+use tsz::emitter::{ModuleKind, Printer, PrinterOptions};
 
 /// `projectInfo`-only view of inferred-project lib/target/noLib settings.
 /// Kept parallel to `Server.inferred_check_options` so we can surface the
@@ -288,7 +288,14 @@ impl Server {
             let file = request.arguments.get("file")?.as_str()?;
             let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
 
-            let mut printer = Printer::with_source_text_len(&arena, source_text.len());
+            let mut printer = Printer::with_source_text_len_and_options(
+                &arena,
+                source_text.len(),
+                PrinterOptions {
+                    module: self.emit_output_module_kind(),
+                    ..Default::default()
+                },
+            );
             printer.set_source_text(&source_text);
             printer.emit(root);
             let output = printer.take_output();
@@ -313,6 +320,31 @@ impl Server {
             request,
             Some(result.unwrap_or(serde_json::json!({"outputFiles": [], "emitSkipped": true}))),
         )
+    }
+
+    fn emit_output_module_kind(&self) -> ModuleKind {
+        self.inferred_check_options
+            .module
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .map(|module| match module.as_str() {
+                "none" => ModuleKind::None,
+                "commonjs" => ModuleKind::CommonJS,
+                "amd" => ModuleKind::AMD,
+                "umd" => ModuleKind::UMD,
+                "system" => ModuleKind::System,
+                "es2015" => ModuleKind::ES2015,
+                "es2020" => ModuleKind::ES2020,
+                "es2022" => ModuleKind::ES2022,
+                "esnext" => ModuleKind::ESNext,
+                "node16" => ModuleKind::Node16,
+                "node18" => ModuleKind::Node18,
+                "node20" => ModuleKind::Node20,
+                "nodenext" => ModuleKind::NodeNext,
+                "preserve" => ModuleKind::Preserve,
+                _ => ModuleKind::ESNext,
+            })
+            .unwrap_or(ModuleKind::ESNext)
     }
 
     pub(crate) fn handle_get_applicable_refactors(

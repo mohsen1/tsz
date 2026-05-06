@@ -724,9 +724,10 @@ pub fn resolve_compiler_options(
         resolved.resolve_json_module = resolve_json_module;
         resolved.checker.resolve_json_module = resolve_json_module;
     } else {
-        // tsc 6.0 defaults resolveJsonModule to true when not explicitly set.
-        resolved.resolve_json_module = true;
-        resolved.checker.resolve_json_module = true;
+        // tsc 6.0 only implies resolveJsonModule for bundler resolution.
+        let resolve_json_module = matches!(effective_resolution, ModuleResolutionKind::Bundler);
+        resolved.resolve_json_module = resolve_json_module;
+        resolved.checker.resolve_json_module = resolve_json_module;
     }
     if let Some(import_helpers) = options.import_helpers {
         resolved.import_helpers = import_helpers;
@@ -1953,6 +1954,31 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     ));
                 }
             }
+        }
+
+        // TS5096: allowImportingTsExtensions is only valid in no-emit modes
+        // or when imports are rewritten before emit.
+        if option_is_effectively_enabled(compiler_opts, &ts5024_keys, "allowImportingTsExtensions")
+            && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "noEmit")
+            && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "emitDeclarationOnly")
+            && !option_is_effectively_enabled(
+                compiler_opts,
+                &ts5024_keys,
+                "rewriteRelativeImportExtensions",
+            )
+        {
+            let start = find_value_offset_in_source(&stripped, "allowImportingTsExtensions");
+            let value_len = compiler_opts
+                .get("allowImportingTsExtensions")
+                .map_or(4, estimate_json_value_len);
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                value_len,
+                diagnostic_messages::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR
+                    .to_string(),
+                diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR,
+            ));
         }
 
         // Group 2: mapRoot requires 'sourceMap' or 'declarationMap'
@@ -5968,6 +5994,37 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_json_module_not_implied_by_node_resolution() {
+        for source in [
+            r#"{"compilerOptions":{"module":"commonjs","moduleResolution":"node10"}}"#,
+            r#"{"compilerOptions":{"module":"node16","moduleResolution":"node16"}}"#,
+        ] {
+            let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+            let resolved =
+                resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+
+            assert!(
+                !resolved.resolve_json_module,
+                "resolveJsonModule should not be implied for {source}"
+            );
+            assert!(
+                !resolved.checker.resolve_json_module,
+                "checker resolveJsonModule should not be implied for {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_resolve_json_module_implied_by_bundler_resolution() {
+        let source = r#"{"compilerOptions":{"moduleResolution":"bundler"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.resolve_json_module);
+        assert!(resolved.checker.resolve_json_module);
+    }
+
+    #[test]
     fn test_ts5070_resolve_json_module_with_amd_module() {
         // module=amd defaults to moduleResolution=classic
         let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"amd"}}"#;
@@ -6625,6 +6682,32 @@ mod tests {
             !resolved.allow_importing_ts_extensions,
             "allowImportingTsExtensions should not be applied from a string-typed boolean value"
         );
+    }
+
+    #[test]
+    fn test_ts5096_allow_importing_ts_extensions_requires_emit_guard() {
+        let invalid = r#"{"compilerOptions":{"allowImportingTsExtensions":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(invalid, "tsconfig.json").unwrap();
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.code
+                == diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR),
+            "Expected TS5096 for allowImportingTsExtensions without an emit guard, got: {:?}",
+            parsed.diagnostics
+        );
+
+        for valid in [
+            r#"{"compilerOptions":{"allowImportingTsExtensions":true,"noEmit":true}}"#,
+            r#"{"compilerOptions":{"allowImportingTsExtensions":true,"declaration":true,"emitDeclarationOnly":true}}"#,
+            r#"{"compilerOptions":{"allowImportingTsExtensions":true,"rewriteRelativeImportExtensions":true}}"#,
+        ] {
+            let parsed = parse_tsconfig_with_diagnostics(valid, "tsconfig.json").unwrap();
+            assert!(
+                parsed.diagnostics.iter().all(|d| d.code
+                    != diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR),
+                "Did not expect TS5096 for guarded allowImportingTsExtensions in {valid}, got: {:?}",
+                parsed.diagnostics
+            );
+        }
     }
 
     #[test]

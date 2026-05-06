@@ -79,7 +79,17 @@ impl<'a> CheckerState<'a> {
                         }
                         return self.current_file_commonjs_namespace_type();
                     }
-                    "module" | "require" => return TypeId::ANY,
+                    "module" | "require" if !self.current_source_file_has_esm_syntax() => {
+                        return TypeId::ANY;
+                    }
+                    "module" | "require" => {
+                        self.error_at_node_msg(
+                            idx,
+                            crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+                            &[name],
+                        );
+                        return TypeId::ERROR;
+                    }
                     "__dirname" | "__filename" => {
                         self.error_at_node_msg(
                             idx,

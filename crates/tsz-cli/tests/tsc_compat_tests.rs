@@ -1699,6 +1699,25 @@ fn tsc_parity_show_config_node16_resolve_json_false() {
 }
 
 #[test]
+fn show_config_rejects_tsconfig_only_cli_options() {
+    let temp = TempDir::new("show_config_tsconfig_only_cli_options").expect("temp dir");
+    write_file(&temp.path.join("index.ts"), "export {};\n");
+
+    for (flag, value) in [("--paths", "@/*=src/*"), ("--plugins", "foo")] {
+        let (code, output) = run_tsz_with_exit_code(
+            &temp.path,
+            &["--showConfig", "--ignoreConfig", flag, value, "index.ts"],
+        )
+        .expect("tsz should run");
+        assert_eq!(code, 1, "expected failure for {flag}, got: {output}");
+        assert!(
+            output.contains("error TS6064:"),
+            "expected TS6064 for {flag}, got: {output}"
+        );
+    }
+}
+
+#[test]
 fn show_config_includes_supported_direct_and_inherited_options() {
     let temp = TempDir::new("show_config_supported_options").expect("temp dir");
     write_file(&temp.path.join("a.ts"), "enum E { A }\n");

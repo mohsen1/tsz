@@ -9,7 +9,9 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{PropertyInfo, TypeId, TypeParamInfo, Visibility};
+use tsz_solver::{
+    CallSignature, CallableShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo, Visibility,
+};
 
 impl CheckerState<'_> {
     /// Push the enclosing JS class's `@template T` JSDoc-derived type
@@ -685,8 +687,7 @@ impl CheckerState<'_> {
                 && !enclosing_has_this_tag
             {
                 let implicit_type = if type_id == TypeId::ANY
-                    || (provisional_open
-                        && (type_id == TypeId::NULL || type_id == TypeId::UNDEFINED))
+                    || (provisional_open && type_id == TypeId::UNDEFINED)
                 {
                     Some("any")
                 } else if crate::query_boundaries::common::array_element_type(
@@ -1218,6 +1219,66 @@ impl CheckerState<'_> {
                         });
                     }
                 }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&method.modifiers) {
+                        continue;
+                    }
+                    let Some(name) = self.get_property_name_resolved(method.name) else {
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    let visibility = self.get_member_visibility(&method.modifiers, method.name);
+                    let return_type = if method.type_annotation.is_some() {
+                        let (_type_params, updates) =
+                            self.push_type_parameters(&method.type_parameters);
+                        let return_type = self.get_type_from_type_node(method.type_annotation);
+                        self.pop_type_parameters(updates);
+                        return_type
+                    } else {
+                        TypeId::ANY
+                    };
+                    let (type_params, updates) = self.push_type_parameters(&method.type_parameters);
+                    self.pop_type_parameters(updates);
+                    let method_type = factory.callable(CallableShape {
+                        call_signatures: vec![CallSignature {
+                            type_params,
+                            params: vec![ParamInfo {
+                                name: None,
+                                type_id: TypeId::ANY,
+                                optional: false,
+                                rest: true,
+                            }],
+                            this_type: None,
+                            return_type,
+                            type_predicate: None,
+                            is_method: true,
+                        }],
+                        construct_signatures: Vec::new(),
+                        properties: Vec::new(),
+                        string_index: None,
+                        number_index: None,
+                        symbol: None,
+                        is_abstract: false,
+                    });
+                    props.push(PropertyInfo {
+                        name: name_atom,
+                        type_id: method_type,
+                        write_type: method_type,
+                        optional: method.question_token,
+                        readonly: false,
+                        is_method: true,
+                        is_class_prototype: true,
+                        visibility,
+                        parent_id: class_sym,
+                        declaration_order: 0,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    });
+                }
                 _ => {}
             }
         }
@@ -1230,5 +1291,87 @@ impl CheckerState<'_> {
         // Cache the partial type so subsequent nested class expressions can use it
         self.ctx.class_instance_type_cache.insert(class_idx, result);
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::CheckerOptions;
+    use crate::query_boundaries::common::{callable_shape_for_type, object_shape_for_type};
+    use crate::query_boundaries::type_construction::TypeInterner;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    #[test]
+    fn quick_prescan_class_members_keeps_method_placeholders() {
+        let source = r#"
+abstract class Boxed<T> {
+    readonly value!: T;
+    abstract parse(input: T): T;
+    sync(input: T): T {
+        return this.parse(input);
+    }
+}
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let source_file = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), source_file);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+
+        let source_file_node = checker
+            .ctx
+            .arena
+            .get(source_file)
+            .expect("source file node");
+        let source_file_data = checker
+            .ctx
+            .arena
+            .get_source_file(source_file_node)
+            .expect("source file data");
+        let class_idx = *source_file_data
+            .statements
+            .nodes
+            .first()
+            .expect("class statement");
+        let class = checker
+            .ctx
+            .arena
+            .get_class_at(class_idx)
+            .expect("class declaration");
+        let partial = checker.quick_prescan_class_members(class_idx, class);
+        let shape = object_shape_for_type(checker.ctx.types, partial).expect("object shape");
+
+        let parse_name = checker.ctx.types.intern_string("parse");
+        let parse_prop = shape
+            .properties
+            .iter()
+            .find(|prop| prop.name == parse_name)
+            .expect("abstract method placeholder");
+        assert!(parse_prop.is_method);
+        assert!(
+            callable_shape_for_type(checker.ctx.types, parse_prop.type_id)
+                .is_some_and(|shape| !shape.call_signatures.is_empty()),
+            "quick prescan should keep callable method placeholders"
+        );
+
+        let sync_name = checker.ctx.types.intern_string("sync");
+        assert!(
+            shape
+                .properties
+                .iter()
+                .any(|prop| prop.name == sync_name && prop.is_method),
+            "quick prescan should include concrete methods too"
+        );
     }
 }

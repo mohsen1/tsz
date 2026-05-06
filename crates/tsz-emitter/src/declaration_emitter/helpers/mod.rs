@@ -189,6 +189,7 @@ mod computed_declarations;
 mod default_import_alias_rewrite;
 mod emit_node;
 mod function_analysis;
+mod generic_call_literal;
 mod js_exports;
 mod jsdoc;
 mod late_bound_function_analysis;

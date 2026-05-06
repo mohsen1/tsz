@@ -801,11 +801,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         let func_body = func.body;
         let func_name = func.name;
-        let preferred_return = if func_body.is_some() {
-            self.function_body_preferred_return_type_text(func_body)
-        } else {
-            None
-        };
+        let (preferred_return, direct_function_return) =
+            self.function_body_return_hint(func, func_body);
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
@@ -854,7 +851,8 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&type_text);
                 } else if let Some(type_text) = preferred_return.as_ref()
-                    && self.should_prefer_source_return_type_text(type_text, return_type_id)
+                    && (direct_function_return
+                        || self.should_prefer_source_return_type_text(type_text, return_type_id))
                 {
                     let (type_text, _) =
                         self.function_return_type_text_for_declaration_scope(func, type_text);
@@ -1629,11 +1627,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         let func_body = func.body;
         let func_name = func.name;
-        let preferred_return = if func_body.is_some() {
-            self.function_body_preferred_return_type_text(func_body)
-        } else {
-            None
-        };
+        let (preferred_return, direct_function_return) =
+            self.function_body_return_hint(func, func_body);
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
@@ -1682,7 +1677,8 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&type_text);
                 } else if let Some(type_text) = preferred_return.as_ref()
-                    && self.should_prefer_source_return_type_text(type_text, return_type_id)
+                    && (direct_function_return
+                        || self.should_prefer_source_return_type_text(type_text, return_type_id))
                 {
                     let (type_text, _) =
                         self.function_return_type_text_for_declaration_scope(func, type_text);
