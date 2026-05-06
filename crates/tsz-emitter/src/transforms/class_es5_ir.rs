@@ -1752,11 +1752,16 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
-        let computed_prop_temp_names: Vec<String> = computed_prop_entries
+        let computed_prop_temp_decls: Vec<IRNode> = computed_prop_entries
             .iter()
-            .filter_map(|(temp, _)| temp.clone())
+            .filter_map(|(temp, _)| {
+                temp.clone().map(|name| IRNode::VarDecl {
+                    name: name.into(),
+                    initializer: None,
+                })
+            })
             .collect();
-        let mut deferred_computed_prop_entries = Vec::new();
+        let mut computed_prop_init_entries = Vec::new();
         if !computed_prop_entries.is_empty() {
             let mut comma_parts: Vec<IRNode> = Vec::new();
             for (temp_name, expr_idx) in &computed_prop_entries {
@@ -1776,7 +1781,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         right: Box::new(right),
                     })
                     .unwrap();
-                deferred_computed_prop_entries.push(IRNode::ExpressionStatement(Box::new(result)));
+                computed_prop_init_entries.push(IRNode::ExpressionStatement(Box::new(result)));
             }
         }
 
@@ -1801,13 +1806,13 @@ impl<'a> ES5ClassTransformer<'a> {
                 IRNode::id(self.class_name.clone()),
             )));
         }
+        if !computed_prop_temp_decls.is_empty() {
+            body.push(IRNode::VarDeclList(computed_prop_temp_decls));
+        }
+        body.append(&mut computed_prop_init_entries);
 
         // Prototype methods and static members interleaved in source order
-        let mut deferred_static_blocks = self.emit_all_members_ir(&mut body, class_idx);
-        if !deferred_computed_prop_entries.is_empty() {
-            deferred_computed_prop_entries.append(&mut deferred_static_blocks);
-            deferred_static_blocks = deferred_computed_prop_entries;
-        }
+        let deferred_static_blocks = self.emit_all_members_ir(&mut body, class_idx);
 
         // Legacy decorator __decorate calls (inside IIFE, before return)
         if self.legacy_decorators {
@@ -1849,8 +1854,11 @@ impl<'a> ES5ClassTransformer<'a> {
         body.push(IRNode::ret(Some(IRNode::id(self.class_name.clone()))));
 
         // Build WeakMap declarations and instantiations
-        let mut weakmap_decls: Vec<String> = computed_prop_temp_names;
-        weakmap_decls.extend(self.private_fields.iter().map(|f| f.weakmap_name.clone()));
+        let mut weakmap_decls: Vec<String> = self
+            .private_fields
+            .iter()
+            .map(|f| f.weakmap_name.clone())
+            .collect();
 
         // Add private accessor WeakMap variables
         for acc in &self.private_accessors {
