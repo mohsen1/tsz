@@ -498,6 +498,7 @@ impl<'a> Printer<'a> {
         let saved_preallocated_logical_value_temps =
             std::mem::take(&mut self.preallocated_logical_assignment_value_temps);
         let saved_hoisted = std::mem::take(&mut self.hoisted_assignment_temps);
+        let saved_block_scoped_private_temps = std::mem::take(&mut self.block_scoped_private_temps);
         let saved_value_temps = std::mem::take(&mut self.hoisted_assignment_value_temps);
         let saved_for_of_temps = std::mem::take(&mut self.hoisted_for_of_temps);
         self.temp_scope_stack.push(super::TempScopeState {
@@ -509,6 +510,7 @@ impl<'a> Printer<'a> {
             preallocated_logical_assignment_value_temps: saved_preallocated_logical_value_temps,
             hoisted_assignment_value_temps: saved_value_temps,
             hoisted_assignment_temps: saved_hoisted,
+            block_scoped_private_temps: saved_block_scoped_private_temps,
             hoisted_for_of_temps: saved_for_of_temps,
         });
         self.ctx.destructuring_state.temp_var_counter = 0;
@@ -527,6 +529,7 @@ impl<'a> Printer<'a> {
                 state.preallocated_logical_assignment_value_temps;
             self.hoisted_assignment_value_temps = state.hoisted_assignment_value_temps;
             self.hoisted_assignment_temps = state.hoisted_assignment_temps;
+            self.block_scoped_private_temps = state.block_scoped_private_temps;
             self.hoisted_for_of_temps = state.hoisted_for_of_temps;
         }
     }
