@@ -576,10 +576,14 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const tsconfigModule = tsconfigOptions.module
       ? parseModule(String(tsconfigOptions.module))
       : undefined;
+    const hasEmbeddedTsconfig = Object.keys(tsconfigOptions).length > 0;
     const module = variant.module ? parseModule(variant.module)
       : directives.module ? parseModule(String(directives.module))
       : tsconfigModule !== undefined ? tsconfigModule
-      : inferDefaultModule(target);  // Match TSC's default: commonjs for es3/es5, es2015 for es2015+
+      // Project-style tsconfig baselines inherit tsc's compiler-option default:
+      // unspecified `module` remains CommonJS, independent of `target`.
+      : hasEmbeddedTsconfig ? parseModule('commonjs')
+      : inferDefaultModule(target);
     const lib = parseLibList(directives.lib) ?? parseLibList(tsconfigOptions.lib);
 
     // TS6: alwaysStrict defaults to true unless explicitly set to false.
@@ -646,7 +650,11 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       : directives.rewriterelativeimportextensions === true;
     const isolatedModules = variant.isolatedmodules !== undefined
       ? variant.isolatedmodules === 'true'
-      : directives.isolatedmodules === true;
+      : directives.isolatedmodules === true
+        ? true
+        : typeof tsconfigOptions.isolatedModules === 'boolean'
+          ? (tsconfigOptions.isolatedModules as boolean)
+          : false;
     const importsNotUsedAsValues = typeof directives.importsnotusedasvalues === 'string'
       ? directives.importsnotusedasvalues : undefined;
     const preserveValueImports = directives.preservevalueimports === true;
