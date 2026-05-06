@@ -591,6 +591,56 @@ const foo: Union = {
 }
 
 #[test]
+fn discriminated_union_object_literal_expands_literal_alias_property_target() {
+    let source = r#"
+interface LinearAxis { type: "linear"; }
+interface CategoricalAxis { type: "categorical"; }
+
+type Axis = LinearAxis | CategoricalAxis;
+type AxisType = "linear" | "categorical";
+
+const objectTarget: Axis = { type: undefined };
+const directTarget: AxisType = undefined;
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "expected object-property and direct-alias TS2322 diagnostics, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag.message_text.contains(
+            "Type 'undefined' is not assignable to type '\"linear\" | \"categorical\"'."
+        )),
+        "object literal property diagnostic should expand the contextual literal-union alias, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("Type 'undefined' is not assignable to type 'AxisType'.")),
+        "direct alias annotation diagnostic should keep the alias display, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn discriminated_tuple_union_accepts_literal_union_tuple_elements() {
+    let source = r#"
+type A = ["a", number] | ["b", number] | ["c", string];
+declare const value: ["a" | "b", 1] | ["c", ""];
+
+const ok: A = value;
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "tuple discriminant assignment should not emit TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn nondiscriminated_union_object_literal_reports_whole_object_mismatch() {
     let source = r#"
 declare var str: string;

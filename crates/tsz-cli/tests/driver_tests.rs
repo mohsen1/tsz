@@ -66,6 +66,100 @@ fn default_args() -> CliArgs {
     CliArgs::try_parse_from(["tsz"]).expect("default args should parse")
 }
 
+fn parse_args(args: &[&str]) -> CliArgs {
+    CliArgs::try_parse_from(args).expect("test args should parse")
+}
+
+fn assert_cli_option_validation_reports(args: &[&str], file_name: &str, source: &str, code: u32) {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join(file_name), source);
+
+    let args = parse_args(args);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code == code),
+        "expected TS{code} for args {args:?}, got diagnostics: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn cli_validates_direct_option_conflicts_and_dependencies() {
+    assert_cli_option_validation_reports(
+        &[
+            "tsz",
+            "--noEmit",
+            "--emitDecoratorMetadata",
+            "--pretty",
+            "false",
+            "--ignoreConfig",
+            "decorator.ts",
+        ],
+        "decorator.ts",
+        r#"
+class C {
+  @d
+  m() {}
+}
+declare const d: MethodDecorator;
+"#,
+        diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+    );
+
+    assert_cli_option_validation_reports(
+        &[
+            "tsz",
+            "--declaration",
+            "--emitDeclarationOnly",
+            "--allowJs",
+            "--isolatedDeclarations",
+            "--pretty",
+            "false",
+            "--ignoreConfig",
+            "a.js",
+        ],
+        "a.js",
+        "export const x = 1;\n",
+        diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
+    );
+
+    assert_cli_option_validation_reports(
+        &[
+            "tsz",
+            "--noEmit",
+            "--module",
+            "amd",
+            "--ignoreDeprecations",
+            "6.0",
+            "--verbatimModuleSyntax",
+            "--pretty",
+            "false",
+            "--ignoreConfig",
+            "plain.ts",
+        ],
+        "plain.ts",
+        "const x = 1;\n",
+        diagnostic_codes::OPTION_VERBATIMMODULESYNTAX_CANNOT_BE_USED_WHEN_MODULE_IS_SET_TO_UMD_AMD_OR_SYST,
+    );
+
+    assert_cli_option_validation_reports(
+        &[
+            "tsz",
+            "--noEmit",
+            "--declarationMap",
+            "--pretty",
+            "false",
+            "--ignoreConfig",
+            "a.ts",
+        ],
+        "a.ts",
+        "export const x = 1;\n",
+        diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION,
+    );
+}
+
 #[test]
 fn source_file_test_pragmas_do_not_override_project_options() {
     let temp = TempDir::new().expect("temp dir");
@@ -114,6 +208,52 @@ const unused = 1;
     assert!(
         codes.contains(&6133),
         "source @noUnusedLocals pragma should not suppress project noUnusedLocals, got: {codes:?}"
+    );
+}
+
+#[test]
+fn check_js_implies_allow_js_for_compilation() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["index.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"// @ts-check
+const n = 1;
+n();
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION),
+        "checkJs should imply allowJs instead of TS5052, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::FILE_IS_A_JAVASCRIPT_FILE_DID_YOU_MEAN_TO_ENABLE_THE_ALLOWJS_OPTION
+        ),
+        "checkJs should imply allowJs instead of TS6504, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE),
+        "expected JS semantic diagnostic after accepting index.js, got: {:?}",
+        result.diagnostics
     );
 }
 
@@ -366,6 +506,53 @@ export const amdCase = 1;
             result.diagnostics
         );
     }
+}
+
+#[test]
+fn compile_extensionless_reference_path_probes_js_when_allow_js() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("main.ts"),
+        r#"/// <reference path="dep" />
+const marker = 1;
+"#,
+    );
+    write_file(
+        &base.join("dep.js"),
+        r#"// @ts-check
+const x = 1;
+x();
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::COULD_NOT_RESOLVE_THE_PATH_WITH_THE_EXTENSIONS),
+        "extensionless .js reference should resolve under allowJs: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE),
+        "referenced dep.js should be included and checked: {:?}",
+        result.diagnostics
+    );
 }
 
 #[test]
@@ -5992,6 +6179,46 @@ fn compile_resolves_node_modules_exports_subpath() {
 }
 
 #[test]
+fn compile_rejects_package_exports_target_with_node_modules_segment() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "node16",
+            "moduleResolution": "node16",
+            "noEmit": true
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        "import { value } from 'pkg/secret';\nconst n: number = value;\n",
+    );
+    write_file(
+        &base.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{"./secret":"./node_modules/secret.d.ts"}}"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg/node_modules/secret.d.ts"),
+        "export declare const value: number;",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected TS2307 for exports target under node_modules, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_cli_node16_resolution_enables_package_json_exports_without_config() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -6961,6 +7188,46 @@ fn compile_resolves_package_imports_wildcard() {
 }
 
 #[test]
+fn compile_rejects_package_imports_target_with_node_modules_segment() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "node16",
+            "moduleResolution": "node16",
+            "noEmit": true
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("package.json"),
+        r##"{"name":"app","imports":{"#secret":"./node_modules/secret.d.ts"}}"##,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        "import { value } from '#secret';\nconst n: number = value;\n",
+    );
+    write_file(
+        &base.join("node_modules/secret.d.ts"),
+        "export declare const value: number;",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected TS2307 for imports target under node_modules, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_resolves_package_imports_array_fallback_after_missing_target() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -6999,6 +7266,52 @@ fn compile_resolves_package_imports_array_fallback_after_missing_target() {
         !result.diagnostics.iter().any(|diag| diag.code
             == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
         "Expected package imports array to fall back to ok.d.ts, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_resolves_package_imports_conditional_fallback_after_missing_target() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("package.json"),
+        r##"{
+          "name": "app",
+          "imports": {
+            "#x": {
+              "import": "./missing.d.ts",
+              "default": "./ok.d.ts"
+            }
+          }
+        }"##,
+    );
+    write_file(&base.join("ok.d.ts"), "export declare const v: number;");
+    write_file(
+        &base.join("index.ts"),
+        "import { v } from '#x';\nconst n: number = v;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        !result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected package imports conditional target to fall back to ok.d.ts, got diagnostics: {:?}",
         result.diagnostics
     );
 }
@@ -9957,6 +10270,48 @@ fn compile_missing_file_in_include_pattern_returns_error() {
             .iter()
             .map(|d| d.code)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn compile_terminal_include_star_matches_direct_js_file() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true,
+            "strict": true
+          },
+          "include": ["src/*"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/a.js"),
+        r#"// @ts-check
+function takesString(value) {
+  return value.toUpperCase();
+}
+
+takesString(123);
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&18003),
+        "terminal include star should discover src/a.js instead of reporting TS18003, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&7006),
+        "discovered checked JS file should be type checked, got: {codes:?}"
     );
 }
 
