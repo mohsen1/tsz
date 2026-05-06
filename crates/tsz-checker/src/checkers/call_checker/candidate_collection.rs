@@ -18,6 +18,24 @@ use tsz_solver::{TupleElement, TypeId};
 const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
 
 impl<'a> CheckerState<'a> {
+    fn generic_function_argument_has_own_type_params(&self, arg_idx: NodeIndex) -> bool {
+        let arg_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let Some(node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+
+        self.ctx
+            .arena
+            .get_function(node)
+            .and_then(|func| func.type_parameters.as_ref())
+            .is_some_and(|params| !params.nodes.is_empty())
+    }
+
     pub(crate) fn call_arg_source_type_annotation_markers(
         &self,
         args: &[NodeIndex],
@@ -469,12 +487,37 @@ impl<'a> CheckerState<'a> {
                 Some(expanded_count),
                 callable_ctx,
             );
+            let expected_context_is_generic_callable =
+                expected_context_type.or(expected_type).is_some_and(|ty| {
+                    let evaluated = self.evaluate_type_with_env(ty);
+                    crate::query_boundaries::checkers::call::get_contextual_signature(
+                        self.ctx.types,
+                        ty,
+                    )
+                    .or_else(|| {
+                        crate::query_boundaries::checkers::call::get_contextual_signature(
+                            self.ctx.types,
+                            evaluated,
+                        )
+                    })
+                    .is_some_and(|shape| !shape.type_params.is_empty())
+                });
+            let skip_generic_callable_context_for_annotated_generic_function =
+                expected_context_is_generic_callable
+                    && self.explicit_generic_function_has_fully_annotated_signature(arg_idx);
             let can_apply_contextual_despite_unresolved = unresolved_refresh_context
                 && self.callable_context_can_type_function_argument_despite_unresolved(
                     arg_idx,
                     expected_context_type,
                 );
+            let skip_bare_type_param_context_for_generic_function =
+                expected_type.is_some_and(|ty| {
+                    crate::query_boundaries::common::type_param_info(self.ctx.types, ty).is_some()
+                        && self.generic_function_argument_has_own_type_params(arg_idx)
+                });
             let apply_contextual = self.argument_needs_contextual_type(arg_idx)
+                && !skip_bare_type_param_context_for_generic_function
+                && !skip_generic_callable_context_for_annotated_generic_function
                 && (!unresolved_refresh_context || can_apply_contextual_despite_unresolved);
             let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {
                 crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
@@ -564,6 +607,10 @@ impl<'a> CheckerState<'a> {
             } else {
                 TypingRequest::NONE
             };
+            if skip_generic_callable_context_for_annotated_generic_function {
+                self.invalidate_expression_for_contextual_retry(arg_idx);
+                self.clear_contextual_resolution_cache();
+            }
             // When the expected parameter type references a const type variable,
             // enable const assertion mode so array/object literals in the argument
             // are inferred as readonly tuples/readonly objects. This matches tsc's
@@ -624,6 +671,24 @@ impl<'a> CheckerState<'a> {
                             expected_eval,
                         )
                     });
+                let raw_arg_eval = self.evaluate_type_with_env(raw_arg_type);
+                let raw_arg_shape =
+                    crate::query_boundaries::checkers::call::get_contextual_signature(
+                        self.ctx.types,
+                        raw_arg_type,
+                    )
+                    .or_else(|| {
+                        crate::query_boundaries::checkers::call::get_contextual_signature(
+                            self.ctx.types,
+                            raw_arg_eval,
+                        )
+                    });
+                let both_source_and_target_are_generic_signatures = expected_shape
+                    .as_ref()
+                    .is_some_and(|shape| !shape.type_params.is_empty())
+                    && raw_arg_shape
+                        .as_ref()
+                        .is_some_and(|shape| !shape.type_params.is_empty());
                 let should_refine_generic_arg = expected_shape.is_some_and(|shape| {
                     !shape.is_constructor
                         && shape.params.iter().all(|param| {
@@ -644,6 +709,7 @@ impl<'a> CheckerState<'a> {
                         )
                 });
                 if should_refine_generic_arg
+                    && !both_source_and_target_are_generic_signatures
                     && self.expression_needs_contextual_signature_instantiation(
                         arg_idx,
                         Some(expected),
