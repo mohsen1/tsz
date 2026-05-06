@@ -2816,6 +2816,7 @@ fn apply_cli_overrides_with_config_options(
     }
     if args.resolve_json_module {
         options.resolve_json_module = true;
+        options.checker.resolve_json_module = true;
     }
     if args.allow_arbitrary_extensions {
         options.allow_arbitrary_extensions = true;
@@ -3377,7 +3378,10 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
                 options.rewrite_relative_import_extensions = false;
                 options.printer.rewrite_relative_import_extensions = false;
             }
-            "resolveJsonModule" => options.resolve_json_module = false,
+            "resolveJsonModule" => {
+                options.resolve_json_module = false;
+                options.checker.resolve_json_module = false;
+            }
             "libReplacement" => options.lib_replacement = false,
             "suppressExcessPropertyErrors" => {
                 options.checker.suppress_excess_property_errors = false
@@ -3424,6 +3428,14 @@ fn apply_module_resolution_derived_options(
                 | ModuleResolutionKind::NodeNext
                 | ModuleResolutionKind::Bundler
         );
+    }
+
+    let config_has_resolve_json_module =
+        config_options.is_some_and(|options| options.resolve_json_module.is_some());
+    if !args.resolve_json_module && !config_has_resolve_json_module {
+        let resolve_json_module = matches!(effective_resolution, ModuleResolutionKind::Bundler);
+        options.resolve_json_module = resolve_json_module;
+        options.checker.resolve_json_module = resolve_json_module;
     }
 }
 

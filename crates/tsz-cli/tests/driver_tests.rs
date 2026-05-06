@@ -17639,6 +17639,37 @@ void exact;
 }
 
 #[test]
+fn ignore_config_explicit_file_mode_implies_resolve_json_module_for_bundler() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("index.ts"),
+        r#"import data from "./data.json";
+const answer: number = data.answer;
+void answer;
+"#,
+    );
+    write_file(&base.join("data.json"), r#"{ "answer": 42 }"#);
+
+    let args = parse_args(&[
+        "tsz",
+        "--ignoreConfig",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "index.ts",
+    ]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no TS2732 for JSON import in no-config explicit-file mode, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn cts_json_namespace_import_default_property_is_json_object() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
