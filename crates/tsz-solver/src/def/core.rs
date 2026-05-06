@@ -1774,7 +1774,7 @@ impl DefinitionStore {
                 next_id = next_id.saturating_add(1);
                 let ctor_info = DefinitionInfo {
                     kind: DefKind::ClassConstructor,
-                    name: intern_string(&entry.name),
+                    name,
                     type_params: Vec::new(),
                     body: None,
                     instance_shape: None,
@@ -1810,7 +1810,10 @@ impl DefinitionStore {
                 let child_def = symbol_to_def.get(&sym_id.0).copied();
                 let parent_def = symbol_to_def.get(&parent_sym.0).copied();
                 if let (Some(child_def_id), Some(parent_def_id)) = (child_def, parent_def) {
-                    let name = intern_string(&entry.name);
+                    let Some(name) = preloaded_info(&def_infos, child_def_id).map(|info| info.name)
+                    else {
+                        continue;
+                    };
                     if let Some(parent_info) = preloaded_info_mut(&mut def_infos, parent_def_id) {
                         parent_info.add_export(name, child_def_id);
                     }

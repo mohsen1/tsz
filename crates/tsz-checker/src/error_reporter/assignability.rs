@@ -611,6 +611,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Exact-optional presence checks make `obj.a = obj.a` safe in the present branch.
+        if self.ctx.compiler_options.exact_optional_property_types
+            && self.same_property_self_assignment_in_presence_true_branch_for_anchor(anchor_idx)
+        {
+            return;
+        }
+
         // TS2375: exactOptionalPropertyTypes — undefined assigned to optional property without undefined.
         if self.has_exact_optional_property_mismatch(source, target) {
             let src_str = self.format_type_for_diagnostic_role(
@@ -643,11 +650,16 @@ impl<'a> CheckerState<'a> {
             // `undefined` is not under `exactOptionalPropertyTypes`. Surface
             // that narrowed display when the union strip leaves the target's
             // shape intact.
-            let narrowed_source = self.exact_optional_source_for_message(source, target);
-            let src_str = self.format_type_for_diagnostic_role(
-                narrowed_source,
-                DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
-            );
+            let narrowed_source =
+                self.exact_optional_source_for_message(source, target, anchor_idx);
+            let src_str = if narrowed_source == TypeId::UNDEFINED {
+                self.format_type_diagnostic(narrowed_source)
+            } else {
+                self.format_type_for_diagnostic_role(
+                    narrowed_source,
+                    DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
+                )
+            };
             let tgt_str = self.format_exact_optional_target_type_for_message(target);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD_2,
@@ -853,22 +865,36 @@ impl<'a> CheckerState<'a> {
     /// only the `null` / `undefined` (or other non-overlapping) members are
     /// the actual mismatch, and tsc reports just those rather than the full
     /// source union.
-    fn exact_optional_source_for_message(&mut self, source: TypeId, target: TypeId) -> TypeId {
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, source)
+    fn exact_optional_source_for_message(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> TypeId {
+        if self.same_property_self_assignment_in_presence_false_branch(anchor_idx) {
+            return TypeId::UNDEFINED;
+        }
+
+        let source_eval = self.evaluate_type_for_assignability(source);
+        let target_eval = self.evaluate_type_for_assignability(target);
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, source_eval)
         else {
             return source;
         };
-        let target_eval = self.evaluate_type_for_assignability(target);
         let mismatched: Vec<TypeId> = members
             .iter()
             .copied()
             .filter(|&m| !self.is_assignable_to(m, target_eval))
             .collect();
-        match mismatched.len() {
-            0 => source,
-            1 => mismatched[0],
-            _ => self.ctx.types.factory().union_preserve_members(mismatched),
+        if mismatched.len() == members.len()
+            && members.len() == 2
+            && members.contains(&TypeId::UNDEFINED)
+            && !crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, target)
+        {
+            return TypeId::UNDEFINED;
         }
+        source
     }
 
     fn format_exact_optional_target_type_for_message(&mut self, target: TypeId) -> String {

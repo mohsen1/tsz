@@ -985,10 +985,17 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::AsteriskToken) // generator method
                     && !self.is_property_name()
                 {
-                    self.parse_error_at_current_token(
-                        "Unexpected token. A constructor, method, accessor, or property was expected.",
-                        diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
-                    );
+                    if self.is_token(SyntaxKind::Unknown) {
+                        self.parse_error_at_current_token(
+                            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                            diagnostic_codes::INVALID_CHARACTER,
+                        );
+                    } else {
+                        self.parse_error_at_current_token(
+                            "Unexpected token. A constructor, method, accessor, or property was expected.",
+                            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                        );
+                    }
                     self.next_token();
                 }
             }
@@ -1029,6 +1036,18 @@ impl ParserState {
         // property names in class bodies (e.g., `class C { delete; for; if() {} }`).
         // We do NOT reject them here — they flow through to normal class member parsing
         // where is_property_name() correctly accepts them.
+
+        // Handle Unknown tokens (invalid characters) before class-member recovery.
+        // tsc reports scanner-shaped TS1127 diagnostics for malformed Unicode
+        // escapes in member names, not the generic TS1068 class-member error.
+        if self.is_token(SyntaxKind::Unknown) {
+            self.parse_error_at_current_token(
+                tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                diagnostic_codes::INVALID_CHARACTER,
+            );
+            self.next_token();
+            return NodeIndex::NONE;
+        }
 
         // Handle bare `#` that can't become a PrivateIdentifier.
         // In tsc, the scanner emits TS1127 for a standalone `#` (e.g., `# name` with a
