@@ -5964,7 +5964,20 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
-        true
+        let computed_key_requires_property_syntax = self
+            .arena
+            .get_computed_property(name_node)
+            .and_then(|computed| self.get_node_type_or_names(&[computed.expression, method.name]))
+            .is_none_or(|type_id| {
+                type_id == tsz_solver::types::TypeId::ANY
+                    || self.type_interner.is_some_and(|interner| {
+                        !tsz_solver::type_queries::is_type_usable_as_property_name(
+                            interner, type_id,
+                        )
+                    })
+            });
+
+        method.question_token || computed_key_requires_property_syntax
     }
 
     fn computed_property_name_is_literal_key(&self, name_idx: NodeIndex) -> bool {
