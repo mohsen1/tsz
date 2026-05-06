@@ -118,6 +118,71 @@ fn list_files_only_resolve_json_module_does_not_list_unimported_json_roots() {
 }
 
 #[test]
+fn show_config_and_list_files_only_find_parent_tsconfig() {
+    let temp = TempDir::new("special_modes_parent_tsconfig").expect("temp dir");
+    write_file(&temp.path.join("p/a.ts"), "let parentConfigFile = 1;\n");
+    write_file(
+        &temp.path.join("p/tsconfig.json"),
+        r#"{
+  "compilerOptions": { "target": "es2015", "strict": true, "noEmit": true },
+  "files": ["a.ts"]
+}
+"#,
+    );
+    std::fs::create_dir_all(temp.path.join("p/sub")).expect("create subdir");
+    let cwd = temp.path.join("p/sub");
+
+    let (show_code, show_output) =
+        run_tsz_with_exit_code(&cwd, &["--showConfig", "--pretty", "false"])
+            .expect("tsz should run");
+    assert_eq!(show_code, 0, "showConfig should succeed: {show_output}");
+    assert!(
+        show_output.contains("\"target\": \"es6\""),
+        "showConfig should load parent compiler options: {show_output}"
+    );
+    assert!(
+        show_output.contains("\"./a.ts\""),
+        "showConfig should list parent project files relative to config: {show_output}"
+    );
+
+    let (list_code, list_output) =
+        run_tsz_with_exit_code(&cwd, &["--listFilesOnly", "--pretty", "false"])
+            .expect("tsz should run");
+    assert_eq!(list_code, 0, "listFilesOnly should succeed: {list_output}");
+    assert!(
+        list_output.contains("p/a.ts"),
+        "listFilesOnly should list the parent project file: {list_output}"
+    );
+}
+
+#[test]
+fn special_modes_ignore_config_with_no_inputs_follow_no_input_behavior() {
+    let temp = TempDir::new("special_modes_ignore_config_no_inputs").expect("temp dir");
+
+    let (show_code, show_output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--showConfig", "--ignoreConfig", "--pretty", "false"],
+    )
+    .expect("tsz should run");
+    assert_eq!(show_code, 1, "showConfig should fail: {show_output}");
+    assert!(
+        show_output.contains("error TS5081: Cannot find a tsconfig.json file"),
+        "showConfig should report TS5081: {show_output}"
+    );
+
+    let (list_code, list_output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--listFilesOnly", "--ignoreConfig", "--pretty", "false"],
+    )
+    .expect("tsz should run");
+    assert_eq!(list_code, 1, "listFilesOnly should fail: {list_output}");
+    assert!(
+        list_output.contains("Version "),
+        "listFilesOnly should print no-input help/version output: {list_output}"
+    );
+}
+
+#[test]
 fn trace_resolution_prints_relative_import_resolution() {
     let Some(tsz_bin) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");
@@ -1443,6 +1508,54 @@ fn tsc_compat_double_digit_line_number_pretty() {
 const TS5112_COMMAND_LINE_FILES_OUTPUT: &str = "error TS5112: tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error.\n";
 
 #[test]
+fn build_only_flags_report_ts5093_outside_build_mode() {
+    let temp = TempDir::new("build_only_flags_ts5093").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "const x = 1;\n");
+
+    for (flag, option_name) in [
+        ("--verbose", "verbose"),
+        ("--dry", "dry"),
+        ("--force", "force"),
+        ("--clean", "clean"),
+        ("--stopBuildOnErrors", "stopBuildOnErrors"),
+    ] {
+        let (code, output) =
+            run_tsz_with_exit_code(&temp.path, &["--pretty", "false", flag, "a.ts"])
+                .expect("tsz binary not found");
+        let expected = format!(
+            "error TS5093: Compiler option '--{option_name}' may only be used with '--build'.\n"
+        );
+
+        assert_eq!(code, 1, "Expected exit code 1 for {flag}, got {code}");
+        assert_eq!(output, expected, "Unexpected output for {flag}");
+        assert!(
+            !temp.path.join("a.js").exists(),
+            "{flag} outside build mode should not emit a.js"
+        );
+    }
+}
+
+#[test]
+fn build_only_explicit_false_still_reports_ts5093() {
+    let temp = TempDir::new("build_only_false_ts5093").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "const x = 1;\n");
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--pretty", "false", "--dry", "false", "a.ts"])
+            .expect("tsz binary not found");
+
+    assert_eq!(code, 1, "Expected exit code 1 for --dry false");
+    assert_eq!(
+        output,
+        "error TS5093: Compiler option '--dry' may only be used with '--build'.\n"
+    );
+    assert!(
+        !temp.path.join("a.js").exists(),
+        "--dry false outside build mode should not emit a.js"
+    );
+}
+
+#[test]
 fn unknown_flag_ts5023_format() {
     let temp = TempDir::new("unknown_flag_ts5023").expect("temp dir");
     let (code, output) =
@@ -1929,6 +2042,43 @@ fn tsc_parity_no_input() {
 }
 
 #[test]
+fn no_input_from_project_subdirectory_uses_parent_tsconfig() {
+    let temp = TempDir::new("parent_config_no_input").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true
+  },
+  "files": ["src/a.ts"]
+}
+"#,
+    );
+    write_file(
+        &temp.path.join("src/a.ts"),
+        "function f(value) {\n  return value;\n}\nf(1);\n",
+    );
+
+    let src_dir = temp.path.join("src");
+    let (code, output) = run_tsz_with_exit_code(&src_dir, &["--pretty", "false"])
+        .expect("tsz should run from project subdirectory");
+
+    assert_ne!(
+        code, 0,
+        "strict config should report diagnostics:\n{output}"
+    );
+    assert!(
+        output.contains("TS7006"),
+        "parent tsconfig should be discovered and applied:\n{output}"
+    );
+    assert!(
+        !output.contains("tsc: The TypeScript Compiler"),
+        "subdirectory project discovery should not fall through to help:\n{output}"
+    );
+}
+
+#[test]
 fn tsc_parity_show_config_strict_stays_compact() {
     if !tsc_available() {
         return;
@@ -1996,6 +2146,46 @@ fn tsc_parity_show_config_node16_resolve_json_false() {
     assert!(
         output.contains("\"resolveJsonModule\": false"),
         "node16 showConfig should include resolveJsonModule false: {output}"
+    );
+}
+
+#[test]
+fn show_config_check_js_implied_allow_js_includes_js_files() {
+    let temp = TempDir::new("show_config_checkjs_allowjs_files").expect("temp dir");
+    write_file(&temp.path.join("src/a.js"), "module.exports = 1;\n");
+    write_file(&temp.path.join("src/b.ts"), "const x: number = 1;\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"checkJs":true},"include":["src"]}"#,
+    );
+
+    let output = run_tsz(&temp.path, &["--showConfig"]).expect("tsz should run");
+    let json: serde_json::Value = serde_json::from_str(&output)
+        .unwrap_or_else(|_| panic!("invalid showConfig JSON:\n{output}"));
+    let options = json
+        .get("compilerOptions")
+        .and_then(|value| value.as_object())
+        .unwrap_or_else(|| panic!("missing compilerOptions in showConfig output:\n{output}"));
+    let files: Vec<_> = json
+        .get("files")
+        .and_then(|value| value.as_array())
+        .unwrap_or_else(|| panic!("missing files in showConfig output:\n{output}"))
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+
+    assert_eq!(
+        options.get("allowJs"),
+        Some(&serde_json::Value::Bool(true)),
+        "showConfig should print implied allowJs: {output}"
+    );
+    assert!(
+        files.iter().any(|file| file.ends_with("src/a.js")),
+        "showConfig files should include JS discovered via implied allowJs: {output}"
+    );
+    assert!(
+        files.iter().any(|file| file.ends_with("src/b.ts")),
+        "showConfig files should keep TS files too: {output}"
     );
 }
 

@@ -243,7 +243,11 @@ fn test_collect_export_names_with_multiple_named_exports() {
 #[test]
 #[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_collect_export_names_with_export_import_equals() {
-    let export_names = parse_collect_exports("namespace Bar {}\nexport import Foo = Bar;");
+    // `export import Foo = Bar;` where Bar is *instantiated* (has runtime
+    // value declarations) does export the alias. Empty/non-instantiated
+    // namespaces are elided by tsc and verified separately.
+    let export_names =
+        parse_collect_exports("namespace Bar { export const x = 1; }\nexport import Foo = Bar;");
     assert_eq!(
         export_names,
         vec!["Foo"],

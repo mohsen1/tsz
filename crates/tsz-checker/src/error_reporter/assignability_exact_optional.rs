@@ -1,8 +1,10 @@
 //! Exact optional property assignability diagnostics.
 
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -197,6 +199,10 @@ impl<'a> CheckerState<'a> {
         if !is_property_like_write {
             return false;
         }
+        if self.same_property_self_assignment_in_presence_true_branch(write_target_idx, anchor_idx)
+        {
+            return false;
+        }
 
         let declared_read_target =
             self.declared_property_read_type_for_write_target(write_target_idx);
@@ -281,5 +287,206 @@ impl<'a> CheckerState<'a> {
             } => Some(type_id),
             _ => None,
         }
+    }
+
+    fn same_property_self_assignment_in_presence_true_branch(
+        &self,
+        write_target_idx: NodeIndex,
+        anchor_idx: NodeIndex,
+    ) -> bool {
+        let Some((base_text, property_name)) = self.property_access_base_and_name(write_target_idx)
+        else {
+            return false;
+        };
+        let Some((binary_idx, rhs_idx)) = self.assignment_binary_and_rhs(anchor_idx) else {
+            return false;
+        };
+        if self.property_access_base_and_name(rhs_idx).as_ref()
+            != Some(&(base_text.clone(), property_name.clone()))
+        {
+            return false;
+        }
+        self.is_inside_presence_branch(binary_idx, &base_text, &property_name, true)
+    }
+
+    pub(crate) fn same_property_self_assignment_in_presence_false_branch(
+        &self,
+        anchor_idx: NodeIndex,
+    ) -> bool {
+        let Some((binary_idx, rhs_idx)) = self.assignment_binary_and_rhs(anchor_idx) else {
+            return false;
+        };
+        let Some(binary_node) = self.ctx.arena.get(binary_idx) else {
+            return false;
+        };
+        let Some(binary) = self.ctx.arena.get_binary_expr(binary_node) else {
+            return false;
+        };
+        let Some((base_text, property_name)) = self.property_access_base_and_name(binary.left)
+        else {
+            return false;
+        };
+        if self.property_access_base_and_name(rhs_idx).as_ref()
+            != Some(&(base_text.clone(), property_name.clone()))
+        {
+            return false;
+        }
+        self.is_inside_presence_branch(binary_idx, &base_text, &property_name, false)
+    }
+
+    pub(crate) fn same_property_self_assignment_in_presence_true_branch_for_anchor(
+        &self,
+        anchor_idx: NodeIndex,
+    ) -> bool {
+        let Some((binary_idx, rhs_idx)) = self.assignment_binary_and_rhs(anchor_idx) else {
+            return false;
+        };
+        let Some(binary_node) = self.ctx.arena.get(binary_idx) else {
+            return false;
+        };
+        let Some(binary) = self.ctx.arena.get_binary_expr(binary_node) else {
+            return false;
+        };
+        let Some((base_text, property_name)) = self.property_access_base_and_name(binary.left)
+        else {
+            return false;
+        };
+        if self.property_access_base_and_name(rhs_idx).as_ref()
+            != Some(&(base_text.clone(), property_name.clone()))
+        {
+            return false;
+        }
+        self.is_inside_presence_branch(binary_idx, &base_text, &property_name, true)
+    }
+
+    fn assignment_binary_and_rhs(&self, anchor_idx: NodeIndex) -> Option<(NodeIndex, NodeIndex)> {
+        let mut current = anchor_idx;
+        for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                && let Some(stmt) = self.ctx.arena.get_expression_statement(node)
+                && let Some(expr_node) = self.ctx.arena.get(stmt.expression)
+                && expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            {
+                let binary = self.ctx.arena.get_binary_expr(expr_node)?;
+                if self.is_assignment_operator(binary.operator_token) {
+                    return Some((stmt.expression, binary.right));
+                }
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                let binary = self.ctx.arena.get_binary_expr(node)?;
+                if self.is_assignment_operator(binary.operator_token) {
+                    return Some((current, binary.right));
+                }
+            }
+            current = self.ctx.arena.parent_of(current)?;
+            if current.is_none() {
+                return None;
+            }
+        }
+        None
+    }
+
+    fn property_access_base_and_name(&self, idx: NodeIndex) -> Option<(String, String)> {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let node = self.ctx.arena.get(idx)?;
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let property_name = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .map(|ident| ident.escaped_text.to_string())
+        } else {
+            self.get_literal_string_from_node(access.name_or_argument)
+                .or_else(|| {
+                    self.get_literal_index_from_node(access.name_or_argument)
+                        .map(|index| index.to_string())
+                })
+        }?;
+        let base_text =
+            name_text::property_access_chain_text_in_arena(self.ctx.arena, access.expression)?;
+        Some((base_text, property_name))
+    }
+
+    fn is_inside_presence_branch(
+        &self,
+        mut child: NodeIndex,
+        base_text: &str,
+        property_name: &str,
+        true_branch: bool,
+    ) -> bool {
+        for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+            let Some(parent) = self.ctx.arena.parent_of(child) else {
+                return false;
+            };
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::IF_STATEMENT {
+                let Some(if_stmt) = self.ctx.arena.get_if_statement(parent_node) else {
+                    return false;
+                };
+                let branch_matches = if true_branch {
+                    if_stmt.then_statement == child
+                } else {
+                    if_stmt.else_statement == child
+                };
+                return branch_matches
+                    && self.condition_is_property_presence(
+                        if_stmt.expression,
+                        base_text,
+                        property_name,
+                    );
+            }
+            child = parent;
+        }
+        false
+    }
+
+    fn condition_is_property_presence(
+        &self,
+        condition_idx: NodeIndex,
+        base_text: &str,
+        property_name: &str,
+    ) -> bool {
+        let condition_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(condition_idx);
+        let Some(condition_node) = self.ctx.arena.get(condition_idx) else {
+            return false;
+        };
+        if condition_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(condition_node)
+            && binary.operator_token == SyntaxKind::InKeyword as u16
+        {
+            return self
+                .get_literal_string_from_node(binary.left)
+                .is_some_and(|name| name == property_name)
+                && name_text::property_access_chain_text_in_arena(self.ctx.arena, binary.right)
+                    .is_some_and(|text| text == base_text);
+        }
+        if condition_node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call) = self.ctx.arena.get_call_expr(condition_node)
+            && let Some(callee_node) = self.ctx.arena.get(call.expression)
+            && let Some(access) = self.ctx.arena.get_access_expr(callee_node)
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "hasOwnProperty")
+            && name_text::property_access_chain_text_in_arena(self.ctx.arena, access.expression)
+                .is_some_and(|text| text == base_text)
+            && let Some(args) = call.arguments.as_ref()
+            && args.nodes.len() == 1
+        {
+            return self
+                .get_literal_string_from_node(args.nodes[0])
+                .is_some_and(|name| name == property_name);
+        }
+        false
     }
 }

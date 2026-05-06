@@ -1659,3 +1659,33 @@ export const foo = (p: string) => {
         "returned object methods must not be rewritten as property functions: {output}"
     );
 }
+
+#[test]
+fn fix_shadowed_type_param_new_class_return_uses_global_this() {
+    let output = emit_dts_with_binding(
+        r#"
+class A {}
+
+var make = <A,>(value: A) => new A();
+function make2<A,>(value: A) {
+    return new A();
+}
+
+interface B {}
+var id = <B,>(value: B) => value;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var make: <A>(value: A) => globalThis.A;"),
+        "Expected arrow return to qualify the shadowed class constructor type: {output}"
+    );
+    assert!(
+        output.contains("declare function make2<A>(value: A): globalThis.A;"),
+        "Expected function return to qualify the shadowed class constructor type: {output}"
+    );
+    assert!(
+        output.contains("declare var id: <B>(value: B) => B;"),
+        "Type-only interface names should still bind to the type parameter: {output}"
+    );
+}

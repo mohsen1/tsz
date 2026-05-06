@@ -530,6 +530,26 @@ interface Derived extends Base {
     );
 }
 
+#[test]
+fn test_outer_type_param_call_property_against_generic_base_errors() {
+    let source = r#"
+interface Base {
+    make: <T>() => T;
+}
+
+interface Derived<T> extends Base {
+    make: () => T;
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| *code == 2430
+            && message.contains("Interface 'Derived<T>' incorrectly extends interface 'Base'")),
+        "Should emit TS2430 when a derived call property uses an outer type parameter instead of the base generic signature. Got: {diags:?}"
+    );
+}
+
 // =========================================================================
 // Regression: `this` type substitution in whole-type assignability check
 // =========================================================================

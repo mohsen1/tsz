@@ -1063,10 +1063,13 @@ impl<'a> CheckerState<'a> {
                 partial_method_props.len() + deferred_methods.len() + deferred_accessors.len(),
             );
             partial_props.extend(partial_method_props.values().cloned());
+            let mut partial_prop_names: FxHashSet<Atom> =
+                FxHashSet::with_capacity_and_hasher(partial_props.len(), Default::default());
+            partial_prop_names.extend(partial_props.iter().map(|prop| prop.name));
             for (_, method, declaration_order) in &deferred_methods {
                 if let Some(name) = self.get_property_name_resolved(method.name) {
                     let name_atom = self.ctx.types.intern_string(&name);
-                    if !partial_props.iter().any(|p| p.name == name_atom) {
+                    if partial_prop_names.insert(name_atom) {
                         // For methods with explicit return type annotations, use the
                         // declared return type instead of ANY. This allows other methods
                         // that reference `this.method()` during body inference to get the
@@ -1124,7 +1127,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             for deferred in &deferred_accessors {
-                if !partial_props.iter().any(|p| p.name == deferred.name_atom) {
+                if partial_prop_names.insert(deferred.name_atom) {
                     partial_props.push(PropertyInfo {
                         name: deferred.name_atom,
                         type_id: TypeId::ANY,
@@ -1602,7 +1605,7 @@ impl<'a> CheckerState<'a> {
                 // alias/default-export symbols while the active resolution set tracks
                 // the declaration symbol; check both to avoid recursion leaks.
                 let canonical_base_sym =
-                    base_class_decl.and_then(|decl_idx| self.ctx.binder.get_node_symbol(decl_idx));
+                    base_class_decl.and_then(|decl_idx| self.class_declaration_symbol(decl_idx));
                 let base_in_resolution_set = self
                     .ctx
                     .class_instance_resolution_set
@@ -1707,7 +1710,7 @@ impl<'a> CheckerState<'a> {
 
                 // CRITICAL: Check global resolution set BEFORE recursing into base class
                 // This prevents infinite recursion when we have forward references in cycles
-                if let Some(base_class_sym) = self.ctx.binder.get_node_symbol(base_class_idx) {
+                if let Some(base_class_sym) = self.class_declaration_symbol(base_class_idx) {
                     if self
                         .ctx
                         .class_instance_resolution_set

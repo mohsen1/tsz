@@ -1045,6 +1045,7 @@ impl<'a> Printer<'a> {
     ///
     /// Examples:
     /// - `foo(...arr)` -> `foo.apply(void 0, arr)`
+    /// - `foo(...iterable)` with downlevelIteration -> `foo.apply(void 0, __spreadArray([], __read(iterable), false))`
     /// - `foo(...arr, 1, 2)` -> `foo.apply(void 0, __spreadArray(__spreadArray([], arr, false), [1, 2], false))`
     /// - `obj.method(...arr)` -> `obj.method.apply(obj, arr)`
     pub(in crate::emitter) fn emit_call_expression_es5_spread(&mut self, node: &Node) {
@@ -1359,15 +1360,23 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let wrap_spread_with_read = self.ctx.target_es5 && self.ctx.options.downlevel_iteration;
+
         if segments.len() == 1 {
             match &segments[0] {
                 ArraySegment::Spread(spread_idx) => {
                     // Just a single spread with no other arguments:
-                    // TypeScript optimization - pass the array directly without __spreadArray
-                    // Example: foo(...args) -> foo.apply(void 0, args)
-                    // NOT: foo.apply(void 0, __spreadArray([], args, false))
+                    // TypeScript optimization - pass arrays directly unless
+                    // downlevelIteration requires __read for iterable inputs.
                     if let Some(spread_node) = self.arena.get(*spread_idx) {
-                        self.emit_spread_expression(spread_node);
+                        if wrap_spread_with_read {
+                            self.write_helper("__spreadArray");
+                            self.write("([], ");
+                            self.emit_spread_expression_with_read(spread_node, true);
+                            self.write(", false)");
+                        } else {
+                            self.emit_spread_expression(spread_node);
+                        }
                     }
                 }
                 ArraySegment::Elements(elems) => {
@@ -1401,7 +1410,7 @@ impl<'a> Printer<'a> {
                 self.write_helper("__spreadArray");
                 self.write("([], ");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
+                    self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                 }
                 self.write(", false)");
             }
@@ -1418,7 +1427,7 @@ impl<'a> Printer<'a> {
                 ArraySegment::Spread(spread_idx) => {
                     self.write(", ");
                     if let Some(spread_node) = self.arena.get(*spread_idx) {
-                        self.emit_spread_expression(spread_node);
+                        self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                     }
                     self.write(", false)");
                 }

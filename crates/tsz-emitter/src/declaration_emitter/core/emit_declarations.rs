@@ -879,7 +879,12 @@ impl<'a> DeclarationEmitter<'a> {
                 let (preferred_return, direct_function_return) =
                     self.function_body_return_hint(func, func_body);
                 let scoped_preferred_return = preferred_return.as_ref().map(|type_text| {
-                    self.function_return_type_text_for_declaration_scope(func, type_text)
+                    let (type_text, substituted_parameter_type_query) =
+                        self.function_return_type_text_for_declaration_scope(func, type_text);
+                    (
+                        self.restore_mapped_return_type_param_constraints(func, &type_text),
+                        substituted_parameter_type_query,
+                    )
                 });
                 // If solver returned `any` OR `undefined` but the function body clearly
                 // returns void (every control-flow exit is a bare `return;` or falls
@@ -993,6 +998,8 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         let printed_type_text =
                             self.print_type_id_with_outer_type_params(effective_return_type_id, tp);
+                        let printed_type_text = self
+                            .restore_mapped_return_type_param_constraints(func, &printed_type_text);
                         let printed_type_text = self
                             .rewrite_returned_auto_accessor_parameter_unknowns(
                                 func,
