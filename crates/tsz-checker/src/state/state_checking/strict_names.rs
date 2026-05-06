@@ -102,6 +102,12 @@ impl<'a> CheckerState<'a> {
         use_class_message: bool,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        // tsc suppresses strict-mode reserved-word diagnostics for nodes created
+        // by parser recovery after syntax errors. Name resolution already applies
+        // this rule; keep declaration-site checks consistent with it.
+        if self.ctx.has_parse_errors {
+            return;
+        }
         // Prevent duplicate TS1212/TS1213/TS1214 at the same position.
         // Multiple paths (type resolution, identifier resolution, parameter checking)
         // can trigger this for the same identifier; tsc only emits one.
@@ -162,6 +168,10 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_parser::parser::syntax_kind_ext;
+
+        if self.ctx.has_parse_errors {
+            return;
+        }
 
         // Detect class context by walking up the AST
         let in_class = {

@@ -693,6 +693,7 @@ impl<'a> CheckerState<'a> {
         if request.name == "yield"
             && matches!(failure.kind, ResolutionFailureKind::NotFound)
             && self.is_yield_in_generator_type_context(request.idx)
+            && !self.ctx.has_parse_errors
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             let message = format_message(

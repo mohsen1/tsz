@@ -3495,6 +3495,29 @@ fn compile_with_explicit_files_without_tsconfig() {
 }
 
 #[test]
+fn compile_with_explicit_files_no_lib_no_emit_without_tsconfig_returns() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("main.ts"), "const value = 1;\n");
+
+    let args = parse_args(&["tsz", "main.ts", "--noLib", "--noEmit", "--pretty", "false"]);
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.iter().all(|code| *code == 2318),
+        "expected only TS2318 missing global type diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(!codes.is_empty(), "expected TS2318 diagnostics");
+    assert!(result.emitted_files.is_empty());
+    assert_eq!(result.files_read.len(), 1);
+    assert!(result.files_read[0].ends_with("main.ts"));
+}
+
+#[test]
 fn compile_no_check_no_emit_is_parse_only() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -11006,6 +11029,49 @@ fn compile_missing_file_in_include_pattern_returns_error() {
             .iter()
             .map(|d| d.code)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn compile_ignore_config_without_files_reports_ts18003_from_discovered_config() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noLib": true
+          }
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.no_emit = true;
+    let compilation = compile(&args, base).expect("Should return Ok with diagnostics");
+
+    let ts18003 = compilation
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 18003)
+        .expect("expected TS18003 diagnostic");
+    let expected_path = base
+        .join("tsconfig.json")
+        .canonicalize()
+        .expect("canonical config path");
+    let expected_path = expected_path.to_string_lossy();
+    assert!(
+        ts18003.message_text.contains(expected_path.as_ref()),
+        "TS18003 should include discovered config path: {}",
+        ts18003.message_text
+    );
+    assert!(
+        ts18003
+            .message_text
+            .contains("Specified 'include' paths were '[\"**/*\"]'"),
+        "TS18003 should use default include paths when --ignoreConfig skips config loading: {}",
+        ts18003.message_text
     );
 }
 
