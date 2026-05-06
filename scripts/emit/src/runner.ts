@@ -667,6 +667,24 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
         baseline.jsFileName = expectedJsName;
       }
     }
+    if (!outFile && sourceFileName && baseline.jsFileName) {
+      const expectedJsLooksLikeSourceInput =
+        /\.(js|jsx|mjs|cjs)$/.test(baseline.jsFileName) &&
+        sourceFiles.some(file => path.basename(file.name) === baseline.jsFileName);
+      if (expectedJsLooksLikeSourceInput) {
+        const sourceBase = path.basename(sourceFileName).replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
+        const sourceExt = sourceFileName.match(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/)?.[1] ?? 'ts';
+        const expectedJsExt =
+          sourceExt === 'tsx' || sourceExt === 'jsx' ? 'jsx' :
+          sourceExt === 'mts' || sourceExt === 'mjs' ? 'mjs' :
+          sourceExt === 'cts' || sourceExt === 'cjs' ? 'cjs' : 'js';
+        const expectedJsName = `${sourceBase}.${expectedJsExt}`;
+        if (baseline.files.has(expectedJsName)) {
+          baseline.js = baseline.files.get(expectedJsName) ?? baseline.js;
+          baseline.jsFileName = expectedJsName;
+        }
+      }
+    }
 
     return {
       baselineFile,
