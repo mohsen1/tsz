@@ -2676,6 +2676,27 @@ fn tsc_parity_ts2322_plain() {
 }
 
 // ---------------------------------------------------------------------------
+// TS8020: JSDoc types in TypeScript source
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_jsdoc_constructor_function_suffix() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts8020_jsdoc_constructor_suffix").expect("temp dir");
+    write_file(
+        &temp.path.join("main.ts"),
+        "var c: function(new: number): string;\n",
+    );
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--pretty", "false", "main.ts"],
+        "JSDoc constructor function suffix recovery",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // TS1005: Syntax errors
 // ---------------------------------------------------------------------------
 
