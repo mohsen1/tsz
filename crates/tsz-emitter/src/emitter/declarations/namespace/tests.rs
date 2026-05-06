@@ -273,6 +273,28 @@ fn reopened_dotted_namespace_qualifies_merged_exports_by_source_path() {
 }
 
 #[test]
+fn nested_namespace_does_not_qualify_own_leaf_name_from_parent_exports() {
+    let source = "namespace X.Y {\n  export namespace Point {\n    export var Origin = new Point(0, 0);\n  }\n}\nnamespace X.Y {\n  export class Point {}\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("Point.Origin = new Point(0, 0);"),
+        "Nested namespace should keep references to its own IIFE parameter bare.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Point.Origin = new Y.Point(0, 0);"),
+        "Parent exports must not reintroduce the current namespace leaf as a qualifier.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn nested_namespace_uses_parent_current_class_lexically() {
     let source = "namespace A {\n  export class Point {\n    constructor(public x: number, public y: number) {}\n  }\n\n  export namespace B {\n    export var Origin: Point = new Point(0, 0);\n  }\n}";
 
