@@ -251,7 +251,7 @@ fn save_to_writes_open_file_snapshot_to_tmpfile() {
     let open = server.handle_tsserver_request(make_request(
         "open",
         serde_json::json!({
-            "file": file.clone(),
+            "file": &file,
             "fileContent": "const value = 123;\n",
         }),
     ));
@@ -260,13 +260,13 @@ fn save_to_writes_open_file_snapshot_to_tmpfile() {
     let response = server.handle_tsserver_request(make_request(
         "saveto",
         serde_json::json!({
-            "file": file,
-            "tmpfile": tmpfile.clone(),
+            "file": &file,
+            "tmpfile": &tmpfile,
         }),
     ));
     assert!(response.success);
     assert_eq!(
-        std::fs::read_to_string(tmpfile).expect("tmpfile should be written"),
+        std::fs::read_to_string(&tmpfile).expect("tmpfile should be written"),
         "const value = 123;\n"
     );
 }

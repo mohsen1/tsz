@@ -580,6 +580,21 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                // `import a = M.x;` (namespace alias to a value) lowers to
+                // `var a = M.x;` and needs the same inline `exports.a = a;`
+                // treatment as a regular variable declaration when the
+                // alias name appears in a later `export { ..., a }` clause.
+                if let Some(import_decl) = self.arena.get_import_decl(node)
+                    && !import_decl.is_type_only
+                    && self.import_decl_has_runtime_value(import_decl)
+                {
+                    let name = self.get_identifier_text_idx(import_decl.import_clause);
+                    if !name.is_empty() {
+                        return vec![name];
+                    }
+                }
+            }
             _ => {}
         }
         Vec::new()
