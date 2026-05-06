@@ -180,6 +180,37 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn legacy_decorated_private_auto_accessors_use_unique_storage_names() {
+        let source = "declare var dec: any;\n\
+class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("_C_a_1_accessor_storage")
+                && output.contains("_C_b_1_accessor_storage"),
+            "Legacy-decorated private auto-accessor storage names should avoid the private accessor helper namespace.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_C_a_accessor_storage = new WeakMap()")
+                && !output.contains("_C_b_accessor_storage = { value: void 0 }"),
+            "Unsuffixed storage names should remain reserved, not emitted.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_class_duplicate_accessors_keep_first_descriptor_body() {
         let source =
             "class C {\n    get x() { return 1; }\n    get x() { return 2; } // error\n}\n";
