@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::checker::context::ScriptTarget as CheckerScriptTarget;
 use crate::checker::diagnostics::Diagnostic;
-use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget};
+use crate::emitter::{ModuleKind, NewLineKind, PrinterOptions, ScriptTarget};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::module_resolver_helpers::{
     PackageExports, PackageJson, match_export_pattern, parse_package_specifier,
@@ -229,6 +229,15 @@ pub struct CompilerOptions {
     /// Import emit helpers from tslib instead of inlining them per-file
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub import_helpers: Option<bool>,
+    /// Disable emitting helper declarations.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub no_emit_helpers: Option<bool>,
+    /// Disable emitting comments.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub remove_comments: Option<bool>,
+    /// Set the newline character used in emitted files.
+    #[serde(default)]
+    pub new_line: Option<String>,
     /// Allow JavaScript files to be a part of your program
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub allow_js: Option<bool>,
@@ -887,6 +896,18 @@ pub fn resolve_compiler_options(
 
     if let Some(declaration_map) = options.declaration_map {
         resolved.declaration_map = declaration_map;
+    }
+
+    if let Some(no_emit_helpers) = options.no_emit_helpers {
+        resolved.printer.no_emit_helpers = no_emit_helpers;
+    }
+
+    if let Some(remove_comments) = options.remove_comments {
+        resolved.printer.remove_comments = remove_comments;
+    }
+
+    if let Some(new_line) = options.new_line.as_deref() {
+        resolved.printer.new_line = parse_new_line_kind(new_line)?;
     }
 
     if let Some(ts_build_info_file) = options.ts_build_info_file.as_deref()
@@ -3394,6 +3415,9 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             experimental_decorators,
             emit_decorator_metadata,
             import_helpers,
+            no_emit_helpers,
+            remove_comments,
+            new_line,
             allow_js,
             check_js,
             skip_lib_check,
@@ -3432,6 +3456,15 @@ fn parse_script_target(value: &str) -> Result<ScriptTarget> {
     reject_comma_separated_option(value, "target")?;
     ScriptTarget::from_ts_str(value)
         .ok_or_else(|| anyhow!("unsupported compilerOptions.target '{value}'"))
+}
+
+fn parse_new_line_kind(value: &str) -> Result<NewLineKind> {
+    reject_comma_separated_option(value, "newLine")?;
+    match value.to_ascii_lowercase().as_str() {
+        "lf" => Ok(NewLineKind::LineFeed),
+        "crlf" => Ok(NewLineKind::CarriageReturnLineFeed),
+        _ => Err(anyhow!("unsupported compilerOptions.newLine '{value}'")),
+    }
 }
 
 fn parse_module_kind(value: &str) -> Result<ModuleKind> {

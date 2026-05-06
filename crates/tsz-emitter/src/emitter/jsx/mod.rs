@@ -39,6 +39,7 @@ pub(super) enum JsxAttrValue {
     StringNode(NodeIndex),
     Bool(bool),
     Expr(NodeIndex),
+    EmptyExpression,
 }
 
 pub(super) struct JsxAttrsInfo {

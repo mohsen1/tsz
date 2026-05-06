@@ -1898,7 +1898,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let display = self.format_type_for_assignability_message(display_type);
+        let display = if self
+            .materialize_finite_mapped_call_parameter_display_type(param_type)
+            .is_some()
+            && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, display_type)
+                .is_some()
+        {
+            self.format_type_diagnostic_widened(display_type)
+        } else {
+            self.format_type_for_assignability_message(display_type)
+        };
         self.rewrite_source_display_for_non_literal_target_assignability(
             arg_type, param_type, display,
         )
@@ -2330,6 +2339,12 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        if let Some(display_type) =
+            self.materialize_finite_mapped_call_parameter_display_type(param_type)
+        {
+            return self.format_type_for_assignability_message(display_type);
+        }
+
         if let Some(display) = self.contextual_constraint_parameter_display(param_type, arg_idx) {
             return display;
         }
@@ -2427,6 +2442,57 @@ impl<'a> CheckerState<'a> {
         } else {
             fallback
         }
+    }
+
+    fn materialize_finite_mapped_call_parameter_display_type(
+        &mut self,
+        param_type: TypeId,
+    ) -> Option<TypeId> {
+        let display_type = self.evaluate_type_for_assignability(param_type);
+        let constraint = query_common::type_param_info(self.ctx.types, param_type)
+            .and_then(|info| info.constraint);
+        let constraint_display_type =
+            constraint.map(|constraint| self.evaluate_type_for_assignability(constraint));
+        let mapped_id = query_common::mapped_type_id(self.ctx.types, display_type)
+            .or_else(|| query_common::mapped_type_id(self.ctx.types, param_type))
+            .or_else(|| {
+                constraint
+                    .and_then(|constraint| query_common::mapped_type_id(self.ctx.types, constraint))
+            })
+            .or_else(|| {
+                constraint_display_type.and_then(|display_type| {
+                    query_common::mapped_type_id(self.ctx.types, display_type)
+                })
+            })?;
+        let mapped = self.ctx.types.mapped_type(mapped_id);
+        let names = crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
+            self.ctx.types,
+            mapped_id,
+        )?;
+        let mut names: Vec<_> = names.into_iter().collect();
+        names.sort_by(|a, b| {
+            self.ctx
+                .types
+                .resolve_atom_ref(*a)
+                .cmp(&self.ctx.types.resolve_atom_ref(*b))
+        });
+
+        let mut properties = Vec::with_capacity(names.len());
+        for name in names {
+            let property_name = self.ctx.types.resolve_atom_ref(name).to_string();
+            let type_id =
+                crate::query_boundaries::state::checking::get_finite_mapped_property_display_type(
+                    self.ctx.types,
+                    mapped_id,
+                    &property_name,
+                )?;
+            let mut property = tsz_solver::PropertyInfo::new(name, type_id);
+            property.optional = mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add);
+            property.readonly = mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Add);
+            properties.push(property);
+        }
+
+        Some(self.ctx.types.factory().object(properties))
     }
 
     fn simple_function_call_parameter_annotation_display(
