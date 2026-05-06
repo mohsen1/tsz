@@ -116,9 +116,15 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(reference_path.as_str());
                 if !file_name_part.contains('.') {
                     let extensions = unresolved_extensions.join("', '");
+                    let display_path = if reference_path.is_empty() {
+                        let resolved = source_path.parent().unwrap_or_else(|| Path::new(""));
+                        normalize_path(resolved)
+                    } else {
+                        reference_path.clone()
+                    };
                     let message = format_message(
                         "Could not resolve the path '{0}' with the extensions: '{1}'.",
-                        &[&reference_path, &extensions],
+                        &[&display_path, &extensions],
                     );
                     self.emit_error_at(
                         pos,

@@ -346,6 +346,10 @@ const fn is_directive_attr_name_char(ch: char) -> bool {
 /// 1. Try exact path first
 /// 2. If no extension or not found, try source extensions supported by options.
 pub fn validate_reference_path(source_file: &Path, reference_path: &str, allow_js: bool) -> bool {
+    if reference_path.is_empty() {
+        return false;
+    }
+
     if let Some(parent) = source_file.parent() {
         let base_path = parent.join(reference_path);
 
@@ -378,7 +382,7 @@ pub fn validate_reference_path(source_file: &Path, reference_path: &str, allow_j
     }
 }
 
-pub fn reference_path_probe_extensions(allow_js: bool) -> &'static [&'static str] {
+pub const fn reference_path_probe_extensions(allow_js: bool) -> &'static [&'static str] {
     if allow_js {
         &[".ts", ".tsx", ".d.ts", ".js", ".jsx"]
     } else {
