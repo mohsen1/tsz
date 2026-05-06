@@ -1,4 +1,4 @@
-Status: claim
+Status: ready
 Branch: fix/checker-module-node-default-imports
 Created: 2026-05-06 00:45:32 UTC
 Scope: Conformance workstream 1
