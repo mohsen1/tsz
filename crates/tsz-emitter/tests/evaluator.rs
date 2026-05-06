@@ -37,6 +37,31 @@ fn test_numeric_enum_explicit_values() {
 }
 
 #[test]
+fn test_special_numeric_globals_auto_increment() {
+    let values = evaluate_enum("enum E { A = Infinity, B, C = NaN, D }");
+    assert!(
+        matches!(values.get("A"), Some(EnumValue::Float(f)) if f.is_infinite() && f.is_sign_positive()),
+        "expected A to evaluate to Infinity, got {:?}",
+        values.get("A")
+    );
+    assert!(
+        matches!(values.get("B"), Some(EnumValue::Float(f)) if f.is_infinite() && f.is_sign_positive()),
+        "expected B to auto-increment to Infinity, got {:?}",
+        values.get("B")
+    );
+    assert!(
+        matches!(values.get("C"), Some(EnumValue::Float(f)) if f.is_nan()),
+        "expected C to evaluate to NaN, got {:?}",
+        values.get("C")
+    );
+    assert!(
+        matches!(values.get("D"), Some(EnumValue::Float(f)) if f.is_nan()),
+        "expected D to auto-increment to NaN, got {:?}",
+        values.get("D")
+    );
+}
+
+#[test]
 fn test_string_enum() {
     let values = evaluate_enum(r#"enum E { A = "alpha", B = "beta" }"#);
     assert_eq!(
@@ -119,6 +144,12 @@ fn test_mixed_string_breaks_auto_increment() {
 fn test_enum_value_to_js_literal() {
     assert_eq!(EnumValue::Number(42).to_js_literal(), "42");
     assert_eq!(EnumValue::Number(-5).to_js_literal(), "-5");
+    assert_eq!(EnumValue::Float(f64::INFINITY).to_js_literal(), "Infinity");
+    assert_eq!(
+        EnumValue::Float(f64::NEG_INFINITY).to_js_literal(),
+        "-Infinity"
+    );
+    assert_eq!(EnumValue::Float(f64::NAN).to_js_literal(), "NaN");
     assert_eq!(
         EnumValue::String("hello".to_string()).to_js_literal(),
         "\"hello\""

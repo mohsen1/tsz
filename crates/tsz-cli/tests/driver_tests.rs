@@ -13029,6 +13029,57 @@ export enum Size {
     assert!(!js.is_empty(), "JS output should not be empty");
 }
 
+#[test]
+fn compile_enum_with_nan_and_infinity_globals() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "outDir": "out",
+            "noEmitOnError": false,
+            "pretty": false,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["a.ts"]
+        }"#,
+    );
+
+    write_file(
+        &base.join("a.ts"),
+        r#"
+enum E { A = Infinity, B }
+enum N { A = NaN, B }
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "NaN and Infinity enum initializers should not report diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let js = std::fs::read_to_string(base.join("out/a.js")).expect("read js");
+    for expected in [
+        "E[E[\"A\"] = Infinity] = \"A\"",
+        "E[E[\"B\"] = Infinity] = \"B\"",
+        "N[N[\"A\"] = NaN] = \"A\"",
+        "N[N[\"B\"] = NaN] = \"B\"",
+    ] {
+        assert!(
+            js.contains(expected),
+            "Expected emitted JS to contain {expected:?}, got:\n{js}"
+        );
+    }
+}
+
 // =============================================================================
 // E2E: Arrow Function Compilation
 // =============================================================================

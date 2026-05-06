@@ -68,6 +68,27 @@ fn test_enum_with_initializer() {
 }
 
 #[test]
+fn test_enum_with_special_numeric_globals() {
+    let output = transform_enum("enum E { A = Infinity, B, C = NaN, D }");
+    assert!(
+        output.contains("E[E[\"A\"] = Infinity] = \"A\""),
+        "A should emit Infinity, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"B\"] = Infinity] = \"B\""),
+        "B should auto-increment to Infinity, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"C\"] = NaN] = \"C\""),
+        "C should emit NaN, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"D\"] = NaN] = \"D\""),
+        "D should auto-increment to NaN, got: {output}"
+    );
+}
+
+#[test]
 fn test_string_enum() {
     let output = transform_enum("enum S { A = \"alpha\", B = \"beta\" }");
     assert!(output.contains("var S;"), "Should declare var S");
