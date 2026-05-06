@@ -2904,11 +2904,11 @@ impl<'a> CheckerState<'a> {
             .ctx
             .arena
             .skip_parenthesized_and_assertions(receiver_access.expression);
-        if !self
+        if self
             .ctx
             .arena
             .get(base_idx)
-            .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16)
+            .is_none_or(|node| node.kind != tsz_scanner::SyntaxKind::ThisKeyword as u16)
         {
             return;
         }
