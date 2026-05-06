@@ -22,6 +22,94 @@ use super::super::call_result::CallResultContext;
 use super::super::complex::is_contextually_sensitive;
 
 impl<'a> CheckerState<'a> {
+    fn fresh_direct_function_call_signature(
+        &mut self,
+        callee_expression: NodeIndex,
+    ) -> Option<tsz_solver::CallSignature> {
+        let callee_node = self.ctx.arena.get(callee_expression)?;
+        if callee_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(callee_expression)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol.value_declaration;
+        if decl_idx.is_none() {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+            return None;
+        }
+        let func = self.ctx.arena.get_function(decl_node).cloned()?;
+
+        let diagnostics_before = self.ctx.snapshot_diagnostics();
+        let fresh_signature = self.call_signature_from_function(&func, decl_idx);
+        self.ctx.rollback_diagnostics(&diagnostics_before);
+
+        Some(fresh_signature)
+    }
+
+    fn direct_function_call_type_for_type_argument_validation(
+        &mut self,
+        callee_expression: NodeIndex,
+    ) -> Option<TypeId> {
+        let fresh_signature = self.fresh_direct_function_call_signature(callee_expression)?;
+        if fresh_signature.type_params.is_empty() {
+            return None;
+        }
+
+        Some(self.ctx.types.factory().function(FunctionShape {
+            type_params: fresh_signature.type_params,
+            params: fresh_signature.params,
+            this_type: fresh_signature.this_type,
+            return_type: fresh_signature.return_type,
+            type_predicate: fresh_signature.type_predicate,
+            is_constructor: false,
+            is_method: fresh_signature.is_method,
+        }))
+    }
+
+    fn refresh_callee_shape_type_param_constraints(
+        &mut self,
+        callee_expression: NodeIndex,
+        mut shape: FunctionShape,
+    ) -> FunctionShape {
+        if shape.type_params.is_empty() {
+            return shape;
+        }
+
+        let Some(fresh_signature) = self.fresh_direct_function_call_signature(callee_expression)
+        else {
+            return shape;
+        };
+        if fresh_signature.type_params.len() != shape.type_params.len() {
+            return shape;
+        }
+
+        for (existing, fresh) in shape
+            .type_params
+            .iter_mut()
+            .zip(fresh_signature.type_params.iter())
+        {
+            let existing_unresolved = existing.constraint.is_none_or(|constraint| {
+                constraint == TypeId::UNKNOWN || constraint == TypeId::ERROR
+            });
+            let fresh_resolved = fresh.constraint.is_some_and(|constraint| {
+                constraint != TypeId::UNKNOWN && constraint != TypeId::ERROR
+            });
+            if existing_unresolved && fresh_resolved {
+                existing.constraint = fresh.constraint;
+            }
+
+            if existing.default.is_none() && fresh.default.is_some() {
+                existing.default = fresh.default;
+            }
+        }
+
+        shape
+    }
+
     fn setup_higher_order_callee_contextual_type(
         &mut self,
         callee_expression: NodeIndex,
@@ -378,8 +466,11 @@ impl<'a> CheckerState<'a> {
         if let Some(ref type_args_list) = call.type_arguments
             && !type_args_list.nodes.is_empty()
         {
+            let validation_callee_type = self
+                .direct_function_call_type_for_type_argument_validation(call.expression)
+                .unwrap_or(callee_type);
             type_arg_validation =
-                self.validate_call_type_arguments(callee_type, type_args_list, idx);
+                self.validate_call_type_arguments(validation_callee_type, type_args_list, idx);
 
             // `super<T>(...)` is always invalid (TS2754). Don't proceed with
             // argument checking — it would emit a false TS2554 because the
@@ -586,7 +677,7 @@ impl<'a> CheckerState<'a> {
         // Using a less-resolved form here can make Round 2 infer from a pre-instantiation
         // method signature even though callback contextual typing is based on the fully
         // resolved receiver-specific callable type.
-        let callee_shape = call_checker::get_contextual_signature_for_arity(
+        let mut callee_shape = call_checker::get_contextual_signature_for_arity(
             self.ctx.types,
             callee_type_for_context,
             args.len(),
@@ -594,6 +685,11 @@ impl<'a> CheckerState<'a> {
         .or_else(|| {
             call_checker::get_call_signature(self.ctx.types, callee_type_for_context, args.len())
         });
+        if let Some(shape) = callee_shape.take() {
+            callee_shape =
+                Some(self.refresh_callee_shape_type_param_constraints(call.expression, shape));
+        }
+        let original_callee_shape = callee_shape.clone();
         let is_generic_call = callee_shape
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())
@@ -2176,10 +2272,25 @@ impl<'a> CheckerState<'a> {
                     Some(self.normalize_contextual_call_param_type(param_type))
                 })
                 .collect();
+            let nominal_lib_object_callback_context: Vec<bool> = single_pass_contextual_types
+                .iter()
+                .map(|param_type| {
+                    param_type.is_some_and(|ty| {
+                        self.nominal_lib_object_callback_return_type(ty).is_some()
+                    })
+                })
+                .collect();
             non_generic_contextual_types = Some(single_pass_contextual_types.clone());
             self.collect_call_argument_types_with_context(
                 args,
                 |i, _arg_count| {
+                    if nominal_lib_object_callback_context
+                        .get(i)
+                        .copied()
+                        .unwrap_or(false)
+                    {
+                        return None;
+                    }
                     if i < single_pass_contextual_types.len() {
                         single_pass_contextual_types[i]
                     } else {
@@ -2670,6 +2781,13 @@ impl<'a> CheckerState<'a> {
         let finalized_contextual_param_types = generic_instantiated_params
             .as_ref()
             .map(|params| self.contextual_param_types_from_instantiated_params(params, args.len()));
+        self.emit_nominal_lib_object_callback_return_errors(
+            args,
+            &arg_types,
+            finalized_contextual_param_types.as_deref(),
+            &base_contextual_param_types,
+            original_callee_shape.as_ref(),
+        );
         let forced_block_body_callback_mismatch = self
             .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
                 finalized_contextual_param_types
@@ -2965,5 +3083,150 @@ impl<'a> CheckerState<'a> {
         if !already_reported {
             self.error_at_node(receiver_idx, message, code);
         }
+    }
+
+    fn emit_nominal_lib_object_callback_return_errors(
+        &mut self,
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+        finalized_contextual_param_types: Option<&[Option<TypeId>]>,
+        base_contextual_param_types: &[Option<TypeId>],
+        callee_shape: Option<&FunctionShape>,
+    ) {
+        for (i, &arg_idx) in args.iter().enumerate() {
+            let Some(return_expr) = self.unannotated_zero_param_callback_return_expression(arg_idx)
+            else {
+                continue;
+            };
+            let Some(body_node) = self.ctx.arena.get(return_expr) else {
+                continue;
+            };
+            if body_node.kind == syntax_kind_ext::BLOCK
+                || self.has_diagnostic_code_within_span(
+                    body_node.pos,
+                    body_node.end,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                )
+            {
+                continue;
+            }
+
+            let mut expected = finalized_contextual_param_types
+                .and_then(|types| types.get(i).copied().flatten())
+                .and_then(|ty| self.nominal_lib_object_callback_return_type(ty))
+                .or_else(|| {
+                    base_contextual_param_types
+                        .get(i)
+                        .copied()
+                        .flatten()
+                        .and_then(|ty| self.nominal_lib_object_callback_return_type(ty))
+                });
+
+            if expected.is_none()
+                && let Some(shape) = callee_shape
+                && let Some(param_type) = shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                    let last = shape.params.last()?;
+                    last.rest.then_some(last.type_id)
+                })
+            {
+                expected = self.nominal_lib_object_callback_return_type(param_type);
+            }
+
+            let Some(expected) = expected else {
+                continue;
+            };
+
+            let Some(actual) = arg_types
+                .get(i)
+                .copied()
+                .and_then(|ty| self.callback_return_type_from_type(ty))
+            else {
+                continue;
+            };
+            if matches!(actual, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                continue;
+            }
+
+            let actual_for_check = common::widen_type(self.ctx.types, actual);
+            if !matches!(
+                actual_for_check,
+                TypeId::STRING
+                    | TypeId::NUMBER
+                    | TypeId::BOOLEAN
+                    | TypeId::BIGINT
+                    | TypeId::SYMBOL
+                    | TypeId::NULL
+                    | TypeId::UNDEFINED
+            ) && !common::is_primitive_type(self.ctx.types, actual_for_check)
+            {
+                continue;
+            }
+            if self.is_assignable_to_with_env(actual_for_check, expected) {
+                continue;
+            }
+
+            let source_display = self.format_type_diagnostic(actual_for_check);
+            let target_display = self.format_type_diagnostic(expected);
+            let message = crate::diagnostics::format_message(
+                crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_display, &target_display],
+            );
+            self.ctx.error(
+                body_node.pos,
+                body_node.end.saturating_sub(body_node.pos),
+                message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
+    }
+
+    fn nominal_lib_object_callback_return_type(&mut self, callback_type: TypeId) -> Option<TypeId> {
+        let callback_shape = call_checker::get_contextual_signature(self.ctx.types, callback_type)
+            .or_else(|| {
+                common::function_shape_for_type(self.ctx.types, callback_type).map(|s| {
+                    let shape = (*s).clone();
+                    FunctionShape {
+                        type_params: shape.type_params,
+                        params: shape.params,
+                        this_type: shape.this_type,
+                        return_type: shape.return_type,
+                        type_predicate: shape.type_predicate,
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
+                    }
+                })
+            })?;
+        self.nominal_lib_object_type(callback_shape.return_type)
+    }
+
+    fn callback_return_type_from_type(&mut self, callback_type: TypeId) -> Option<TypeId> {
+        call_checker::get_contextual_signature(self.ctx.types, callback_type)
+            .map(|shape| shape.return_type)
+            .or_else(|| {
+                common::function_shape_for_type(self.ctx.types, callback_type)
+                    .map(|shape| shape.return_type)
+            })
+    }
+
+    fn nominal_lib_object_type(&mut self, ty: TypeId) -> Option<TypeId> {
+        let ty = if let Some(info) = common::type_param_info(self.ctx.types, ty) {
+            info.constraint?
+        } else {
+            ty
+        };
+        let name = self.format_type_diagnostic(ty);
+        if !matches!(
+            name.as_str(),
+            "Window" | "Document" | "Element" | "HTMLElement" | "Event" | "EventTarget"
+        ) {
+            return None;
+        }
+        let evaluated = self.evaluate_type_with_env(ty);
+        let expected = if evaluated == TypeId::ANY && ty != TypeId::ANY {
+            ty
+        } else {
+            evaluated
+        };
+        (!matches!(expected, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)).then_some(expected)
     }
 }
