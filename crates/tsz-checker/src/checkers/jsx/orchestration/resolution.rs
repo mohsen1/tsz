@@ -1973,18 +1973,11 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Instantiate a JSX component type with explicit type arguments.
-    ///
-    /// For function types (SFCs like `<SFC<string>>`), directly instantiates the
-    /// function's type parameters to produce a concrete non-generic function.
-    /// For other types (class components, type aliases), creates an Application type
-    /// for normal evaluation.
     pub(super) fn instantiate_jsx_component_with_type_args(
         &mut self,
         component_type: TypeId,
         type_args: &[TypeId],
     ) -> TypeId {
-        // Try Function types (single-signature SFCs) - use solver helper
         if let Some(instantiated) =
             crate::query_boundaries::common::instantiate_function_with_type_args(
                 self.ctx.types,
