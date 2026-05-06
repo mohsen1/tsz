@@ -1766,11 +1766,8 @@ impl<'a> Printer<'a> {
                     && stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT
                     && stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION;
                 let prev_deferred_local_export_bindings = if use_deferred_nested_cjs_exports {
-                    let bindings = cjs_deferred_export_names
-                        .iter()
-                        .map(|name| (name.clone(), name.clone()))
-                        .collect();
-                    self.deferred_local_export_bindings.replace(bindings)
+                    self.deferred_local_export_bindings
+                        .replace(cjs_deferred_export_bindings.clone())
                 } else {
                     None
                 };
@@ -1822,18 +1819,21 @@ impl<'a> Printer<'a> {
             {
                 let names = self.get_declaration_export_names(stmt_node);
                 for name in names {
-                    if cjs_deferred_export_names.contains(name.as_str())
+                    if let Some(export_name) = cjs_deferred_export_bindings.get(&name)
                         && !self.ctx.module_state.iife_exported_names.contains(&name)
                     {
                         if !self.writer.is_at_line_start() {
                             self.write_line();
                         }
                         self.write("exports.");
-                        self.write(&name);
+                        self.write(export_name);
                         self.write(" = ");
                         self.write(&name);
                         self.write(";");
-                        self.ctx.module_state.inline_exported_names.insert(name);
+                        self.ctx
+                            .module_state
+                            .inline_exported_names
+                            .insert(export_name.clone());
                     }
                 }
             }

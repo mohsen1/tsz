@@ -405,15 +405,20 @@ impl<'a> Printer<'a> {
                 continue;
             };
             // Skip clauses that mix same-name and renamed exports
-            // (e.g., `export { as, as as return }`). When mixed, let the
-            // clause handle ALL exports together to preserve source order.
-            let has_renamed = named.elements.nodes.iter().any(|&spec_idx| {
-                self.arena
-                    .get(spec_idx)
-                    .and_then(|n| self.arena.get_specifier(n))
-                    .is_some_and(|s| s.property_name.is_some())
-            });
-            if has_renamed {
+            // (e.g., `export { x, y as z }`). When mixed, let the clause handle
+            // ALL exports together to preserve source order.
+            let (has_renamed, has_unrenamed) = named.elements.nodes.iter().fold(
+                (false, false),
+                |(renamed, unrenamed), &spec_idx| {
+                    let is_renamed = self
+                        .arena
+                        .get(spec_idx)
+                        .and_then(|n| self.arena.get_specifier(n))
+                        .is_some_and(|s| s.property_name.is_some());
+                    (renamed || is_renamed, unrenamed || !is_renamed)
+                },
+            );
+            if has_renamed && has_unrenamed {
                 continue;
             }
             for &spec_idx in &named.elements.nodes {
@@ -423,8 +428,18 @@ impl<'a> Printer<'a> {
                     if spec.is_type_only {
                         continue;
                     }
-                    let local = self.get_identifier_text_idx(spec.name);
+                    let local = if spec.property_name.is_some() {
+                        self.get_specifier_name_text(spec.property_name)
+                            .unwrap_or_else(|| self.get_identifier_text_idx(spec.name))
+                    } else {
+                        self.get_identifier_text_idx(spec.name)
+                    };
                     if !local.is_empty() {
+                        if spec.property_name.is_some()
+                            && !self.has_cjs_deferred_export_declaration(statements, &local)
+                        {
+                            continue;
+                        }
                         names.insert(local);
                     }
                 }
@@ -483,6 +498,11 @@ impl<'a> Printer<'a> {
                 } else {
                     export_name.clone()
                 };
+                if spec.property_name.is_some()
+                    && !self.has_cjs_deferred_export_declaration(statements, &local_name)
+                {
+                    continue;
+                }
                 bindings.entry(local_name).or_insert(export_name);
             }
         }
@@ -490,6 +510,44 @@ impl<'a> Printer<'a> {
             bindings.remove(local_name.as_str());
         }
         bindings
+    }
+
+    fn has_cjs_deferred_export_declaration(
+        &self,
+        statements: &tsz_parser::parser::NodeList,
+        local_name: &str,
+    ) -> bool {
+        statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            let decl_node = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                    return false;
+                };
+                if export_decl.is_type_only || export_decl.module_specifier.is_some() {
+                    return false;
+                }
+                self.arena.get(export_decl.export_clause)
+            } else {
+                Some(stmt_node)
+            };
+            let Some(decl_node) = decl_node else {
+                return false;
+            };
+            match decl_node.kind {
+                k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                    .arena
+                    .get_class(decl_node)
+                    .and_then(|class| self.get_identifier_text_opt(class.name))
+                    .is_some_and(|name| name == local_name),
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
+                    .get_declaration_export_names(decl_node)
+                    .iter()
+                    .any(|name| name == local_name),
+                _ => false,
+            }
+        })
     }
 
     /// Get names declared by a statement for inline CJS export.
@@ -500,6 +558,15 @@ impl<'a> Printer<'a> {
         node: &tsz_parser::parser::node::Node,
     ) -> Vec<String> {
         match node.kind {
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export) = self.arena.get_export_decl(node)
+                    && export.module_specifier.is_none()
+                    && !export.is_type_only
+                    && let Some(clause_node) = self.arena.get(export.export_clause)
+                {
+                    return self.get_declaration_export_names(clause_node);
+                }
+            }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = self.arena.get_variable(node) {
                     return self.collect_variable_names_with_initializers(&var_stmt.declarations);

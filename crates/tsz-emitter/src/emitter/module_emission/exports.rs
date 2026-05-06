@@ -799,6 +799,15 @@ impl<'a> Printer<'a> {
                                     continue;
                                 }
 
+                                if self
+                                    .deferred_local_export_bindings
+                                    .as_ref()
+                                    .and_then(|bindings| bindings.get(&local_name))
+                                    .is_some_and(|deferred_export| deferred_export == &export_name)
+                                {
+                                    continue;
+                                }
+
                                 // For `export { undefined }`, tsc relies on the
                                 // preamble `exports.undefined = void 0;` and does not
                                 // emit a trailing `exports.undefined = undefined;`.
