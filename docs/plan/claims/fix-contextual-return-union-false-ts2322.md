@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/contextual-return-union-false-ts2322`
-- **PR**: TBD
+- **PR**: #3483
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance)
 
