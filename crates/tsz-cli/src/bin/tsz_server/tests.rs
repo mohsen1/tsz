@@ -581,6 +581,75 @@ fn test_synchronize_project_list_reports_external_project_files() {
 }
 
 #[test]
+fn test_synchronize_project_list_reports_inferred_project_for_open_file() {
+    let mut server = make_server_with_real_libs();
+    let open_response = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": "/private/tmp/tsz-probe-sync-project.ts",
+            "fileContent": "const x = 1;\n",
+        }),
+    ));
+    assert!(open_response.success);
+
+    let response = server.handle_tsserver_request(make_request(
+        "synchronizeProjectList",
+        serde_json::json!({
+            "knownProjects": [],
+            "includeProjectReferenceRedirectInfo": false,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response
+        .body
+        .expect("synchronizeProjectList should return a body");
+    let projects = body
+        .as_array()
+        .expect("synchronizeProjectList body should be an array");
+    assert_eq!(projects.len(), 1, "expected one inferred project: {body:?}");
+
+    let project = &projects[0];
+    assert_eq!(
+        project
+            .pointer("/info/isInferred")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        project
+            .pointer("/info/projectName")
+            .and_then(serde_json::Value::as_str),
+        Some("/dev/null/inferredProject1*")
+    );
+    assert!(
+        project
+            .pointer("/info/options")
+            .and_then(serde_json::Value::as_object)
+            .is_some(),
+        "inferred project should include compiler options: {project:?}"
+    );
+    let files = project
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .expect("project files should be an array");
+    assert!(
+        files.iter().any(|file| file
+            .as_str()
+            .is_some_and(|file| file.ends_with("lib.es5.d.ts")
+                || file.ends_with("lib.es5.full.d.ts")
+                || file.ends_with("lib.esnext.d.ts"))),
+        "inferred project should include the default lib: {files:?}"
+    );
+    assert!(
+        files
+            .iter()
+            .any(|file| file.as_str() == Some("/private/tmp/tsz-probe-sync-project.ts")),
+        "inferred project should include the open file: {files:?}"
+    );
+}
+
+#[test]
 fn project_info_uses_external_project_identity_and_files() {
     let mut server = make_server();
     let open_response = server.handle_tsserver_request(make_request(
@@ -1733,6 +1802,31 @@ fn test_new_commands_are_recognized() {
             "Command '{cmd}' was not recognized"
         );
     }
+}
+
+#[test]
+fn test_indentation_returns_absolute_position() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/indent.ts".to_string(),
+        "const a = 1;\nconst b = 2;\n".to_string(),
+    );
+    let req = make_request(
+        "indentation",
+        serde_json::json!({
+            "file": "/indent.ts",
+            "line": 2,
+            "offset": 5,
+            "options": { "indentSize": 2, "tabSize": 2 }
+        }),
+    );
+
+    let resp = server.handle_tsserver_request(req);
+
+    assert!(resp.success);
+    let body = resp.body.expect("indentation should return a body");
+    assert_eq!(body.get("position"), Some(&serde_json::json!(17)));
+    assert_eq!(body.get("indentation"), Some(&serde_json::json!(0)));
 }
 
 #[test]
