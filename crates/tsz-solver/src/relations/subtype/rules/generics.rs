@@ -87,18 +87,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    fn shared_application_base_def_id(
-        &self,
-        source_base: TypeId,
-        target_base: TypeId,
-    ) -> Option<DefId> {
-        let source_def = self.application_base_def_id(source_base)?;
-        let target_def = self.application_base_def_id(target_base)?;
-        self.resolver
-            .defs_are_equivalent(source_def, target_def)
-            .then_some(source_def)
-    }
-
     /// Helper for resolving two Ref/TypeQuery symbols and checking subtype.
     ///
     /// Handles the common pattern of:
@@ -341,12 +329,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_app = self.interner.type_application(s_app_id);
         let t_app = self.interner.type_application(t_app_id);
 
-        if s_app.args == t_app.args
-            && (s_app.base == t_app.base
-                || self
-                    .shared_application_base_def_id(s_app.base, t_app.base)
-                    .is_some())
-        {
+        if s_app.args == t_app.args && s_app.base == t_app.base {
             return SubtypeResult::True;
         }
         // Synthetic Promise fallback: when lib resolution cannot find the real Promise
@@ -397,13 +380,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let same_arity = s_app.args.len() == t_app.args.len();
-        let shared_base_def = self.shared_application_base_def_id(s_app.base, t_app.base);
-        let same_application_family =
-            same_arity && (s_app.base == t_app.base || shared_base_def.is_some());
-        let variance_def_id = if s_app.base == t_app.base {
+        let same_application_family = same_arity && s_app.base == t_app.base;
+        let variance_def_id = if same_application_family {
             self.application_base_def_id(s_app.base)
         } else {
-            shared_base_def
+            None
         };
         let source_type = self.interner.application(s_app.base, s_app.args.clone());
         let target_type = self.interner.application(t_app.base, t_app.args.clone());
@@ -690,21 +671,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let t_app = self.interner.type_application(t_app_id);
 
         // Must be the same base type (same generic definition)
-        let same_base = s_app.base == t_app.base
-            || self
-                .shared_application_base_def_id(s_app.base, t_app.base)
-                .is_some();
-        if !same_base {
+        if s_app.base != t_app.base {
             return None;
         }
 
-        let variance_def_id = if s_app.base == t_app.base {
-            self.application_base_def_id(s_app.base)
-        } else {
-            self.shared_application_base_def_id(s_app.base, t_app.base)
-        };
-
-        let def_id = variance_def_id?;
+        let def_id = self.application_base_def_id(s_app.base)?;
 
         // Arity normalization: when both applications share the same base but have
         // different arg counts (e.g., Generator<T, void, any> vs Generator<T>),
@@ -723,9 +694,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             (s_app.args.clone(), t_app.args.clone())
         };
 
-        if s_args == t_args {
-            return Some(SubtypeResult::True);
-        }
         use crate::caches::db::QueryDatabase;
         let variances = self
             .resolver
@@ -853,11 +821,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Check if this Application has the same base as the source
                 let s_app = self.interner.type_application(s_app_id);
                 let t_app = self.interner.type_application(t_app_id);
-                let same_base = s_app.base == t_app.base
-                    || self
-                        .shared_application_base_def_id(s_app.base, t_app.base)
-                        .is_some();
-                if same_base && s_app.args.len() == t_app.args.len() {
+                if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
                     app_member_id = Some(t_app_id);
                 } else {
                     non_app_members.push(member);
