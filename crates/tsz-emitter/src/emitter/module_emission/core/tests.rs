@@ -365,6 +365,49 @@ fn nested_classes_preserve_outer_private_name_scope() {
 }
 
 #[test]
+fn class_expression_in_loop_uses_block_scoped_private_temps() {
+    let source = r#"const array = [];
+for (let i = 0; i < 10; ++i) {
+    array.push(class C {
+        #myField = "hello";
+        #method() {}
+        get #accessor() { return 42; }
+        set #accessor(val) { }
+    });
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _a;"),
+        "Only the class-expression temp should be var-hoisted outside the loop.\nOutput:\n{output}"
+    );
+    assert!(
+        output
+            .contains("let _C_instances, _C_myField, _C_method, _C_accessor_get, _C_accessor_set;"),
+        "Private backing names should be recreated in the loop block.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _C_instances"),
+        "Private backing names should not be var-hoisted outside the loop.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn reserved_private_constructor_method_is_not_extracted() {
     let source = r#"class A {
     #constructor() {}

@@ -938,6 +938,13 @@ fn compile_inner(
     };
 
     let cwd = normalize_path(cwd);
+    let ignored_config_path_for_no_input = if args.ignore_config && args.files.is_empty() {
+        resolve_tsconfig_path(&cwd, args.project.as_deref())
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
     let tsconfig_path = if args.ignore_config {
         // --ignoreConfig: skip tsconfig.json discovery and loading entirely
         None
@@ -1080,6 +1087,34 @@ fn compile_inner(
     resolved.base_url = base_url;
     resolved.root_dirs = root_dirs;
     resolved.type_roots = normalize_type_roots(&base_dir, resolved.type_roots.clone());
+
+    if args.ignore_config
+        && args.files.is_empty()
+        && let Some(config_path) = ignored_config_path_for_no_input.as_deref()
+    {
+        let diagnostics = no_input_diagnostics_for_config(
+            config_diagnostics,
+            Some(config_path),
+            None,
+            None,
+            resolved.allow_js,
+        );
+        return Ok(CompilationResult {
+            diagnostics,
+            emitted_files: Vec::new(),
+            files_read: Vec::new(),
+            file_infos: Vec::new(),
+            request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
+            interned_types_count: 0,
+            interner_estimated_bytes: 0,
+            query_cache_stats: None,
+            def_store_stats: None,
+            phase_timings: PhaseTimings::default(),
+            residency_stats: None,
+            module_dep_stats: None,
+            invalidation_summaries: Vec::new(),
+        });
+    }
 
     let discovery = build_discovery_options(
         args,
@@ -2865,6 +2900,29 @@ fn apply_cli_overrides_with_config_options(
         options.checker.use_unknown_in_catch_variables = true;
         options.checker.always_strict = true;
         options.printer.always_strict = true;
+    } else if args
+        .explicitly_disabled_bool_flags
+        .iter()
+        .any(|name| name == "strict")
+    {
+        // Mirror config loader's strict-disable expansion: explicit
+        // `--strict false` (forwarded by `preprocess_args` through the hidden
+        // side-channel) flips a config `strict: true` plus its expansion to
+        // `false`. Must run before the individual `Option<bool>` family
+        // overrides below so that `--strict false --strictNullChecks=true`
+        // still keeps `strict_null_checks = true` (issue #3861).
+        options.checker.strict = false;
+        options.checker.no_implicit_any = false;
+        options.checker.no_implicit_returns = false;
+        options.checker.strict_null_checks = false;
+        options.checker.strict_function_types = false;
+        options.checker.strict_bind_call_apply = false;
+        options.checker.strict_property_initialization = false;
+        options.checker.no_implicit_this = false;
+        options.checker.use_unknown_in_catch_variables = false;
+        options.checker.strict_builtin_iterator_return = false;
+        options.checker.always_strict = false;
+        options.printer.always_strict = false;
     }
     // Individual strict flag overrides (must come after --strict expansion)
     if let Some(val) = args.strict_null_checks {
@@ -3134,7 +3192,174 @@ fn apply_cli_overrides_with_config_options(
         options.checker.suppress_implicit_any_index_errors = true;
     }
 
+    apply_explicitly_disabled_bool_flags(options, args);
+
     Ok(())
+}
+
+/// Apply `--flag false` overrides for plain `bool` compiler-option flags.
+///
+/// `preprocess_args` collects each `--flag false` pair for plain bool flags
+/// into `args.explicitly_disabled_bool_flags` (the value is the canonical
+/// camelCase compiler-option name, e.g. `"strict"`, `"noEmit"`). The earlier
+/// override blocks only set options to `true` when the corresponding `bool`
+/// arg is `true`, so without this pass an explicit CLI `false` cannot override
+/// a `true` value loaded from `tsconfig.json`. tsc treats `--flag false` as an
+/// explicit disable, so each entry here flips the matching option(s) back to
+/// `false` after config + CLI true-overrides have been applied.
+fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, args: &CliArgs) {
+    if args.explicitly_disabled_bool_flags.is_empty() {
+        return;
+    }
+    for name in &args.explicitly_disabled_bool_flags {
+        match name.as_str() {
+            // `strict` is handled earlier (just after the `--strict` true
+            // expansion) so the strict-family `Option<bool>` overrides that
+            // run between can still win over the disable. See the
+            // `else if` branch on `args.strict` above.
+            "strict" => {}
+            "noEmit" => options.no_emit = false,
+            "noEmitOnError" => options.no_emit_on_error = false,
+            "noEmitHelpers" => options.printer.no_emit_helpers = false,
+            "noCheck" => options.no_check = false,
+            "noResolve" => {
+                options.no_resolve = false;
+                options.checker.no_resolve = false;
+            }
+            "noLib" => options.checker.no_lib = false,
+            "noUnusedLocals" => options.checker.no_unused_locals = false,
+            "noUnusedParameters" => options.checker.no_unused_parameters = false,
+            "noImplicitReturns" => options.checker.no_implicit_returns = false,
+            "noFallthroughCasesInSwitch" => options.checker.no_fallthrough_cases_in_switch = false,
+            "noImplicitOverride" => options.checker.no_implicit_override = false,
+            "noPropertyAccessFromIndexSignature" => {
+                options.checker.no_property_access_from_index_signature = false
+            }
+            "noUncheckedIndexedAccess" => options.checker.no_unchecked_indexed_access = false,
+            "noUncheckedSideEffectImports" => {
+                options.checker.no_unchecked_side_effect_imports = false
+            }
+            "noImplicitUseStrict" => options.checker.no_implicit_use_strict = false,
+            "noErrorTruncation" => { /* CLI-only display flag; no compiler option to toggle */ }
+            "exactOptionalPropertyTypes" => options.checker.exact_optional_property_types = false,
+            "erasableSyntaxOnly" => options.checker.erasable_syntax_only = false,
+            "sound" => options.checker.sound_mode = false,
+            "experimentalDecorators" => {
+                options.checker.experimental_decorators = false;
+                options.printer.legacy_decorators = false;
+            }
+            "emitDecoratorMetadata" => options.printer.emit_decorator_metadata = false,
+            "esModuleInterop" => {
+                options.es_module_interop = false;
+                options.checker.es_module_interop = false;
+                options.printer.es_module_interop = false;
+            }
+            "isolatedModules" => {
+                options.checker.isolated_modules = false;
+                options.printer.preserve_const_enums = false;
+                options.printer.no_const_enum_inlining = false;
+            }
+            "isolatedDeclarations" => {
+                options.isolated_declarations = false;
+                options.checker.isolated_declarations = false;
+            }
+            "verbatimModuleSyntax" => {
+                options.checker.verbatim_module_syntax = false;
+                options.printer.verbatim_module_syntax = false;
+                options.printer.preserve_const_enums = false;
+                options.printer.no_const_enum_inlining = false;
+            }
+            "preserveSymlinks" => options.preserve_symlinks = false,
+            "preserveConstEnums" => options.printer.preserve_const_enums = false,
+            "stripInternal" => options.strip_internal = false,
+            "removeComments" => options.printer.remove_comments = false,
+            "emitBOM" => options.emit_bom = false,
+            "downlevelIteration" => options.printer.downlevel_iteration = false,
+            "importHelpers" => {
+                options.import_helpers = false;
+                options.printer.import_helpers = false;
+                options.printer.no_emit_helpers = false;
+            }
+            "declaration" => {
+                options.emit_declarations = false;
+                options.checker.emit_declarations = false;
+            }
+            "declarationMap" => options.declaration_map = false,
+            "emitDeclarationOnly" => options.emit_declaration_only = false,
+            "sourceMap" => options.source_map = false,
+            "inlineSourceMap" => options.inline_source_map = false,
+            // `inlineSources` has no corresponding `ResolvedCompilerOptions` field
+            // (the CLI flag is parsed for parity but never applied today). Mirror
+            // that — there is nothing to flip back to false.
+            "inlineSources" => {}
+            "composite" => options.composite = false,
+            "incremental" => options.incremental = false,
+            "skipLibCheck" => options.skip_lib_check = false,
+            "skipDefaultLibCheck" => options.skip_default_lib_check = false,
+            "allowJs" => {
+                options.allow_js = false;
+                options.checker.allow_js = false;
+            }
+            "checkJs" => {
+                options.check_js = false;
+                options.checker.check_js = false;
+            }
+            "allowUmdGlobalAccess" => options.checker.allow_umd_global_access = false,
+            "allowArbitraryExtensions" => options.allow_arbitrary_extensions = false,
+            "allowImportingTsExtensions" => options.allow_importing_ts_extensions = false,
+            "rewriteRelativeImportExtensions" => {
+                options.rewrite_relative_import_extensions = false;
+                options.printer.rewrite_relative_import_extensions = false;
+            }
+            "resolveJsonModule" => options.resolve_json_module = false,
+            "libReplacement" => options.lib_replacement = false,
+            "suppressExcessPropertyErrors" => {
+                options.checker.suppress_excess_property_errors = false
+            }
+            "suppressImplicitAnyIndexErrors" => {
+                options.checker.suppress_implicit_any_index_errors = false
+            }
+            // Display / build-graph / watch / diagnostic-mode flags don't
+            // round-trip through compiler options — the CLI consumer reads
+            // `args.<field>` directly, so no override is needed here. Listing
+            // them keeps the match exhaustive against the bool-flag set.
+            "diagnostics"
+            | "extendedDiagnostics"
+            | "explainFiles"
+            | "listFiles"
+            | "listEmittedFiles"
+            | "traceResolution"
+            | "traceDependencies"
+            | "preserveWatchOutput"
+            | "synchronousWatchDirectory"
+            | "watch"
+            | "build"
+            | "build-verbose"
+            | "dry"
+            | "force"
+            | "clean"
+            | "stopBuildOnErrors"
+            | "assumeChangesOnlyAffectDirectDependencies"
+            | "disableReferencedProjectLoad"
+            | "disableSolutionSearching"
+            | "disableSourceOfProjectReferenceRedirect"
+            | "disableSizeLimit"
+            | "init"
+            | "all"
+            | "showConfig"
+            | "ignoreConfig"
+            | "listFilesOnly"
+            | "batch" => {}
+            // Removed/unsupported legacy flags — silently ignore so a leftover
+            // `--foo false` doesn't break compilation.
+            "keyofStringsOnly" | "noStrictGenericChecks" | "preserveValueImports" => {}
+            _ => {
+                // Unknown name: leave compilation unchanged. The flag is
+                // already validated as a known bool flag in preprocess_args
+                // before being recorded here.
+            }
+        }
+    }
 }
 
 fn apply_module_resolution_derived_options(
