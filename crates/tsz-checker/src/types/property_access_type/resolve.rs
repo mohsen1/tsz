@@ -1326,7 +1326,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if self.namespace_has_type_only_member(object_type, property_name) {
+            let type_only_namespace_access_name = self.type_only_namespace_member_access_name(idx);
+            if self.namespace_has_type_only_member(object_type, property_name)
+                || type_only_namespace_access_name.is_some()
+            {
                 if self.is_js_file()
                     && self.ctx.compiler_options.check_js
                     && let Some(ns_name) = self.entity_name_text(access.expression)
@@ -1397,7 +1400,9 @@ impl<'a> CheckerState<'a> {
                     // Emit TS2708 for namespace member access (e.g., ns.Interface())
                     // This is "Cannot use namespace as a value"
                     // Get the namespace name from the left side of the access
-                    if let Some(ns_name) = self.entity_name_text(access.expression) {
+                    if let Some(ns_name) = type_only_namespace_access_name
+                        .or_else(|| self.entity_name_text(access.expression))
+                    {
                         self.report_wrong_meaning_diagnostic(
                             &ns_name,
                             access.expression,
