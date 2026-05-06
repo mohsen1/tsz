@@ -547,6 +547,43 @@ fn test_middle_dot_identifier_part_parses_without_ts1127() {
 }
 
 #[test]
+fn test_regex_extended_unicode_escape_above_max_reports_ts1198() {
+    let source = r#"
+const regexes: RegExp[] = [
+  /\u{110000}/u,
+  /[\u{110000}]/u,
+];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1198: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code
+                == diagnostic_codes::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE
+        })
+        .collect();
+
+    assert_eq!(
+        ts1198.len(),
+        2,
+        "Expected exactly two TS1198 diagnostics for out-of-range regex unicode escapes, got {diagnostics:?}"
+    );
+
+    let expected_starts = [
+        source.find("110000").expect("first escape") as u32,
+        source.rfind("110000").expect("second escape") as u32,
+    ];
+    let actual_starts: Vec<_> = ts1198.iter().map(|d| d.start).collect();
+    assert_eq!(
+        actual_starts, expected_starts,
+        "Expected TS1198 to point at the braced escape digits, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_character_class_range_order_reports_ts1517() {
     let source = r#"
 const regexes: RegExp[] = [
@@ -669,6 +706,31 @@ fn test_regex_missing_parenthesis_reports_ts1005_at_regex_end() {
         "Expected exactly one missing ')' diagnostic: {diagnostics:?}"
     );
     assert_eq!(ts1005[0].start, expected_pos);
+}
+
+#[test]
+fn test_unterminated_regex_class_suppresses_missing_bracket() {
+    let source = "let r = /[a/;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    let slash_pos = source.find('/').expect("regex slash") as u32;
+
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL
+                && d.start == slash_pos
+        }),
+        "expected TS1161 at regex slash, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message == "']' expected."),
+        "unterminated regex class should not also emit missing bracket diagnostic, got {codes:?}: {diagnostics:?}"
+    );
 }
 
 #[test]
@@ -1321,6 +1383,45 @@ type T = [element: string?];
         parser.get_diagnostics().iter().all(|d| d.code != 1005),
         "Named tuple members with a trailing '?' after the type should defer to later tuple diagnostics without TS1005: {:?}",
         parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn named_tuple_member_postfix_question_is_not_jsdoc_nullable() {
+    let source = "type T = [a: string?];";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.iter().all(|d| {
+            d.code
+                != diagnostic_codes::AT_THE_END_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE
+        }),
+        "Expected named tuple member `string?` to avoid TS17019, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn tuple_type_missing_comma_reports_comma_without_bracket_cascade() {
+    let source = "type T = [string number];";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let number_pos = source.find("number").expect("number token") as u32;
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::EXPECTED
+                && d.start == number_pos
+                && d.message == "',' expected."
+        }),
+        "Expected TS1005 ',' expected at `number`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.message != "']' expected."
+            && d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "Expected no bracket/TS1128 cascade, got {diagnostics:?}"
     );
 }
 
@@ -3440,6 +3541,59 @@ fn test_import_defer_type_modifier_conflict_anchors_from_at_namespace_token() {
     assert!(
         from_expected.iter().any(|d| d.start == 18),
         "Expected `'from' expected.` anchored at column 19 (start=18), got {from_expected:?}"
+    );
+}
+
+#[test]
+fn test_import_defer_from_equals_routes_to_import_declaration() {
+    // `import defer from = require("m")` — `defer` has no import-equals form,
+    // so the lookahead must route this to import-declaration. tsc parses it as
+    // `defer` modifier + `from` binding name, then expects the `from` keyword
+    // and finds `=` at column 19 (start=18). The lookahead must NOT route to
+    // import-equals (which would emit `'=' expected.` at column 14 plus a
+    // trailing `';' expected.`).
+    let source = r#"import defer from = require("m");"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1005: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
+    assert!(
+        !ts1005.iter().any(|d| d.message.contains("'=' expected")),
+        "Should not emit `'=' expected.` for `import defer from = require(...)`: {ts1005:?}"
+    );
+    assert!(
+        !ts1005.iter().any(|d| d.message.contains("';' expected")),
+        "Should not emit `';' expected.` for `import defer from = require(...)`: {ts1005:?}"
+    );
+    let from_expected: Vec<_> = ts1005
+        .iter()
+        .filter(|d| d.message.contains("'from' expected"))
+        .collect();
+    assert!(
+        from_expected.iter().any(|d| d.start == 18),
+        "Expected `'from' expected.` anchored at column 19 (start=18), got {from_expected:?} (all ts1005: {ts1005:?})"
+    );
+}
+
+#[test]
+fn test_import_type_from_equals_still_routes_to_import_equals() {
+    // Regression for the sibling case: `import type from = require("m")` IS
+    // valid type-only import-equals (with `from` as the binding name). The
+    // narrow `defer` fix must not regress the `type` branch, so the parser
+    // should accept this without parser-level recovery diagnostics.
+    let source = r#"import type from = require("m");"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let parse_errors: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code < 2000)
+        .collect();
+    assert!(
+        parse_errors.is_empty(),
+        "Expected no parse errors for `import type from = require(...)`, got {parse_errors:?}"
     );
 }
 

@@ -201,6 +201,14 @@ impl<'a> CheckerState<'a> {
                     let is_bare_type_param =
                         query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg);
                     if !is_bare_type_param {
+                        if self.type_arg_evaluates_to_infer_result_conditional(type_arg)
+                            && query::contains_index_access_with_type_parameter_object(
+                                self.ctx.types.as_type_database(),
+                                type_arg,
+                            )
+                        {
+                            continue;
+                        }
                         // Composite type with type parameters (e.g., `T[K]`, `GetProps<C>`,
                         // `Parameters<Target[K]>`). Prefer checking against its resolved
                         // base constraint when one exists; otherwise defer to instantiation
@@ -701,8 +709,19 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
 
-                            let mut is_satisfied = self.is_assignable_to(base, inst_constraint)
-                                || self.satisfies_array_like_constraint(base, inst_constraint);
+                            let base_for_check = self.resolve_lazy_members_in_union(base);
+                            let base_for_check =
+                                self.evaluate_type_for_assignability(base_for_check);
+                            let mut is_satisfied = self
+                                .is_assignable_to(base_for_check, inst_constraint)
+                                || self.base_union_members_satisfy_constraint(
+                                    base_for_check,
+                                    inst_constraint,
+                                )
+                                || self.satisfies_array_like_constraint(
+                                    base_for_check,
+                                    inst_constraint,
+                                );
                             if !is_satisfied {
                                 // When the constraint is a function type (e.g., `(...args: any) => any`),
                                 // accept any callable base type. For type parameters with callable
@@ -712,10 +731,10 @@ impl<'a> CheckerState<'a> {
                                 let is_fn_constraint = self
                                     .is_function_constraint(original_constraint)
                                     || query::is_callable_type(db, original_constraint);
-                                let base_is_callable = query::is_callable_type(db, base)
-                                    || self.type_parameter_has_callable_constraint(base)
-                                    || self.is_function_constraint(base)
-                                    || query::is_function_interface_structural(db, base);
+                                let base_is_callable = query::is_callable_type(db, base_for_check)
+                                    || self.type_parameter_has_callable_constraint(base_for_check)
+                                    || self.is_function_constraint(base_for_check)
+                                    || query::is_function_interface_structural(db, base_for_check);
                                 is_satisfied = is_fn_constraint && base_is_callable;
                             }
                             if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
@@ -1010,10 +1029,22 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types.as_type_database(),
                                     inst_constraint,
                                 );
+                            let base_for_check = (base != TypeId::UNKNOWN).then(|| {
+                                let base_for_check = self.resolve_lazy_members_in_union(base);
+                                self.evaluate_type_for_assignability(base_for_check)
+                            });
                             if is_checkable
-                                && (base == TypeId::UNKNOWN
-                                    || !self.is_assignable_to(base, inst_constraint))
-                                && !self.satisfies_array_like_constraint(base, inst_constraint)
+                                && base_for_check.is_none_or(|base_for_check| {
+                                    !self.is_assignable_to(base_for_check, inst_constraint)
+                                        && !self.base_union_members_satisfy_constraint(
+                                            base_for_check,
+                                            inst_constraint,
+                                        )
+                                        && !self.satisfies_array_like_constraint(
+                                            base_for_check,
+                                            inst_constraint,
+                                        )
+                                })
                                 && let Some(&arg_idx) = type_args_list.nodes.get(i)
                                 && !self.type_argument_is_narrowed_by_conditional_true_branch(
                                     arg_idx,
@@ -1170,8 +1201,16 @@ impl<'a> CheckerState<'a> {
                             );
                             continue;
                         }
-                        let mut is_satisfied = self.is_assignable_to(base, inst_constraint)
-                            || self.satisfies_array_like_constraint(base, inst_constraint);
+                        let base_for_check = self.resolve_lazy_members_in_union(base);
+                        let base_for_check = self.evaluate_type_for_assignability(base_for_check);
+                        let mut is_satisfied = self
+                            .is_assignable_to(base_for_check, inst_constraint)
+                            || self.base_union_members_satisfy_constraint(
+                                base_for_check,
+                                inst_constraint,
+                            )
+                            || self
+                                .satisfies_array_like_constraint(base_for_check, inst_constraint);
                         if !is_satisfied {
                             // When the constraint is a function type, accept callable bases.
                             // The `Function` interface may be lowered as an Object type
@@ -1180,10 +1219,10 @@ impl<'a> CheckerState<'a> {
                             let db2 = self.ctx.types.as_type_database();
                             let is_fn_constraint = self.is_function_constraint(inst_constraint)
                                 || query::is_callable_type(db2, inst_constraint);
-                            let base_is_callable = query::is_callable_type(db2, base)
-                                || self.type_parameter_has_callable_constraint(base)
-                                || self.is_function_constraint(base)
-                                || query::is_function_interface_structural(db2, base);
+                            let base_is_callable = query::is_callable_type(db2, base_for_check)
+                                || self.type_parameter_has_callable_constraint(base_for_check)
+                                || self.is_function_constraint(base_for_check)
+                                || query::is_function_interface_structural(db2, base_for_check);
                             is_satisfied = is_fn_constraint && base_is_callable;
                         }
                         if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
@@ -1373,7 +1412,11 @@ impl<'a> CheckerState<'a> {
                     && base != TypeId::UNKNOWN
                     && !query::contains_free_type_parameters(self.ctx.types, base)
                 {
+                    let base = self.resolve_lazy_members_in_union(base);
+                    let base = self.evaluate_type_for_assignability(base);
                     is_satisfied = self.is_assignable_to(base, instantiated_constraint)
+                        || self
+                            .base_union_members_satisfy_constraint(base, instantiated_constraint)
                         || self.satisfies_array_like_constraint(base, instantiated_constraint);
                 }
                 if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
@@ -1414,7 +1457,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn constraint_check_base_type(&mut self, type_id: TypeId) -> TypeId {
+    pub(super) fn constraint_check_base_type(&mut self, type_id: TypeId) -> TypeId {
         let evaluated = self.evaluate_type_for_assignability(type_id);
         if evaluated != type_id {
             return self.constraint_check_base_type(evaluated);
@@ -1496,7 +1539,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn ast_indexed_access_property_union_from_declaration(
+    pub(super) fn ast_indexed_access_property_union_from_declaration(
         &mut self,
         type_arg: TypeId,
         arg_idx: tsz_parser::parser::NodeIndex,
@@ -1605,6 +1648,18 @@ impl<'a> CheckerState<'a> {
             && let Some(object_keys) =
                 crate::query_boundaries::common::keyof_object_properties(db, object_type)
         {
+            let keyed_object_type =
+                if let Some(keyed_operand) = query::keyof_operand(db, keyed_object_type) {
+                    let keyed_operand = self.evaluate_type_for_assignability(keyed_operand);
+                    let keyed_operand = self.resolve_lazy_type(keyed_operand);
+                    if keyed_operand == object_type {
+                        object_keys
+                    } else {
+                        keyed_object_type
+                    }
+                } else {
+                    keyed_object_type
+                };
             let keys_assignable = self.is_assignable_to(keyed_object_type, object_keys);
             if !keys_assignable {
                 return None;
@@ -1637,5 +1692,80 @@ impl<'a> CheckerState<'a> {
         let value_type = self.evaluate_type_for_assignability(value_type);
         let value_type = self.resolve_lazy_type(value_type);
         (!query::contains_free_type_parameters(self.ctx.types, value_type)).then_some(value_type)
+    }
+
+    pub(super) fn base_union_members_satisfy_constraint(
+        &mut self,
+        base: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, base)
+        else {
+            return false;
+        };
+        let original_constraint = constraint;
+        let constraint = self.resolve_lazy_type(constraint);
+        let constraint = self.evaluate_type_for_assignability(constraint);
+        !members.is_empty()
+            && members.iter().all(|&member| {
+                if self.member_extends_constraint_heritage(member, original_constraint) {
+                    return true;
+                }
+                let member = self.resolve_lazy_type(member);
+                let member = self.evaluate_type_for_assignability(member);
+                self.is_assignable_to(member, constraint)
+                    || self.satisfies_array_like_constraint(member, constraint)
+            })
+    }
+
+    fn member_extends_constraint_heritage(&mut self, member: TypeId, constraint: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let member_sym = self.ctx.resolve_type_to_symbol_id(member).or_else(|| {
+            query::lazy_def_id(db, member)
+                .and_then(|def| self.ctx.def_to_symbol_id_with_fallback(def))
+        });
+        let constraint_sym = self.ctx.resolve_type_to_symbol_id(constraint).or_else(|| {
+            query::lazy_def_id(db, constraint)
+                .and_then(|def| self.ctx.def_to_symbol_id_with_fallback(def))
+        });
+        let (Some(member_sym), Some(constraint_sym)) = (member_sym, constraint_sym) else {
+            return false;
+        };
+        self.interface_extends_symbol(member_sym, constraint_sym)
+            && !self.member_has_conflicting_constraint_property(member, constraint)
+    }
+
+    fn member_has_conflicting_constraint_property(
+        &mut self,
+        member: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        let member = self.resolve_lazy_type(member);
+        let member = self.evaluate_type_for_assignability(member);
+        let constraint = self.resolve_lazy_type(constraint);
+        let constraint = self.evaluate_type_for_assignability(constraint);
+        let db = self.ctx.types.as_type_database();
+        let Some(member_shape) = crate::query_boundaries::common::object_shape_for_type(db, member)
+        else {
+            return false;
+        };
+        let Some(constraint_shape) =
+            crate::query_boundaries::common::object_shape_for_type(db, constraint)
+        else {
+            return false;
+        };
+        member_shape.properties.iter().any(|member_prop| {
+            constraint_shape
+                .properties
+                .iter()
+                .find(|constraint_prop| constraint_prop.name == member_prop.name)
+                .is_some_and(|constraint_prop| {
+                    let member_type = self.resolve_lazy_type(member_prop.type_id);
+                    let member_type = self.evaluate_type_for_assignability(member_type);
+                    let constraint_type = self.resolve_lazy_type(constraint_prop.type_id);
+                    let constraint_type = self.evaluate_type_for_assignability(constraint_type);
+                    !self.is_assignable_to(member_type, constraint_type)
+                })
+        })
     }
 }

@@ -404,6 +404,10 @@ pub struct CheckerContext<'a> {
     /// nested namespace export name visible across all binders.
     pub nested_namespace_candidates_cache_complete: Cell<bool>,
 
+    /// Per-checker cache for same-name symbol candidates across the current binder
+    /// and all cross-file binders.
+    pub symbol_name_candidates_cache: RefCell<FxHashMap<String, Vec<SymbolId>>>,
+
     /// Per-checker cache for text-based entity-name resolution used by lowering.
     /// Keyed by names like `React.ReactNode` / `JSX.Element` and stores both
     /// hits and misses to avoid repeatedly walking the same symbol graph during

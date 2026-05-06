@@ -231,11 +231,7 @@ impl BinderState {
         F: FnMut(SymbolId) -> bool,
     {
         let node = arena.get(node_idx)?;
-        let name = if let Some(ident) = arena.get_identifier(node) {
-            ident.escaped_text.as_str()
-        } else {
-            return None;
-        };
+        let name = arena.get_identifier(node)?.escaped_text.as_str();
 
         let mut consider =
             |sym_id: SymbolId| -> Option<SymbolId> { accept(sym_id).then_some(sym_id) };
