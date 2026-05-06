@@ -331,7 +331,7 @@ impl SemVer {
 pub(crate) const TYPES_VERSIONS_COMPILER_VERSION_FALLBACK: SemVer = SemVer {
     major: 6,
     minor: 0,
-    patch: 0,
+    patch: 3,
 };
 
 pub(crate) fn parse_semver(value: &str) -> Option<SemVer> {
@@ -698,7 +698,11 @@ mod tests {
         );
         assert_eq!(
             types_versions_compiler_version(None),
-            TYPES_VERSIONS_COMPILER_VERSION_FALLBACK
+            SemVer {
+                major: 6,
+                minor: 0,
+                patch: 3,
+            }
         );
     }
 

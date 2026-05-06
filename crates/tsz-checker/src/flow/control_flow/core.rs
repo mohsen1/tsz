@@ -1386,6 +1386,9 @@ impl<'a> FlowAnalyzer<'a> {
                                 })
                             });
                         let ant_needs_defer = (ant_flags & flow_flags::CONDITION) != 0
+                            // Closure START nodes may carry the enclosing flow
+                            // that preserves narrowing for effectively-const captures.
+                            || (ant_flags & flow_flags::START) != 0
                             || (ant_flags & flow_flags::CALL) != 0
                             || (ant_flags & flow_flags::LOOP_LABEL) != 0
                             || (ant_flags & flow_flags::BRANCH_LABEL) != 0
