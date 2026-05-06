@@ -620,12 +620,30 @@ impl<'a> CheckerState<'a> {
         &mut self,
         props_type: TypeId,
     ) -> TypeId {
+        let alias_hint = self.ctx.types.get_display_alias(props_type).or_else(|| {
+            crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, props_type)
+                .then_some(props_type)
+        });
         let normalized = self.evaluate_application_type(props_type);
         let normalized = self.evaluate_type_with_env(normalized);
         let normalized = self.resolve_type_for_property_access(normalized);
         let normalized = self.resolve_lazy_type(normalized);
         let normalized = self.evaluate_application_type(normalized);
-        self.evaluate_type_with_env(normalized)
+        let normalized = self.evaluate_type_with_env(normalized);
+        if normalized != props_type
+            && normalized != TypeId::ERROR
+            && self.ctx.types.get_display_alias(normalized).is_none()
+            && let Some(alias_hint) = alias_hint
+        {
+            let alias_evaluated = self.evaluate_type_with_env(alias_hint);
+            if alias_evaluated != TypeId::ERROR
+                && self.is_assignable_to(alias_evaluated, normalized)
+                && self.is_assignable_to(normalized, alias_evaluated)
+            {
+                self.ctx.types.store_display_alias(normalized, alias_hint);
+            }
+        }
+        normalized
     }
 
     pub(in crate::checkers_domain::jsx) fn get_jsx_special_attribute_expected_type(
@@ -1431,17 +1449,42 @@ impl<'a> CheckerState<'a> {
         declared_type_id: TypeId,
         prop_is_optional_in_anonymous_source: bool,
     ) -> TypeId {
-        if !prop_is_optional_in_anonymous_source {
-            return write_check_type;
-        }
-        if write_check_type == declared_type_id {
+        let display_type = if !prop_is_optional_in_anonymous_source {
+            write_check_type
+        } else if write_check_type == declared_type_id {
             self.ctx
                 .types
                 .factory()
                 .union2(write_check_type, TypeId::UNDEFINED)
         } else {
             declared_type_id
+        };
+
+        if crate::query_boundaries::checkers::jsx::contains_index_access_type(
+            self.ctx.types,
+            display_type,
+        ) {
+            let alias_hint =
+                crate::query_boundaries::checkers::jsx::index_access_type_arg_alias_hint(
+                    self.ctx.types,
+                    &self.ctx.definition_store,
+                    display_type,
+                );
+            let evaluated = self.evaluate_type_with_env(display_type);
+            if evaluated != display_type && evaluated != TypeId::ERROR {
+                if let Some(alias_hint) = alias_hint {
+                    let alias_evaluated = self.evaluate_type_with_env(alias_hint);
+                    if self.is_assignable_to(alias_evaluated, evaluated)
+                        && self.is_assignable_to(evaluated, alias_evaluated)
+                    {
+                        self.ctx.types.store_display_alias(evaluated, alias_hint);
+                    }
+                }
+                return evaluated;
+            }
         }
+
+        display_type
     }
 
     /// JSX bare-string-literal attribute write to an optional anonymous prop:

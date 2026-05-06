@@ -34,7 +34,69 @@ fn remap_mapped_property_key(
     use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 
     let subst = TypeSubstitution::single(mapped.type_param.name, source_key);
-    crate::evaluation::evaluate::evaluate_type(db, instantiate_type(db, name_type, &subst))
+    let remapped =
+        crate::evaluation::evaluate::evaluate_type(db, instantiate_type(db, name_type, &subst));
+    simplify_remapped_template_key_for_literal_source(db, remapped, source_key)
+}
+
+fn simplify_remapped_template_key_for_literal_source(
+    db: &dyn TypeDatabase,
+    remapped: TypeId,
+    source_key: TypeId,
+) -> TypeId {
+    let Some(TypeData::TemplateLiteral(list_id)) = db.lookup(remapped) else {
+        return remapped;
+    };
+    let spans = db.template_list(list_id);
+    let mut changed = false;
+    let mut simplified = Vec::with_capacity(spans.len());
+
+    for span in spans.iter() {
+        match span {
+            crate::types::TemplateSpan::Text(text) => {
+                simplified.push(crate::types::TemplateSpan::Text(*text));
+            }
+            crate::types::TemplateSpan::Type(type_id) => {
+                let evaluated = crate::evaluation::evaluate::evaluate_type(db, *type_id);
+                let replacement = simplify_remapped_template_span_type_for_literal_source(
+                    db, evaluated, source_key,
+                );
+                changed |= replacement != *type_id;
+                simplified.push(crate::types::TemplateSpan::Type(replacement));
+            }
+        }
+    }
+
+    if changed {
+        db.template_literal(simplified)
+    } else {
+        remapped
+    }
+}
+
+fn simplify_remapped_template_span_type_for_literal_source(
+    db: &dyn TypeDatabase,
+    span_type: TypeId,
+    source_key: TypeId,
+) -> TypeId {
+    let Some(TypeData::Application(app_id)) = db.lookup(span_type) else {
+        return span_type;
+    };
+    let app = db.type_application(app_id);
+    if app.args.len() == 2
+        && app.args[0] == source_key
+        && matches!(
+            (db.lookup(source_key), app.args[1]),
+            (
+                Some(TypeData::Literal(crate::types::LiteralValue::String(_))),
+                TypeId::STRING
+            )
+        )
+    {
+        source_key
+    } else {
+        span_type
+    }
 }
 
 fn add_mapped_property_optional_undefined(

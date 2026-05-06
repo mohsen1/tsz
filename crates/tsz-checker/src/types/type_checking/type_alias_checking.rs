@@ -177,7 +177,8 @@ impl<'a> CheckerState<'a> {
             .map(|sid| self.ctx.symbol_resolution_set.insert(sid))
             .unwrap_or(false);
 
-        self.check_variance_annotations_supported_for_type_alias(alias);
+        let variance_annotations_supported =
+            self.check_variance_annotations_supported_for_type_alias(alias);
 
         // Check variance annotations match actual usage (TS2636).
         // Resolve the alias body type directly so the solver can compute variance.
@@ -185,11 +186,13 @@ impl<'a> CheckerState<'a> {
         let body_type = {
             let _ = self.ctx.types.take_union_too_complex();
             let body_type = self.get_type_from_type_node(alias.type_node);
-            self.check_variance_annotations_with_body(
-                node_idx,
-                &alias.type_parameters,
-                Some(body_type),
-            );
+            if variance_annotations_supported {
+                self.check_variance_annotations_with_body(
+                    node_idx,
+                    &alias.type_parameters,
+                    Some(body_type),
+                );
+            }
             body_type
         };
         let body_construction_too_complex = self.ctx.types.take_union_too_complex();
@@ -381,58 +384,82 @@ impl<'a> CheckerState<'a> {
     fn check_variance_annotations_supported_for_type_alias(
         &mut self,
         alias: &tsz_parser::parser::node::TypeAliasData,
-    ) {
+    ) -> bool {
         let Some(type_params) = &alias.type_parameters else {
-            return;
+            return true;
         };
 
-        let first_variance_modifier = type_params.nodes.iter().copied().find_map(|param_idx| {
-            let param_node = self.ctx.arena.get(param_idx)?;
-            let param = self.ctx.arena.get_type_parameter(param_node)?;
-            if self.node_contains_any_parse_error(param_idx)
-                || matches!(
-                    self.get_identifier_text_from_idx(param.name).as_deref(),
-                    Some("in" | "out")
-                )
+        let variance_supported = self.type_alias_body_supports_variance_annotations(alias);
+        if variance_supported {
+            return true;
+        }
+
+        let mut emitted_unsupported_variance_diagnostic = false;
+        for param_idx in type_params.nodes.iter().copied() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            if self.node_contains_any_parse_error(param.name)
+                || self.type_parameter_name_is_variance_keyword(param.name)
             {
-                return None;
+                continue;
             }
-            let modifiers = param.modifiers.as_ref()?;
-            modifiers.nodes.iter().copied().find(|&modifier_idx| {
-                self.ctx
-                    .arena
-                    .get(modifier_idx)
-                    .is_some_and(|modifier_node| {
-                        matches!(
-                            modifier_node.kind,
-                            k if k == SyntaxKind::InKeyword as u16
-                                || k == SyntaxKind::OutKeyword as u16
-                        )
-                    })
-            })
-        });
+            let Some(modifiers) = param.modifiers.as_ref() else {
+                continue;
+            };
+            let Some(variance_modifier_idx) =
+                modifiers.nodes.iter().copied().find(|&modifier_idx| {
+                    self.ctx
+                        .arena
+                        .get(modifier_idx)
+                        .is_some_and(|modifier_node| {
+                            matches!(
+                                modifier_node.kind,
+                                k if k == SyntaxKind::InKeyword as u16
+                                    || k == SyntaxKind::OutKeyword as u16
+                            )
+                        })
+                })
+            else {
+                continue;
+            };
 
-        let Some(variance_modifier_idx) = first_variance_modifier else {
-            return;
-        };
+            self.error_at_node(
+                variance_modifier_idx,
+                crate::diagnostics::diagnostic_messages::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
+                crate::diagnostics::diagnostic_codes::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
+            );
+            emitted_unsupported_variance_diagnostic = true;
+        }
 
-        let body_kind = self.ctx.arena.kind_at(alias.type_node);
-        let variance_supported = body_kind.is_some_and(|kind| {
+        !emitted_unsupported_variance_diagnostic
+    }
+
+    fn type_alias_body_supports_variance_annotations(
+        &self,
+        alias: &tsz_parser::parser::node::TypeAliasData,
+    ) -> bool {
+        self.ctx.arena.kind_at(alias.type_node).is_some_and(|kind| {
             kind == syntax_kind_ext::TYPE_LITERAL
                 || kind == syntax_kind_ext::FUNCTION_TYPE
                 || kind == syntax_kind_ext::CONSTRUCTOR_TYPE
                 || kind == syntax_kind_ext::MAPPED_TYPE
-        });
+        })
+    }
 
-        if variance_supported {
-            return;
+    fn type_parameter_name_is_variance_keyword(&self, name_idx: NodeIndex) -> bool {
+        if matches!(
+            self.get_identifier_text_from_idx(name_idx).as_deref(),
+            Some("in" | "out")
+        ) {
+            return true;
         }
-
-        self.error_at_node(
-            variance_modifier_idx,
-            crate::diagnostics::diagnostic_messages::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
-            crate::diagnostics::diagnostic_codes::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
-        );
+        self.ctx.arena.get(name_idx).is_some_and(|node| {
+            node.kind == SyntaxKind::InKeyword as u16 || node.kind == SyntaxKind::OutKeyword as u16
+        })
     }
 
     /// Walk the alias body AST and return the AST node of the last

@@ -39,6 +39,28 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a type node is a `typeof` type query, looking through
+    /// parenthesized type wrappers.
+    fn is_type_query_node_through_parens(&self, mut node_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        for _ in 0..10 {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::TYPE_QUERY {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+                && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+            {
+                node_idx = wrapped.type_node;
+                continue;
+            }
+            return false;
+        }
+        false
+    }
+
     fn type_nodes_structurally_equal(&self, left: NodeIndex, right: NodeIndex) -> bool {
         if let (Some(left_text), Some(right_text)) = (self.node_text(left), self.node_text(right))
             && left_text == right_text
