@@ -1088,6 +1088,7 @@ impl<'a> Printer<'a> {
             let inline_var_names = module_commonjs::collect_inline_exported_var_names(
                 self.arena,
                 &source.statements.nodes,
+                self.ctx.options.preserve_const_enums,
             );
             self.commonjs_exported_var_names.extend(inline_var_names);
             // When `export =` is present, suppress hoisted function exports

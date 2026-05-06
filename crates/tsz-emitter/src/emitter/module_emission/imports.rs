@@ -1087,6 +1087,7 @@ impl<'a> Printer<'a> {
                     self.arena,
                     import.module_specifier,
                     &stmts,
+                    self.ctx.options.preserve_const_enums,
                 )
             {
                 return;
