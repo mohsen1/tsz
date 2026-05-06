@@ -889,6 +889,32 @@ fn collect_parse_only_no_check_diagnostics(
     }
 }
 
+fn no_lib_core_global_type_diagnostics() -> Vec<Diagnostic> {
+    [
+        "Array",
+        "Boolean",
+        "Function",
+        "IArguments",
+        "Number",
+        "Object",
+        "RegExp",
+        "String",
+        "CallableFunction",
+        "NewableFunction",
+    ]
+    .into_iter()
+    .map(|name| {
+        Diagnostic::error(
+            String::new(),
+            0,
+            0,
+            format!("Cannot find global type '{name}'."),
+            diagnostic_codes::CANNOT_FIND_GLOBAL_TYPE,
+        )
+    })
+    .collect()
+}
+
 fn compile_inner(
     args: &CliArgs,
     cwd: &Path,
@@ -1010,6 +1036,14 @@ fn compile_inner(
             .as_ref()
             .and_then(|cfg| cfg.compiler_options.as_ref()),
     )?;
+    let positional_no_config_no_emit =
+        tsconfig_path.is_none() && !args.files.is_empty() && resolved.no_emit;
+    if positional_no_config_no_emit && !resolved.emit_declarations {
+        // Single-file CLI probes should not enter the full semantic checker when
+        // emit is disabled. The project path already returns quickly for this
+        // shape; keep positional files on the same parse-only path.
+        resolved.no_check = true;
+    }
 
     // Wire removed-but-honored suppress flags from config
     if loaded.suppress_excess_property_errors {
@@ -1028,21 +1062,6 @@ fn compile_inner(
         resolved.checker.rewrite_relative_import_extensions = true;
         resolved.printer.rewrite_relative_import_extensions = true;
     }
-    if config.is_none()
-        && args.module.is_none()
-        && matches!(resolved.printer.module, ModuleKind::None)
-    {
-        // When no tsconfig is present, align with tsc's computed module default:
-        // ES2015+ targets -> ES2015 modules, older targets -> CommonJS.
-        let default_module = if resolved.printer.target.supports_es2015() {
-            ModuleKind::ES2015
-        } else {
-            ModuleKind::CommonJS
-        };
-        resolved.printer.module = default_module;
-        resolved.checker.module = default_module;
-    }
-
     let base_dir = config_base_dir(&cwd, tsconfig_path.as_deref());
     let base_dir = if resolved.preserve_symlinks {
         normalize_path(&base_dir)
@@ -1382,6 +1401,9 @@ fn compile_inner(
         perf_log_phase("parse_no_check", parse_start);
 
         let mut diagnostics = collect_parse_only_no_check_diagnostics(&parse_results, &resolved);
+        if positional_no_config_no_emit && resolved.checker.no_lib {
+            diagnostics.extend(no_lib_core_global_type_diagnostics());
+        }
 
         if !binary_file_names_to_suppress.is_empty() {
             diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));

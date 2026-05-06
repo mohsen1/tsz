@@ -296,7 +296,7 @@ fn should_report_ts5112_for_command_line_files(args: &CliArgs, cwd: &std::path::
 }
 
 const fn should_use_large_stack_thread(args: &CliArgs) -> bool {
-    args.project.is_some() || args.build || args.watch || args.batch || args.files.len() != 1
+    args.project.is_some() || args.build || args.watch || args.batch || !args.files.is_empty()
 }
 
 /// Batch compilation mode: read project directory paths from stdin (one per line),
