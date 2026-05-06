@@ -78,6 +78,74 @@ fn make_request(command: &str, arguments: serde_json::Value) -> TsServerRequest 
 }
 
 #[test]
+fn test_provide_inlay_hints_respects_protocol_start_length_span() {
+    let mut server = make_server();
+    let source = "function f(value: number) {}\nf(1);\n";
+    server
+        .open_files
+        .insert("/a.ts".to_string(), source.to_string());
+
+    let empty_response = server.handle_tsserver_request(make_request(
+        "provideInlayHints",
+        serde_json::json!({
+            "file": "/a.ts",
+            "start": 0,
+            "length": 0,
+        }),
+    ));
+    assert!(empty_response.success);
+    let empty_body = empty_response
+        .body
+        .expect("provideInlayHints should return a body")
+        .as_array()
+        .cloned()
+        .expect("provideInlayHints body should be an array");
+    assert!(
+        empty_body.is_empty(),
+        "zero-length protocol span should not include hints: {empty_body:?}"
+    );
+
+    let full_response = server.handle_tsserver_request(make_request(
+        "provideInlayHints",
+        serde_json::json!({
+            "file": "/a.ts",
+            "start": 0,
+            "length": source.len(),
+        }),
+    ));
+    assert!(full_response.success);
+    let full_body = full_response
+        .body
+        .expect("provideInlayHints should return a body")
+        .as_array()
+        .cloned()
+        .expect("provideInlayHints body should be an array");
+    assert_eq!(
+        full_body.len(),
+        1,
+        "full protocol span should include the parameter hint: {full_body:?}"
+    );
+    assert_eq!(
+        full_body[0].get("kind").and_then(serde_json::Value::as_str),
+        Some("Parameter")
+    );
+    assert_eq!(
+        full_body[0]
+            .get("position")
+            .and_then(|position| position.get("line"))
+            .and_then(serde_json::Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        full_body[0]
+            .get("position")
+            .and_then(|position| position.get("offset"))
+            .and_then(serde_json::Value::as_u64),
+        Some(3)
+    );
+}
+
+#[test]
 fn emit_output_preserves_type_only_module_marker() {
     let mut server = make_server();
     let response = server.handle_tsserver_request(make_request(
