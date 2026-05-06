@@ -917,6 +917,30 @@ type B = Pick<[number], "length">;
 }
 
 #[test]
+fn tuple_spread_assignment_satisfies_numeric_object_properties() {
+    let source = r#"
+var temp2: [number[], string[]] = [[1, 2, 3], ["hello", "string"]];
+
+interface TupLike {
+    0: number[] | string[];
+    1: number[] | string[];
+}
+
+var c0: TupLike = [...temp2];
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2739),
+        "tuple spreads should satisfy numeric object properties without TS2739: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "tuple spread assignment should match tsc without extra diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn optional_tuple_length_assignment_accepts_minimum_length_literal() {
     let source = r#"
 declare const tuple: [number?];
