@@ -851,40 +851,89 @@ fn compile_source_reference_lib_known_name_does_not_report_ts2726() {
 }
 
 #[test]
-fn compile_triple_slash_reference_rejects_prefixed_path_attribute() {
-    let temp = TempDir::new().expect("temp dir");
-    let base = temp.path.as_path();
+fn compile_triple_slash_reference_attribute_must_match_exactly() {
+    // Regression for #3375: triple-slash reference attributes must be matched
+    // as exact attribute names. `notpath="..."` must NOT be treated as
+    // `path="..."`. tsc reports TS1084 for the invalid directive and does not
+    // pull in the bogus referenced file, so the global declared in extra.d.ts
+    // must be unresolved (TS2304).
+    //
+    // The bogus and valid cases use separate compilations because ambient
+    // declarations from extra.d.ts become global across the entire program
+    // once any file in the program pulls it in - sharing one project would
+    // mask the leak the bug demonstrates.
 
+    // === Bogus attribute: must NOT pull in extra.d.ts; must emit TS1084. ===
+    let bogus_temp = TempDir::new().expect("temp dir (bogus)");
+    let bogus_base = bogus_temp.path.as_path();
     write_file(
-        &base.join("extra.d.ts"),
-        r#"declare const extraGlobal: number;
-"#,
+        &bogus_base.join("extra.d.ts"),
+        "declare const extraGlobal: number;\n",
     );
     write_file(
-        &base.join("main.ts"),
+        &bogus_base.join("main.ts"),
         r#"/// <reference notpath="./extra.d.ts" />
 extraGlobal.toFixed();
 "#,
     );
     write_file(
-        &base.join("tsconfig.json"),
+        &bogus_base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
-            "noEmit": true,
-            "strict": true
-          },
+          "compilerOptions": { "noEmit": true, "strict": true },
           "files": ["main.ts"]
         }"#,
     );
 
-    let mut args = default_args();
-    args.project = Some(base.join("tsconfig.json"));
+    let mut bogus_args = default_args();
+    bogus_args.project = Some(bogus_base.join("tsconfig.json"));
+    let bogus_result = compile(&bogus_args, bogus_base).expect("bogus compile should succeed");
+    let bogus_codes: Vec<u32> = bogus_result.diagnostics.iter().map(|d| d.code).collect();
 
-    let result = compile(&args, base).expect("compile should succeed");
     assert!(
-        result.diagnostics.iter().any(|d| d.code == 1084),
-        "Expected TS1084 for invalid reference directive syntax, got diagnostics: {:?}",
-        result.diagnostics
+        bogus_codes.contains(&1084),
+        "Expected TS1084 (invalid reference directive) for `notpath=`; got: {:?}",
+        bogus_result.diagnostics
+    );
+    assert!(
+        bogus_codes.contains(&2304),
+        "Expected TS2304 (cannot find `extraGlobal`) - bogus reference must not pull in extra.d.ts; got: {:?}",
+        bogus_result.diagnostics
+    );
+
+    // === Control: a valid path attribute must still resolve and type-check. ===
+    let valid_temp = TempDir::new().expect("temp dir (valid)");
+    let valid_base = valid_temp.path.as_path();
+    write_file(
+        &valid_base.join("extra.d.ts"),
+        "declare const extraGlobal: number;\n",
+    );
+    write_file(
+        &valid_base.join("main.ts"),
+        r#"/// <reference path="./extra.d.ts" />
+extraGlobal.toFixed();
+"#,
+    );
+    write_file(
+        &valid_base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": { "noEmit": true, "strict": true },
+          "files": ["main.ts"]
+        }"#,
+    );
+
+    let mut valid_args = default_args();
+    valid_args.project = Some(valid_base.join("tsconfig.json"));
+    let valid_result = compile(&valid_args, valid_base).expect("valid compile should succeed");
+    let valid_codes: Vec<u32> = valid_result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !valid_codes.contains(&1084),
+        "Valid `path=` directive must not be flagged TS1084; got: {:?}",
+        valid_result.diagnostics
+    );
+    assert!(
+        !valid_codes.contains(&2304),
+        "Valid `path=` directive must pull in extra.d.ts so `extraGlobal` resolves; got: {:?}",
+        valid_result.diagnostics
     );
 }
 
