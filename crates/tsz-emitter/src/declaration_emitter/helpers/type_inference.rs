@@ -4022,7 +4022,7 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 continue;
             }
-            let Some(arg_type_text) = self.preferred_expression_type_text(arg_idx) else {
+            let Some(arg_type_text) = self.call_argument_type_text_for_substitution(arg_idx) else {
                 continue;
             };
             substitutions.push((
@@ -4067,6 +4067,24 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         substitutions
+    }
+
+    fn call_argument_type_text_for_substitution(&self, arg_idx: NodeIndex) -> Option<String> {
+        if let Some(type_text) = self.reference_declared_type_annotation_text(arg_idx) {
+            return Some(type_text);
+        }
+
+        let expr_idx = self.skip_parenthesized_expression(arg_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::StringLiteral as u16 {
+            let literal = self.arena.get_literal(expr_node)?;
+            return Some(format!(
+                "\"{}\"",
+                super::escape_string_for_double_quote(literal.text.as_ref())
+            ));
+        }
+
+        self.preferred_expression_type_text(arg_idx)
     }
 
     pub(in crate::declaration_emitter) fn function_signature_accepts_call_arguments(
