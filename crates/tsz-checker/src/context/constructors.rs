@@ -74,6 +74,7 @@ impl<'a> CheckerContext<'a> {
             namespace_member_resolution_cache: RefCell::new(FxHashMap::default()),
             export_equals_named_cache: RefCell::new(FxHashMap::default()),
             nested_namespace_candidates_cache: RefCell::new(FxHashMap::default()),
+            nested_namespace_candidates_cache_complete: Cell::new(false),
             symbol_name_candidates_cache: RefCell::new(FxHashMap::default()),
             lowering_entity_name_resolution_cache: RefCell::new(FxHashMap::default()),
             shared_lib_type_cache: None,
@@ -117,8 +118,8 @@ impl<'a> CheckerContext<'a> {
             js_export_surface_cache: FxHashMap::default(),
             js_export_surface_resolution_set: FxHashSet::default(),
             expando_property_resolution_set: FxHashSet::default(),
-            module_specifiers: FxHashMap::default(),
-            module_path_specifiers: FxHashMap::default(),
+            module_specifiers: Arc::new(FxHashMap::default()),
+            module_path_specifiers: Arc::new(FxHashMap::default()),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             class_constructor_type_cache: FxHashMap::default(),
@@ -621,6 +622,8 @@ impl<'a> CheckerContext<'a> {
             parent.export_equals_named_cache.borrow().clone();
         *ctx.nested_namespace_candidates_cache.borrow_mut() =
             parent.nested_namespace_candidates_cache.borrow().clone();
+        ctx.nested_namespace_candidates_cache_complete =
+            Cell::new(parent.nested_namespace_candidates_cache_complete.get());
         *ctx.lowering_entity_name_resolution_cache.borrow_mut() = parent
             .lowering_entity_name_resolution_cache
             .borrow()

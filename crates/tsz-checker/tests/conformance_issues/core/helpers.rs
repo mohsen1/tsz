@@ -1042,6 +1042,97 @@ class Test {
 }
 
 #[test]
+fn test_this_in_array_find_callback_emits_ts2683() {
+    let source = r#"
+class Test {
+    data: number[] = [1, 2, 3];
+
+    finderRaw() {
+        this.data.find(function (d) {
+            return d === this.data.length;
+        });
+    }
+
+    finder() {
+        this.data.find(
+        /** @this {Test} */
+        function (d) {
+            return d === this.data.length;
+        }, this);
+    }
+}
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        source,
+        CheckerOptions {
+            no_implicit_this: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2683_spans: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2683)
+        .map(|diag| &source[diag.start as usize..(diag.start + diag.length) as usize])
+        .collect();
+    assert_eq!(
+        ts2683_spans,
+        vec!["this", "this"],
+        "Array.find callbacks should emit TS2683 at each callback `this`; got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_this_in_js_array_find_callback_emits_ts2683_without_this_jsdoc() {
+    let source = r#"
+class Test {
+    constructor() {
+        /** @type {number[]} */
+        this.data = [1, 2, 3];
+    }
+
+    finderRaw() {
+        this.data.find(function (d) {
+            return d === this.data.length;
+        });
+    }
+
+    finder() {
+        this.data.find(
+        /** @this {Test} */
+        function (d) {
+            return d === this.data.length;
+        }, this);
+    }
+}
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "a.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_this: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2683_spans: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2683)
+        .map(|diag| &source[diag.start as usize..(diag.start + diag.length) as usize])
+        .collect();
+    assert_eq!(
+        ts2683_spans,
+        vec!["this"],
+        "JS Array.find should emit TS2683 only for the callback without @this; got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_js_iife_annotated_inner_function_still_emits_ts2683() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "index.js",
