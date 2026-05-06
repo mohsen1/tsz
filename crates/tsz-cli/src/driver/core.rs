@@ -2698,7 +2698,7 @@ fn apply_cli_overrides_with_config_options(
     }
     if let Some(use_define_for_class_fields) = args.use_define_for_class_fields {
         options.printer.use_define_for_class_fields = use_define_for_class_fields;
-    } else {
+    } else if !config_options.is_some_and(|options| options.use_define_for_class_fields.is_some()) {
         // Default: true for target >= ES2022, false otherwise (matches tsc behavior)
         options.printer.use_define_for_class_fields =
             (options.printer.target as u32) >= (tsz::emitter::ScriptTarget::ES2022 as u32);
