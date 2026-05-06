@@ -1211,6 +1211,44 @@ fn test_semantic_diagnostics_preserve_options_with_numeric_inferred_target() {
 }
 
 #[test]
+fn test_semantic_diagnostics_include_line_position_uses_utf16_length() {
+    let mut server = make_server_with_real_libs();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "const café: string = 1;\n".to_string(),
+    );
+
+    let diagnostics_resp = server.handle_tsserver_request(make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts",
+            "includeLinePosition": true
+        }),
+    ));
+
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    let diagnostic = diagnostics
+        .first()
+        .unwrap_or_else(|| panic!("expected a semantic diagnostic, got {diagnostics:?}"));
+    assert_eq!(diagnostic.get("start"), Some(&serde_json::json!(6)));
+    assert_eq!(diagnostic.get("length"), Some(&serde_json::json!(4)));
+    assert_eq!(
+        diagnostic.get("startLocation"),
+        Some(&serde_json::json!({ "line": 1, "offset": 7 }))
+    );
+    assert_eq!(
+        diagnostic.get("endLocation"),
+        Some(&serde_json::json!({ "line": 1, "offset": 11 }))
+    );
+}
+
+#[test]
 fn test_semantic_diagnostics_skip_core_global_type_noise_for_no_lib_files() {
     let mut server = make_server();
     server.open_files.insert(
