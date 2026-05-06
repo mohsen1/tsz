@@ -965,14 +965,50 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
     ) -> Option<tsz_binder::SymbolTable> {
+        if let Some(cached) = self
+            .ctx
+            .namespace_exports_cache
+            .borrow()
+            .get(module_specifier)
+            .cloned()
+        {
+            return cached;
+        }
+
         if let Some(exports) = self.resolve_ambient_module_namespace_exports(module_specifier) {
+            self.ctx
+                .namespace_exports_cache
+                .borrow_mut()
+                .insert(module_specifier.to_string(), Some(exports.clone()));
             return Some(exports);
         }
 
-        let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
-        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let Some(target_file_idx) = self.ctx.resolve_import_target(module_specifier) else {
+            self.ctx
+                .namespace_exports_cache
+                .borrow_mut()
+                .insert(module_specifier.to_string(), None);
+            return None;
+        };
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
+            self.ctx
+                .namespace_exports_cache
+                .borrow_mut()
+                .insert(module_specifier.to_string(), None);
+            return None;
+        };
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
-        let target_file_name = target_arena.source_files.first()?.file_name.clone();
+        let Some(target_file_name) = target_arena
+            .source_files
+            .first()
+            .map(|source_file| source_file.file_name.clone())
+        else {
+            self.ctx
+                .namespace_exports_cache
+                .borrow_mut()
+                .insert(module_specifier.to_string(), None);
+            return None;
+        };
 
         // Helper: record cross-file origin for all symbols in a table.
         let record_symbols = |table: &tsz_binder::SymbolTable| {
@@ -1012,6 +1048,10 @@ impl<'a> CheckerState<'a> {
                 Some(module_specifier),
             );
             record_symbols(&combined);
+            self.ctx
+                .namespace_exports_cache
+                .borrow_mut()
+                .insert(module_specifier.to_string(), Some(combined.clone()));
             return Some(combined);
         }
 
@@ -1042,9 +1082,17 @@ impl<'a> CheckerState<'a> {
             // type-only exports (e.g., `export type * from '...'`). An empty namespace
             // object type is correct and will produce TS2339 for value access, instead
             // of falling through to "module not found" → TypeId::ANY.
+            self.ctx
+                .namespace_exports_cache
+                .borrow_mut()
+                .insert(module_specifier.to_string(), Some(combined.clone()));
             return Some(combined);
         }
 
+        self.ctx
+            .namespace_exports_cache
+            .borrow_mut()
+            .insert(module_specifier.to_string(), None);
         None
     }
 
