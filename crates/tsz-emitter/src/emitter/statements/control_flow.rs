@@ -345,6 +345,15 @@ impl<'a> Printer<'a> {
         // Check if the for-of initializer has object rest that needs ES2018 lowering.
         if self.ctx.needs_es2018_lowering
             && !self.ctx.target_es5
+            && let Some(pattern_idx) =
+                self.for_of_assignment_initializer_has_object_rest(for_in_of.initializer)
+        {
+            self.emit_for_of_assignment_with_rest_lowering(node, for_in_of, pattern_idx);
+            return;
+        }
+
+        if self.ctx.needs_es2018_lowering
+            && !self.ctx.target_es5
             && let Some(rest_info) = self.for_of_has_object_rest(for_in_of.initializer)
         {
             self.emit_for_of_with_rest_lowering(node, for_in_of, rest_info);
@@ -402,6 +411,18 @@ impl<'a> Printer<'a> {
         Some((keyword.to_string(), decl.name))
     }
 
+    fn for_of_assignment_initializer_has_object_rest(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return None;
+        }
+        self.assignment_pattern_has_object_rest(initializer)
+            .then_some(initializer)
+    }
+
     /// Emit a for-of with object rest lowering.
     fn emit_for_of_with_rest_lowering(
         &mut self,
@@ -437,6 +458,52 @@ impl<'a> Printer<'a> {
         self.write_line();
 
         // Emit the original body statements
+        if let Some(body_node) = self.arena.get(for_in_of.statement) {
+            if body_node.kind == syntax_kind_ext::BLOCK {
+                if let Some(block) = self.arena.get_block(body_node) {
+                    for &stmt in &block.statements.nodes {
+                        self.emit(stmt);
+                        self.write_line();
+                    }
+                }
+            } else {
+                self.emit(for_in_of.statement);
+                self.write_line();
+            }
+        }
+
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    fn emit_for_of_assignment_with_rest_lowering(
+        &mut self,
+        node: &Node,
+        for_in_of: &tsz_parser::parser::node::ForInOfData,
+        pattern_idx: NodeIndex,
+    ) {
+        let temp = self.get_temp_var_name();
+
+        self.write("for ");
+        if for_in_of.await_modifier {
+            self.write("await ");
+        }
+        self.write("(let ");
+        self.write(&temp);
+        self.write(" of ");
+        self.emit(for_in_of.expression);
+        if let Some(body_node) = self.arena.get(for_in_of.statement) {
+            self.map_closing_paren_backward(node.pos, body_node.pos);
+        }
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+
+        self.write("(");
+        self.emit_assignment_object_rest_destructuring_from_source(pattern_idx, &temp);
+        self.write(");");
+        self.write_line();
+
         if let Some(body_node) = self.arena.get(for_in_of.statement) {
             if body_node.kind == syntax_kind_ext::BLOCK {
                 if let Some(block) = self.arena.get_block(body_node) {

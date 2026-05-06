@@ -114,6 +114,59 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn is_require_call_callee_without_node_global(
+        &self,
+        name: &str,
+        idx: NodeIndex,
+    ) -> bool {
+        if name != "require" {
+            return false;
+        }
+
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+        if parent_node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(parent_node) else {
+            return false;
+        };
+        if call.expression != idx {
+            return false;
+        }
+        let Some(module_specifier) = self.get_require_module_specifier(parent) else {
+            return false;
+        };
+
+        let is_import_equals_module_reference = self
+            .ctx
+            .arena
+            .get_extended(parent)
+            .and_then(|parent_ext| self.ctx.arena.get(parent_ext.parent))
+            .is_some_and(|grandparent| {
+                grandparent.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            });
+        if is_import_equals_module_reference {
+            return true;
+        }
+
+        self.is_js_file()
+            && self
+                .ctx
+                .resolve_import_target_from_file_for_request(
+                    self.ctx.current_file_idx,
+                    &module_specifier,
+                    Some(crate::context::ResolutionModeOverride::Require),
+                    crate::context::ResolutionRequestKind::CjsRequire,
+                )
+                .is_some()
+    }
+
     /// Check if a node is in a type-annotation context (type reference, implements, extends, etc.).
     /// Used to determine which symbol meaning to use for spelling suggestions.
     fn is_in_type_context(&self, idx: NodeIndex) -> bool {
@@ -664,6 +717,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.unresolved_name_matches_enclosing_param(name, idx) {
+            return;
+        }
+
+        if self.is_require_call_callee_without_node_global(name, idx) {
             return;
         }
 

@@ -158,12 +158,19 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit_comments_in_range(
+        let (emitted, last_comment_end, had_trailing_newline) = self.emit_comments_in_range(
             open_end as u32,
             expr_node.pos,
             false,
             gap.starts_with('\n') || gap.starts_with('\r'),
         );
+        if emitted
+            && !had_trailing_newline
+            && let Some(trailing) = text.get(last_comment_end as usize..expr_pos)
+            && trailing.bytes().any(|byte| matches!(byte, b' ' | b'\t'))
+        {
+            self.write_space();
+        }
     }
 
     fn emit_template_span_trailing_comments(
