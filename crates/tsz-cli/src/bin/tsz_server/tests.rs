@@ -1580,6 +1580,31 @@ fn test_new_commands_are_recognized() {
 }
 
 #[test]
+fn test_indentation_returns_absolute_position() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/indent.ts".to_string(),
+        "const a = 1;\nconst b = 2;\n".to_string(),
+    );
+    let req = make_request(
+        "indentation",
+        serde_json::json!({
+            "file": "/indent.ts",
+            "line": 2,
+            "offset": 5,
+            "options": { "indentSize": 2, "tabSize": 2 }
+        }),
+    );
+
+    let resp = server.handle_tsserver_request(req);
+
+    assert!(resp.success);
+    let body = resp.body.expect("indentation should return a body");
+    assert_eq!(body.get("position"), Some(&serde_json::json!(17)));
+    assert_eq!(body.get("indentation"), Some(&serde_json::json!(0)));
+}
+
+#[test]
 fn test_signature_help_has_no_body_without_signature() {
     let mut server = make_server();
     server
