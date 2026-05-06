@@ -376,6 +376,51 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    pub(in crate::declaration_emitter) fn js_commonjs_define_property_export_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<JsDefinedPropertyDecl> {
+        if !self.source_is_js_file {
+            return None;
+        }
+
+        let stmt_node = self.arena.get(stmt_idx)?;
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_node = self.arena.get(expr_stmt.expression)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(expr_node)?;
+        if !self.is_object_define_property_call(call.expression) {
+            return None;
+        }
+        let args = call.arguments.as_ref()?;
+        if args.nodes.len() != 3 {
+            return None;
+        }
+
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(args.nodes[0]);
+        if !self.is_exports_identifier_reference(receiver)
+            && !self.is_module_exports_reference(receiver)
+        {
+            return None;
+        }
+
+        let name = self.js_define_property_name(args.nodes[1])?;
+        if self.declaration_property_name_text(&name) != name {
+            return None;
+        }
+        let (type_text, readonly) = self.js_define_property_descriptor(args.nodes[2])?;
+        Some(JsDefinedPropertyDecl {
+            name,
+            type_text,
+            readonly,
+        })
+    }
+
     pub(in crate::declaration_emitter) fn is_object_define_property_call(
         &self,
         expr_idx: NodeIndex,
