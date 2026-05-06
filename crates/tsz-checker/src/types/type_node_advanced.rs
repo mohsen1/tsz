@@ -15,7 +15,7 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{ObjectShape, PropertyInfo, TypeId};
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // =========================================================================
@@ -1303,7 +1303,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 name,
                 "undefined" | "NaN" | "Infinity" | "globalThis" | "arguments"
             );
-            if is_global_name {
+            if name == "globalThis" {
+                return self.get_global_this_type(type_query.expr_name);
+            } else if is_global_name {
                 // Fall through to TypeLowering
             } else {
                 // Name not found in any scope — emit TS2304
@@ -1786,6 +1788,82 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }?;
 
         Some(self.check(type_ann)).filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
+    }
+
+    fn get_global_this_type(&mut self, _error_node: NodeIndex) -> TypeId {
+        let mut names = rustc_hash::FxHashSet::default();
+        for (name, _) in self.ctx.binder.file_locals.iter() {
+            names.insert(name.clone());
+        }
+        for lib_ctx in self.ctx.lib_contexts.iter() {
+            for (name, _) in lib_ctx.binder.file_locals.iter() {
+                names.insert(name.clone());
+            }
+        }
+        names.insert("globalThis".to_string());
+
+        let mut properties = Vec::new();
+        for name in names {
+            let type_id = if name == "globalThis" {
+                TypeId::UNKNOWN
+            } else {
+                let Some(sym_id) = self.global_this_surface_symbol(&name) else {
+                    continue;
+                };
+                self.ctx
+                    .symbol_types
+                    .get(&sym_id)
+                    .copied()
+                    .filter(|&type_id| type_id != TypeId::ERROR)
+                    .or_else(|| self.declared_type_for_type_query_symbol(sym_id))
+                    .unwrap_or_else(|| {
+                        self.ctx
+                            .types
+                            .factory()
+                            .type_query(tsz_solver::SymbolRef(sym_id.0))
+                    })
+            };
+
+            let prop_name = self.ctx.types.intern_string(&name);
+            let mut prop = PropertyInfo::new(prop_name, type_id);
+            prop.write_type = type_id;
+            prop.readonly = name == "globalThis";
+            prop.parent_id = self.global_this_surface_symbol(&name);
+            prop.declaration_order = properties.len() as u32;
+            properties.push(prop);
+        }
+
+        self.ctx.types.factory().object_with_index(ObjectShape {
+            flags: tsz_solver::ObjectFlags::empty(),
+            properties,
+            ..ObjectShape::default()
+        })
+    }
+
+    fn global_this_surface_symbol(&self, name: &str) -> Option<tsz_binder::SymbolId> {
+        use tsz_binder::symbol_flags;
+
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.has_any_flags(symbol_flags::VALUE)
+            && (!symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
+                || symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
+        {
+            return Some(sym_id);
+        }
+
+        for lib_ctx in self.ctx.lib_contexts.iter() {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
+                && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
+                && symbol.has_any_flags(symbol_flags::VALUE)
+                && (!symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
+                    || symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
+            {
+                return Some(sym_id);
+            }
+        }
+
+        None
     }
 
     /// Emit TS2693 for a type-only symbol used in a typeof type query.
