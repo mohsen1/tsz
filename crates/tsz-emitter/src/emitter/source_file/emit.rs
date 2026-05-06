@@ -1825,8 +1825,11 @@ impl<'a> Printer<'a> {
                         if !self.writer.is_at_line_start() {
                             self.write_line();
                         }
-                        self.write("exports.");
-                        self.write(export_name);
+                        // Arbitrary module namespace identifiers (e.g.
+                        // `export { someValue as "<X>" }`) yield non-identifier
+                        // export names that must use bracket access — `exports.<X>`
+                        // is a syntax error.
+                        self.write_export_property_access(export_name);
                         self.write(" = ");
                         self.write(&name);
                         self.write(";");

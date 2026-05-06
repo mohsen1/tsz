@@ -244,7 +244,7 @@ fn compile_on_save_reports_affected_files_and_emits_file() {
 
     let affected = server.handle_tsserver_request(make_request(
         "compileOnSaveAffectedFileList",
-        serde_json::json!({ "file": a_str.clone() }),
+        serde_json::json!({ "file": &a_str }),
     ));
     assert!(affected.success);
     let body = affected.body.expect("affected files body");
