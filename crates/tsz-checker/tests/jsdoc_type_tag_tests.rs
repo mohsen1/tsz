@@ -191,6 +191,27 @@ class A {
     );
 }
 
+#[test]
+fn jsdoc_numeric_literal_type_accepts_exponent_syntax() {
+    let source = r#"
+// @ts-check
+/** @type {1e3} */
+let bad = 999;
+"#;
+    let diagnostics = check_js(source);
+
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2322 && d.message_text.contains("'999'") && d.message_text.contains("'1000'")
+        }),
+        "Expected TS2322 from JSDoc numeric literal type 1e3, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// @type {string} on class field with compatible initializer → no error
 #[test]
 fn test_jsdoc_type_on_class_field_compatible_initializer() {
