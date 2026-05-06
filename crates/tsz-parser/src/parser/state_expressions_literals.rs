@@ -2105,11 +2105,13 @@ impl ParserState {
             self.token_pos()
         };
 
-        // Parse body if present. Missing body is reported in grammar check, not here.
-        // This matches TypeScript's behavior of allowing ASI and checking later.
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
+            if had_open_paren {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+            }
             NodeIndex::NONE
         };
 
@@ -2196,10 +2198,13 @@ impl ParserState {
             let _ = self.parse_return_type();
         }
 
-        // Parse body if present. Missing body is reported in grammar check, not here.
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
+            if had_open_paren {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+            }
             NodeIndex::NONE
         };
 
