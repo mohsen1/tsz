@@ -1506,3 +1506,41 @@ fn interface_var_member_recovery_emits_var_statement() {
         "Malformed var members in interfaces should recover as a variable statement.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn exported_alias_to_uninstantiated_namespace_is_elided() {
+    let source = r#"export namespace a {
+    export namespace b {
+        export interface I {
+            foo();
+        }
+    }
+}
+
+export import b = a.b;
+export var x: b.I;
+x.foo();
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::AMD,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.x = void 0;"),
+        "Exported variable should still get the CJS-style initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.b"),
+        "Exported aliases to type-only namespaces should not emit runtime export assignments.\nOutput:\n{output}"
+    );
+}
