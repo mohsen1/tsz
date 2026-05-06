@@ -312,8 +312,8 @@ impl ModuleResolver {
                     }
                 }
                 // Fall back to the original file if no declaration substitute exists
-                if let Some(resolved) = try_file_with_suffixes(path, &self.module_suffixes) {
-                    return Some(resolved);
+                if path.is_file() {
+                    return Some(path.to_path_buf());
                 }
                 return None;
             }
