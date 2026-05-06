@@ -2711,12 +2711,10 @@ impl<'a> CheckerState<'a> {
                         // the result should inherit the index signatures (with readonly removed).
                         // These are collected separately and only included in the final type
                         // when the literal has no explicit (non-spread) properties, matching tsc.
-                        if spread_props.is_empty()
-                            && !crate::query_boundaries::type_computation::core::is_fresh_literal_indexed_object(
-                                self.ctx.types,
-                                resolved_spread,
-                            )
-                        {
+                        if !crate::query_boundaries::type_computation::core::is_fresh_literal_indexed_object(
+                            self.ctx.types,
+                            resolved_spread,
+                        ) {
                             use crate::query_boundaries::common::IndexSignatureResolver;
                             let resolver = IndexSignatureResolver::new(self.ctx.types);
                             if let Some(string_index_value) =
