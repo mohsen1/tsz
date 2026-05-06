@@ -3504,6 +3504,17 @@ impl<'a> DeclarationEmitter<'a> {
                     .is_some_and(|params| !params.nodes.is_empty());
             let is_source_with_return_annotation =
                 callable.body.is_some() && callable.type_annotation.is_some();
+            if imported_module.is_some()
+                && !is_ambient_function
+                && self
+                    .current_file_path
+                    .as_deref()
+                    .is_some_and(|current_path| {
+                        self.paths_refer_to_same_source_file(current_path, &source_file.file_name)
+                    })
+            {
+                return None;
+            }
             if (!is_ambient_function
                 && !is_source_overload_signature
                 && !is_source_with_return_annotation)
@@ -3518,8 +3529,10 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let mut type_text = self
-                .emit_type_node_text_from_arena(source_arena, callable.type_annotation)
-                .or_else(|| self.source_slice_from_arena(source_arena, callable.type_annotation))?
+                .source_slice_from_arena(source_arena, callable.type_annotation)
+                .or_else(|| {
+                    self.emit_type_node_text_from_arena(source_arena, callable.type_annotation)
+                })?
                 .trim_end()
                 .trim_end_matches(';')
                 .trim_end()
@@ -3592,12 +3605,36 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 return None;
             }
-            type_text = Self::replace_whole_words_in_text(&type_text, &type_param_substitutions);
+            let mut protected_type_param_names = Vec::new();
+            let protected_substitutions = type_param_substitutions
+                .iter()
+                .enumerate()
+                .map(|(substitution_idx, (name_text, arg_text))| {
+                    let mut protected_arg_text = arg_text.clone();
+                    for (param_idx, param_name) in type_param_names.iter().enumerate() {
+                        if !Self::contains_whole_word_in_text(&protected_arg_text, param_name) {
+                            continue;
+                        }
+                        let protected_name =
+                            format!("__tszDeclEmitTypeParam{substitution_idx}_{param_idx}__");
+                        protected_arg_text = Self::replace_whole_words_in_text(
+                            &protected_arg_text,
+                            &[(param_name.clone(), protected_name.clone())],
+                        );
+                        protected_type_param_names.push((protected_name, param_name.clone()));
+                    }
+                    (name_text.clone(), protected_arg_text)
+                })
+                .collect::<Vec<_>>();
+            type_text = Self::replace_whole_words_in_text(&type_text, &protected_substitutions);
             if type_param_names
                 .iter()
                 .any(|name| Self::contains_whole_word_in_text(&type_text, name))
             {
                 return None;
+            }
+            for (protected_name, param_name) in protected_type_param_names {
+                type_text = type_text.replace(&protected_name, &param_name);
             }
             if Self::leading_type_reference_name(&type_text)
                 .is_some_and(Self::is_builtin_conditional_utility_type_name)

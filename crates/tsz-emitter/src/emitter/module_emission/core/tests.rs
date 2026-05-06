@@ -1406,3 +1406,25 @@ export { default as Foo } from "./b";
         "System re-export setter should read default with bracket access.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn interface_var_member_recovery_emits_var_statement() {
+    let source = "interface Foo<T> {\n    var x: T<>;\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var x;"),
+        "Malformed var members in interfaces should recover as a variable statement.\nOutput:\n{output}"
+    );
+}
