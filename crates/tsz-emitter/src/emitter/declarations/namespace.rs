@@ -460,7 +460,12 @@ impl<'a> Printer<'a> {
         let name_start = module_pos + "module".len();
         let rest = &source[name_start..];
         let rest_trimmed = rest.trim_start_matches(|ch: char| ch.is_whitespace());
-        Some(rest_trimmed.as_bytes().first().is_some_and(|byte| pred(*byte)))
+        Some(
+            rest_trimmed
+                .as_bytes()
+                .first()
+                .is_some_and(|byte| pred(*byte)),
+        )
     }
 
     /// Emit a namespace/module as an IIFE for ES6+ targets.
