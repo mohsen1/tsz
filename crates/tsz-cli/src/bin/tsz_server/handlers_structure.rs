@@ -1673,6 +1673,56 @@ impl Server {
         self.stub_response(seq, request, None)
     }
 
+    pub(crate) fn handle_synchronize_project_list(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let include_redirect_info = request
+            .arguments
+            .get("includeProjectReferenceRedirectInfo")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let mut projects: Vec<(&String, &Vec<String>)> =
+            self.external_project_files.iter().collect();
+        projects.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+        let body: Vec<serde_json::Value> = projects
+            .into_iter()
+            .map(|(project_name, files)| {
+                let files: Vec<serde_json::Value> = if include_redirect_info {
+                    files
+                        .iter()
+                        .map(|file_name| {
+                            serde_json::json!({
+                                "fileName": file_name,
+                                "isSourceOfProjectReferenceRedirect": false,
+                            })
+                        })
+                        .collect()
+                } else {
+                    files
+                        .iter()
+                        .map(|file_name| serde_json::json!(file_name))
+                        .collect()
+                };
+                serde_json::json!({
+                    "info": {
+                        "projectName": project_name,
+                        "isInferred": false,
+                        "version": 1,
+                        "options": {},
+                        "languageServiceDisabled": false,
+                    },
+                    "files": files,
+                    "projectErrors": [],
+                })
+            })
+            .collect();
+
+        self.stub_response(seq, request, Some(serde_json::json!(body)))
+    }
+
     pub(crate) fn handle_inlay_hints(
         &mut self,
         seq: u64,
