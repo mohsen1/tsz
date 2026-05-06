@@ -474,20 +474,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Shouldn't happen since we iterate up to max_param_count
                 continue;
             } else {
-                let mut result = param_types_at_pos[0];
-                for &param_type in &param_types_at_pos[1..] {
-                    if self.checker.is_assignable_to(result, param_type) {
-                        continue;
-                    }
-                    if self.checker.is_assignable_to(param_type, result) {
-                        result = param_type;
-                        continue;
-                    }
-                    result = self
-                        .checker
-                        .evaluate_type(self.interner.intersection2(result, param_type));
-                }
-                result
+                self.intersect_union_call_param_types(&param_types_at_pos)
             };
 
             combined_params.push(combined_type);
