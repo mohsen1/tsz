@@ -16264,6 +16264,59 @@ function process(image) {
 }
 
 #[test]
+fn compile_jsdoc_nested_object_return_types_are_type_checked() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "target": "es2020",
+            "module": "commonjs",
+            "noEmit": true,
+            "types": []
+          },
+          "files": ["input.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("input.js"),
+        r#"// @ts-check
+/** @returns {{ value: string }} */
+function f() {
+  return { value: 123 };
+}
+
+/**
+ * @callback MakeBox
+ * @returns {{ value: string }}
+ */
+
+/** @type {MakeBox} */
+const g = () => ({ value: 123 });
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322.len() >= 2,
+        "Expected both plain @returns and @callback nested object returns to report TS2322, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn direct_checker_with_real_default_libs_jsdoc_type_reference_to_ambient_value_keeps_construct_signature()
  {
     let files = vec![(
