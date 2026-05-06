@@ -16628,6 +16628,43 @@ fn config_removed_target_es3_emits_ts5108() {
 }
 
 #[test]
+fn cli_removed_target_es3_emits_ts5108() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "let x: string = 1;\n");
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--target",
+        "ES3",
+        "--typeRoots",
+        "./empty-types",
+        "main.ts",
+    ])
+    .expect("--target ES3 should parse so config validation can report TS5108");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2],
+        "Expected only TS5108 for direct --target ES3, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics[0]
+            .message_text
+            .contains("Option 'target=ES3' has been removed"),
+        "Unexpected TS5108 message: {}",
+        result.diagnostics[0].message_text
+    );
+}
+
+#[test]
 fn cli_invalid_ignore_deprecations_emits_ts5103() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
