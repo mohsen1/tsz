@@ -468,13 +468,62 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Arrow function `(params) => ret` or `() => ret`.
+        // Arrow function `(params) => ret`, `() => ret`, or
+        // `<T, U>(params) => ret` (generic signature). When a generic
+        // signature prefix is present, the names it declares are in scope
+        // for the params and the return type, so they must be appended to
+        // `template_params` before we recurse — otherwise a body like
+        // `<T>(p: T) => T` would emit a spurious TS2304 for `T`.
         if let Some(arrow_idx) = find_top_level_jsdoc_arrow(trimmed) {
             let mut reported = false;
-            let params_str = trimmed[..arrow_idx].trim();
+            let mut prefix = trimmed[..arrow_idx].trim();
             let ret_str = trimmed[arrow_idx + 2..].trim();
-            if params_str.starts_with('(') && params_str.ends_with(')') {
-                let inner = &params_str[1..params_str.len() - 1];
+
+            let mut local_template_params: Vec<String> = template_params.to_vec();
+            if let Some(stripped_prefix) = prefix.strip_prefix('<') {
+                let mut depth = 1u32;
+                let mut close_idx = None;
+                for (i, ch) in stripped_prefix.char_indices() {
+                    match ch {
+                        '<' => depth += 1,
+                        '>' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close_idx = Some(i);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(close) = close_idx {
+                    let tp_block = &stripped_prefix[..close];
+                    for tp in tp_block.split(',') {
+                        let tp = tp.trim();
+                        if tp.is_empty() {
+                            continue;
+                        }
+                        // `T` or `T extends Constraint` — only the bound name
+                        // goes in scope; the constraint expression can still
+                        // contain unresolved leaves and is not walked here.
+                        let name = tp
+                            .split_whitespace()
+                            .next()
+                            .map(str::trim)
+                            .unwrap_or("")
+                            .to_string();
+                        if !name.is_empty() {
+                            local_template_params.push(name);
+                        }
+                    }
+                    prefix = stripped_prefix[close + 1..].trim();
+                }
+            }
+
+            let scope: &[String] = &local_template_params;
+
+            if prefix.starts_with('(') && prefix.ends_with(')') {
+                let inner = &prefix[1..prefix.len() - 1];
                 for param in Self::split_top_level_params(inner) {
                     let param_text = param.trim();
                     if param_text.is_empty() {
@@ -496,7 +545,7 @@ impl<'a> CheckerState<'a> {
                         comment_pos,
                         comment_end,
                         source_text,
-                        template_params,
+                        scope,
                     );
                 }
             }
@@ -505,7 +554,7 @@ impl<'a> CheckerState<'a> {
                 comment_pos,
                 comment_end,
                 source_text,
-                template_params,
+                scope,
             );
             return reported;
         }
