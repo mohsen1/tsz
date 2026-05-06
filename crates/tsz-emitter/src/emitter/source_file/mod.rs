@@ -146,6 +146,28 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn es5_class_duplicate_accessors_keep_first_descriptor_body() {
+        let source =
+            "class C {\n    get x() { return 1; }\n    get x() { return 2; } // error\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("get: function () { return 1; },"),
+            "Duplicate ES5 accessor descriptor should use the first getter body.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("return 2;") && !output.contains("// error"),
+            "Duplicate ES5 accessor descriptor should not inherit the later error accessor body or comment.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn commonjs_later_named_export_keeps_legacy_decorator_export_alias() {
         let source = "export {};\ndeclare var dec: any;\n@dec\nclass C {}\nexport { C as D };\nusing after = null;\n";
 
