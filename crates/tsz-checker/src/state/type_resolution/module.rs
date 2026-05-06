@@ -9,6 +9,7 @@ use crate::module_resolution::module_specifier_candidates;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -2281,9 +2282,10 @@ impl<'a> CheckerState<'a> {
                 .find_all_by_name(name)
                 .to_vec();
             if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                let mut seen: FxHashSet<tsz_binder::SymbolId> = result.iter().copied().collect();
                 for binder in all_binders.iter() {
                     for &sym_id in binder.get_symbols().find_all_by_name(name) {
-                        if !result.contains(&sym_id) {
+                        if seen.insert(sym_id) {
                             result.push(sym_id);
                         }
                     }
