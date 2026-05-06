@@ -1,6 +1,7 @@
 //! Infer-result conditional helpers for TS2344 constraint validation.
 
 use crate::query_boundaries::checkers::generic as query;
+use crate::query_boundaries::type_computation::complex as type_query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -62,7 +63,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let constrained =
-            tsz_solver::instantiate_type_params_to_constraints(self.ctx.types, type_arg);
+            type_query::instantiate_type_params_to_constraints(self.ctx.types, type_arg);
         if constrained == type_arg {
             return false;
         }
