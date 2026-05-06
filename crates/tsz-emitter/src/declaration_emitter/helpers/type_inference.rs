@@ -6094,7 +6094,7 @@ impl<'a> DeclarationEmitter<'a> {
                         trimmed.starts_with(&prefix)
                             || trimmed.starts_with(&format!("readonly {prefix}"))
                     })
-                    || trimmed.starts_with(&format!("{name_text}("))
+                    || Self::object_literal_method_line_matches_name(trimmed, &name_text)
             }) else {
                 continue;
             };
@@ -6127,12 +6127,23 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(open_paren) = trimmed.find('(') else {
             return line.to_string();
         };
-        let name = trimmed[..open_paren].trim_end_matches('?').trim();
+        let before_paren = trimmed[..open_paren].trim();
+        let optional = before_paren.ends_with('?');
+        let method_head = before_paren.trim_end_matches('?').trim();
+        let (name, type_params) = method_head
+            .find('<')
+            .map(|type_param_start| {
+                (
+                    method_head[..type_param_start].trim(),
+                    method_head[type_param_start..].trim(),
+                )
+            })
+            .unwrap_or((method_head, ""));
         if name.is_empty()
             || name == "new"
             || name.contains(' ')
             || name.starts_with('[')
-            || trimmed[..open_paren].contains(':')
+            || before_paren.contains(':')
         {
             return line.to_string();
         }
@@ -6144,10 +6155,13 @@ impl<'a> DeclarationEmitter<'a> {
             return line.to_string();
         };
         let return_text = return_text.trim_start().trim_end_matches(';');
+        let optional_text = if optional { "?" } else { "" };
         format!(
-            "{}{}: ({}) => {};",
+            "{}{}{}: {}({}) => {};",
             &line[..indent_len],
             name,
+            optional_text,
+            type_params,
             &trimmed[open_paren + 1..close_paren],
             return_text
         )
