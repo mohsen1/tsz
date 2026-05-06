@@ -53,9 +53,7 @@ fn test_definition_empty_response_is_valid_array() {
 }
 
 #[test]
-fn test_definition_and_bound_span_has_valid_text_span() {
-    // The definitionAndBoundSpan response must always have a textSpan with
-    // valid start/end, even when no definitions are found.
+fn test_definition_and_bound_span_has_no_body_without_definition() {
     let mut server = make_server();
     server
         .open_files
@@ -66,16 +64,9 @@ fn test_definition_and_bound_span_has_valid_text_span() {
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp
-        .body
-        .expect("definitionAndBoundSpan should return a body");
-    let text_span = body
-        .get("textSpan")
-        .expect("definitionAndBoundSpan must have textSpan");
-    assert_valid_span(text_span, "definitionAndBoundSpan textSpan");
     assert!(
-        body.get("definitions").is_some(),
-        "definitionAndBoundSpan must have definitions array"
+        resp.body.is_none(),
+        "definitionAndBoundSpan should omit body when no definition exists"
     );
 }
 
@@ -603,6 +594,72 @@ fn test_rename_quoted_alias_marker_offset_uses_literal_only_locations() {
             );
         }
     }
+}
+
+#[test]
+fn test_document_highlights_import_specifier_dedupes_and_has_context() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export const shared = 1;\nshared;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import { shared } from \"./a\";\nshared;\n".to_string(),
+    );
+
+    let req = make_request(
+        "documentHighlights",
+        serde_json::json!({
+            "file": "/b.ts",
+            "line": 1,
+            "offset": 10,
+            "filesToSearch": ["/b.ts"]
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("documentHighlights should return a body");
+    let groups = body
+        .as_array()
+        .expect("documentHighlights body should be an array");
+    let spans = groups
+        .first()
+        .and_then(|group| group.get("highlightSpans"))
+        .and_then(serde_json::Value::as_array)
+        .expect("documentHighlights should include highlightSpans");
+
+    let import_spans: Vec<_> = spans
+        .iter()
+        .filter(|span| {
+            span["start"]["line"].as_u64() == Some(1)
+                && span["start"]["offset"].as_u64() == Some(10)
+                && span["end"]["offset"].as_u64() == Some(16)
+        })
+        .collect();
+    assert_eq!(
+        import_spans.len(),
+        1,
+        "import specifier highlight should not be duplicated: {spans:?}"
+    );
+    let import_span = import_spans[0];
+    assert_eq!(
+        import_span.get("kind").and_then(serde_json::Value::as_str),
+        Some("writtenReference"),
+        "import specifier should be a writtenReference: {import_span:?}"
+    );
+    assert!(
+        import_span.get("contextStart").is_some() && import_span.get("contextEnd").is_some(),
+        "import specifier highlight should include import-line context: {import_span:?}"
+    );
+    assert!(
+        spans.iter().any(|span| {
+            span["start"]["line"].as_u64() == Some(2)
+                && span["start"]["offset"].as_u64() == Some(1)
+                && span["end"]["offset"].as_u64() == Some(7)
+        }),
+        "expected the local usage highlight too: {spans:?}"
+    );
 }
 
 #[test]
