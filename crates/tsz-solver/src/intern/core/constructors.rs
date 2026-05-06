@@ -502,11 +502,17 @@ impl TypeInterner {
     ) -> std::cmp::Ordering {
         use std::cmp::Ordering;
 
-        // Fast path: built-in types have fixed sort positions
+        // Fast path: built-in types have fixed sort positions. Break equal
+        // built-in buckets with the raw TypeId so the comparator remains a
+        // strict total order even when several intrinsic TypeIds share a bucket.
         match (a.builtin_key, b.builtin_key) {
-            (Some(ka), Some(kb)) => return ka.cmp(&kb),
-            (Some(ka), None) => return ka.cmp(&100),
-            (None, Some(kb)) => return 100u32.cmp(&kb),
+            (Some(ka), Some(kb)) => return ka.cmp(&kb).then_with(|| a.id.0.cmp(&b.id.0)),
+            (Some(ka), None) => {
+                return ka.cmp(&100).then(std::cmp::Ordering::Less);
+            }
+            (None, Some(kb)) => {
+                return 100u32.cmp(&kb).then(std::cmp::Ordering::Greater);
+            }
             (None, None) => {}
         }
 
@@ -566,28 +572,23 @@ impl TypeInterner {
                 | (TypeData::ObjectWithIndex(_), TypeData::ObjectWithIndex(_))
                 | (TypeData::Object(_), TypeData::ObjectWithIndex(_))
                 | (TypeData::ObjectWithIndex(_), TypeData::Object(_)) => {
-                    // Use pre-fetched symbol data instead of re-looking up shapes
-                    if let (Some(sym1), Some(sym2)) = (a.obj_symbol, b.obj_symbol) {
-                        let cmp = sym1.cmp(&sym2);
-                        if cmp != Ordering::Equal {
-                            return cmp;
-                        }
+                    // Use pre-fetched symbol/shape data instead of re-looking up
+                    // shapes. Compare option presence as part of the key; falling
+                    // through to allocation order when only one side has a symbol
+                    // can create non-transitive triples with symbol-keyed pairs.
+                    let cmp = Self::compare_optional_u32(a.obj_symbol, b.obj_symbol);
+                    if cmp != Ordering::Equal {
+                        return cmp;
                     }
-                    // Anonymous objects: use pre-fetched ShapeId
-                    if let (Some(shape1), Some(shape2)) = (a.obj_anon_shape, b.obj_anon_shape) {
-                        let cmp = shape1.cmp(&shape2);
-                        if cmp != Ordering::Equal {
-                            return cmp;
-                        }
+                    let cmp = Self::compare_optional_u32(a.obj_anon_shape, b.obj_anon_shape);
+                    if cmp != Ordering::Equal {
+                        return cmp;
                     }
                 }
                 (TypeData::Callable(_), TypeData::Callable(_)) => {
-                    // Use pre-fetched symbol data
-                    if let (Some(sym1), Some(sym2)) = (a.callable_symbol, b.callable_symbol) {
-                        let cmp = sym1.cmp(&sym2);
-                        if cmp != Ordering::Equal {
-                            return cmp;
-                        }
+                    let cmp = Self::compare_optional_u32(a.callable_symbol, b.callable_symbol);
+                    if cmp != Ordering::Equal {
+                        return cmp;
                     }
                 }
                 (TypeData::Application(app1), TypeData::Application(app2)) => {
@@ -626,6 +627,15 @@ impl TypeInterner {
         }
 
         a.id.0.cmp(&b.id.0)
+    }
+
+    fn compare_optional_u32(a: Option<u32>, b: Option<u32>) -> std::cmp::Ordering {
+        match (a, b) {
+            (Some(a), Some(b)) => a.cmp(&b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
     }
 
     const fn cached_union_member_rank(member: &CachedUnionMember) -> u8 {

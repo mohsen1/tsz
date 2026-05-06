@@ -1483,8 +1483,9 @@ fn test_union_application_types_sort_by_base_def_id() {
     );
 }
 
-/// Symbol-backed and anonymous object members must keep order-independent identity
-/// without forcing symbol-first display order for object/object pairs.
+/// Symbol-backed and anonymous object members must use one coherent ordering key.
+/// Mixing symbol order for symbol pairs with allocation order for symbol/anonymous
+/// pairs can form non-transitive triples and make Rust's stable sort panic.
 #[test]
 fn test_union_object_members_sort_total_with_mixed_symbols() {
     let interner = TypeInterner::new();
