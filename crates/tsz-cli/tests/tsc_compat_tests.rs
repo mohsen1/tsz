@@ -2875,6 +2875,93 @@ fn deprecated_module_amd_accepted() {
     );
 }
 
+#[test]
+fn dom_deprecated_tag_name_map_keeps_element_constraint_under_node_merge() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("dom_deprecated_tag_name_map").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "pretty": false,
+    "noLib": true
+  },
+  "files": ["lib.d.ts", "test.ts"]
+}
+"#,
+    );
+    write_file(
+        &temp.path.join("lib.d.ts"),
+        r#"
+declare const enum SyntaxKind {
+    Modifier,
+    Decorator,
+}
+
+interface Node {
+    kind: SyntaxKind;
+}
+
+interface Modifier extends Node { kind: SyntaxKind.Modifier; }
+interface Decorator extends Node { kind: SyntaxKind.Decorator; }
+
+interface Element extends Node { tagName: string; }
+interface HTMLElement extends Element { id: string; }
+interface HTMLUnknownElement extends HTMLElement { unknown: string; }
+interface HTMLTrackElement extends HTMLElement { kind: string; }
+
+interface HTMLElementTagNameMap {
+    div: HTMLElement;
+    track: HTMLTrackElement;
+}
+
+interface HTMLElementDeprecatedTagNameMap {
+    acronym: HTMLElement;
+    applet: HTMLUnknownElement;
+}
+
+interface HTMLCollectionOf<T extends Element> {
+    item(index: number): T;
+}
+
+interface QueryRoot {
+    getElementsByTagName<K extends keyof HTMLElementTagNameMap>(
+        qualifiedName: K
+    ): HTMLCollectionOf<HTMLElementTagNameMap[K]>;
+    getElementsByDeprecatedTagName<K extends keyof HTMLElementDeprecatedTagNameMap>(
+        qualifiedName: K
+    ): HTMLCollectionOf<HTMLElementDeprecatedTagNameMap[K]>;
+}
+"#,
+    );
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"
+interface Modifier extends Node { kind: SyntaxKind.Modifier; }
+interface Decorator extends Node { kind: SyntaxKind.Decorator; }
+"#,
+    );
+
+    let (_code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--project", ".", "--noEmit", "--pretty", "false"],
+    )
+    .expect("tsz binary not found");
+    assert!(
+        output.contains("HTMLElementTagNameMap[K]"),
+        "regular tag map should still fail because HTMLTrackElement.kind conflicts with merged Node.kind: {output}"
+    );
+    assert!(
+        !output.contains("HTMLElementDeprecatedTagNameMap[K]"),
+        "deprecated tag map entries all satisfy Element and should not produce TS2344: {output}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // TS2427: Interface name reserved-word handling.
 //
