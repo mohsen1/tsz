@@ -1240,14 +1240,7 @@ impl<'a> Printer<'a> {
                         &mut object_rest_temp_names,
                     );
                     if param.dot_dot_dot_token {
-                        self.write("...");
-                        if let Some(name_node) = self.arena.get(param.name) {
-                            self.emit_comments_after_dot_dot_dot(
-                                param_node.pos,
-                                name_node.pos,
-                                false,
-                            );
-                        }
+                        self.emit_rest_parameter_spread_prefix(param_node.pos, param.name);
                     }
                     self.write(&temp);
                     // Skip type annotation comments
@@ -1263,10 +1256,7 @@ impl<'a> Printer<'a> {
                 }
 
                 if param.dot_dot_dot_token {
-                    self.write("...");
-                    if let Some(name_node) = self.arena.get(param.name) {
-                        self.emit_comments_after_dot_dot_dot(param_node.pos, name_node.pos, false);
-                    }
+                    self.emit_rest_parameter_spread_prefix(param_node.pos, param.name);
                 }
                 self.emit_parameter_name_js(param.name);
                 self.remove_namespace_exported_parameter_name(param_idx);
