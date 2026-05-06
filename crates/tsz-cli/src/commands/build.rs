@@ -51,19 +51,13 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
     // Check if source files have changed using ChangeTracker
     let root_dir = &project.root_dir;
 
-    // Discover all TypeScript source files in the project
-    // Note: out_dir is passed so output files are excluded from discovery
-    let discovery_options = FileDiscoveryOptions {
-        base_dir: root_dir.clone(),
-        files: Vec::new(),
-        files_explicitly_set: false,
-        include: None,
-        exclude: None,
-        out_dir: project.out_dir.clone(),
-        follow_links: false,
-        allow_js: false,
-        resolve_json_module: false,
-    };
+    // Discover the configured project root files, rather than doing a fresh
+    // default scan. Build mode should not treat unlisted files as new roots.
+    let discovery_options = FileDiscoveryOptions::from_tsconfig(
+        &project.config_path,
+        &project.config.base,
+        project.out_dir.as_deref(),
+    );
 
     let current_files = match discover_ts_files(&discovery_options) {
         Ok(files) => files,
