@@ -1483,6 +1483,36 @@ fn test_union_application_types_sort_by_base_def_id() {
     );
 }
 
+<<<<<<< ours
+=======
+/// Symbol-backed and anonymous object members must keep order-independent identity
+/// without forcing symbol-first display order for object/object pairs.
+#[test]
+fn test_union_object_members_sort_total_with_mixed_symbols() {
+    let interner = TypeInterner::new();
+
+    let named_high = interner.object_type_from_shape(interner.intern_object_shape(ObjectShape {
+        symbol: Some(SymbolId(20)),
+        ..Default::default()
+    }));
+    let anonymous = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
+    let named_low = interner.object_type_from_shape(interner.intern_object_shape(ObjectShape {
+        symbol: Some(SymbolId(10)),
+        ..Default::default()
+    }));
+
+    let union_a = interner.union(vec![named_high, anonymous, named_low]);
+    let union_b = interner.union(vec![anonymous, named_low, named_high]);
+    let union_c = interner.union(vec![named_low, named_high, anonymous]);
+
+    assert_eq!(union_a, union_b);
+    assert_eq!(union_a, union_c);
+}
+
+>>>>>>> theirs
 /// Application types with the same base but different args should sort by args.
 #[test]
 fn test_union_application_types_same_base_sort_by_args() {
