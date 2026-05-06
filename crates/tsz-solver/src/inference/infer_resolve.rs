@@ -584,7 +584,11 @@ impl<'a> InferenceContext<'a> {
         // This distinction is critical: for `foo<T>(n: {x: T, y: T}, m: T)` called as
         // `foo({x: 3, y: ""}, 4)`, tsc infers T = number (first candidate wins),
         // NOT T = number | string (union). The string property then gets TS2322.
-        let candidate_types: Vec<TypeId> = if is_const {
+        let const_applies_readonly_assertion = is_const
+            && !declared_constraint.is_some_and(|constraint| {
+                crate::type_queries::constraint_allows_mutable_array_like(self.interner, constraint)
+            });
+        let candidate_types: Vec<TypeId> = if const_applies_readonly_assertion {
             filtered_no_never
                 .iter()
                 .map(|c| widening::apply_const_assertion(self.interner, c.type_id))

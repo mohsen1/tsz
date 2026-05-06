@@ -379,6 +379,9 @@ mod conditional_infer_tests;
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
+#[path = "tests/const_asserted_return_type_tests.rs"]
+mod const_asserted_return_type_tests;
+#[cfg(test)]
 #[path = "tests/contextual_return_wrapper_tests.rs"]
 mod contextual_return_wrapper_tests;
 #[cfg(test)]
