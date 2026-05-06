@@ -972,6 +972,15 @@ fn compile_inner(
         args,
         config.as_ref(),
     )?);
+    if args.source_map || args.declaration_map {
+        config_diagnostics.retain(|d| {
+            !(d.code
+                == diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+                && d.message_text.contains("mapRoot")
+                && d.message_text.contains("sourceMap")
+                && d.message_text.contains("declarationMap"))
+        });
+    }
 
     // TS5103 (invalid ignoreDeprecations value) and TS5102 (removed option) are fatal
     // in tsc: they stop compilation and report only config-level errors.
@@ -3213,6 +3222,12 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
         return;
     }
     for name in &args.explicitly_disabled_bool_flags {
+        // The empty `"strict"` and `"noErrorTruncation"` arms below are
+        // semantically distinct from each other (one is handled earlier in
+        // the pipeline; the other is a CLI-only display flag that has no
+        // compiler option to toggle), so keep the comments and silence
+        // `clippy::match_same_arms` for this match.
+        #[allow(clippy::match_same_arms)]
         match name.as_str() {
             // `strict` is handled earlier (just after the `--strict` true
             // expansion) so the strict-family `Option<bool>` overrides that

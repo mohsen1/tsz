@@ -581,6 +581,75 @@ fn test_synchronize_project_list_reports_external_project_files() {
 }
 
 #[test]
+fn test_synchronize_project_list_reports_inferred_project_for_open_file() {
+    let mut server = make_server_with_real_libs();
+    let open_response = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": "/private/tmp/tsz-probe-sync-project.ts",
+            "fileContent": "const x = 1;\n",
+        }),
+    ));
+    assert!(open_response.success);
+
+    let response = server.handle_tsserver_request(make_request(
+        "synchronizeProjectList",
+        serde_json::json!({
+            "knownProjects": [],
+            "includeProjectReferenceRedirectInfo": false,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response
+        .body
+        .expect("synchronizeProjectList should return a body");
+    let projects = body
+        .as_array()
+        .expect("synchronizeProjectList body should be an array");
+    assert_eq!(projects.len(), 1, "expected one inferred project: {body:?}");
+
+    let project = &projects[0];
+    assert_eq!(
+        project
+            .pointer("/info/isInferred")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        project
+            .pointer("/info/projectName")
+            .and_then(serde_json::Value::as_str),
+        Some("/dev/null/inferredProject1*")
+    );
+    assert!(
+        project
+            .pointer("/info/options")
+            .and_then(serde_json::Value::as_object)
+            .is_some(),
+        "inferred project should include compiler options: {project:?}"
+    );
+    let files = project
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .expect("project files should be an array");
+    assert!(
+        files.iter().any(|file| file
+            .as_str()
+            .is_some_and(|file| file.ends_with("lib.es5.d.ts")
+                || file.ends_with("lib.es5.full.d.ts")
+                || file.ends_with("lib.esnext.d.ts"))),
+        "inferred project should include the default lib: {files:?}"
+    );
+    assert!(
+        files
+            .iter()
+            .any(|file| file.as_str() == Some("/private/tmp/tsz-probe-sync-project.ts")),
+        "inferred project should include the open file: {files:?}"
+    );
+}
+
+#[test]
 fn project_info_uses_external_project_identity_and_files() {
     let mut server = make_server();
     let open_response = server.handle_tsserver_request(make_request(
@@ -1064,6 +1133,57 @@ fn test_semantic_diagnostics_respect_inferred_module_none() {
 }
 
 #[test]
+fn test_update_open_changed_files_edits_open_snapshot() {
+    let mut server = make_server();
+    let file = "/a.ts";
+    server
+        .open_files
+        .insert(file.to_string(), "const x: string = \"ok\";".to_string());
+
+    let update_req = make_request(
+        "updateOpen",
+        serde_json::json!({
+            "changedFiles": [{
+                "fileName": file,
+                "textChanges": [{
+                    "start": { "line": 1, "offset": 19 },
+                    "end": { "line": 1, "offset": 23 },
+                    "newText": "1"
+                }]
+            }]
+        }),
+    );
+    let update_resp = server.handle_tsserver_request(update_req);
+    assert!(update_resp.success);
+    assert_eq!(
+        server.open_files.get(file).map(String::as_str),
+        Some("const x: string = 1;"),
+        "updateOpen changedFiles should mutate the open-file snapshot"
+    );
+
+    let diagnostics_req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": file
+        }),
+    );
+    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.get("code").and_then(serde_json::Value::as_u64) == Some(2322)),
+        "semantic diagnostics should use the edited open-file snapshot, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_semantic_diagnostics_skip_inferred_module_none_when_target_supports_imports() {
     let mut server = make_server();
     server.open_files.insert(
@@ -1156,6 +1276,44 @@ fn test_semantic_diagnostics_preserve_options_with_numeric_inferred_target() {
                 )
         }),
         "expected noImplicitAny to survive numeric target payload, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_semantic_diagnostics_include_line_position_uses_utf16_length() {
+    let mut server = make_server_with_real_libs();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "const café: string = 1;\n".to_string(),
+    );
+
+    let diagnostics_resp = server.handle_tsserver_request(make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts",
+            "includeLinePosition": true
+        }),
+    ));
+
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    let diagnostic = diagnostics
+        .first()
+        .unwrap_or_else(|| panic!("expected a semantic diagnostic, got {diagnostics:?}"));
+    assert_eq!(diagnostic.get("start"), Some(&serde_json::json!(6)));
+    assert_eq!(diagnostic.get("length"), Some(&serde_json::json!(4)));
+    assert_eq!(
+        diagnostic.get("startLocation"),
+        Some(&serde_json::json!({ "line": 1, "offset": 7 }))
+    );
+    assert_eq!(
+        diagnostic.get("endLocation"),
+        Some(&serde_json::json!({ "line": 1, "offset": 11 }))
     );
 }
 
@@ -1647,6 +1805,31 @@ fn test_new_commands_are_recognized() {
 }
 
 #[test]
+fn test_indentation_returns_absolute_position() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/indent.ts".to_string(),
+        "const a = 1;\nconst b = 2;\n".to_string(),
+    );
+    let req = make_request(
+        "indentation",
+        serde_json::json!({
+            "file": "/indent.ts",
+            "line": 2,
+            "offset": 5,
+            "options": { "indentSize": 2, "tabSize": 2 }
+        }),
+    );
+
+    let resp = server.handle_tsserver_request(req);
+
+    assert!(resp.success);
+    let body = resp.body.expect("indentation should return a body");
+    assert_eq!(body.get("position"), Some(&serde_json::json!(17)));
+    assert_eq!(body.get("indentation"), Some(&serde_json::json!(0)));
+}
+
+#[test]
 fn test_todo_comments_report_utf16_position_after_non_bmp_text() {
     let mut server = make_server();
     let file = "/todo-unicode.ts";
@@ -1783,6 +1966,36 @@ fn test_quickinfo_response_always_has_valid_spans() {
     assert!(resp.success);
     let body = resp.body.expect("quickinfo should return a body");
     assert_valid_span(&body, "quickinfo on valid symbol");
+}
+
+#[test]
+fn test_quickinfo_preserves_non_ascii_identifier_display() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "const café = 1;\ncafé;\n".to_string(),
+    );
+    let req = make_request(
+        "quickinfo",
+        serde_json::json!({"file": "/index.ts", "line": 2, "offset": 2}),
+    );
+
+    let resp = server.handle_tsserver_request(req);
+
+    assert!(resp.success);
+    let body = resp.body.expect("quickinfo should return a body");
+    assert_eq!(
+        body.get("displayString"),
+        Some(&serde_json::json!("const café: 1"))
+    );
+    assert_eq!(
+        body.get("start"),
+        Some(&serde_json::json!({ "line": 2, "offset": 1 }))
+    );
+    assert_eq!(
+        body.get("end"),
+        Some(&serde_json::json!({ "line": 2, "offset": 5 }))
+    );
 }
 
 #[test]

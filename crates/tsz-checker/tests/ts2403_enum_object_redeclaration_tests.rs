@@ -81,6 +81,28 @@ var namespacedObject: { A: Outer.Nested.A };
     );
 }
 
+#[test]
+fn nested_namespaced_enum_redeclaration_no_false_ts2403() {
+    let source = r#"
+namespace A {
+    export namespace B {
+        export enum E { X }
+    }
+}
+
+var v: typeof A.B.E;
+var v = A.B.E;
+
+var wrong: typeof A.B.E;
+var wrong = { X: "not a number" };
+"#;
+    assert_eq!(
+        count_ts2403(source),
+        1,
+        "Expected only the object-literal control redeclaration to emit TS2403"
+    );
+}
+
 /// Sanity: a same-shape redeclaration with both annotations as `typeof Enum`
 /// must STILL be allowed (no TS2403). The fix targets only the asymmetric
 /// case where one side is an enum-object type and the other is a plain

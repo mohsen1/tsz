@@ -1760,16 +1760,18 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
 
-        let invalid_first_array_binding_element = next == SyntaxKind::OpenBracketToken
-            && !matches!(
-                first_elem,
-                SyntaxKind::CloseBracketToken
-                    | SyntaxKind::CommaToken
-                    | SyntaxKind::DotDotDotToken
-                    | SyntaxKind::OpenBraceToken
-                    | SyntaxKind::OpenBracketToken
-            )
-            && !is_identifier_or_keyword(first_elem);
+        let first_elem_is_recoverable_binding_start = matches!(
+            first_elem,
+            SyntaxKind::CloseBracketToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::DotDotDotToken
+                | SyntaxKind::OpenBraceToken
+                | SyntaxKind::OpenBracketToken
+        ) || (is_identifier_or_keyword(first_elem)
+            && !tsz_scanner::token_is_reserved_word(first_elem));
+
+        let invalid_first_array_binding_element =
+            next == SyntaxKind::OpenBracketToken && !first_elem_is_recoverable_binding_start;
 
         if !invalid_first_array_binding_element {
             return None;

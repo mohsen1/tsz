@@ -1434,6 +1434,7 @@ impl Server {
                     .unwrap_or_default()
             };
             display_string = text::normalize_quickinfo_display_string(&display_string);
+            display_string = text::repair_utf8_mojibake(&display_string);
             let base_offset = line_map
                 .position_to_offset(position, &source_text)
                 .or_else(|| {
