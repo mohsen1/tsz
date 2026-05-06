@@ -1367,6 +1367,11 @@ impl<'a> Printer<'a> {
         } else {
             rustc_hash::FxHashMap::default()
         };
+        let cjs_deferred_export_aliases = if is_top_level_cjs {
+            self.collect_cjs_deferred_export_aliases(&source.statements)
+        } else {
+            rustc_hash::FxHashMap::default()
+        };
 
         let mut last_erased_stmt_end: Option<u32> = None;
         let mut last_erased_was_shorthand_module = false;
@@ -1820,24 +1825,26 @@ impl<'a> Printer<'a> {
             {
                 let names = self.get_declaration_export_names(stmt_node);
                 for name in names {
-                    if let Some(export_name) = cjs_deferred_export_bindings.get(&name)
+                    if let Some(export_names) = cjs_deferred_export_aliases.get(&name)
                         && !self.ctx.module_state.iife_exported_names.contains(&name)
                     {
-                        if !self.writer.is_at_line_start() {
-                            self.write_line();
+                        for export_name in export_names {
+                            if !self.writer.is_at_line_start() {
+                                self.write_line();
+                            }
+                            // Arbitrary module namespace identifiers (e.g.
+                            // `export { someValue as "<X>" }`) yield non-identifier
+                            // export names that must use bracket access — `exports.<X>`
+                            // is a syntax error.
+                            self.write_export_property_access(export_name);
+                            self.write(" = ");
+                            self.write(&name);
+                            self.write(";");
+                            self.ctx
+                                .module_state
+                                .inline_exported_names
+                                .insert(export_name.clone());
                         }
-                        // Arbitrary module namespace identifiers (e.g.
-                        // `export { someValue as "<X>" }`) yield non-identifier
-                        // export names that must use bracket access — `exports.<X>`
-                        // is a syntax error.
-                        self.write_export_property_access(export_name);
-                        self.write(" = ");
-                        self.write(&name);
-                        self.write(";");
-                        self.ctx
-                            .module_state
-                            .inline_exported_names
-                            .insert(export_name.clone());
                     }
                 }
             }
