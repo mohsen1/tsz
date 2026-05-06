@@ -2199,10 +2199,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         if let (Some(cache), Some(interner)) = (self.type_cache.as_ref(), self.type_interner)
             && let Some(type_id) = cache.symbol_types.get(&resolved_sym_id).copied()
-            && matches!(
-                interner.lookup(type_id),
-                Some(tsz_solver::types::TypeData::UniqueSymbol(_))
-            )
+            && tsz_solver::type_queries::is_unique_symbol_type(interner, type_id)
         {
             return true;
         }
