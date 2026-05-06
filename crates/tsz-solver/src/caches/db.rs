@@ -30,6 +30,9 @@ use tsz_common::interner::Atom;
 pub trait TypeDatabase {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
+    fn lookup_alloc_order(&self, _id: TypeId) -> Option<u32> {
+        None
+    }
     fn intern_string(&self, s: &str) -> Atom;
     fn resolve_atom(&self, atom: Atom) -> String;
     fn resolve_atom_ref(&self, atom: Atom) -> Arc<str>;
@@ -301,6 +304,10 @@ impl TypeDatabase for TypeInterner {
 
     fn lookup(&self, id: TypeId) -> Option<TypeData> {
         Self::lookup(self, id)
+    }
+
+    fn lookup_alloc_order(&self, id: TypeId) -> Option<u32> {
+        Self::lookup_alloc_order(self, id)
     }
 
     fn intern_string(&self, s: &str) -> Atom {
