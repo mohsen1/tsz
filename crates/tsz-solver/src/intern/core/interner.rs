@@ -1392,10 +1392,8 @@ impl TypeInterner {
             ) || self.union_origin_overrides_canonical_application_sort(
                 current.as_ref(),
                 &origin_members,
-            ) || self.union_origin_overrides_canonical_composite_sort(
-                current.as_ref(),
-                &origin_members,
-            );
+            ) || self
+                .union_origin_overrides_canonical_composite_sort(current.as_ref(), &origin_members);
             if !needs_origin {
                 return;
             }
