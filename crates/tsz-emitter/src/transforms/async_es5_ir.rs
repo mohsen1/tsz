@@ -2073,7 +2073,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 opcode: opcodes::YIELD_STAR,
                 value: Some(Box::new(IRNode::CallExpr {
                     callee: Box::new(IRNode::Identifier(loop_fn.into())),
-                    arguments: vec![IRNode::Identifier(loop_var.clone().into())],
+                    arguments: vec![IRNode::Identifier(loop_var.into())],
                 })),
                 comment: Some("yield*".to_string().into()),
             },
@@ -2169,18 +2169,14 @@ impl<'a> AsyncES5Transformer<'a> {
     }
 
     fn captured_for_loop_state_name(&self, idx: NodeIndex) -> Option<String> {
-        let Some(node) = self.arena.get(idx) else {
-            return None;
-        };
+        let node = self.arena.get(idx)?;
         let loop_data = self.arena.get_loop(node)?;
         if !self.captured_for_loop_has_break(loop_data.statement)
             && !self.captured_for_loop_has_value_return(loop_data.statement)
         {
             return None;
         }
-        let Some(current) = self.arena.get(idx) else {
-            return None;
-        };
+        let current = self.arena.get(idx)?;
         let ordinal = self
             .arena
             .nodes
