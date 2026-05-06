@@ -3,7 +3,9 @@ use crate::query_boundaries::assignability::{
     classify_for_excess_properties, get_keyof_type, get_string_literal_value, is_keyof_type,
     is_type_parameter_like, object_shape_for_type,
 };
-use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+use crate::query_boundaries::common::{
+    TypeSubstitution, instantiate_type, single_rest_tuple_element_type, type_param_info,
+};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -688,6 +690,16 @@ impl<'a> CheckerState<'a> {
             self.error_no_common_properties(display_source, target, diag_idx);
             return false;
         }
+        if let Some(display_source) =
+            self.parameter_type_param_display_source_for_variadic_tuple(source, target, source_idx)
+        {
+            self.error_type_not_assignable_at_with_raw_display_types(
+                display_source,
+                target,
+                diag_idx,
+            );
+            return false;
+        }
         if !skip_source_elaboration
             && self.try_elaborate_assignment_source_error(source_idx, target)
         {
@@ -695,6 +707,75 @@ impl<'a> CheckerState<'a> {
         }
         self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
         false
+    }
+
+    fn error_type_not_assignable_at_with_raw_display_types(
+        &mut self,
+        source_for_display: TypeId,
+        target_for_display: TypeId,
+        anchor_idx: NodeIndex,
+    ) {
+        let source_str = self.format_type_diagnostic(source_for_display);
+        let target_str = self.format_type_diagnostic(target_for_display);
+        let message = crate::diagnostics::format_message(
+            crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        self.error_at_node(
+            anchor_idx,
+            &message,
+            crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
+    }
+
+    fn parameter_type_param_display_source_for_variadic_tuple(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let evaluated_target = self.evaluate_type_for_assignability(target);
+        single_rest_tuple_element_type(self.ctx.types, target)
+            .or_else(|| single_rest_tuple_element_type(self.ctx.types, evaluated_target))?;
+
+        let source_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        let source_node = self.ctx.arena.get(source_idx)?;
+        if source_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(source_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl_idx = symbol.value_declaration;
+        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+            && decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+        {
+            decl_idx = ext.parent;
+        }
+
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::PARAMETER {
+            return None;
+        }
+        let annotation = self.ctx.arena.get_parameter(decl_node)?.type_annotation;
+        if annotation.is_none() {
+            return None;
+        }
+
+        if is_type_parameter_like(self.ctx.types, source) {
+            return Some(source);
+        }
+        let display_source = self.get_type_from_type_node(annotation);
+        let param_info = type_param_info(self.ctx.types, display_source)?;
+        let constraint = param_info.constraint?;
+        let evaluated_constraint = self.evaluate_type_for_assignability(constraint);
+        if source == display_source || source == constraint || source == evaluated_constraint {
+            Some(display_source)
+        } else {
+            None
+        }
     }
 
     fn numeric_enum_assignment_override_from_source(

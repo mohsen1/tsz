@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::intern::TypeInterner;
+use crate::relations::compat::CompatChecker;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{TupleElement, TypeData, TypeParamInfo};
 
@@ -843,6 +844,78 @@ fn test_type_param_assignable_to_readonly_spread_tuple() {
     assert!(
         checker.is_subtype_of(t_param, readonly_target),
         "T should be assignable to readonly [...T]"
+    );
+}
+
+/// A readonly-constrained T is not assignable to mutable [...T].
+#[test]
+fn test_readonly_type_param_not_assignable_to_mutable_spread_tuple() {
+    let interner = TypeInterner::new();
+
+    let readonly_unknown_array = interner.readonly_type(interner.array(TypeId::UNKNOWN));
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(readonly_unknown_array),
+        default: None,
+        is_const: false,
+    }));
+
+    let target = interner.tuple(vec![TupleElement {
+        type_id: t_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(t_param, target),
+        "readonly-constrained T should not be assignable to mutable [...T]"
+    );
+
+    let mut checker = CompatChecker::new(&interner);
+    assert!(
+        !checker.is_assignable(t_param, target),
+        "readonly-constrained T should not be compat-assignable to mutable [...T]"
+    );
+}
+
+/// U extends T inherits T's readonly constraint and is not assignable to mutable [...T].
+#[test]
+fn test_nested_readonly_type_param_not_assignable_to_mutable_spread_tuple() {
+    let interner = TypeInterner::new();
+
+    let readonly_unknown_array = interner.readonly_type(interner.array(TypeId::UNKNOWN));
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(readonly_unknown_array),
+        default: None,
+        is_const: false,
+    }));
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(t_param),
+        default: None,
+        is_const: false,
+    }));
+
+    let target = interner.tuple(vec![TupleElement {
+        type_id: t_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(u_param, target),
+        "U extends readonly-constrained T should not be assignable to mutable [...T]"
+    );
+
+    let mut checker = CompatChecker::new(&interner);
+    assert!(
+        !checker.is_assignable(u_param, target),
+        "U extends readonly-constrained T should not be compat-assignable to mutable [...T]"
     );
 }
 
