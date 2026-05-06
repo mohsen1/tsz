@@ -1300,9 +1300,19 @@ impl<'a> CodeActionProvider<'a> {
             }
             let end_idx = i;
 
-            if end_idx > start_idx + 1
-                && let Some(edit) =
-                    self.sort_imports_range(&statements[start_idx..end_idx], &source_file.comments)
+            let block = &statements[start_idx..end_idx];
+            if end_idx > start_idx + 1 {
+                if let Some(edit) = self.sort_imports_range(block, &source_file.comments) {
+                    edits.push(edit);
+                } else {
+                    for &import_idx in block {
+                        if let Some(edit) = self.sort_named_import_specifiers_edit(import_idx) {
+                            edits.push(edit);
+                        }
+                    }
+                }
+            } else if end_idx == start_idx + 1
+                && let Some(edit) = self.sort_named_import_specifiers_edit(statements[start_idx])
             {
                 edits.push(edit);
             }
@@ -1373,10 +1383,19 @@ impl<'a> CodeActionProvider<'a> {
             let import_decl = self.arena.get_import_decl(node)?;
             let is_side_effect = import_decl.import_clause.is_none();
             let specifier = self.get_module_specifier(node_idx).unwrap_or_default();
-            let text = self
+            let mut text = self
                 .source
                 .get(start as usize..node.end as usize)?
                 .to_string();
+            if let Some((inner_start, inner_end, replacement)) =
+                self.sorted_named_import_specifier_replacement(node_idx)
+            {
+                let rel_start = inner_start.saturating_sub(start) as usize;
+                let rel_end = inner_end.saturating_sub(start) as usize;
+                if rel_start <= rel_end && rel_end <= text.len() {
+                    text.replace_range(rel_start..rel_end, &replacement);
+                }
+            }
             imports.push(ImportInfo {
                 start,
                 end: node.end,
@@ -1477,6 +1496,98 @@ impl<'a> CodeActionProvider<'a> {
             range: Range::new(start_pos, end_pos),
             new_text,
         })
+    }
+
+    fn sort_named_import_specifiers_edit(&self, import_idx: NodeIndex) -> Option<TextEdit> {
+        let (inner_start, inner_end, replacement) =
+            self.sorted_named_import_specifier_replacement(import_idx)?;
+        let start_pos = self.line_map.offset_to_position(inner_start, self.source);
+        let end_pos = self.line_map.offset_to_position(inner_end, self.source);
+        Some(TextEdit {
+            range: Range::new(start_pos, end_pos),
+            new_text: replacement,
+        })
+    }
+
+    fn sorted_named_import_specifier_replacement(
+        &self,
+        import_idx: NodeIndex,
+    ) -> Option<(u32, u32, String)> {
+        let import_node = self.arena.get(import_idx)?;
+        let import_decl = self.arena.get_import_decl(import_node)?;
+        let clause_node = self.arena.get(import_decl.import_clause)?;
+        let clause = self.arena.get_import_clause(clause_node)?;
+        let named_node = self.arena.get(clause.named_bindings)?;
+        if named_node.kind != syntax_kind_ext::NAMED_IMPORTS {
+            return None;
+        }
+        let named = self.arena.get_named_imports(named_node)?;
+        if named.elements.nodes.len() < 2 {
+            return None;
+        }
+
+        let named_text = self
+            .source
+            .get(named_node.pos as usize..named_node.end as usize)?;
+        let open_rel = named_text.find('{')?;
+        let close_rel = named_text.rfind('}')?;
+        if close_rel <= open_rel {
+            return None;
+        }
+        let inner_start = named_node.pos + open_rel as u32 + 1;
+        let inner_end = named_node.pos + close_rel as u32;
+
+        let open_pos = self.line_map.offset_to_position(inner_start, self.source);
+        let close_pos = self.line_map.offset_to_position(inner_end, self.source);
+        if open_pos.line != close_pos.line {
+            return None;
+        }
+
+        let mut entries = Vec::new();
+        for &specifier_idx in &named.elements.nodes {
+            let specifier_node = self.arena.get(specifier_idx)?;
+            let specifier = self.arena.get_specifier(specifier_node)?;
+            let import_idx = if specifier.property_name.is_some() {
+                specifier.property_name
+            } else {
+                specifier.name
+            };
+            let local_idx = if specifier.name.is_some() {
+                specifier.name
+            } else {
+                specifier.property_name
+            };
+            let import_name = self.arena.get_identifier_text(import_idx)?;
+            let local_name = self.arena.get_identifier_text(local_idx)?;
+            let mut rendered = String::new();
+            if specifier.is_type_only {
+                rendered.push_str("type ");
+            }
+            if import_name == local_name {
+                rendered.push_str(import_name);
+            } else {
+                rendered.push_str(&format!("{import_name} as {local_name}"));
+            }
+            entries.push((local_name.to_string(), rendered));
+        }
+
+        entries.sort_by(|(left, _), (right, _)| {
+            compare_import_specifier_local_names(left, right, self.organize_imports_ignore_case)
+        });
+        let replacement = format!(
+            " {} ",
+            entries
+                .iter()
+                .map(|(_, rendered)| rendered.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let original = self.source.get(inner_start as usize..inner_end as usize)?;
+        if original == replacement {
+            return None;
+        }
+
+        Some((inner_start, inner_end, replacement))
     }
 
     fn get_module_specifier(&self, import_idx: NodeIndex) -> Option<String> {

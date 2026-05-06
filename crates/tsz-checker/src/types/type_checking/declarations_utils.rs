@@ -177,13 +177,12 @@ impl<'a> CheckerState<'a> {
                 Some(list) => list.clone(),
                 None => return Some(Vec::new()),
             }
-        } else if let Some(class) = self.ctx.arena.get_class(node) {
+        } else {
+            let class = self.ctx.arena.get_class(node)?;
             match class.type_parameters.as_ref() {
                 Some(list) => list.clone(),
                 None => return Some(Vec::new()),
             }
-        } else {
-            return None;
         };
         let list = &list;
 

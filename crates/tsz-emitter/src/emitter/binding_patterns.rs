@@ -334,8 +334,14 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Determine if we need a temp variable for the source
-        let needs_temp = rest_element.is_some() && source_temp.is_none();
+        // Determine if we need a temp variable for the source. We need one whenever
+        // anything below the outer pattern requires the source: either a rest element
+        // at this level, or a nested element whose own pattern carries an object rest
+        // (e.g. `{ f: { a, ...spread } } = value` — outer has no rest, but the nested
+        // pattern under `f:` does, so the lowering still needs to thread `value` /
+        // `value.f` through `__rest`).
+        let needs_temp =
+            (rest_element.is_some() || !nested_rest_indices.is_empty()) && source_temp.is_none();
         let source_name: String;
         let mut emitted_prefix = false;
 

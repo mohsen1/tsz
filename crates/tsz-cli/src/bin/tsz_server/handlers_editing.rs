@@ -1136,10 +1136,7 @@ impl Server {
         // Find the RHS start position in source for multi-line scanning
         let eq_byte_offset = {
             let eq_search = &source[decl_offset..];
-            match eq_search.find('=') {
-                Some(pos) => decl_offset + pos + 1,
-                None => return None,
-            }
+            decl_offset + eq_search.find('=')? + 1
         };
         // Skip whitespace after = to find RHS start
         let mut rhs_source_start = eq_byte_offset;
