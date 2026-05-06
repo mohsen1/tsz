@@ -2499,6 +2499,31 @@ fn deprecated_target_es5_accepted() {
 }
 
 #[test]
+fn removed_target_es3_reports_ts5108() {
+    let temp = TempDir::new("removed_es3").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "let x: string = 1;\n");
+    let (_code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit", "--pretty", "false", "--target", "ES3", "test.ts",
+        ],
+    )
+    .expect("tsz binary not found");
+    assert!(
+        output.contains("TS5108"),
+        "Removed --target ES3 should produce TS5108: {output}"
+    );
+    assert!(
+        output.contains("Option 'target=ES3' has been removed"),
+        "Removed --target ES3 should use the removed-value diagnostic: {output}"
+    );
+    assert!(
+        !output.contains("TS6046"),
+        "Removed --target ES3 should not be rejected as an invalid enum value: {output}"
+    );
+}
+
+#[test]
 fn deprecated_module_amd_accepted() {
     let temp = TempDir::new("deprecated_amd").expect("temp dir");
     write_file(&temp.path.join("test.ts"), "export const x = 1;\n");

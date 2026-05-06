@@ -2322,6 +2322,7 @@ fn show_config_apply_cli_overrides(
     use serde_json::Value;
     if let Some(target) = args.target {
         let s = match target {
+            tsz_cli::args::Target::Es3 => "es3",
             tsz_cli::args::Target::Es5 => "es5",
             tsz_cli::args::Target::Es2015 => "es6",
             tsz_cli::args::Target::Es2016 => "es2016",
