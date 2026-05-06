@@ -276,7 +276,8 @@ impl ParserState {
 
             let bytes = raw_text.as_bytes();
             let flags = &raw_text[body_end + 1..];
-            let any_unicode_mode = flags.contains('u') || flags.contains('v');
+            let unicode_sets_mode = flags.contains('v');
+            let any_unicode_mode = flags.contains('u') || unicode_sets_mode;
             let strict_mode = any_unicode_mode;
 
             #[derive(Clone, Copy)]
@@ -550,6 +551,7 @@ impl ParserState {
                 emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
                 body: &[u8],
                 strict_mode: bool,
+                unicode_sets_mode: bool,
                 _end: usize,
                 pos: &mut usize,
                 _start_pos: u32,
@@ -563,6 +565,21 @@ impl ParserState {
                     b'd' | b'D' | b's' | b'S' | b'w' | b'W' => {
                         *pos += 1;
                         Some(ClassAtomKind::Class)
+                    }
+                    b'q' if unicode_sets_mode => {
+                        *pos += 1;
+                        if *pos < body.len() && body[*pos] == b'{' {
+                            *pos += 1;
+                            while *pos < body.len() && body[*pos] != b'}' {
+                                *pos += 1;
+                            }
+                            if *pos < body.len() {
+                                *pos += 1;
+                            }
+                            Some(ClassAtomKind::Class)
+                        } else {
+                            Some(ClassAtomKind::Unknown)
+                        }
                     }
                     b'P' => {
                         *pos += 1;
@@ -634,6 +651,7 @@ impl ParserState {
                 emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
                 body: &[u8],
                 strict_mode: bool,
+                unicode_sets_mode: bool,
                 body_end: usize,
                 start_pos: u32,
                 pos: &mut usize,
@@ -655,6 +673,7 @@ impl ParserState {
                         emit,
                         &body[..body_end],
                         strict_mode,
+                        unicode_sets_mode,
                         body_end,
                         pos,
                         start_pos,
@@ -702,10 +721,39 @@ impl ParserState {
                 emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
                 body: &[u8],
                 strict_mode: bool,
+                unicode_sets_mode: bool,
                 body_end: usize,
                 start_pos: u32,
                 pos: &mut usize,
             ) {
+                fn is_class_set_operator_at(body: &[u8], pos: usize, end: usize) -> bool {
+                    pos + 1 < end
+                        && ((body[pos] == b'&' && body[pos + 1] == b'&')
+                            || (body[pos] == b'-' && body[pos + 1] == b'-'))
+                }
+
+                fn scan_class_set_operator(
+                    parser: &mut ParserState,
+                    emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
+                    body: &[u8],
+                    body_end: usize,
+                    pos: &mut usize,
+                ) {
+                    *pos += 2;
+                    if *pos >= body_end
+                        || body[*pos] == b']'
+                        || is_class_set_operator_at(body, *pos, body_end)
+                    {
+                        emit(
+                            parser,
+                            *pos,
+                            1,
+                            diagnostic_messages::EXPECTED_A_CLASS_SET_OPERAND,
+                            diagnostic_codes::EXPECTED_A_CLASS_SET_OPERAND,
+                        );
+                    }
+                }
+
                 // Consume optional leading ^
                 if *pos < body_end && body[*pos] == b'^' {
                     *pos += 1;
@@ -716,6 +764,10 @@ impl ParserState {
                         *pos += 1;
                         break;
                     }
+                    if unicode_sets_mode && is_class_set_operator_at(body, *pos, body_end) {
+                        scan_class_set_operator(parser, emit, body, body_end, pos);
+                        continue;
+                    }
 
                     let mut atoms = Vec::new();
                     let min_start = *pos;
@@ -724,11 +776,16 @@ impl ParserState {
                         emit,
                         body,
                         strict_mode,
+                        unicode_sets_mode,
                         body_end,
                         start_pos,
                         pos,
                         &mut atoms,
                     );
+                    if unicode_sets_mode && is_class_set_operator_at(body, *pos, body_end) {
+                        scan_class_set_operator(parser, emit, body, body_end, pos);
+                        continue;
+                    }
                     if *pos >= body_end || body[*pos] != b'-' {
                         continue;
                     }
@@ -746,6 +803,7 @@ impl ParserState {
                         emit,
                         body,
                         strict_mode,
+                        unicode_sets_mode,
                         body_end,
                         start_pos,
                         pos,
@@ -813,6 +871,7 @@ impl ParserState {
                 pos: &mut usize,
                 in_group: bool,
                 strict_mode: bool,
+                unicode_sets_mode: bool,
                 start_pos: u32,
             ) {
                 let mut is_previous_term_quantifiable = false;
@@ -888,6 +947,7 @@ impl ParserState {
                                             pos,
                                             true,
                                             strict_mode,
+                                            unicode_sets_mode,
                                             start_pos,
                                         );
                                     }
@@ -913,6 +973,7 @@ impl ParserState {
                                             pos,
                                             true,
                                             strict_mode,
+                                            unicode_sets_mode,
                                             start_pos,
                                         );
                                     }
@@ -959,6 +1020,7 @@ impl ParserState {
                                             pos,
                                             true,
                                             strict_mode,
+                                            unicode_sets_mode,
                                             start_pos,
                                         );
                                     }
@@ -973,6 +1035,7 @@ impl ParserState {
                                     pos,
                                     true,
                                     strict_mode,
+                                    unicode_sets_mode,
                                     start_pos,
                                 );
                             }
@@ -1188,6 +1251,7 @@ impl ParserState {
                                 emit,
                                 body,
                                 strict_mode,
+                                unicode_sets_mode,
                                 body_end,
                                 start_pos,
                                 pos,
@@ -1257,6 +1321,7 @@ impl ParserState {
                 pos: &mut usize,
                 in_group: bool,
                 strict_mode: bool,
+                unicode_sets_mode: bool,
                 start_pos: u32,
             ) {
                 loop {
@@ -1268,6 +1333,7 @@ impl ParserState {
                         pos,
                         in_group,
                         strict_mode,
+                        unicode_sets_mode,
                         start_pos,
                     );
 
@@ -1288,6 +1354,7 @@ impl ParserState {
                 &mut pos,
                 false,
                 strict_mode,
+                unicode_sets_mode,
                 start_pos,
             );
         }
