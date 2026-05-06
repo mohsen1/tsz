@@ -3659,6 +3659,7 @@ impl<'a> DeclarationEmitter<'a> {
             .module_exports
             .get(target_module_path)?
             .get("default")?;
+        let default_sym = self.resolve_portability_symbol(default_sym, binder);
         let declared_type = self.declared_type_annotation_text_for_symbol(default_sym)?;
         let public_module =
             Self::combine_public_module_specifier(imported_module, &module_specifier)?;
