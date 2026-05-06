@@ -3125,6 +3125,38 @@ fn validate_cli_compiler_option_diagnostics(
             out_file.to_string_lossy().into_owned().into(),
         );
     }
+    let config_options = config.and_then(|cfg| cfg.compiler_options.as_ref());
+    let config_bool = |get: fn(&CompilerOptions) -> Option<bool>| -> bool {
+        config_options.and_then(get).unwrap_or(false)
+    };
+    if args.declaration
+        || (args.emit_declaration_only && config_bool(|options| options.declaration))
+    {
+        compiler_options.insert("declaration".to_string(), true.into());
+    }
+    if args.composite || (args.emit_declaration_only && config_bool(|options| options.composite)) {
+        compiler_options.insert("composite".to_string(), true.into());
+    }
+    if args.no_emit
+        || (args.allow_importing_ts_extensions && config_bool(|options| options.no_emit))
+    {
+        compiler_options.insert("noEmit".to_string(), true.into());
+    }
+    if args.emit_declaration_only
+        || (args.allow_importing_ts_extensions
+            && config_bool(|options| options.emit_declaration_only))
+    {
+        compiler_options.insert("emitDeclarationOnly".to_string(), true.into());
+    }
+    if args.allow_importing_ts_extensions {
+        compiler_options.insert("allowImportingTsExtensions".to_string(), true.into());
+    }
+    if args.rewrite_relative_import_extensions
+        || (args.allow_importing_ts_extensions
+            && config_bool(|options| options.rewrite_relative_import_extensions))
+    {
+        compiler_options.insert("rewriteRelativeImportExtensions".to_string(), true.into());
+    }
     if args.downlevel_iteration {
         compiler_options.insert("downlevelIteration".to_string(), true.into());
     }

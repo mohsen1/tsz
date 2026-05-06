@@ -1935,6 +1935,31 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
+        // TS5096: allowImportingTsExtensions is only valid in no-emit modes
+        // or when imports are rewritten before emit.
+        if option_is_effectively_enabled(compiler_opts, &ts5024_keys, "allowImportingTsExtensions")
+            && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "noEmit")
+            && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "emitDeclarationOnly")
+            && !option_is_effectively_enabled(
+                compiler_opts,
+                &ts5024_keys,
+                "rewriteRelativeImportExtensions",
+            )
+        {
+            let start = find_value_offset_in_source(&stripped, "allowImportingTsExtensions");
+            let value_len = compiler_opts
+                .get("allowImportingTsExtensions")
+                .map_or(4, estimate_json_value_len);
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                value_len,
+                diagnostic_messages::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR
+                    .to_string(),
+                diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR,
+            ));
+        }
+
         // Group 2: mapRoot requires 'sourceMap' or 'declarationMap'
         if compiler_opts.contains_key("mapRoot")
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "sourceMap")
@@ -6560,6 +6585,32 @@ mod tests {
             !resolved.allow_importing_ts_extensions,
             "allowImportingTsExtensions should not be applied from a string-typed boolean value"
         );
+    }
+
+    #[test]
+    fn test_ts5096_allow_importing_ts_extensions_requires_emit_guard() {
+        let invalid = r#"{"compilerOptions":{"allowImportingTsExtensions":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(invalid, "tsconfig.json").unwrap();
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.code
+                == diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR),
+            "Expected TS5096 for allowImportingTsExtensions without an emit guard, got: {:?}",
+            parsed.diagnostics
+        );
+
+        for valid in [
+            r#"{"compilerOptions":{"allowImportingTsExtensions":true,"noEmit":true}}"#,
+            r#"{"compilerOptions":{"allowImportingTsExtensions":true,"declaration":true,"emitDeclarationOnly":true}}"#,
+            r#"{"compilerOptions":{"allowImportingTsExtensions":true,"rewriteRelativeImportExtensions":true}}"#,
+        ] {
+            let parsed = parse_tsconfig_with_diagnostics(valid, "tsconfig.json").unwrap();
+            assert!(
+                parsed.diagnostics.iter().all(|d| d.code
+                    != diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR),
+                "Did not expect TS5096 for guarded allowImportingTsExtensions in {valid}, got: {:?}",
+                parsed.diagnostics
+            );
+        }
     }
 
     #[test]

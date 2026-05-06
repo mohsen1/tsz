@@ -9605,6 +9605,114 @@ fn compile_emit_declaration_only_from_cli_suppresses_js_output() {
 }
 
 #[test]
+fn compile_config_allow_importing_ts_extensions_requires_emit_guard() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowImportingTsExtensions": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(&base.join("main.ts"), "export const value = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR
+        ),
+        "allowImportingTsExtensions without an emit guard should report TS5096, got: {codes:?}"
+    );
+}
+
+#[test]
+fn compile_config_allow_importing_ts_extensions_accepts_no_emit_guard() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowImportingTsExtensions": true,
+            "noEmit": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(&base.join("main.ts"), "export const value = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR
+        ),
+        "allowImportingTsExtensions with noEmit should not report TS5096, got: {codes:?}"
+    );
+}
+
+#[test]
+fn compile_cli_allow_importing_ts_extensions_requires_emit_guard() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("main.ts"), "export const value = 1;\n");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--allowImportingTsExtensions",
+        "--ignoreConfig",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR
+        ),
+        "CLI allowImportingTsExtensions without an emit guard should report TS5096, got: {codes:?}"
+    );
+}
+
+#[test]
+fn compile_cli_allow_importing_ts_extensions_accepts_no_emit_guard() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("main.ts"), "export const value = 1;\n");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--allowImportingTsExtensions",
+        "--noEmit",
+        "--ignoreConfig",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR
+        ),
+        "CLI allowImportingTsExtensions with noEmit should not report TS5096, got: {codes:?}"
+    );
+}
+
+#[test]
 fn cli_declaration_dir_places_declarations_outside_out_dir() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
