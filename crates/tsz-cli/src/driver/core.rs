@@ -3222,6 +3222,12 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
         return;
     }
     for name in &args.explicitly_disabled_bool_flags {
+        // The empty `"strict"` and `"noErrorTruncation"` arms below are
+        // semantically distinct from each other (one is handled earlier in
+        // the pipeline; the other is a CLI-only display flag that has no
+        // compiler option to toggle), so keep the comments and silence
+        // `clippy::match_same_arms` for this match.
+        #[allow(clippy::match_same_arms)]
         match name.as_str() {
             // `strict` is handled earlier (just after the `--strict` true
             // expansion) so the strict-family `Option<bool>` overrides that
