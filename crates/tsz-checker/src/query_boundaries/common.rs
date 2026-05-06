@@ -444,6 +444,10 @@ pub(crate) fn type_has_displayable_name(db: &dyn TypeDatabase, type_id: TypeId) 
     db.lookup(type_id).is_some()
 }
 
+pub(crate) fn type_id_is_known_to_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    type_id.is_intrinsic() || type_id.is_error() || db.lookup(type_id).is_some()
+}
+
 pub(crate) fn is_symbol_or_unique_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_symbol_or_unique_symbol(db, type_id)
 }
