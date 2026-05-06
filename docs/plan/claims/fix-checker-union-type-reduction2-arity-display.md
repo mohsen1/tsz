@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/checker-union-type-reduction2-arity-display`
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/3553
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
