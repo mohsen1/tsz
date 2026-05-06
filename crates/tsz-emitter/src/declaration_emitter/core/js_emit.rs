@@ -3,7 +3,7 @@ use tsz_binder::{BinderState, SymbolId};
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, string_to_token, token_is_reserved_word};
 use tsz_solver::type_queries;
 
 use super::DeclarationEmitter;
@@ -555,16 +555,30 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         self.write_indent();
-        if is_exported {
+        let reserved_export_alias = if is_exported {
+            self.js_reserved_export_local_name(name_idx)
+        } else {
+            None
+        };
+        if is_exported && reserved_export_alias.is_none() {
             self.write("export ");
             self.write(self.js_synthetic_export_value_keyword(initializer));
         } else {
             if self.should_emit_declare_keyword(false) {
                 self.write("declare ");
             }
-            self.write("var ");
+            if is_exported {
+                self.write(self.js_synthetic_export_value_keyword(initializer));
+            } else {
+                self.write("var ");
+            }
         }
-        self.emit_node(name_idx);
+        if let Some((export_name, local_name)) = reserved_export_alias {
+            self.write(&local_name);
+            self.js_cjs_export_aliases.push((export_name, local_name));
+        } else {
+            self.emit_node(name_idx);
+        }
         self.write(": ");
         self.write(&type_text);
         self.write(";");
@@ -572,6 +586,22 @@ impl<'a> DeclarationEmitter<'a> {
         if is_exported {
             self.emitted_module_indicator = true;
         }
+    }
+
+    fn js_reserved_export_local_name(&mut self, name_idx: NodeIndex) -> Option<(String, String)> {
+        let export_name = self.get_identifier_text(name_idx)?;
+        if !token_is_reserved_word(string_to_token(&export_name)) {
+            return None;
+        }
+
+        let base = format!("_{export_name}");
+        let local_name = if self.reserved_names.contains(&base) {
+            self.generate_unique_name(&base)
+        } else {
+            base
+        };
+        self.reserved_names.insert(local_name.clone());
+        Some((export_name, local_name))
     }
 
     pub(in crate::declaration_emitter) fn emit_js_commonjs_define_property_export(

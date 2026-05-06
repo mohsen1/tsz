@@ -15538,6 +15538,66 @@ exports.value = {};
 }
 
 #[test]
+fn js_commonjs_keyword_named_exports_emit_valid_declarations() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist",
+    "module": "commonjs",
+    "target": "es2022",
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "files": ["index.js"]
+}"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"exports.class = 123;
+exports.for = "loop";
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:#?}",
+        result.diagnostics
+    );
+
+    let dts = std::fs::read_to_string(base.join("dist/index.d.ts"))
+        .expect("index declaration should be emitted");
+    assert!(
+        dts.contains("declare const _class: 123;"),
+        "expected keyword export to use a local alias: {dts}"
+    );
+    assert!(
+        dts.contains("declare const _for: \"loop\";"),
+        "expected keyword export to use a local alias: {dts}"
+    );
+    assert!(
+        dts.contains("export { _class as class, _for as for };"),
+        "expected keyword exports to be re-exported by alias: {dts}"
+    );
+    assert!(
+        !dts.contains("export const class"),
+        "expected invalid keyword binding declaration to be absent: {dts}"
+    );
+    assert!(
+        !dts.contains("export const for"),
+        "expected invalid keyword binding declaration to be absent: {dts}"
+    );
+}
+
+#[test]
 fn bare_import_type_export_equals_class_does_not_report_ts1340() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
