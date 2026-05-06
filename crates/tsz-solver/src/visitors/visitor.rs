@@ -1244,11 +1244,17 @@ impl<'a> ConstAssertionVisitor<'a> {
         }
 
         let result = match lookup {
-            // Arrays whose type reached const assertion as an array, rather than
-            // an array-literal tuple, become readonly arrays.
+            // Arrays: Convert to readonly tuple
             Some(TypeData::Array(element_type)) => {
                 let const_element = self.apply_const_assertion(element_type);
-                self.db.readonly_type(self.db.array(const_element))
+                let tuple_elem = TupleElement {
+                    type_id: const_element,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                };
+                let tuple_type = self.db.tuple(vec![tuple_elem]);
+                self.db.readonly_type(tuple_type)
             }
 
             // Tuples: Mark readonly and recurse on elements
