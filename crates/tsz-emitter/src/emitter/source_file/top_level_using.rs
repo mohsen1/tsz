@@ -1106,13 +1106,35 @@ impl<'a> Printer<'a> {
         {
             emitted = stripped.to_string();
         }
+        // For anonymous `export default class { }` emitted *inside* a
+        // System top-level `using` block (i.e. the class was reached
+        // while processing the body of a lowered `using` and so lives
+        // inside the synthesized try/catch), tsc threads the value
+        // through a `_default` tracker variable:
+        //
+        //     exports_1("default", _default = default_1);
+        //
+        // When the class is emitted *outside* the `using` block (e.g.
+        // the class declaration precedes the `using` in source), the
+        // export reads `default_1` directly with no tracker. The
+        // ES2025+ native-`using` path also skips the tracker.
+        let local_expr = if export_name == "default"
+            && binding_name == "default_1"
+            && self.in_system_execute_body
+            && self.in_top_level_using_scope
+            && !self.ctx.options.target.supports_es2025()
+        {
+            format!("_default = {binding_name}")
+        } else {
+            binding_name.to_string()
+        };
         let export_stmt = if let Some(indent) = leading_indent.as_ref() {
             format!(
                 "{indent}{}",
-                self.top_level_using_export_binding_stmt(export_name, binding_name)
+                self.top_level_using_export_binding_stmt(export_name, &local_expr)
             )
         } else {
-            self.top_level_using_export_binding_stmt(export_name, binding_name)
+            self.top_level_using_export_binding_stmt(export_name, &local_expr)
         };
 
         if export_name == "default" {

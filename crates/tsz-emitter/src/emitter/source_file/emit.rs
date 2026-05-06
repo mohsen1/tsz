@@ -1742,7 +1742,12 @@ impl<'a> Printer<'a> {
                 .map(|next_node| next_node.pos);
 
             let before_len = self.writer.len();
-            if let Some(recovered_yield_call) = self.recovered_yield_call_statement_text(stmt_node)
+            if let Some(recovered_jsx_closing) =
+                self.recovered_invalid_jsx_closing_fragment_statement_text(stmt_node)
+            {
+                self.write(&recovered_jsx_closing);
+            } else if let Some(recovered_yield_call) =
+                self.recovered_yield_call_statement_text(stmt_node)
             {
                 self.write(&recovered_yield_call);
                 skip_recovered_yield_operand_statement = true;
@@ -2135,6 +2140,17 @@ impl<'a> Printer<'a> {
 
         let recovered = crate::safe_slice::slice(text, start, end).ok()?.trim_end();
         Some(format!("{recovered};"))
+    }
+
+    fn recovered_invalid_jsx_closing_fragment_statement_text(&self, node: &Node) -> Option<String> {
+        if node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+
+        let text = self.source_text?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let tail = text.get(start..)?;
+        tail.starts_with("</>").then(|| " > ;".to_string())
     }
 
     fn recovered_ambient_class_parenthesized_tail_text(&self, node: &Node) -> Option<String> {
