@@ -2239,6 +2239,16 @@ impl<'a> CheckerState<'a> {
         };
 
         let lookup_by_name = |name: &str| -> Vec<tsz_binder::SymbolId> {
+            if let Some(cached) = self
+                .ctx
+                .symbol_name_candidates_cache
+                .borrow()
+                .get(name)
+                .cloned()
+            {
+                return cached;
+            }
+
             let mut result: Vec<tsz_binder::SymbolId> = self
                 .ctx
                 .binder
@@ -2254,6 +2264,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            self.ctx
+                .symbol_name_candidates_cache
+                .borrow_mut()
+                .insert(name.to_string(), result.clone());
             result
         };
         let prefer_value_named_member = |member_id: tsz_binder::SymbolId| -> tsz_binder::SymbolId {

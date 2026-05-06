@@ -73,6 +73,7 @@ impl<'a> CheckerContext<'a> {
             lib_delegation_cache: FxHashMap::default(),
             namespace_member_resolution_cache: RefCell::new(FxHashMap::default()),
             nested_namespace_candidates_cache: RefCell::new(FxHashMap::default()),
+            symbol_name_candidates_cache: RefCell::new(FxHashMap::default()),
             lowering_entity_name_resolution_cache: RefCell::new(FxHashMap::default()),
             shared_lib_type_cache: None,
             skip_lib_type_resolution: false,
