@@ -1685,13 +1685,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // `moduleResolution: "bundler"` requires `module` to be "preserve" or ES2015+.
         if let Some(serde_json::Value::String(mr_value)) = compiler_opts.get("moduleResolution") {
             let mr_normalized =
-                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+                normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value));
             if mr_normalized == "bundler" {
                 let module_ok = if let Some(serde_json::Value::String(mod_value)) =
                     compiler_opts.get("module")
                 {
-                    let mod_normalized =
-                        normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    let mod_normalized = normalize_enum_option_value(
+                        mod_value.split(',').next().unwrap_or(mod_value),
+                    );
                     // tsc message: "can only be used when 'module' is set to 'preserve',
                     // 'commonjs', or 'es2015' or later" — commonjs IS valid.
                     // AMD, UMD, System, None are the invalid values.
@@ -1734,7 +1735,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // When moduleResolution is node16/nodenext, module must also be node16/nodenext.
         if let Some(serde_json::Value::String(mr_value)) = compiler_opts.get("moduleResolution") {
             let mr_normalized =
-                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+                normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value));
             let is_node_mr = matches!(
                 mr_normalized.as_str(),
                 "node16" | "node18" | "node20" | "nodenext"
@@ -1743,8 +1744,9 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 let module_ok = if let Some(serde_json::Value::String(mod_value)) =
                     compiler_opts.get("module")
                 {
-                    let mod_normalized =
-                        normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    let mod_normalized = normalize_enum_option_value(
+                        mod_value.split(',').next().unwrap_or(mod_value),
+                    );
                     matches!(
                         mod_normalized.as_str(),
                         "node16" | "node18" | "node20" | "nodenext"
@@ -1797,7 +1799,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // When module is node16/nodenext, moduleResolution must be the same (or left unspecified).
         if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
             let mod_normalized =
-                normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
             let is_node_module = matches!(
                 mod_normalized.as_str(),
                 "node16" | "node18" | "node20" | "nodenext"
@@ -1807,7 +1809,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     compiler_opts.get("moduleResolution")
             {
                 let mr_normalized =
-                    normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+                    normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value));
                 let mr_ok = matches!(
                     mr_normalized.as_str(),
                     "node16" | "node18" | "node20" | "nodenext"
@@ -1841,13 +1843,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // preserve, commonjs, or es2015+.
         if let Some(serde_json::Value::String(mr_value)) = compiler_opts.get("moduleResolution") {
             let mr_normalized =
-                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+                normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value));
             if mr_normalized == "bundler" {
                 let module_ok = if let Some(serde_json::Value::String(mod_value)) =
                     compiler_opts.get("module")
                 {
-                    let mod_normalized =
-                        normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    let mod_normalized = normalize_enum_option_value(
+                        mod_value.split(',').next().unwrap_or(mod_value),
+                    );
                     // bundler is incompatible with node16/nodenext module kinds
                     !matches!(
                         mod_normalized.as_str(),
@@ -1882,7 +1885,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             && let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module")
         {
             let mod_normalized =
-                normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
             // `module=none` means no module system; tsc does not report TS6082 for it.
             if !matches!(mod_normalized.as_str(), "amd" | "system" | "none") {
                 let msg = format_message(
@@ -1914,14 +1917,15 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
 
         // TS5105: Option 'verbatimModuleSyntax' cannot be used when 'module' is set to 'UMD', 'AMD', or 'System'.
         if option_is_effectively_enabled(compiler_opts, &ts5024_keys, "verbatimModuleSyntax") {
-            let module_bad =
-                if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
-                    let mod_normalized =
-                        normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
-                    matches!(mod_normalized.as_str(), "umd" | "amd" | "system")
-                } else {
-                    false
-                };
+            let module_bad = if let Some(serde_json::Value::String(mod_value)) =
+                compiler_opts.get("module")
+            {
+                let mod_normalized =
+                    normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
+                matches!(mod_normalized.as_str(), "umd" | "amd" | "system")
+            } else {
+                false
+            };
             if module_bad {
                 let start = find_key_offset_in_source(&stripped, "verbatimModuleSyntax");
                 let key_len = "verbatimModuleSyntax".len() as u32 + 2;
@@ -2251,13 +2255,13 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             let effective_mr = if let Some(serde_json::Value::String(mr_value)) =
                 compiler_opts.get("moduleResolution")
             {
-                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim())
+                normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value))
             } else {
                 // Default moduleResolution based on module setting
                 let effective_module = if let Some(serde_json::Value::String(mod_value)) =
                     compiler_opts.get("module")
                 {
-                    normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim())
+                    normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value))
                 } else {
                     String::new() // no module set
                 };
@@ -2292,7 +2296,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 && let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module")
             {
                 let mod_normalized =
-                    normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
                 if matches!(mod_normalized.as_str(), "none" | "system" | "umd") {
                     let emit_ts5071 = |diagnostics: &mut Vec<Diagnostic>,
                                        error_key: &str,
@@ -2331,7 +2335,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             compiler_opts.get("moduleResolution")
         {
             let mr_normalized =
-                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+                normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value));
             matches!(mr_normalized.as_str(), "node16" | "nodenext" | "bundler")
         } else {
             // When moduleResolution is not set, the default depends on module.
@@ -2339,7 +2343,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             // For classic module settings (none, amd, umd, system, commonjs), default is classic/node → NOT OK.
             if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
                 let mod_normalized =
-                    normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
                 !matches!(
                     mod_normalized.as_str(),
                     "none" | "amd" | "umd" | "system" | "commonjs"
@@ -4493,6 +4497,10 @@ fn normalize_option(value: &str) -> String {
     normalized
 }
 
+fn normalize_enum_option_value(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
 pub fn strip_jsonc(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
@@ -4612,10 +4620,10 @@ fn remove_trailing_commas(input: &str) -> String {
     out
 }
 
-// TS6046: Valid option value lists (normalized lowercase, matching tsc 6.0)
+// TS6046: Valid option value lists (lowercase canonical spellings, matching tsc 6.0)
 // These must match the values tsc accepts and lists in its TS6046 messages.
 
-/// Valid `--target` values (normalized). The display list uses tsc's canonical casing.
+/// Valid `--target` values. The display list uses tsc's canonical casing.
 const VALID_TARGET_VALUES: &[&str] = &[
     "es3", "es5", "es6", "es2015", "es2016", "es2017", "es2018", "es2019", "es2020", "es2021",
     "es2022", "es2023", "es2024", "es2025", "esnext",
@@ -4624,7 +4632,7 @@ const VALID_TARGET_VALUES: &[&str] = &[
 // and added es2025. Match TSC's display.
 const VALID_TARGET_DISPLAY: &str = "'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'esnext'";
 
-/// Valid `--module` values (normalized).
+/// Valid `--module` values.
 const VALID_MODULE_VALUES: &[&str] = &[
     "none", "commonjs", "amd", "system", "umd", "es6", "es2015", "es2020", "es2022", "esnext",
     "node16", "node18", "node20", "nodenext", "preserve",
@@ -4633,31 +4641,31 @@ const VALID_MODULE_VALUES: &[&str] = &[
 // message, though they are still accepted. Match TSC's display.
 const VALID_MODULE_DISPLAY: &str = "'commonjs', 'es6', 'es2015', 'es2020', 'es2022', 'esnext', 'node16', 'node18', 'node20', 'nodenext', 'preserve'";
 
-/// Valid `--moduleResolution` values (normalized).
+/// Valid `--moduleResolution` values.
 const VALID_MODULE_RESOLUTION_VALUES: &[&str] =
     &["classic", "node", "node10", "node16", "nodenext", "bundler"];
 const VALID_MODULE_RESOLUTION_DISPLAY: &str =
     "'classic', 'node', 'node10', 'node16', 'nodenext', 'bundler'";
 
-/// Valid `--jsx` values (normalized).
+/// Valid `--jsx` values.
 const VALID_JSX_VALUES: &[&str] = &[
     "preserve",
     "react",
-    "reactnative",
-    "reactjsx",
-    "reactjsxdev",
+    "react-native",
+    "react-jsx",
+    "react-jsxdev",
 ];
 const VALID_JSX_DISPLAY: &str = "'preserve', 'react', 'react-native', 'react-jsx', 'react-jsxdev'";
 
-/// Valid `--moduleDetection` values (normalized).
+/// Valid `--moduleDetection` values.
 const VALID_MODULE_DETECTION_VALUES: &[&str] = &["auto", "legacy", "force"];
 const VALID_MODULE_DETECTION_DISPLAY: &str = "'auto', 'legacy', 'force'";
 
-/// Valid `--newLine` values (normalized).
+/// Valid `--newLine` values.
 const VALID_NEW_LINE_VALUES: &[&str] = &["crlf", "lf"];
 const VALID_NEW_LINE_DISPLAY: &str = "'crlf', 'lf'";
 
-/// Valid `--lib` values (normalized). This list matches tsc 6.0's accepted lib names.
+/// Valid `--lib` values. This list matches tsc 6.0's accepted lib names.
 const VALID_LIB_VALUES: &[&str] = &[
     "es5",
     "es6",
@@ -4782,7 +4790,7 @@ fn validate_option_value(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     if let Some(serde_json::Value::String(value)) = compiler_opts.get(key) {
-        let normalized = normalize_option(value.trim());
+        let normalized = normalize_enum_option_value(value);
         if !normalized.is_empty() && !valid_values.contains(&normalized.as_str()) {
             let start = find_value_offset_in_source(source, key);
             let value_len = value.len() as u32 + 2; // include quotes
@@ -4819,7 +4827,7 @@ fn validate_lib_values(
     let mut invalid_indices = Vec::new();
     for (i, entry) in lib_array.iter().enumerate() {
         if let serde_json::Value::String(lib_name) = entry {
-            let normalized = normalize_option(lib_name);
+            let normalized = normalize_enum_option_value(lib_name);
             if !normalized.is_empty() && !VALID_LIB_VALUES.contains(&normalized.as_str()) {
                 // Find position of this lib entry in source
                 let start = find_lib_entry_offset(source, lib_name);
@@ -5138,6 +5146,51 @@ mod tests {
                 diagnostic.message_text.contains(flag),
                 "Unexpected TS6046 message for compilerOptions.{option}: {}",
                 diagnostic.message_text
+            );
+            assert_eq!(
+                diagnostic.start,
+                source.find(&format!(r#""{value}""#)).unwrap() as u32
+            );
+        }
+    }
+
+    #[test]
+    fn test_ts6046_emitted_for_separator_mutated_enum_options() {
+        for (option, value, flag) in [
+            ("target", "es_2020", "--target"),
+            ("target", "es-2020", "--target"),
+            ("target", "es 2020", "--target"),
+            ("module", "node_next", "--module"),
+            ("jsx", "react_jsx", "--jsx"),
+            ("moduleResolution", "node_16", "--moduleResolution"),
+        ] {
+            let source = format!(
+                r#"{{"compilerOptions":{{"{option}":"{value}","noEmit":true}},"files":["a.ts"]}}"#
+            );
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            let codes: Vec<u32> = parsed.diagnostics.iter().map(|diag| diag.code).collect();
+            let diagnostic = parsed
+                .diagnostics
+                .iter()
+                .find(|diag| diag.code == diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Expected TS6046 for compilerOptions.{option}={value:?}, got: {:?}",
+                        parsed.diagnostics
+                    )
+                });
+
+            assert!(
+                diagnostic.message_text.contains(flag),
+                "Unexpected TS6046 message for compilerOptions.{option}: {}",
+                diagnostic.message_text
+            );
+            assert!(
+                !codes.contains(
+                    &diagnostic_codes::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO
+                ),
+                "separator-mutated moduleResolution should not produce follow-on TS5110, got: {:?}",
+                parsed.diagnostics
             );
             assert_eq!(
                 diagnostic.start,
