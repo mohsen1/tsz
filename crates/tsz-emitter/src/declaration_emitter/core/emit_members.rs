@@ -220,6 +220,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) {
         let method_body = method.body;
         let method_name = method.name;
+        let is_static = self.arena.is_static(&method.modifiers);
         if method.type_annotation.is_some() && !is_private {
             self.write(": ");
             self.emit_type(method.type_annotation);
@@ -233,7 +234,7 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&type_text);
-        } else if !is_private && self.method_body_returns_this(method_body) {
+        } else if !is_private && !is_static && self.method_body_returns_this(method_body) {
             self.write(": this");
         } else if !is_private
             && let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache)
@@ -328,7 +329,8 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(&type_text);
             return;
         }
-        if self.method_body_returns_this(method_body) {
+        let is_static = self.arena.is_static(&method.modifiers);
+        if !is_static && self.method_body_returns_this(method_body) {
             self.write("this");
             return;
         }

@@ -1689,3 +1689,21 @@ var id = <B,>(value: B) => value;
         "Type-only interface names should still bind to the type parameter: {output}"
     );
 }
+
+#[test]
+fn fix_static_method_return_this_does_not_emit_instance_this() {
+    let output = emit_dts_with_binding(
+        r#"
+export class Enhancement {
+  static getType() {
+    return this;
+  }
+}
+"#,
+    );
+
+    assert!(
+        !output.contains("static getType(): this;"),
+        "Static methods must not use instance this return syntax: {output}"
+    );
+}
