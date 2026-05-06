@@ -1218,6 +1218,37 @@ let mutableArray: string[] = fromReadonlyConstraint;
 }
 
 #[test]
+fn const_type_parameter_mutable_array_constraint_does_not_reject_array_literal() {
+    let source = r#"
+declare function mutableConstraint<const T extends unknown[]>(value: T): T;
+declare function mutableRest<const T extends unknown[]>(...args: T): T;
+
+mutableConstraint(["hello", 42]);
+mutableRest("hello", 42);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "mutable array constraints on const T should not force readonly argument types. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_parameter_mixed_mutable_readonly_array_constraint_accepts_literals() {
+    let source = r#"
+declare function mixed<const T extends string[] | readonly number[]>(value: T): T;
+
+mixed(["hello", "world"]);
+mixed([1, 2, 3]);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "mixed mutable/readonly array constraints on const T should accept matching array literals. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn jsdoc_const_template_infers_deep_readonly_literals() {
     let source = r#"
 /**
