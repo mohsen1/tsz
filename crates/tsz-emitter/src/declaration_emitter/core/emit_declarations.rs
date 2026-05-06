@@ -1366,14 +1366,6 @@ impl<'a> DeclarationEmitter<'a> {
         static_members
     }
 
-    fn class_members_have_computed_names(&self, members: &tsz_parser::parser::NodeList) -> bool {
-        members.nodes.iter().copied().any(|member_idx| {
-            self.get_member_name_idx(member_idx)
-                .and_then(|name_idx| self.arena.get(name_idx))
-                .is_some_and(|name_node| name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-        })
-    }
-
     fn js_class_instance_member_emit_order(&self, members: Vec<NodeIndex>) -> Vec<NodeIndex> {
         let mut backing_field_keys = FxHashSet::default();
         for &member_idx in &members {
