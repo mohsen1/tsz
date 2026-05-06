@@ -53,9 +53,7 @@ fn test_definition_empty_response_is_valid_array() {
 }
 
 #[test]
-fn test_definition_and_bound_span_has_valid_text_span() {
-    // The definitionAndBoundSpan response must always have a textSpan with
-    // valid start/end, even when no definitions are found.
+fn test_definition_and_bound_span_has_no_body_without_definition() {
     let mut server = make_server();
     server
         .open_files
@@ -66,16 +64,9 @@ fn test_definition_and_bound_span_has_valid_text_span() {
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp
-        .body
-        .expect("definitionAndBoundSpan should return a body");
-    let text_span = body
-        .get("textSpan")
-        .expect("definitionAndBoundSpan must have textSpan");
-    assert_valid_span(text_span, "definitionAndBoundSpan textSpan");
     assert!(
-        body.get("definitions").is_some(),
-        "definitionAndBoundSpan must have definitions array"
+        resp.body.is_none(),
+        "definitionAndBoundSpan should omit body when no definition exists"
     );
 }
 

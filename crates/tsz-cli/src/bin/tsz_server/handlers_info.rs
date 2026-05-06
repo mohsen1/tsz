@@ -593,14 +593,7 @@ impl Server {
                 "textSpan": text_span,
             }))
         })();
-        self.stub_response(
-            seq,
-            request,
-            Some(result.unwrap_or(serde_json::json!({
-                "definitions": [],
-                "textSpan": {"start": {"line": 1, "offset": 1}, "end": {"line": 1, "offset": 1}}
-            }))),
-        )
+        self.stub_response(seq, request, result)
     }
 
     pub(crate) fn handle_references(

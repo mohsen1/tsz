@@ -202,7 +202,7 @@ fn save_to_writes_open_file_snapshot_to_tmpfile() {
     let open = server.handle_tsserver_request(make_request(
         "open",
         serde_json::json!({
-            "file": file.clone(),
+            "file": &file,
             "fileContent": "const value = 123;\n",
         }),
     ));
@@ -211,13 +211,13 @@ fn save_to_writes_open_file_snapshot_to_tmpfile() {
     let response = server.handle_tsserver_request(make_request(
         "saveto",
         serde_json::json!({
-            "file": file,
-            "tmpfile": tmpfile.clone(),
+            "file": &file,
+            "tmpfile": &tmpfile,
         }),
     ));
     assert!(response.success);
     assert_eq!(
-        std::fs::read_to_string(tmpfile).expect("tmpfile should be written"),
+        std::fs::read_to_string(&tmpfile).expect("tmpfile should be written"),
         "const value = 123;\n"
     );
 }
@@ -268,38 +268,6 @@ fn compile_on_save_reports_affected_files_and_emits_file() {
         emitted.exists(),
         "compile-on-save should write {}",
         emitted.display()
-    );
-}
-
-#[test]
-fn save_to_writes_open_file_snapshot_to_tmpfile() {
-    let temp = tempfile::tempdir().expect("temp dir");
-    let file = temp.path().join("a.ts");
-    let tmpfile = temp.path().join("copy.ts");
-    let file = file.to_string_lossy().to_string();
-    let tmpfile = tmpfile.to_string_lossy().to_string();
-
-    let mut server = make_server();
-    let open = server.handle_tsserver_request(make_request(
-        "open",
-        serde_json::json!({
-            "file": &file,
-            "fileContent": "const value = 123;\n",
-        }),
-    ));
-    assert!(open.success);
-
-    let response = server.handle_tsserver_request(make_request(
-        "saveto",
-        serde_json::json!({
-            "file": &file,
-            "tmpfile": &tmpfile,
-        }),
-    ));
-    assert!(response.success);
-    assert_eq!(
-        std::fs::read_to_string(&tmpfile).expect("tmpfile should be written"),
-        "const value = 123;\n"
     );
 }
 
@@ -1612,6 +1580,24 @@ fn test_new_commands_are_recognized() {
 }
 
 #[test]
+fn test_signature_help_has_no_body_without_signature() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/test.ts".to_string(), "const x = 1;\n".to_string());
+    let req = make_request(
+        "signatureHelp",
+        serde_json::json!({"file": "/test.ts", "line": 1, "offset": 1}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    assert!(
+        resp.body.is_none(),
+        "signatureHelp should omit body when no signature exists"
+    );
+}
+
+#[test]
 fn test_unrecognized_command() {
     let mut server = make_server();
     let req = make_request("nonExistentCommand", serde_json::json!({}));
@@ -1703,10 +1689,7 @@ fn test_quickinfo_response_always_has_valid_spans() {
 }
 
 #[test]
-fn test_quickinfo_fallback_has_valid_spans() {
-    // When quickinfo is called on whitespace or a position where no symbol
-    // is found, the response body must still have start/end spans to avoid
-    // "Cannot read properties of undefined (reading 'line')" in the harness.
+fn test_quickinfo_has_no_body_without_info() {
     let mut server = make_server();
     server
         .open_files
@@ -1717,8 +1700,10 @@ fn test_quickinfo_fallback_has_valid_spans() {
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp.body.expect("quickinfo fallback should return a body");
-    assert_valid_span(&body, "quickinfo fallback on whitespace");
+    assert!(
+        resp.body.is_none(),
+        "quickinfo should omit body when no quickinfo exists"
+    );
 }
 
 #[test]
@@ -2453,9 +2438,7 @@ fn test_format_document_does_not_invalidate_fourslash_markers() {
 }
 
 #[test]
-fn test_quickinfo_on_nonexistent_file_has_valid_spans() {
-    // Even when the file is not open, the quickinfo fallback must return
-    // valid span data.
+fn test_quickinfo_on_nonexistent_file_has_no_body() {
     let mut server = make_server();
     let req = make_request(
         "quickinfo",
@@ -2463,8 +2446,10 @@ fn test_quickinfo_on_nonexistent_file_has_valid_spans() {
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp.body.expect("quickinfo fallback should return a body");
-    assert_valid_span(&body, "quickinfo on nonexistent file");
+    assert!(
+        resp.body.is_none(),
+        "quickinfo should omit body when the file cannot be resolved"
+    );
 }
 
 #[test]
@@ -2552,9 +2537,7 @@ fn test_definition_empty_response_is_valid_array() {
 }
 
 #[test]
-fn test_definition_and_bound_span_has_valid_text_span() {
-    // The definitionAndBoundSpan response must always have a textSpan with
-    // valid start/end, even when no definitions are found.
+fn test_definition_and_bound_span_has_no_body_without_definition() {
     let mut server = make_server();
     server
         .open_files
@@ -2565,16 +2548,9 @@ fn test_definition_and_bound_span_has_valid_text_span() {
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp
-        .body
-        .expect("definitionAndBoundSpan should return a body");
-    let text_span = body
-        .get("textSpan")
-        .expect("definitionAndBoundSpan must have textSpan");
-    assert_valid_span(text_span, "definitionAndBoundSpan textSpan");
     assert!(
-        body.get("definitions").is_some(),
-        "definitionAndBoundSpan must have definitions array"
+        resp.body.is_none(),
+        "definitionAndBoundSpan should omit body when no definition exists"
     );
 }
 
