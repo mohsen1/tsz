@@ -2853,6 +2853,47 @@ fn compile_with_source_map_emits_map_outputs() {
 }
 
 #[test]
+fn compile_with_inline_source_map_embeds_map_data_url() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "inlineSourceMap": true
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/index.ts"), "export const value = 1;");
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(result.diagnostics.is_empty());
+    let js_path = base.join("dist/src/index.js");
+    let map_path = base.join("dist/src/index.js.map");
+    assert!(js_path.is_file());
+    assert!(
+        !map_path.exists(),
+        "inlineSourceMap should not write a sibling .map file"
+    );
+    let js_contents = std::fs::read_to_string(&js_path).expect("read js output");
+    assert!(
+        js_contents.contains("//# sourceMappingURL=data:application/json;base64,"),
+        "Expected inline source map data URL in JS output: {js_contents}"
+    );
+    assert!(
+        !js_contents.contains("sourceMappingURL=index.js.map"),
+        "Expected no external source map comment in JS output: {js_contents}"
+    );
+}
+
+#[test]
 fn compile_resolves_self_name_exports_with_virtual_absolute_output_paths_from_package_root() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

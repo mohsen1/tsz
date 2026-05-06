@@ -2752,6 +2752,9 @@ fn apply_cli_overrides_with_config_options(
     if args.source_map {
         options.source_map = true;
     }
+    if args.inline_source_map {
+        options.inline_source_map = true;
+    }
     if args.emit_bom {
         options.emit_bom = true;
     }
