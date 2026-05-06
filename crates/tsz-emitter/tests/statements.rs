@@ -1130,6 +1130,40 @@ fn namespace_export_declaration_inline_comment_erased() {
 }
 
 #[test]
+fn declare_prefix_identifiers_keep_recovered_expression_statements() {
+    let source = "declare interfaceX;\ndeclare typeName;\ndeclare className;\ndeclare asyncValue;\ndeclare interface I {}\nconst keep = 1;\n";
+    let mut parser = ParserState::new("a.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            target: ScriptTarget::ES2020,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    for ident in ["interfaceX", "typeName", "className", "asyncValue"] {
+        let expected = format!("declare;\n{ident};");
+        assert!(
+            output.contains(&expected),
+            "`declare;` expression before `{ident}` should be preserved.\nOutput:\n{output}"
+        );
+    }
+    assert!(
+        !output.contains("interface I"),
+        "true `declare interface` artifact should still be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const keep = 1;"),
+        "following statements should still emit.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn recovered_unicode_identifier_initializer_emits_as_statement() {
     let subscript_one = '\u{2081}';
     let source = format!("var a{subscript_one} = \"hello\"; alert(a{subscript_one})");
