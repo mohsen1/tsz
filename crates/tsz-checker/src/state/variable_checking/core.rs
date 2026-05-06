@@ -27,11 +27,23 @@ impl<'a> CheckerState<'a> {
             let annotation_type = self.get_type_from_type_node(annotation_idx);
             let evaluated_type = self.evaluate_application_type(annotation_type);
             let resolved_type = self.resolve_lazy_type(evaluated_type);
+            let indexed_access_has_unresolved_part = if node.kind
+                == syntax_kind_ext::INDEXED_ACCESS_TYPE
+                && let Some(indexed) = self.ctx.arena.get_indexed_access_type(node)
+            {
+                let object_type = self.get_type_from_type_node(indexed.object_type);
+                let index_type = self.get_type_from_type_node(indexed.index_type);
+                matches!(object_type, TypeId::ERROR | TypeId::UNKNOWN)
+                    || matches!(index_type, TypeId::ERROR | TypeId::UNKNOWN)
+            } else {
+                false
+            };
             let is_unresolved_indexed_access = node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
-                && matches!(
-                    (annotation_type, evaluated_type, resolved_type),
-                    (TypeId::UNKNOWN, _, _) | (_, TypeId::UNKNOWN, _) | (_, _, TypeId::UNKNOWN)
-                );
+                && (indexed_access_has_unresolved_part
+                    || matches!(
+                        (annotation_type, evaluated_type, resolved_type),
+                        (TypeId::UNKNOWN, _, _) | (_, TypeId::UNKNOWN, _) | (_, _, TypeId::UNKNOWN)
+                    ));
             return is_unresolved_indexed_access
                 || matches!(annotation_type, TypeId::ERROR)
                 || matches!(evaluated_type, TypeId::ERROR)
