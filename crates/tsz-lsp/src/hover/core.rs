@@ -754,6 +754,9 @@ impl<'a> HoverProvider<'a> {
     ) -> String {
         use tsz_binder::symbol_flags;
         let f = symbol.flags;
+        let display_name = self
+            .declaration_display_name(decl_node_idx)
+            .unwrap_or_else(|| symbol.escaped_name.clone());
 
         if f & symbol_flags::ALIAS != 0 {
             if decl_node_idx.is_some()
@@ -917,18 +920,15 @@ impl<'a> HoverProvider<'a> {
             type_string = format::format_hover_variable_type(&type_string);
             let keyword = self.get_variable_keyword(decl_node_idx);
             if self.is_local_variable(decl_node_idx) {
-                return format!(
-                    "(local {}) {}: {}",
-                    keyword, symbol.escaped_name, type_string
-                );
+                return format!("(local {}) {}: {}", keyword, display_name, type_string);
             }
             if let Some(namespace_name) = self.namespace_container_name(decl_node_idx) {
                 return format!(
                     "{} {}.{}: {}",
-                    keyword, namespace_name, symbol.escaped_name, type_string
+                    keyword, namespace_name, display_name, type_string
                 );
             }
-            return format!("{} {}: {}", keyword, symbol.escaped_name, type_string);
+            return format!("{} {}: {}", keyword, display_name, type_string);
         }
         if f & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
             let mut type_string = self
@@ -956,21 +956,76 @@ impl<'a> HoverProvider<'a> {
             type_string = self.rewrite_date_constructor_error_types(decl_node_idx, type_string);
             type_string = format::format_hover_variable_type(&type_string);
             if self.is_parameter_declaration(decl_node_idx) {
-                return format!("(parameter) {}: {}", symbol.escaped_name, type_string);
+                return format!("(parameter) {}: {}", display_name, type_string);
             }
             if self.is_local_variable(decl_node_idx) {
-                return format!("(local var) {}: {}", symbol.escaped_name, type_string);
+                return format!("(local var) {}: {}", display_name, type_string);
             }
             if let Some(namespace_name) = self.namespace_container_name(decl_node_idx) {
-                return format!(
-                    "var {}.{}: {}",
-                    namespace_name, symbol.escaped_name, type_string
-                );
+                return format!("var {}.{}: {}", namespace_name, display_name, type_string);
             }
-            return format!("var {}: {}", symbol.escaped_name, type_string);
+            return format!("var {}: {}", display_name, type_string);
         }
 
-        format!("({}) {}: {}", kind, symbol.escaped_name, type_string)
+        format!("({}) {}: {}", kind, display_name, type_string)
+    }
+
+    fn declaration_display_name(&self, decl_node_idx: NodeIndex) -> Option<String> {
+        if !decl_node_idx.is_some() {
+            return None;
+        }
+        let node = self.arena.get(decl_node_idx)?;
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            if let Some(text) = self.source_text_for_node_span(node.pos, node.end)
+                && !text.is_empty()
+            {
+                return Some(text.to_string());
+            }
+        }
+        let name_idx = self
+            .arena
+            .get_variable_declaration(node)
+            .map(|decl| decl.name)
+            .or_else(|| self.arena.get_parameter(node).map(|decl| decl.name))?;
+        if let Some(name_node) = self.arena.get(name_idx) {
+            if let Some(text) = self.source_text_for_node_span(name_node.pos, name_node.end)
+                && !text.is_empty()
+            {
+                return Some(text.to_string());
+            }
+        }
+        self.arena
+            .get_identifier_text(name_idx)
+            .map(std::string::ToString::to_string)
+    }
+
+    fn source_text_for_node_span(&self, start: u32, end: u32) -> Option<&str> {
+        if start > end {
+            return None;
+        }
+        let byte_start = usize::try_from(start).ok()?;
+        let byte_end = usize::try_from(end).ok()?;
+        if let Some(text) = self.source_text.get(byte_start..byte_end) {
+            return Some(text);
+        }
+
+        let byte_start = Self::byte_offset_for_utf16_offset(self.source_text, start)?;
+        let byte_end = Self::byte_offset_for_utf16_offset(self.source_text, end)?;
+        self.source_text.get(byte_start..byte_end)
+    }
+
+    fn byte_offset_for_utf16_offset(source_text: &str, utf16_offset: u32) -> Option<usize> {
+        let mut units = 0u32;
+        for (byte_idx, ch) in source_text.char_indices() {
+            if units == utf16_offset {
+                return Some(byte_idx);
+            }
+            units = units.saturating_add(u32::try_from(ch.len_utf16()).ok()?);
+            if units > utf16_offset {
+                return None;
+            }
+        }
+        (units == utf16_offset).then_some(source_text.len())
     }
 
     fn find_import_equals_module_ref_text(&self, symbol: &tsz_binder::Symbol) -> Option<String> {

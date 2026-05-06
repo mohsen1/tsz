@@ -3374,28 +3374,39 @@ impl ParserState {
         let (atom, text, original_text) = if self.is_identifier_or_keyword() {
             // OPTIMIZATION: Capture atom for O(1) comparison
             let atom = self.scanner.get_token_atom();
-            // Use zero-copy accessor and clone only when storing
-            let text = self.scanner.get_token_value_ref().to_string();
+            let has_unicode_escape =
+                (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0;
+            let text = if !has_unicode_escape {
+                let src = self.scanner.source_text();
+                let start = self.scanner.get_token_start();
+                let end = self.scanner.get_token_end();
+                if start < end && end <= src.len() {
+                    src[start..end].to_string()
+                } else {
+                    self.scanner.get_token_value_ref().to_string()
+                }
+            } else {
+                self.scanner.get_token_value_ref().to_string()
+            };
             // tsc preserves unicode escape sequences in emitted identifiers.
             // Capture the original source text when the scanner detected escapes.
-            let original_text =
-                if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
-                    let src = self.scanner.source_text();
-                    let start = self.scanner.get_token_start();
-                    let end = self.scanner.get_token_end();
-                    if start < end && end <= src.len() {
-                        let slice = &src[start..end];
-                        if slice != text {
-                            Some(slice.to_string())
-                        } else {
-                            None
-                        }
+            let original_text = if has_unicode_escape {
+                let src = self.scanner.source_text();
+                let start = self.scanner.get_token_start();
+                let end = self.scanner.get_token_end();
+                if start < end && end <= src.len() {
+                    let slice = &src[start..end];
+                    if slice != text {
+                        Some(slice.to_string())
                     } else {
                         None
                     }
                 } else {
                     None
-                };
+                }
+            } else {
+                None
+            };
             self.next_token();
             (atom, text, original_text)
         } else {
@@ -3426,26 +3437,38 @@ impl ParserState {
         let (atom, text, original_text) = if self.is_identifier_or_keyword() {
             // OPTIMIZATION: Capture atom for O(1) comparison
             let atom = self.scanner.get_token_atom();
-            let text = self.scanner.get_token_value_ref().to_string();
+            let has_unicode_escape =
+                (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0;
+            let text = if !has_unicode_escape {
+                let src = self.scanner.source_text();
+                let start = self.scanner.get_token_start();
+                let end = self.scanner.get_token_end();
+                if start < end && end <= src.len() {
+                    src[start..end].to_string()
+                } else {
+                    self.scanner.get_token_value_ref().to_string()
+                }
+            } else {
+                self.scanner.get_token_value_ref().to_string()
+            };
             // Preserve unicode escape sequences for emission parity with tsc
-            let original_text =
-                if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
-                    let src = self.scanner.source_text();
-                    let start = self.scanner.get_token_start();
-                    let end = self.scanner.get_token_end();
-                    if start < end && end <= src.len() {
-                        let slice = &src[start..end];
-                        if slice != text {
-                            Some(slice.to_string())
-                        } else {
-                            None
-                        }
+            let original_text = if has_unicode_escape {
+                let src = self.scanner.source_text();
+                let start = self.scanner.get_token_start();
+                let end = self.scanner.get_token_end();
+                if start < end && end <= src.len() {
+                    let slice = &src[start..end];
+                    if slice != text {
+                        Some(slice.to_string())
                     } else {
                         None
                     }
                 } else {
                     None
-                };
+                }
+            } else {
+                None
+            };
             self.next_token();
             (atom, text, original_text)
         } else {
