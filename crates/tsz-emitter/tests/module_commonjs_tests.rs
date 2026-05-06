@@ -260,6 +260,16 @@ fn test_collect_export_names_skips_external_export_import_equals() {
 }
 
 #[test]
+fn test_collect_export_names_ignores_type_only_import_equals_identifier() {
+    let export_names =
+        parse_collect_exports("export namespace C { export interface I {} }\nexport import v = C;");
+    assert!(
+        export_names.is_empty(),
+        "Expected no runtime exports for import-equals aliases to type-only namespaces"
+    );
+}
+
+#[test]
 fn test_collect_export_names_ignores_type_only_declarations() {
     let export_names =
         parse_collect_exports("export type Foo = number; export interface Bar { x: number; }");
