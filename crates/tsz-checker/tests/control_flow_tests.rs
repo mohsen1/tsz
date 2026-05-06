@@ -4686,6 +4686,62 @@ function f12() {
     );
 }
 
+#[test]
+fn test_parameter_early_return_narrowing_preserved_in_closure() {
+    use tsz_common::checker_options::CheckerOptions;
+
+    let source = r#"
+type Params = { required_error?: string } | undefined;
+type ErrorMap = (
+    issue: { code: string },
+    ctx: { data: unknown; defaultError: string }
+) => { message: string };
+
+function process(params: Params) {
+    if (!params) return {};
+    const customMap: ErrorMap = (iss, ctx) => {
+        if (iss.code !== "invalid_type") return { message: ctx.defaultError };
+        if (typeof ctx.data === "undefined" && params.required_error)
+            return { message: params.required_error };
+        return { message: ctx.defaultError };
+    };
+    return customMap;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let interner = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let mut state = CheckerState::new(arena, &binder, &interner, "test.ts".to_string(), options);
+    state.check_source_file(root);
+
+    let ts18048_errors: Vec<_> = state
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18048)
+        .collect();
+    assert!(
+        ts18048_errors.is_empty(),
+        "Expected no TS18048 for early-return narrowed parameter in closure, got {}: {:?}",
+        ts18048_errors.len(),
+        ts18048_errors
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Test: implicit-any `let` variable with two closures — only the FIRST closure
 /// (before the last assignment) should get TS7005; the SECOND (after the last
 /// assignment) should not, because the type is now known to be `number`.

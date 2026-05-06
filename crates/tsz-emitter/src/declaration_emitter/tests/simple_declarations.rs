@@ -677,6 +677,35 @@ class C {
 }
 
 #[test]
+fn test_ts_class_getter_before_setter_preserves_source_order() {
+    let output = emit_dts(
+        r#"
+const enum G {
+    B = 2,
+}
+class C {
+    get [G.B]() {
+        return true;
+    }
+    set [G.B](value: number) {}
+}
+"#,
+    );
+
+    let getter_pos = output
+        .find("get [G.B](): number;")
+        .expect("missing getter in output");
+    let setter_pos = output
+        .find("set [G.B](value: number);")
+        .expect("missing setter in output");
+
+    assert!(
+        getter_pos < setter_pos,
+        "Expected TypeScript accessor declarations to preserve source order: {output}"
+    );
+}
+
+#[test]
 fn test_computed_methods_emit_as_property_signatures() {
     let output = emit_dts(
         r#"
