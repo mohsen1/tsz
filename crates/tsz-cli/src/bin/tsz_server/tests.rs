@@ -520,6 +520,38 @@ fn reset_clears_session_state_but_keeps_server_alive() {
 }
 
 #[test]
+fn organize_imports_sort_and_combine_sorts_named_imports() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/organize-main.ts".to_string(),
+        "import { b, a } from \"./organize-m\";\nconsole.log(1);\n".to_string(),
+    );
+    server.open_files.insert(
+        "/organize-m.ts".to_string(),
+        "export const a = 1;\nexport const b = 2;\n".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "organizeImports",
+        serde_json::json!({
+            "scope": {
+                "type": "file",
+                "args": { "file": "/organize-main.ts" }
+            },
+            "mode": "SortAndCombine"
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("organizeImports should return a body");
+    let changes = body[0]["textChanges"]
+        .as_array()
+        .expect("textChanges should be an array");
+    assert_eq!(changes.len(), 1, "expected one sorting edit, got {body:?}");
+    assert_eq!(changes[0]["newText"], " a, b ");
+}
+
+#[test]
 fn test_synchronize_project_list_returns_empty_list() {
     let mut server = make_server();
     let response = server.handle_tsserver_request(make_request(
