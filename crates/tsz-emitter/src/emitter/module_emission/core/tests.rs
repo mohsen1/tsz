@@ -1222,3 +1222,31 @@ console.log(x);
         "File without module syntax should NOT get __esModule marker.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn system_reexport_setter_uses_bracket_access() {
+    let source = r#"export { b } from "./b";
+export { default as Foo } from "./b";
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::System,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("\"b\": b_1_1[\"b\"]"),
+        "System re-export setter should read named exports with bracket access.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("\"Foo\": b_1_1[\"default\"]"),
+        "System re-export setter should read default with bracket access.\nOutput:\n{output}"
+    );
+}
