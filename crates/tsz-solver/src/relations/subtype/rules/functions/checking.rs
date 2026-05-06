@@ -7,7 +7,8 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::type_param_info;
 use crate::types::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags,
-    ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, Visibility,
+    ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
+    Visibility,
 };
 use crate::visitor::callable_shape_id;
 
@@ -1077,7 +1078,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 };
                 if !source_params
                     .iter()
-                    .any(|existing: &crate::types::TypeParamInfo| existing.name == info.name)
+                    .any(|existing: &TypeParamInfo| existing.name == info.name)
                 {
                     source_params.push(info);
                 }

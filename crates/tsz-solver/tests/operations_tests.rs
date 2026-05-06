@@ -1304,9 +1304,17 @@ fn test_call_tuple_rest_with_fixed_tail() {
             actual,
             ..
         } => {
-            assert_eq!(index, 1);
-            assert_eq!(expected, TypeId::STRING);
-            assert_eq!(actual, TypeId::NUMBER);
+            assert_eq!(index, 0);
+            assert_eq!(expected, tuple_rest);
+            let Some(TypeData::Tuple(actual_elements)) = interner.lookup(actual) else {
+                panic!(
+                    "expected aggregate tuple actual, got {:?}",
+                    interner.lookup(actual)
+                );
+            };
+            let actual_elements = interner.tuple_list(actual_elements);
+            assert_eq!(actual_elements.len(), 3);
+            assert_eq!(actual_elements[1].type_id, TypeId::NUMBER);
         }
         _ => panic!("Expected ArgumentTypeMismatch, got {result:?}"),
     }
@@ -1407,6 +1415,67 @@ fn test_call_variadic_tuple_rest_empty_args_produces_type_mismatch() {
     match result {
         CallResult::Success(ret) => assert_eq!(ret, TypeId::VOID),
         _ => panic!("Expected success with 1 arg to variadic tuple rest, got {result:?}"),
+    }
+}
+
+#[test]
+fn test_call_variadic_tuple_rest_with_trailing_element_uses_aggregate_mismatch() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let rest_array = interner.array(TypeId::STRING);
+    let tuple_type = interner.tuple(vec![
+        TupleElement {
+            type_id: rest_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: tuple_type,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = evaluator.resolve_call(func, &[TypeId::STRING, TypeId::NUMBER, TypeId::STRING]);
+    match result {
+        CallResult::ArgumentTypeMismatch {
+            index,
+            expected,
+            actual,
+            ..
+        } => {
+            assert_eq!(index, 0);
+            assert_eq!(expected, tuple_type);
+            let Some(TypeData::Tuple(actual_elements)) = interner.lookup(actual) else {
+                panic!(
+                    "expected aggregate tuple actual, got {:?}",
+                    interner.lookup(actual)
+                );
+            };
+            let actual_elements = interner.tuple_list(actual_elements);
+            assert_eq!(actual_elements.len(), 3);
+            assert_eq!(actual_elements[1].type_id, TypeId::NUMBER);
+        }
+        _ => panic!("Expected aggregate ArgumentTypeMismatch, got {result:?}"),
     }
 }
 

@@ -1555,6 +1555,16 @@ fn from_semantic_defs_creates_all_declaration_families() {
         8,
         "7 decls + 1 class constructor companion = 8"
     );
+    assert_eq!(
+        store.statistics().symbol_def_index_entries,
+        7,
+        "one composite symbol/file mapping per semantic definition"
+    );
+    assert_eq!(
+        store.statistics().symbol_only_index_entries,
+        7,
+        "constructor companion shares the class symbol and must not add a second symbol-only entry"
+    );
 
     // Verify each kind via symbol lookup
     assert!(store.find_def_by_symbol(1).is_some(), "Class should exist");
@@ -1579,6 +1589,13 @@ fn from_semantic_defs_creates_all_declaration_families() {
         store.find_def_by_symbol(7).is_some(),
         "Variable should exist"
     );
+    for symbol_id in 1..=7 {
+        assert_eq!(
+            store.lookup_by_symbol(symbol_id, 1),
+            store.find_def_by_symbol(symbol_id),
+            "semantic defs should keep composite and file-agnostic symbol lookups in sync"
+        );
+    }
 
     // Verify class has constructor companion
     let class_def = store.find_def_by_symbol(1).unwrap();
