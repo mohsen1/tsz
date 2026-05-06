@@ -575,7 +575,10 @@ impl<'a> CheckerState<'a> {
             if !self.ctx.in_const_assertion {
                 let mut should_enable_const = false;
                 if let Some(et) = expected_type
-                    && Self::type_references_const_type_param(self.ctx.types, et)
+                    && Self::type_references_const_type_param_requiring_readonly_argument_context(
+                        self.ctx.types,
+                        et,
+                    )
                 {
                     should_enable_const = true;
                 }
@@ -594,11 +597,10 @@ impl<'a> CheckerState<'a> {
                     );
                     if let Some(param_type) =
                         ctx.get_parameter_type_for_call(effective_index, expanded_count)
-                        && crate::query_boundaries::common::type_param_info(
+                        && Self::direct_const_type_param_requires_readonly_argument_context(
                             self.ctx.types,
                             param_type,
                         )
-                        .is_some_and(|info| info.is_const)
                     {
                         should_enable_const = true;
                     }
@@ -969,18 +971,17 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    /// Check if a type is or references a const type parameter.
+    /// Check if a type is or references a const type parameter whose constraint
+    /// allows readonly literal inference.
     /// Used to propagate const assertion context into call argument expressions.
-    fn type_references_const_type_param(
+    fn type_references_const_type_param_requiring_readonly_argument_context(
         db: &dyn tsz_solver::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         use crate::query_boundaries::common;
 
         // Direct check: is the type itself a const type parameter?
-        if let Some(tp_info) = common::type_param_info(db, type_id)
-            && tp_info.is_const
-        {
+        if Self::direct_const_type_param_requires_readonly_argument_context(db, type_id) {
             return true;
         }
 
@@ -988,7 +989,31 @@ impl<'a> CheckerState<'a> {
         let referenced = common::collect_referenced_types(db, type_id);
         referenced
             .into_iter()
-            .any(|ty| common::type_param_info(db, ty).is_some_and(|info| info.is_const))
+            .any(|ty| Self::direct_const_type_param_requires_readonly_argument_context(db, ty))
+    }
+
+    fn direct_const_type_param_requires_readonly_argument_context(
+        db: &dyn tsz_solver::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common;
+
+        let Some(info) = common::type_param_info(db, type_id) else {
+            return false;
+        };
+        if !info.is_const {
+            return false;
+        }
+        !info
+            .constraint
+            .is_some_and(|constraint| Self::constraint_allows_mutable_array_like(db, constraint))
+    }
+
+    pub(super) fn constraint_allows_mutable_array_like(
+        db: &dyn tsz_solver::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        crate::query_boundaries::common::constraint_allows_mutable_array_like(db, type_id)
     }
 
     /// Check excess properties on call arguments that are object literals.

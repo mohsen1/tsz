@@ -2418,6 +2418,27 @@ fn concrete_display_alias_can_name_preexisting_structural_type() {
     );
 }
 
+#[test]
+fn preferred_application_display_alias_can_name_preexisting_structural_type() {
+    let db = TypeInterner::new();
+    let evaluated = db.object(vec![PropertyInfo::new(
+        db.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
+    let app = db.application(
+        db.lazy(crate::def::DefId(1)),
+        vec![TypeId::NUMBER, TypeId::VOID, TypeId::UNKNOWN],
+    );
+
+    db.store_display_alias_preferring_application(evaluated, app);
+
+    assert_eq!(
+        db.get_display_alias(evaluated),
+        Some(app),
+        "Explicitly preferred application aliases should preserve nominal generic display"
+    );
+}
+
 /// The empty object shape `{}` is a universally-shared interning target, but
 /// some named generic interfaces/classes have empty bodies and still need a
 /// display alias so their type arguments survive diagnostic rendering.

@@ -453,7 +453,10 @@ impl<'a> CheckerState<'a> {
                         let prev_preserve_literals_retry = self.ctx.preserve_literal_types;
                         let prev_in_const_assertion_retry = self.ctx.in_const_assertion;
                         self.ctx.preserve_literal_types = true;
-                        if sig.type_params.iter().any(|tp| tp.is_const) {
+                        if Self::signature_const_type_params_require_readonly_argument_context(
+                            self.ctx.types,
+                            &sig.type_params,
+                        ) {
                             self.ctx.in_const_assertion = true;
                         }
                         let refreshed_arg_types = if used_return_context_sub {
@@ -853,7 +856,11 @@ impl<'a> CheckerState<'a> {
             // or JSDoc `@template const T`), set const-assertion context so that
             // argument expressions get readonly tuple / readonly object / literal
             // inference — matching tsc's behavior for const type parameters.
-            let has_const_type_params = sig.type_params.iter().any(|tp| tp.is_const);
+            let has_const_type_params =
+                Self::signature_const_type_params_require_readonly_argument_context(
+                    self.ctx.types,
+                    &sig.type_params,
+                );
             let prev_in_const_assertion = self.ctx.in_const_assertion;
             if has_const_type_params {
                 self.ctx.in_const_assertion = true;
@@ -1735,6 +1742,18 @@ impl<'a> CheckerState<'a> {
                 fallback_return,
             },
             selected_type_predicate: None,
+        })
+    }
+
+    fn signature_const_type_params_require_readonly_argument_context(
+        db: &dyn tsz_solver::TypeDatabase,
+        type_params: &[tsz_solver::TypeParamInfo],
+    ) -> bool {
+        type_params.iter().any(|type_param| {
+            type_param.is_const
+                && !type_param.constraint.is_some_and(|constraint| {
+                    Self::constraint_allows_mutable_array_like(db, constraint)
+                })
         })
     }
 
