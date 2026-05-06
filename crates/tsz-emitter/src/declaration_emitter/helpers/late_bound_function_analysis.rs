@@ -8,8 +8,6 @@ use tsz_scanner::SyntaxKind;
 
 use super::super::DeclarationEmitter;
 use super::LateBoundAssignmentMember;
-use crate::output::source_writer::SourceWriter;
-
 impl<'a> DeclarationEmitter<'a> {
     fn escape_non_ascii_for_double_quote(text: &str) -> String {
         let mut result = String::with_capacity(text.len() + 8);
