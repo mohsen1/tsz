@@ -550,7 +550,10 @@ mod number_scanning {
         let mut scanner = ScannerState::new(".2n".to_string(), true);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
-        assert_eq!(scanner.get_token_value(), ".2");
+        // tsc consumes the `n` (advances pos) and reports TS1353; emit then
+        // prints the literal verbatim as `.2n;`. The token value covers the
+        // full consumed span so the emitter preserves the source spelling.
+        assert_eq!(scanner.get_token_value(), ".2n");
         let diagnostics = scanner.get_scanner_diagnostics();
         assert!(
             diagnostics.iter().any(|d| d.code == 1353),
@@ -563,7 +566,10 @@ mod number_scanning {
         let mut scanner = ScannerState::new("1e2n".to_string(), true);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
-        assert_eq!(scanner.get_token_value(), "1e2");
+        // Same recovery rule as `.2n`: the trailing `n` is consumed, TS1352
+        // is reported, and the literal span includes the `n` so emit prints
+        // `1e2n;` instead of dropping the suffix.
+        assert_eq!(scanner.get_token_value(), "1e2n");
         let diagnostics = scanner.get_scanner_diagnostics();
         assert!(
             diagnostics.iter().any(|d| d.code == 1352),
