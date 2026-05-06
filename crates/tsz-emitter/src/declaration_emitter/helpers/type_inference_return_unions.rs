@@ -4,6 +4,33 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn is_simple_identifier_text(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first == '$' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+    }
+
+    pub(in crate::declaration_emitter) fn serialized_property_name_length(
+        &self,
+        name: &str,
+    ) -> usize {
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return 2;
+        };
+        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+            return name.len() + 2;
+        }
+        if chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()) {
+            name.len()
+        } else {
+            name.len() + 2
+        }
+    }
+
     pub(in crate::declaration_emitter) fn numeric_literal_union_widens_to_number(
         source_type_text: &str,
         inferred_text: &str,

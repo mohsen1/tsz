@@ -3156,15 +3156,6 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    pub(in crate::declaration_emitter) fn is_simple_identifier_text(text: &str) -> bool {
-        let mut chars = text.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        (first == '_' || first == '$' || first.is_ascii_alphabetic())
-            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-    }
-
     pub(in crate::declaration_emitter) fn type_reference_name_text(
         &self,
         name_idx: NodeIndex,
@@ -3178,24 +3169,6 @@ impl<'a> DeclarationEmitter<'a> {
             return self.get_identifier_text(qualified.right);
         }
         None
-    }
-
-    pub(in crate::declaration_emitter) fn serialized_property_name_length(
-        &self,
-        name: &str,
-    ) -> usize {
-        let mut chars = name.chars();
-        let Some(first) = chars.next() else {
-            return 2;
-        };
-        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
-            return name.len() + 2;
-        }
-        if chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()) {
-            name.len()
-        } else {
-            name.len() + 2
-        }
     }
 
     pub(in crate::declaration_emitter) fn skip_parenthesized_expression(
