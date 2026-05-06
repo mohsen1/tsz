@@ -35,6 +35,34 @@ bar(g1, g2);
     );
 }
 
+#[test]
+fn callable_reference_contra_candidate_broadens_dependent_constraint() {
+    let source = r#"
+interface A { a: string }
+interface B extends A { b: string }
+interface C extends A { c: string }
+
+declare function useA(a: A): void;
+declare function consume<T, U extends T>(t: T, u: U, f: (x: T) => void): void;
+
+function f2(b: B, c: C) {
+    consume(b, c, useA);
+    consume(c, b, useA);
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        relevant.iter().all(|(code, _)| *code != 2345),
+        "callable references should contribute contra-candidates for T. Got: {relevant:#?}"
+    );
+}
+
 /// When the only covariant candidate is `never` (from an empty array) and
 /// contra-candidates exist (from callback parameters), the solver should
 /// use the contra-candidates. This matches tsc's getInferredType logic:

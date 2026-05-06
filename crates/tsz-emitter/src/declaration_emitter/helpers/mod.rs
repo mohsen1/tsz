@@ -193,7 +193,6 @@ mod js_exports;
 mod jsdoc;
 mod portability_check;
 mod portability_resolve;
-mod recursive_static_class_expression;
 mod returned_function_initializer;
 mod synthetic_dependencies;
 mod type_inference;
