@@ -82,5 +82,9 @@ path = "tests/class_member_recovery_tests.rs"
 name = "expression_with_type_arguments_tests"
 path = "tests/expression_with_type_arguments_tests.rs"
 
+[[test]]
+name = "system_using_es_decorator_default_tests"
+path = "tests/system_using_es_decorator_default_tests.rs"
+
 [lints]
 workspace = true
