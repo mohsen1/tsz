@@ -2580,7 +2580,7 @@ fn hash_text(text: &str) -> u64 {
 mod sources;
 #[cfg(test)]
 pub(crate) use sources::has_no_types_and_symbols_directive;
-pub use sources::{FileReadResult, read_source_file};
+pub use sources::{FileReadResult, find_tsconfig, read_source_file};
 use sources::{
     SourceEntry, SourceReadResult, build_discovery_options, collect_type_root_files,
     read_source_files, sources_have_no_default_lib, sources_have_no_types_and_symbols,
