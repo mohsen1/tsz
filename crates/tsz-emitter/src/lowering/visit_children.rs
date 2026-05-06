@@ -576,6 +576,13 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 if let Some(lit) = self.arena.get_literal_expr(node) {
+                    if self.in_assignment_target
+                        && self.ctx.needs_es2018_lowering
+                        && self.assignment_pattern_has_object_rest(idx)
+                    {
+                        self.transforms.helpers_mut().rest = true;
+                    }
+
                     // Skip transform if this is the left side of a destructuring assignment
                     if !self.in_assignment_target
                         && self.ctx.target_es5

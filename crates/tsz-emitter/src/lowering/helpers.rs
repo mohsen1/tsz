@@ -1020,6 +1020,56 @@ impl<'a> LoweringPass<'a> {
         })
     }
 
+    /// Check if an assignment destructuring pattern has object rest.
+    ///
+    /// Assignment destructuring uses object/array literal nodes rather than
+    /// binding-pattern nodes, but it still lowers object rest through `__rest`.
+    pub(super) fn assignment_pattern_has_object_rest(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(node) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                match elem_node.kind {
+                    k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => true,
+                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                        .arena
+                        .get_property_assignment(elem_node)
+                        .is_some_and(|prop| {
+                            self.assignment_pattern_has_object_rest(prop.initializer)
+                        }),
+                    _ => false,
+                }
+            });
+        }
+
+        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(node) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                    && let Some(spread) = self.arena.get_spread(elem_node)
+                {
+                    return self.assignment_pattern_has_object_rest(spread.expression);
+                }
+                self.assignment_pattern_has_object_rest(elem_idx)
+            });
+        }
+
+        false
+    }
+
     pub(super) fn is_binding_pattern_idx(&self, idx: NodeIndex) -> bool {
         self.arena.get(idx).is_some_and(|n| n.is_binding_pattern())
     }
