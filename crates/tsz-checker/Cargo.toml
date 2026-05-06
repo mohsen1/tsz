@@ -797,5 +797,9 @@ path = "tests/shadowed_symbol_global_tests.rs"
 name = "jsdoc_tag_boundary_tests"
 path = "tests/jsdoc_tag_boundary_tests.rs"
 
+[[test]]
+name = "jsdoc_import_default_and_named_tests"
+path = "tests/jsdoc_import_default_and_named_tests.rs"
+
 [lints]
 workspace = true

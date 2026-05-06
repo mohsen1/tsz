@@ -97,3 +97,92 @@ const f = <T extends object>(x: T) => "a" in x && "b" in x;
             .collect::<Vec<_>>()
     );
 }
+
+fn ts2638_count(source: &str) -> usize {
+    tsz_checker::test_utils::check_source_codes(source)
+        .into_iter()
+        .filter(|&code| code == 2638)
+        .count()
+}
+
+#[test]
+fn in_operator_rejects_generic_nonnullable_intersections() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+function f<P>(a: P & {}) {
+  "foo" in a;
+}
+
+type NonNull<T> = T & {};
+function g<T>(a: NonNull<T>) {
+  "foo" in a;
+}
+"#,
+    );
+
+    let ts2638: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2638)
+        .collect();
+    assert_eq!(
+        ts2638.len(),
+        2,
+        "Expected TS2638 for both generic non-nullable RHS values, got {diagnostics:#?}"
+    );
+    assert!(
+        ts2638
+            .iter()
+            .any(|(_, message)| message.contains("NonNullable<P>")),
+        "Expected diagnostic to mention NonNullable<P>, got {diagnostics:#?}"
+    );
+    assert!(
+        ts2638
+            .iter()
+            .any(|(_, message)| message.contains("NonNull<T>")),
+        "Expected diagnostic to mention NonNull<T>, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_allows_object_constrained_intersections() {
+    let source = r#"
+function object_rhs(a: object) {
+  "foo" in a;
+}
+
+function object_intersection<T>(a: T & object) {
+  "foo" in a;
+}
+
+function non_empty_object_intersection<T>(a: T & { value: number }) {
+  "foo" in a;
+}
+
+interface EmptyInterface {}
+function empty_interface_intersection<T>(a: T & EmptyInterface) {
+  "foo" in a;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected object-constrained RHS values to be accepted, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_rejects_empty_object_type_alias_intersection() {
+    let source = r#"
+type Empty = {};
+function alias_intersection<T>(a: T & Empty) {
+  "foo" in a;
+}
+"#;
+
+    assert_eq!(
+        ts2638_count(source),
+        1,
+        "Expected empty object type alias intersection to emit TS2638"
+    );
+}
