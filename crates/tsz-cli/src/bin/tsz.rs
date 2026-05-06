@@ -7,6 +7,7 @@ use clap::{CommandFactory, Parser};
 use rustc_hash::FxHashMap;
 use std::ffi::OsString;
 use std::io::IsTerminal;
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use tsz::checker::diagnostics::DiagnosticCategory;
@@ -1901,6 +1902,11 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         None
     };
 
+    let base_dir = tsconfig_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .unwrap_or(cwd);
+
     // Build the compiler options map from the MERGED config (extends-resolved).
     let mut compiler_options_map: serde_json::Map<String, serde_json::Value> =
         if let Some(ref cfg) = config {
@@ -1914,6 +1920,8 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     // Issue 3: Compute and add implied options.
     show_config_add_implied_options(&mut compiler_options_map);
+
+    show_config_relativize_resolved_path_options(&mut compiler_options_map, base_dir);
 
     // Issue 5: Normalize outDir/outFile/rootDir paths with "./" prefix
     for path_key in &["outDir", "outFile", "rootDir", "declarationDir", "baseUrl"] {
@@ -1946,11 +1954,6 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         .or_else(|| resolved.as_ref().and_then(|r| r.out_dir.clone()));
 
     // Discover resolved file list
-    let base_dir = tsconfig_path
-        .as_ref()
-        .and_then(|p| p.parent())
-        .unwrap_or(cwd);
-
     let explicit_files: Vec<std::path::PathBuf> = if !args.files.is_empty() {
         args.files.clone()
     } else if let Some(ref cfg) = config {
@@ -2143,6 +2146,73 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     print!("{output}");
 
     Ok(())
+}
+
+fn show_config_relativize_resolved_path_options(
+    options: &mut serde_json::Map<String, serde_json::Value>,
+    base_dir: &Path,
+) {
+    if let Some(serde_json::Value::String(base_url)) = options.get_mut("baseUrl") {
+        *base_url = show_config_format_path_option(base_url, base_dir);
+    }
+
+    if let Some(serde_json::Value::Array(root_dirs)) = options.get_mut("rootDirs") {
+        for root_dir in root_dirs {
+            if let serde_json::Value::String(path) = root_dir {
+                *path = show_config_format_path_option(path, base_dir);
+            }
+        }
+    }
+}
+
+fn show_config_format_path_option(path: &str, base_dir: &Path) -> String {
+    let path_obj = Path::new(path);
+    if !path_obj.is_absolute() {
+        return path.to_string();
+    }
+
+    let canonical_base = base_dir
+        .canonicalize()
+        .unwrap_or_else(|_| base_dir.to_path_buf());
+    let canonical_path = path_obj
+        .canonicalize()
+        .unwrap_or_else(|_| path_obj.to_path_buf());
+    let relative = diff_paths(&canonical_path, &canonical_base)
+        .unwrap_or_else(|| canonical_path.to_path_buf());
+    path_to_show_config_string(&relative)
+}
+
+fn path_to_show_config_string(path: &Path) -> String {
+    let display = path.to_string_lossy().replace('\\', "/");
+    if display.is_empty() || display == "." {
+        "./".to_string()
+    } else if display.starts_with("../") || display.starts_with('/') {
+        display
+    } else {
+        format!("./{display}")
+    }
+}
+
+fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
+    let path_components: Vec<Component<'_>> = path.components().collect();
+    let base_components: Vec<Component<'_>> = base.components().collect();
+    let common_len = path_components
+        .iter()
+        .zip(base_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    if common_len == 0 && path.is_absolute() && base.is_absolute() {
+        return None;
+    }
+
+    let mut result = PathBuf::new();
+    for _ in common_len..base_components.len() {
+        result.push("..");
+    }
+    for component in &path_components[common_len..] {
+        result.push(component);
+    }
+    Some(result)
 }
 
 /// Convert merged `CompilerOptions` (from extends-resolved `TsConfig`) into a JSON map
