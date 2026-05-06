@@ -28,6 +28,51 @@ fn emit_es5_with_comments(source: &str) -> String {
     lower_and_print(&parser.arena, root, PrintOptions::es5()).code
 }
 
+#[test]
+fn async_es5_uses_ambient_value_for_custom_promise_constructor() {
+    let output = emit_es5(
+        "type MyPromise<T> = Promise<T>;\n\
+         declare var MyPromise: typeof Promise;\n\
+         async function f(): MyPromise<void> { }\n\
+         var g = async (): MyPromise<void> => { };\n\
+         class C { async m(): MyPromise<void> { } }\n",
+    );
+
+    assert!(
+        output.matches("MyPromise, function").count() >= 3,
+        "Async functions, arrows, and methods should pass the ambient value constructor.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_labeled_block_break_after_await_lowers_to_generator_jump() {
+    let output = emit_es5(
+        "async function f() {\n\
+             block: {\n\
+                 await 1;\n\
+                 break block;\n\
+             }\n\
+         }\n",
+    );
+
+    assert!(
+        !output.contains("block:") && !output.contains("await 1"),
+        "Raw labeled block and await syntax should not remain in ES5 output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, 1];"),
+        "Await should lower to the initial yield case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 2];"),
+        "Labeled break should jump to the post-block case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: return [2 /*return*/];"),
+        "Post-block case should contain the final generator return.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // Array Destructuring
 // =============================================================================
