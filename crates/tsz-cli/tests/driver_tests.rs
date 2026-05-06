@@ -369,6 +369,53 @@ export const amdCase = 1;
 }
 
 #[test]
+fn compile_extensionless_reference_path_probes_js_when_allow_js() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("main.ts"),
+        r#"/// <reference path="dep" />
+const marker = 1;
+"#,
+    );
+    write_file(
+        &base.join("dep.js"),
+        r#"// @ts-check
+const x = 1;
+x();
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::COULD_NOT_RESOLVE_THE_PATH_WITH_THE_EXTENSIONS),
+        "extensionless .js reference should resolve under allowJs: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE),
+        "referenced dep.js should be included and checked: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_source_reference_lib_unknown_name_reports_ts2726() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
