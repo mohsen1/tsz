@@ -331,8 +331,7 @@ impl ParserState {
                     if let Some(digit) = (body[*pos] as char).to_digit(16)
                         && !overflow
                     {
-                        if let Some(next) =
-                            value.checked_mul(16).and_then(|v| v.checked_add(digit))
+                        if let Some(next) = value.checked_mul(16).and_then(|v| v.checked_add(digit))
                         {
                             value = next;
                         } else {
