@@ -3,7 +3,7 @@
 - **Date**: 2026-05-05
 - **Branch**: `fix/parser-typeguard-function-errors-fingerprint`
 - **PR**: #3478
-- **Status**: claim
+- **Status**: abandoned
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
@@ -18,6 +18,10 @@ function declarations.
 but the local `dist-fast` build was killed silently while compiling
 `tsz-checker`; the same picker without `--run` selected this case from the
 available detail snapshot.
+
+Abandoned before implementation: current `origin/main`'s checked-in
+`conformance-detail.json` no longer lists `typeGuardFunctionErrors.ts` as a
+failure, so this fallback pick was stale.
 
 ## Files Touched
 
