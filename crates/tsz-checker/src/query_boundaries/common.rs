@@ -1541,19 +1541,6 @@ pub(crate) fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> 
     tsz_solver::type_queries::get_fixed_tuple_length(db, type_id)
 }
 
-pub(crate) fn single_rest_tuple_element_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<TypeId> {
-    let tuple_id = tsz_solver::tuple_list_id(db, type_id)?;
-    let elements = db.tuple_list(tuple_id);
-    if elements.len() == 1 && elements[0].rest {
-        Some(elements[0].type_id)
-    } else {
-        None
-    }
-}
-
 /// Returns the number of leading fixed (non-rest) elements before the first rest element,
 /// when the tuple has trailing fixed elements after the rest. Returns `None` if the tuple
 /// has no rest element or no trailing fixed elements after the rest.

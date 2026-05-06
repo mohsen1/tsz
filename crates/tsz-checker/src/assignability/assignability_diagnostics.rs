@@ -3,9 +3,7 @@ use crate::query_boundaries::assignability::{
     classify_for_excess_properties, get_keyof_type, get_string_literal_value, is_keyof_type,
     is_type_parameter_like, object_shape_for_type,
 };
-use crate::query_boundaries::common::{
-    TypeSubstitution, instantiate_type, single_rest_tuple_element_type, type_param_info,
-};
+use crate::query_boundaries::common::{TypeSubstitution, instantiate_type, type_param_info};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -735,8 +733,14 @@ impl<'a> CheckerState<'a> {
         source_idx: NodeIndex,
     ) -> Option<TypeId> {
         let evaluated_target = self.evaluate_type_for_assignability(target);
-        single_rest_tuple_element_type(self.ctx.types, target)
-            .or_else(|| single_rest_tuple_element_type(self.ctx.types, evaluated_target))?;
+        let target_has_single_rest_tuple = |ty| {
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, ty)
+                .is_some_and(|elements| elements.len() == 1 && elements[0].rest)
+        };
+        if !target_has_single_rest_tuple(target) && !target_has_single_rest_tuple(evaluated_target)
+        {
+            return None;
+        }
 
         let source_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
         let source_node = self.ctx.arena.get(source_idx)?;
