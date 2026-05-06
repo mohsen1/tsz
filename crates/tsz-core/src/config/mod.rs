@@ -3525,6 +3525,23 @@ fn anchor_inherited_path_options(config: &mut TsConfig, config_path: &Path) {
             *root_dir = normalized.to_string_lossy().into_owned();
         }
     }
+
+    if let Some(type_roots) = opts.type_roots.as_mut() {
+        let parent_abs = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+        for type_root in type_roots {
+            let trimmed = type_root.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let candidate = std::path::Path::new(trimmed);
+            if candidate.is_absolute() {
+                continue;
+            }
+            let joined = parent_abs.join(candidate);
+            let normalized = std::fs::canonicalize(&joined).unwrap_or(joined);
+            *type_root = normalized.to_string_lossy().into_owned();
+        }
+    }
 }
 
 fn anchor_inherited_root_selectors(config: &mut TsConfig, config_path: &Path) {
@@ -5707,6 +5724,61 @@ mod tests {
                 "Inherited rootDirs must not anchor at the child's directory: {root_dir:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_inherited_type_roots_anchor_at_declaring_config_dir() {
+        let temp = tempdir().expect("create temp dir");
+        let base_dir = temp.path().join("base");
+        let app_dir = temp.path().join("app");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        std::fs::create_dir_all(&app_dir).expect("create app dir");
+
+        let base_path = base_dir.join("tsconfig.base.json");
+        std::fs::write(
+            &base_path,
+            r#"{
+    "compilerOptions": {
+        "typeRoots": ["./types"]
+    }
+}"#,
+        )
+        .expect("write base");
+
+        let child_path = app_dir.join("tsconfig.json");
+        std::fs::write(
+            &child_path,
+            r#"{
+    "extends": "../base/tsconfig.base.json",
+    "files": ["src/index.ts"]
+}"#,
+        )
+        .expect("write child");
+
+        let merged = load_tsconfig(&child_path).expect("load child");
+        let opts = merged.compiler_options.expect("compiler options merged");
+        let type_roots = opts.type_roots.expect("inherited typeRoots present");
+        let expected_base = base_dir
+            .canonicalize()
+            .expect("canonicalize base")
+            .to_string_lossy()
+            .into_owned();
+        let unexpected_app = app_dir
+            .canonicalize()
+            .expect("canonicalize app")
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(type_roots.len(), 1);
+        let type_root = &type_roots[0];
+        assert!(
+            type_root.starts_with(&expected_base),
+            "Inherited typeRoots must anchor at the base config's directory, got {type_root:?}"
+        );
+        assert!(
+            !type_root.starts_with(&unexpected_app),
+            "Inherited typeRoots must not anchor at the child's directory: {type_root:?}"
+        );
     }
 
     #[test]

@@ -2040,10 +2040,12 @@ impl<'a> Printer<'a> {
                     // Bodyless methods are erased (abstract methods without body,
                     // overload signatures). Abstract methods WITH a body (an error
                     // in TS) are still emitted by tsc, so we must not erase them.
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_method_decl(member_node)
-                        .is_some_and(|m| m.body.is_none()),
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        self.arena.get_method_decl(member_node).is_some_and(|m| {
+                            m.body.is_none()
+                                && !self.has_recovered_declaration_trailing_comma(member_node)
+                        })
+                    }
                     // Abstract accessors without body are erased. Bodyless non-abstract
                     // accessors (error case) are kept — tsc emits them as `{}`.
                     // Abstract accessors WITH a body (error case) are also kept.
@@ -2481,7 +2483,7 @@ impl<'a> Printer<'a> {
         // For class declarations: use separate statements `ClassName.field = value;`
         let emit_private_inits_before_static_elements = !needs_private_comma_expr
             && has_any_private_lowering
-            && static_initializer_class_alias.is_some()
+            && (static_initializer_class_alias.is_some() || has_static_privates)
             && (!static_field_inits.is_empty() || !deferred_static_blocks.is_empty());
         let mut emitted_private_auto_accessors_pre_static = false;
         if emit_private_inits_before_static_elements {

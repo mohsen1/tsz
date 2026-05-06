@@ -391,6 +391,8 @@ pub struct Printer<'a> {
     /// Parent namespace name for scope-qualified `namespace_prior_exports` keys.
     /// Used to distinguish same-named nested namespaces (e.g., `m1.m2` vs `m4.m2`).
     pub(crate) parent_namespace_name: Option<String>,
+    /// Source-level namespace path for the current namespace IIFE.
+    pub(crate) current_namespace_source_path: Option<String>,
 
     /// Override name for anonymous default exports (e.g., "`default_1`").
     /// When set, class/function emitters use this instead of leaving the name blank.
@@ -459,6 +461,8 @@ pub struct Printer<'a> {
     /// that has already exited.
     pub(crate) namespace_prior_class_fn_enum_exports:
         FxHashMap<String, std::collections::HashSet<String>>,
+    /// Source-level merged namespace exports keyed by full dotted namespace path.
+    pub(crate) namespace_all_exported_names: FxHashMap<String, FxHashSet<String>>,
 
     /// Exported variable/function/class names in the current namespace IIFE.
     /// Used to qualify identifier references: `foo` → `ns.foo`.
@@ -923,6 +927,7 @@ impl<'a> Printer<'a> {
             pending_function_body_parameters: Vec::new(),
             current_namespace_name: None,
             parent_namespace_name: None,
+            current_namespace_source_path: None,
             anonymous_default_export_name: None,
             next_anonymous_default_index: 0,
             next_disposable_env_id: 1,
@@ -937,6 +942,7 @@ impl<'a> Printer<'a> {
             namespace_iife_param_counter: FxHashMap::default(),
             namespace_prior_exports: FxHashMap::default(),
             namespace_prior_class_fn_enum_exports: FxHashMap::default(),
+            namespace_all_exported_names: FxHashMap::default(),
             namespace_exported_names: FxHashSet::default(),
             namespace_parent_exported_names: FxHashSet::default(),
             namespace_ancestor_export_qualifiers: FxHashMap::default(),

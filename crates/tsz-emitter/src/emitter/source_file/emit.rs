@@ -85,6 +85,8 @@ impl<'a> Printer<'a> {
         self.commonjs_tslib_import_binding = "tslib_1".to_string();
         self.ctx.arguments_capture_counter = 0;
         self.first_for_of_emitted = false;
+        self.namespace_all_exported_names.clear();
+        self.collect_all_namespace_exports(&source.statements);
 
         // Pre-pass: collect const enum values for inlining at usage sites.
         // tsc replaces property/element access to const enum members with their
@@ -511,6 +513,8 @@ impl<'a> Printer<'a> {
             self.write("\"use strict\";");
             self.write_line();
         }
+        let script_pre_header_hoist_byte_offset = self.writer.len();
+        let script_pre_header_hoist_line = self.writer.current_line();
 
         // Emit header comments AFTER "use strict" but BEFORE helpers.
         // Use skip_trivia_forward to find the actual token start since
@@ -1346,8 +1350,16 @@ impl<'a> Printer<'a> {
         self.prepare_logical_assignment_value_temps(source_idx);
         self.prepare_object_rest_assignment_temps(source_idx);
 
-        let mut hoisted_var_byte_offset = self.writer.len();
-        let mut hoisted_var_line = self.writer.current_line();
+        let mut hoisted_var_byte_offset = if is_file_module {
+            self.writer.len()
+        } else {
+            script_pre_header_hoist_byte_offset
+        };
+        let mut hoisted_var_line = if is_file_module {
+            self.writer.current_line()
+        } else {
+            script_pre_header_hoist_line
+        };
 
         // Emit statements with their leading comments.
         // In this parser, node.pos includes leading trivia (whitespace + comments).
@@ -1367,8 +1379,8 @@ impl<'a> Printer<'a> {
         } else {
             rustc_hash::FxHashMap::default()
         };
-        let cjs_deferred_export_aliases = if is_top_level_cjs {
-            self.collect_cjs_deferred_export_aliases(&source.statements)
+        let cjs_deferred_export_bindings_all = if is_top_level_cjs {
+            self.collect_cjs_deferred_export_bindings_all(&source.statements)
         } else {
             rustc_hash::FxHashMap::default()
         };
@@ -1825,26 +1837,28 @@ impl<'a> Printer<'a> {
             {
                 let names = self.get_declaration_export_names(stmt_node);
                 for name in names {
-                    if let Some(export_names) = cjs_deferred_export_aliases.get(&name)
-                        && !self.ctx.module_state.iife_exported_names.contains(&name)
-                    {
-                        for export_name in export_names {
-                            if !self.writer.is_at_line_start() {
-                                self.write_line();
-                            }
-                            // Arbitrary module namespace identifiers (e.g.
-                            // `export { someValue as "<X>" }`) yield non-identifier
-                            // export names that must use bracket access — `exports.<X>`
-                            // is a syntax error.
-                            self.write_export_property_access(export_name);
-                            self.write(" = ");
-                            self.write(&name);
-                            self.write(";");
-                            self.ctx
-                                .module_state
-                                .inline_exported_names
-                                .insert(export_name.clone());
+                    if self.ctx.module_state.iife_exported_names.contains(&name) {
+                        continue;
+                    }
+                    let Some(export_names) = cjs_deferred_export_bindings_all.get(&name) else {
+                        continue;
+                    };
+                    for export_name in export_names {
+                        if !self.writer.is_at_line_start() {
+                            self.write_line();
                         }
+                        // Arbitrary module namespace identifiers (e.g.
+                        // `export { someValue as "<X>" }`) yield non-identifier
+                        // export names that must use bracket access — `exports.<X>`
+                        // is a syntax error.
+                        self.write_export_property_access(export_name);
+                        self.write(" = ");
+                        self.write(&name);
+                        self.write(";");
+                        self.ctx
+                            .module_state
+                            .inline_exported_names
+                            .insert(export_name.clone());
                     }
                 }
             }

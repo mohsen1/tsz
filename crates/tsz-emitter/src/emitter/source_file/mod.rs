@@ -640,6 +640,37 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn recovered_comma_separated_overload_signatures_emit_empty_bodies() {
+        let source = "function f1(), function f1();\nfunction f2(), function f2() {}\nfunction f3() {}, function f3();\n\nclass C {\n    m1(), m1();\n    m2(), m2() {}\n    m3() {}, m3();\n}\n";
+
+        let mut parser =
+            ParserState::new("overloadConsecutiveness.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "function f1() { }\nfunction f2() { }\nfunction f2() { }\nfunction f3() { }"
+            ),
+            "Recovered comma-separated function declarations should emit empty bodies before comma separators.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    m1() { }\n    m2() { }\n    m2() { }\n    m3() { }"),
+            "Recovered comma-separated method declarations should emit empty bodies before comma separators.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn recovered_class_member_enum_emits_after_class() {
         let source = "namespace M {\n    class C {\n\n    enum E {\n    }\n}\n";
 

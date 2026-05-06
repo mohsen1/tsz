@@ -548,12 +548,11 @@ impl<'a> Printer<'a> {
         bindings
     }
 
-    pub(in crate::emitter) fn collect_cjs_deferred_export_aliases(
+    pub(in crate::emitter) fn collect_cjs_deferred_export_bindings_all(
         &self,
         statements: &tsz_parser::parser::NodeList,
     ) -> rustc_hash::FxHashMap<String, Vec<String>> {
-        let mut aliases: rustc_hash::FxHashMap<String, Vec<String>> =
-            rustc_hash::FxHashMap::default();
+        let mut bindings = rustc_hash::FxHashMap::<String, Vec<String>>::default();
         for &stmt_idx in &statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -600,13 +599,16 @@ impl<'a> Printer<'a> {
                 {
                     continue;
                 }
-                aliases.entry(local_name).or_default().push(export_name);
+                let names = bindings.entry(local_name).or_default();
+                if !names.contains(&export_name) {
+                    names.push(export_name);
+                }
             }
         }
         for (_, local_name) in &self.ctx.module_state.hoisted_func_exports {
-            aliases.remove(local_name.as_str());
+            bindings.remove(local_name.as_str());
         }
-        aliases
+        bindings
     }
 
     fn has_cjs_deferred_export_declaration(
