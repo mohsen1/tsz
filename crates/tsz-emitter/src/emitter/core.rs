@@ -149,6 +149,8 @@ pub struct PrinterOptions {
     pub external_const_enum_values: FxHashMap<String, FxHashMap<String, EnumValue>>,
     /// Local binding names that refer to external const enums.
     pub external_const_enum_bindings: FxHashSet<String>,
+    /// External ambient modules whose `export =` target is type-only.
+    pub type_only_export_equals_modules: FxHashSet<String>,
     /// Import helpers from tslib instead of inlining them
     pub import_helpers: bool,
     /// JSX emit mode
@@ -206,6 +208,7 @@ impl Default for PrinterOptions {
             no_const_enum_inlining: false,
             external_const_enum_values: FxHashMap::default(),
             external_const_enum_bindings: FxHashSet::default(),
+            type_only_export_equals_modules: FxHashSet::default(),
             import_helpers: false,
             jsx: JsxEmit::Preserve,
             jsx_factory: None,

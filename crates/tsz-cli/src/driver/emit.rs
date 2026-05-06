@@ -108,6 +108,10 @@ pub(crate) fn emit_outputs(
         context.program,
         context.options.printer.preserve_const_enums,
     );
+    let type_only_export_equals_modules = build_type_only_export_equals_modules(
+        context.program,
+        context.options.printer.preserve_const_enums,
+    );
 
     // Build the set of JS output paths produced by TypeScript source files
     // (.ts/.tsx/.mts/.cts). When --allowJs is set and a JS input file (e.g.
@@ -185,6 +189,8 @@ pub(crate) fn emit_outputs(
                 &mut type_only_nodes,
             );
             printer_options.type_only_nodes = std::sync::Arc::new(type_only_nodes);
+            printer_options.type_only_export_equals_modules =
+                type_only_export_equals_modules.clone();
 
             // Wire JSX options from resolved compiler options to printer
             if let Some(jsx) = context.options.jsx {
@@ -1609,6 +1615,95 @@ fn build_ambient_global_type_only_names(
 
     type_only_names.retain(|name| !value_names.contains(name));
     type_only_names
+}
+
+fn build_type_only_export_equals_modules(
+    program: &MergedProgram,
+    preserve_const_enums: bool,
+) -> FxHashSet<String> {
+    let mut modules = FxHashSet::default();
+
+    for file in &program.files {
+        let input_path = PathBuf::from(&file.file_name);
+        if !is_declaration_file(&input_path) {
+            continue;
+        }
+
+        let Some(source) = file
+            .arena
+            .get(file.source_file)
+            .and_then(|node| file.arena.get_source_file(node))
+        else {
+            continue;
+        };
+
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = file.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module) = file.arena.get_module(stmt_node) else {
+                continue;
+            };
+            if !file
+                .arena
+                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+            {
+                continue;
+            }
+            let Some(module_name) = file
+                .arena
+                .get(module.name)
+                .and_then(|node| file.arena.get_literal(node))
+                .map(|lit| lit.text.clone())
+            else {
+                continue;
+            };
+            let Some(statements) = module_block_statements(&file.arena, module.body) else {
+                continue;
+            };
+            let Some(export_name) = export_equals_identifier_name(&file.arena, statements) else {
+                continue;
+            };
+            let value_names =
+                tsz_emitter::transforms::module_commonjs::build_value_declaration_names(
+                    &file.arena,
+                    statements,
+                    preserve_const_enums,
+                );
+
+            if !value_names.contains(&export_name) {
+                modules.insert(module_name);
+            }
+        }
+    }
+
+    modules
+}
+
+fn module_block_statements(arena: &NodeArena, body_idx: NodeIndex) -> Option<&[NodeIndex]> {
+    let body_node = arena.get(body_idx)?;
+    let block = arena.get_module_block(body_node)?;
+    block
+        .statements
+        .as_ref()
+        .map(|statements| statements.nodes.as_slice())
+}
+
+fn export_equals_identifier_name(arena: &NodeArena, statements: &[NodeIndex]) -> Option<String> {
+    statements.iter().find_map(|&stmt_idx| {
+        let node = arena.get(stmt_idx)?;
+        if node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+            return None;
+        }
+        let export_assignment = arena.get_export_assignment(node)?;
+        if !export_assignment.is_export_equals {
+            return None;
+        }
+        arena.identifier_text_owned(export_assignment.expression)
+    })
 }
 
 fn source_file_has_top_level_module_syntax(arena: &NodeArena, statements: &[NodeIndex]) -> bool {

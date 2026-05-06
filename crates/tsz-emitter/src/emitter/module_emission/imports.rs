@@ -25,6 +25,15 @@ impl<'a> Printer<'a> {
         node: &Node,
         clause: &tsz_parser::parser::node::ImportClauseData,
     ) -> bool {
+        if self.import_clause_is_namespace_only(clause)
+            && self
+                .arena
+                .get_import_decl(node)
+                .is_some_and(|import| self.import_references_type_only_export_equals_module(import))
+        {
+            return false;
+        }
+
         let mut names = Vec::new();
         if clause.name.is_some() {
             let default_name = self.get_identifier_text_idx(clause.name);
@@ -125,6 +134,35 @@ impl<'a> Printer<'a> {
         }
         self.ctx.target_es5
             && self.async_return_type_uses_imported_promise_constructor_after_node(node, &names)
+    }
+
+    fn import_clause_is_namespace_only(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
+                .is_some_and(|named| named.name.is_some() && named.elements.nodes.is_empty())
+    }
+
+    pub(in crate::emitter) fn import_references_type_only_export_equals_module(
+        &self,
+        import: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        let Some(module_node) = self.arena.get(import.module_specifier) else {
+            return false;
+        };
+        let Some(lit) = self.arena.get_literal(module_node) else {
+            return false;
+        };
+        self.ctx
+            .options
+            .type_only_export_equals_modules
+            .contains(lit.text.as_str())
     }
 
     fn async_return_type_uses_imported_promise_constructor_after_node(
@@ -311,6 +349,10 @@ impl<'a> Printer<'a> {
         node: &Node,
         import_data: &tsz_parser::parser::node::ImportDeclData,
     ) -> bool {
+        if self.import_references_type_only_export_equals_module(import_data) {
+            return false;
+        }
+
         let name = self.get_identifier_text_idx(import_data.import_clause);
         if name.is_empty() {
             return true;
