@@ -161,14 +161,11 @@ pub fn is_valid_module_or_js_file(path: &Path) -> bool {
 #[must_use]
 pub fn default_discovery_include_patterns(
     allow_js: bool,
-    resolve_json_module: bool,
+    _resolve_json_module: bool,
 ) -> Vec<String> {
     let mut patterns = glob_patterns_for_extensions(TS_SOURCE_EXTENSIONS);
     if allow_js {
         patterns.extend(glob_patterns_for_extensions(JS_FAMILY_EXTENSIONS));
-    }
-    if resolve_json_module {
-        patterns.extend(glob_patterns_for_extensions(&[JSON_EXTENSION]));
     }
     patterns
 }
@@ -180,7 +177,6 @@ pub fn include_pattern_has_supported_extension(pattern: &str) -> bool {
     TS_SOURCE_EXTENSIONS
         .iter()
         .chain(JS_FAMILY_EXTENSIONS)
-        .chain([JSON_EXTENSION].iter())
         .any(|ext| pattern.ends_with(ext))
 }
 
@@ -289,9 +285,9 @@ mod tests {
                 "*.ts", "*.tsx", "*.mts", "*.cts", "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
             ]
         );
-        assert!(default_discovery_include_patterns(true, true).contains(&"**/*.json".to_string()));
+        assert!(!default_discovery_include_patterns(true, true).contains(&"**/*.json".to_string()));
         assert!(include_pattern_has_supported_extension("src/index.mjs"));
-        assert!(include_pattern_has_supported_extension("src/*.json"));
+        assert!(!include_pattern_has_supported_extension("src/*.json"));
         assert!(!include_pattern_has_supported_extension("src"));
     }
 

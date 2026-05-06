@@ -542,17 +542,27 @@ impl<'a> Printer<'a> {
 
                 // Emit: varName = source[keyTemp]
                 let var_name = self.get_identifier_text(elem.name);
-                self.write(&var_name);
+                let value_name = if elem.initializer.is_some() {
+                    self.get_temp_var_name()
+                } else {
+                    var_name.clone()
+                };
+                self.write(&value_name);
                 self.write(" = ");
                 self.write(&source_name);
                 self.write("[");
                 self.write(&key_temp);
                 self.write("]");
 
-                // Handle default value
                 if elem.initializer.is_some() {
-                    // This would need: var_name === void 0 ? default : var_name
-                    // For now, simple assignment
+                    self.write(", ");
+                    self.write(&var_name);
+                    self.write(" = ");
+                    self.write(&value_name);
+                    self.write(" === void 0 ? ");
+                    self.emit_expression(elem.initializer);
+                    self.write(" : ");
+                    self.write(&value_name);
                 }
 
                 excluded_props.push(ExcludedProp::Dynamic(key_temp));
@@ -565,15 +575,26 @@ impl<'a> Printer<'a> {
                     static_name.clone()
                 };
 
-                self.write(&var_name);
+                let value_name = if elem.initializer.is_some() {
+                    self.get_temp_var_name()
+                } else {
+                    var_name.clone()
+                };
+                self.write(&value_name);
                 self.write(" = ");
                 self.write(&source_name);
                 self.write(".");
                 self.write(&prop_name);
 
-                // Handle default value
                 if elem.initializer.is_some() {
-                    // Would need void 0 check; for now simple
+                    self.write(", ");
+                    self.write(&var_name);
+                    self.write(" = ");
+                    self.write(&value_name);
+                    self.write(" === void 0 ? ");
+                    self.emit_expression(elem.initializer);
+                    self.write(" : ");
+                    self.write(&value_name);
                 }
 
                 let is_str_lit =

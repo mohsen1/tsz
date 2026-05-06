@@ -217,6 +217,23 @@ impl<'a> CheckerState<'a> {
             .map(|sf| sf.text.as_ref())
     }
 
+    /// Return whether the current file contains any JSX construct
+    /// (element, self-closing element, or fragment).
+    ///
+    /// Used to decide whether the JSX factory (e.g. `React`) is actually
+    /// referenced by emit/checking. In files without JSX, an unused
+    /// `import React from "react"` should still report TS6133, matching tsc.
+    pub(crate) fn current_file_contains_jsx(&self) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            JSX_ELEMENT, JSX_FRAGMENT, JSX_SELF_CLOSING_ELEMENT,
+        };
+        self.ctx.arena.nodes.iter().any(|node| {
+            node.kind == JSX_ELEMENT
+                || node.kind == JSX_FRAGMENT
+                || node.kind == JSX_SELF_CLOSING_ELEMENT
+        })
+    }
+
     /// Return the effective JSX mode for the current file, taking the
     /// `@jsxRuntime` pragma into account.
     pub(crate) fn effective_jsx_mode(&self) -> tsz_common::checker_options::JsxMode {

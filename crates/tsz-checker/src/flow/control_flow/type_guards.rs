@@ -1054,7 +1054,27 @@ impl<'a> FlowAnalyzer<'a> {
         params: &[ParamInfo],
     ) -> Option<TypePredicate> {
         let expr = self.find_inferable_predicate_body_expression(body_idx)?;
-        let (mut guard, mut guard_target, is_optional) = self.extract_type_guard(expr)?;
+        let expr = self.skip_parens_and_assertions(expr);
+
+        if let Some(predicate) = self.try_infer_logical_or_type_predicate(expr, params_list, params)
+        {
+            return Some(predicate);
+        }
+        if let Some(predicate) = self.try_infer_truthiness_type_predicate(expr, params_list, params)
+        {
+            return Some(predicate);
+        }
+
+        self.try_infer_type_predicate_from_guard_expression(expr, params_list, params)
+    }
+
+    fn try_infer_type_predicate_from_guard_expression(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let (guard, mut guard_target, is_optional) = self.extract_type_guard(expr)?;
 
         if is_optional {
             return None;
@@ -1068,14 +1088,10 @@ impl<'a> FlowAnalyzer<'a> {
         // `fb.type === "foo"`), `extract_type_guard` returns
         // `LiteralEquality(literal)` with `target = fb.type`. Promote that to a
         // discriminant on `fb` so narrowing can refine the parameter union.
-        if let TypeGuard::LiteralEquality(literal) = guard
-            && let Some((base, path)) =
+        if let TypeGuard::LiteralEquality(_) = guard
+            && let Some((base, _path)) =
                 self.parameter_property_access_chain(guard_target, params_list)
         {
-            guard = TypeGuard::Discriminant {
-                property_path: path,
-                value_type: literal,
-            };
             guard_target = base;
         }
 
@@ -1084,8 +1100,27 @@ impl<'a> FlowAnalyzer<'a> {
             self.match_guard_target_to_parameter(guard_target, params_list, params)?;
         let param_type = params.get(param_idx)?.type_id;
 
-        // Run the guard through the solver's narrowing primitive.
-        let narrowed = self.narrow_with_inferred_predicate_guard(param_type, &guard);
+        // Infer from the same full condition-narrowing path used by inline
+        // `if (<guard>)` checks. That keeps inferred predicates aligned with
+        // richer flow handling such as `instanceof` on `object`, `in` through
+        // non-null assertions, and other expression-level refinements.
+        let mut narrowed = self.narrow_type_by_condition(
+            param_type,
+            expr,
+            guard_target,
+            true,
+            tsz_binder::FlowNodeId::NONE,
+        );
+        if narrowed == param_type
+            && matches!(param_type, TypeId::OBJECT | TypeId::UNKNOWN)
+            && let TypeGuard::Instanceof(instance_type, _) = guard
+            && !matches!(
+                instance_type,
+                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+            )
+        {
+            narrowed = instance_type;
+        }
 
         // Only emit a predicate when the narrowed type is strictly more
         // specific. Equal-or-wider results would not give callers useful
@@ -1105,6 +1140,164 @@ impl<'a> FlowAnalyzer<'a> {
             type_id: Some(narrowed),
             parameter_index: Some(param_idx),
         })
+    }
+
+    fn try_infer_truthiness_type_predicate(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let target = self.double_negation_target(expr)?;
+        let (param_idx, param_name) =
+            self.match_guard_target_to_parameter(target, params_list, params)?;
+        let param_type = params.get(param_idx)?.type_id;
+        let narrowed = self.narrow_type_by_condition(
+            param_type,
+            expr,
+            target,
+            true,
+            tsz_binder::FlowNodeId::NONE,
+        );
+        if narrowed == param_type
+            || narrowed == TypeId::NEVER
+            || narrowed == TypeId::ERROR
+            || narrowed == TypeId::ANY
+        {
+            return None;
+        }
+
+        let falsy = self.narrow_type_by_condition(
+            param_type,
+            expr,
+            target,
+            false,
+            tsz_binder::FlowNodeId::NONE,
+        );
+        if !self.is_nullish_only_type(falsy) {
+            return None;
+        }
+
+        Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_name),
+            type_id: Some(narrowed),
+            parameter_index: Some(param_idx),
+        })
+    }
+
+    fn double_negation_target(&self, expr: NodeIndex) -> Option<NodeIndex> {
+        let expr_node = self.arena.get(expr)?;
+        if expr_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return None;
+        }
+        let outer = self.arena.get_unary_expr(expr_node)?;
+        if outer.operator != SyntaxKind::ExclamationToken as u16 {
+            return None;
+        }
+        let inner_idx = self.skip_parens_and_assertions(outer.operand);
+        let inner_node = self.arena.get(inner_idx)?;
+        if inner_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return None;
+        }
+        let inner = self.arena.get_unary_expr(inner_node)?;
+        if inner.operator != SyntaxKind::ExclamationToken as u16 {
+            return None;
+        }
+        let target = self.skip_parens_and_assertions(inner.operand);
+        let target_node = self.arena.get(target)?;
+        if target_node.kind == SyntaxKind::Identifier as u16 {
+            Some(target)
+        } else {
+            None
+        }
+    }
+
+    fn is_nullish_only_type(&self, type_id: TypeId) -> bool {
+        if matches!(type_id, TypeId::NEVER | TypeId::NULL | TypeId::UNDEFINED) {
+            return true;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.interner, type_id)
+        {
+            return !members.is_empty()
+                && members
+                    .iter()
+                    .all(|member| matches!(*member, TypeId::NULL | TypeId::UNDEFINED));
+        }
+        false
+    }
+
+    fn try_infer_logical_or_type_predicate(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let expr_node = self.arena.get(expr)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let bin = self.arena.get_binary_expr(expr_node)?;
+        if bin.operator_token != SyntaxKind::BarBarToken as u16 {
+            return None;
+        }
+
+        let left = self.skip_parens_and_assertions(bin.left);
+        let right = self.skip_parens_and_assertions(bin.right);
+        let left_target = self.inferable_guard_target(left, params_list)?;
+        let right_target = self.inferable_guard_target(right, params_list)?;
+
+        let (param_idx, param_name) =
+            self.match_guard_target_to_parameter(left_target, params_list, params)?;
+        let (right_param_idx, _) =
+            self.match_guard_target_to_parameter(right_target, params_list, params)?;
+        if right_param_idx != param_idx {
+            return None;
+        }
+
+        let param_type = params.get(param_idx)?.type_id;
+        let narrowed = self.narrow_type_by_condition(
+            param_type,
+            expr,
+            left_target,
+            true,
+            tsz_binder::FlowNodeId::NONE,
+        );
+        if narrowed == param_type
+            || narrowed == TypeId::NEVER
+            || narrowed == TypeId::ERROR
+            || narrowed == TypeId::ANY
+        {
+            return None;
+        }
+
+        Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_name),
+            type_id: Some(narrowed),
+            parameter_index: Some(param_idx),
+        })
+    }
+
+    fn inferable_guard_target(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+    ) -> Option<NodeIndex> {
+        let (guard, mut guard_target, is_optional) = self.extract_type_guard(expr)?;
+        if is_optional || matches!(guard, TypeGuard::Predicate { asserts: true, .. }) {
+            return None;
+        }
+
+        if let TypeGuard::LiteralEquality(_) = guard
+            && let Some((base, _path)) =
+                self.parameter_property_access_chain(guard_target, params_list)
+        {
+            guard_target = base;
+        }
+
+        Some(guard_target)
     }
 
     /// Locate the single guard expression in an inferable function body.
@@ -1162,6 +1355,35 @@ impl<'a> FlowAnalyzer<'a> {
                         | syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                         | syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
                 )
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                let Some(if_stmt) = self.arena.get_if_statement(stmt) else {
+                    return false;
+                };
+                if if_stmt.else_statement.is_some() {
+                    return false;
+                }
+                self.statement_always_throws_for_predicate_prefix(if_stmt.then_statement)
+            }
+            _ => false,
+        }
+    }
+
+    fn statement_always_throws_for_predicate_prefix(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        match stmt.kind {
+            syntax_kind_ext::THROW_STATEMENT => true,
+            syntax_kind_ext::BLOCK => {
+                let Some(block) = self.arena.get_block(stmt) else {
+                    return false;
+                };
+                block
+                    .statements
+                    .nodes
+                    .iter()
+                    .any(|&child| self.statement_always_throws_for_predicate_prefix(child))
             }
             _ => false,
         }

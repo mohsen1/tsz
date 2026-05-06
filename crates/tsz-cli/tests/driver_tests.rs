@@ -3495,6 +3495,29 @@ fn compile_with_explicit_files_without_tsconfig() {
 }
 
 #[test]
+fn compile_with_explicit_files_no_lib_no_emit_without_tsconfig_returns() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("main.ts"), "const value = 1;\n");
+
+    let args = parse_args(&["tsz", "main.ts", "--noLib", "--noEmit", "--pretty", "false"]);
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.iter().all(|code| *code == 2318),
+        "expected only TS2318 missing global type diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(!codes.is_empty(), "expected TS2318 diagnostics");
+    assert!(result.emitted_files.is_empty());
+    assert_eq!(result.files_read.len(), 1);
+    assert!(result.files_read[0].ends_with("main.ts"));
+}
+
+#[test]
 fn compile_no_check_no_emit_is_parse_only() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -11010,6 +11033,49 @@ fn compile_missing_file_in_include_pattern_returns_error() {
 }
 
 #[test]
+fn compile_ignore_config_without_files_reports_ts18003_from_discovered_config() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noLib": true
+          }
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.no_emit = true;
+    let compilation = compile(&args, base).expect("Should return Ok with diagnostics");
+
+    let ts18003 = compilation
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 18003)
+        .expect("expected TS18003 diagnostic");
+    let expected_path = base
+        .join("tsconfig.json")
+        .canonicalize()
+        .expect("canonical config path");
+    let expected_path = expected_path.to_string_lossy();
+    assert!(
+        ts18003.message_text.contains(expected_path.as_ref()),
+        "TS18003 should include discovered config path: {}",
+        ts18003.message_text
+    );
+    assert!(
+        ts18003
+            .message_text
+            .contains("Specified 'include' paths were '[\"**/*\"]'"),
+        "TS18003 should use default include paths when --ignoreConfig skips config loading: {}",
+        ts18003.message_text
+    );
+}
+
+#[test]
 fn compile_terminal_include_star_matches_direct_js_file() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -16628,6 +16694,43 @@ fn config_removed_target_es3_emits_ts5108() {
 }
 
 #[test]
+fn cli_removed_target_es3_emits_ts5108() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "let x: string = 1;\n");
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--target",
+        "ES3",
+        "--typeRoots",
+        "./empty-types",
+        "main.ts",
+    ])
+    .expect("--target ES3 should parse so config validation can report TS5108");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2],
+        "Expected only TS5108 for direct --target ES3, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics[0]
+            .message_text
+            .contains("Option 'target=ES3' has been removed"),
+        "Unexpected TS5108 message: {}",
+        result.diagnostics[0].message_text
+    );
+}
+
+#[test]
 fn cli_invalid_ignore_deprecations_emits_ts5103() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -16874,6 +16977,38 @@ export const name = pkg.default.name;
     assert!(
         result.diagnostics.iter().all(|d| d.code != 2339),
         "Did not expect TS2339 for JSON namespace default property, got diagnostics: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn resolve_json_module_does_not_make_included_json_files_roots() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "node16",
+            "moduleResolution": "node16",
+            "resolveJsonModule": true,
+            "types": [],
+            "noEmit": true
+          },
+          "include": ["**/*"]
+        }"#,
+    );
+    write_file(&base.join("app.ts"), "export const x = 1;\n");
+    write_file(&base.join("data.json"), "{ not valid json }\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "unimported JSON matched by include should not be parsed as a root: {:#?}",
         result.diagnostics
     );
 }

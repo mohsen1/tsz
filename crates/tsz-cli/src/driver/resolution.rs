@@ -11,6 +11,13 @@ use tsz::parser::ParserState;
 use tsz::parser::node::{NodeAccess, NodeArena};
 use tsz::scanner::SyntaxKind;
 
+type CollectedModuleSpecifier = (
+    String,
+    NodeIndex,
+    tsz::module_resolver::ImportKind,
+    Option<tsz::module_resolver::ImportingModuleKind>,
+);
+
 #[derive(Default)]
 pub(crate) struct ModuleResolutionCache {
     package_type_by_dir: FxHashMap<PathBuf, Option<PackageType>>,
@@ -762,18 +769,13 @@ const fn is_jsdoc_import_keyword_part(ch: char) -> bool {
 pub(crate) fn collect_module_specifiers(
     arena: &NodeArena,
     source_file: NodeIndex,
-) -> Vec<(
-    String,
-    NodeIndex,
-    tsz::module_resolver::ImportKind,
-    Option<tsz::module_resolver::ImportingModuleKind>,
-)> {
+) -> Vec<CollectedModuleSpecifier> {
     use tsz::module_resolver::ImportKind;
-    let mut specifiers = Vec::new();
 
     let Some(source) = arena.get_source_file_at(source_file) else {
-        return specifiers;
+        return Vec::new();
     };
+    let mut specifiers = Vec::with_capacity(source.statements.nodes.len().min(64));
 
     // Helper to strip surrounding quotes from a module specifier
     let strip_quotes =
@@ -970,18 +972,12 @@ pub(crate) fn collect_module_specifiers(
         }
     }
 
-    // Also collect dynamic imports and plain CommonJS require() calls from
-    // expression/call sites so dependency discovery follows the same module
-    // graph that checker-side call typing uses.
-    // Skip for declaration files (.d.ts) — they cannot contain runtime
-    // expressions like import() or require(), and scanning all nodes in
-    // large lib files (e.g. dom.d.ts with ~40K nodes) is wasted work.
-    if !source.is_declaration_file {
-        collect_dynamic_imports(arena, source_file, &strip_quotes, &mut specifiers);
-        collect_commonjs_requires(arena, &mut specifiers);
-    }
-
-    collect_import_type_specifiers(arena, &strip_quotes, &mut specifiers);
+    collect_non_static_module_specifiers(
+        arena,
+        !source.is_declaration_file,
+        &strip_quotes,
+        &mut specifiers,
+    );
 
     specifiers
 }
@@ -1007,18 +1003,18 @@ fn leftmost_import_type_call(arena: &NodeArena, mut idx: NodeIndex) -> Option<No
     None
 }
 
-fn collect_import_type_specifiers(
+fn collect_non_static_module_specifiers(
     arena: &NodeArena,
+    include_runtime_specifiers: bool,
     strip_quotes: &dyn Fn(&str) -> String,
-    specifiers: &mut Vec<(
-        String,
-        NodeIndex,
-        tsz::module_resolver::ImportKind,
-        Option<tsz::module_resolver::ImportingModuleKind>,
-    )>,
+    specifiers: &mut Vec<CollectedModuleSpecifier>,
 ) {
     use tsz::module_resolver::ImportKind;
     use tsz::parser::syntax_kind_ext;
+
+    let mut dynamic_imports = Vec::new();
+    let mut commonjs_requires = Vec::new();
+    let mut import_types = Vec::new();
 
     let mut push_import_type_specifier = |call_idx: NodeIndex| {
         let Some(call_node) = arena.get(call_idx) else {
@@ -1034,7 +1030,7 @@ fn collect_import_type_specifiers(
             return;
         };
         if let Some(text) = arena.get_literal_text(arg_idx) {
-            specifiers.push((
+            import_types.push((
                 strip_quotes(text),
                 arg_idx,
                 ImportKind::EsmImport,
@@ -1046,6 +1042,28 @@ fn collect_import_type_specifiers(
     for i in 0..arena.nodes.len() {
         let node = &arena.nodes[i];
         match node.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION && include_runtime_specifiers => {
+                let idx = NodeIndex(i as u32);
+                if let Some(call) = arena.get_call_expr(node)
+                    && let Some(callee) = arena.get(call.expression)
+                    && callee.kind == SyntaxKind::ImportKeyword as u16
+                    && let Some(args) = call.arguments.as_ref()
+                    && let Some(&arg_idx) = args.nodes.first()
+                    && !arg_idx.is_none()
+                    && let Some(text) = arena.get_literal_text(arg_idx)
+                {
+                    dynamic_imports.push((
+                        strip_quotes(text),
+                        arg_idx,
+                        ImportKind::DynamicImport,
+                        None,
+                    ));
+                }
+
+                if let Some(specifier) = extract_require_specifier(arena, idx) {
+                    commonjs_requires.push((specifier, idx, ImportKind::CjsRequire, None));
+                }
+            }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 let Some(type_ref) = arena.get_type_ref(node) else {
                     continue;
@@ -1067,6 +1085,10 @@ fn collect_import_type_specifiers(
             _ => {}
         }
     }
+
+    specifiers.extend(dynamic_imports);
+    specifiers.extend(commonjs_requires);
+    specifiers.extend(import_types);
 }
 
 fn import_type_resolution_mode_override(
@@ -1122,86 +1144,6 @@ fn import_type_resolution_mode_override(
         "import" => Some(ImportingModuleKind::Esm),
         "require" => Some(ImportingModuleKind::CommonJs),
         _ => None,
-    }
-}
-
-/// Collect dynamic `import()` expressions from the AST
-fn collect_dynamic_imports(
-    arena: &NodeArena,
-    _source_file: NodeIndex,
-    strip_quotes: &dyn Fn(&str) -> String,
-    specifiers: &mut Vec<(
-        String,
-        NodeIndex,
-        tsz::module_resolver::ImportKind,
-        Option<tsz::module_resolver::ImportingModuleKind>,
-    )>,
-) {
-    use tsz::parser::syntax_kind_ext;
-    use tsz::scanner::SyntaxKind;
-
-    // Iterate all nodes looking for CallExpression with ImportKeyword callee
-    for i in 0..arena.nodes.len() {
-        let node = &arena.nodes[i];
-        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            continue;
-        }
-        let Some(call) = arena.get_call_expr(node) else {
-            continue;
-        };
-        // Check if the callee is an ImportKeyword (dynamic import)
-        let Some(callee) = arena.get(call.expression) else {
-            continue;
-        };
-        if callee.kind != SyntaxKind::ImportKeyword as u16 {
-            continue;
-        }
-        // Get the first argument (the module specifier)
-        let Some(args) = call.arguments.as_ref() else {
-            continue;
-        };
-        let Some(&arg_idx) = args.nodes.first() else {
-            continue;
-        };
-        if arg_idx.is_none() {
-            continue;
-        }
-        if let Some(text) = arena.get_literal_text(arg_idx) {
-            specifiers.push((
-                strip_quotes(text),
-                arg_idx,
-                tsz::module_resolver::ImportKind::DynamicImport,
-                None,
-            ));
-        }
-    }
-}
-
-fn collect_commonjs_requires(
-    arena: &NodeArena,
-    specifiers: &mut Vec<(
-        String,
-        NodeIndex,
-        tsz::module_resolver::ImportKind,
-        Option<tsz::module_resolver::ImportingModuleKind>,
-    )>,
-) {
-    use tsz::parser::syntax_kind_ext;
-    for i in 0..arena.nodes.len() {
-        // Only check call expressions — skip all other node kinds to avoid
-        // incorrectly treating numeric/string literals as module specifiers.
-        if arena.nodes[i].kind != syntax_kind_ext::CALL_EXPRESSION {
-            continue;
-        }
-        let idx = NodeIndex(i as u32);
-        if let Some(specifier) = extract_require_specifier(arena, idx) {
-            specifiers.push((
-                specifier,
-                idx,
-                tsz::module_resolver::ImportKind::CjsRequire,
-                None,
-            ));
-        }
     }
 }
 
