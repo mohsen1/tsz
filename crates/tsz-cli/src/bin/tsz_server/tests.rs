@@ -298,7 +298,7 @@ fn save_to_writes_open_file_snapshot_to_tmpfile() {
     ));
     assert!(response.success);
     assert_eq!(
-        std::fs::read_to_string(tmpfile).expect("tmpfile should be written"),
+        std::fs::read_to_string(&tmpfile).expect("tmpfile should be written"),
         "const value = 123;\n"
     );
 }
