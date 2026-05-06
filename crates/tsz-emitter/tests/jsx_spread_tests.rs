@@ -353,6 +353,63 @@ fn react_jsxdev_under_module_detection_legacy_emits_file_name_without_import() {
 }
 
 #[test]
+fn react_jsxdev_column_number_uses_utf16_units() {
+    // tsc reports `columnNumber` in UTF-16 code units (the same units a JS
+    // runtime sees when indexing strings). Source text containing non-ASCII
+    // characters before the JSX element must not shift the column past tsc.
+    //
+    // Layout (1-based UTF-16 columns):
+    //   c o n s t   x   =   " 😀 "  ,     y     =     <
+    //   1 2 3 4 5 6 7 8 9 10 11 12-13 14 15 16 17 18 19 20 21
+    // The astral `😀` occupies UTF-16 columns 12 and 13 (surrogate pair),
+    // so the `<` lands at column 21.
+    let source = "const x = \"\u{1F600}\", y = <div />;\n";
+    let opts = PrintOptions {
+        jsx: JsxEmit::ReactJsxDev,
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let output = parse_and_print_named_with_opts("test.tsx", source, opts);
+
+    assert!(
+        output.contains("columnNumber: 21"),
+        "Expected UTF-16 columnNumber: 21 for `<` after an emoji, got:\n{output}"
+    );
+    assert!(
+        !output.contains("columnNumber: 23"),
+        "columnNumber must not count UTF-8 bytes (would render 23), got:\n{output}"
+    );
+}
+
+#[test]
+fn react_jsxdev_column_number_with_bmp_non_ascii() {
+    // BMP non-ASCII characters (here `é`) are one UTF-16 code unit each, so
+    // the column count should match the character index even though `é` is
+    // two UTF-8 bytes. `<` lands at UTF-16 column 14 here.
+    //   c o n s t _ c a f é _  =  _ <
+    //   1 2 3 4 5 6 7 8 9 10 11 12 13 14
+    let source = "const caf\u{00E9} = <div />;\n";
+    let opts = PrintOptions {
+        jsx: JsxEmit::ReactJsxDev,
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let output = parse_and_print_named_with_opts("test.tsx", source, opts);
+
+    assert!(
+        output.contains("columnNumber: 14"),
+        "Expected columnNumber: 14 for `<` after a BMP non-ASCII identifier, got:\n{output}"
+    );
+    // UTF-8 byte counting would have produced 15 (`é` is two bytes).
+    assert!(
+        !output.contains("columnNumber: 15"),
+        "columnNumber must not count UTF-8 bytes (would render 15), got:\n{output}"
+    );
+}
+
+#[test]
 fn react_jsxdev_preserves_virtual_src_file_name() {
     let source = "const el = <div />;\n";
     let opts = PrintOptions {
