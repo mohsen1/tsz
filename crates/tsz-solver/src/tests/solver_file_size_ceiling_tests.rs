@@ -207,7 +207,6 @@ fn test_emitter_file_size_ceiling() {
     //   transforms/ir_printer.rs (2481),
     //   declaration_emitter/exports/imports_and_modules.rs (2468),
     //   emitter/types/printer/type_printing.rs (2405),
-    //   declaration_emitter/helpers/function_analysis.rs (2317),
     //   emitter/source_file/emit.rs (2364),
     //   emitter/functions.rs (2228),
     //   emitter/es5/bindings_assignment.rs (2165),
