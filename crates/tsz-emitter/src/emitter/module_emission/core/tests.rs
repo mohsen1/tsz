@@ -1354,6 +1354,63 @@ fn decorated_class_export_no_duplicate_exports() {
 }
 
 #[test]
+fn cjs_deferred_enum_export_folds_into_iife_tail() {
+    let source = r#"class C {}
+enum E {
+    A, B
+}
+export { C, E };
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("})(E || (exports.E = E = {}));"),
+        "Deferred enum export should be folded into the IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\nexports.E = E;"),
+        "Deferred enum export should not emit a separate assignment.\nOutput:\n{output}"
+    );
+
+    let mut amd_printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::AMD,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    amd_printer.set_source_text(source);
+    amd_printer.emit(root);
+    let amd_output = amd_printer.get_output().to_string();
+
+    assert!(
+        amd_output.contains("    var E;"),
+        "AMD enum declaration should keep wrapper indentation.\nOutput:\n{amd_output}"
+    );
+    assert!(
+        !amd_output.contains("        var E;"),
+        "AMD enum rewrite should not double-indent the enum declaration.\nOutput:\n{amd_output}"
+    );
+    assert!(
+        !amd_output.contains("\n    exports.E = E;"),
+        "AMD deferred enum export should not emit a separate assignment.\nOutput:\n{amd_output}"
+    );
+}
+
+#[test]
 fn cjs_exported_class_with_mixin_heritage_exports_after_outer_class() {
     let source = r#"export const Mixin = null as any;
 export class Base {}
