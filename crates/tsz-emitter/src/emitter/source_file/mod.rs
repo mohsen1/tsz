@@ -329,6 +329,29 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn es5_object_literal_setter_downlevels_destructured_parameter() {
+        let source = "const foo = {\n    set foo([start, end]: [any, any]) {\n        void start;\n        void end;\n    },\n};\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("set foo(_a) {\n        var start = _a[0], end = _a[1];"),
+            "ES5 object literal setters should lower destructured parameters.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn decorator_metadata_conditional_type_uses_common_branch_runtime_type() {
         let source = "declare function d(): PropertyDecorator;\nabstract class BaseEntity<T> {\n    @d()\n    public attributes: T extends { attributes: infer A } ? A : undefined;\n}\nclass C {\n    @d()\n    x: number extends string ? false : true;\n}\n";
 
