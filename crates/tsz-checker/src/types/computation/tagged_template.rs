@@ -479,6 +479,22 @@ impl<'a> CheckerState<'a> {
                 args: &args,
                 arg_types: &arg_types,
                 callee_type,
+                callee_has_declared_generic_signature:
+                    crate::query_boundaries::common::function_shape_for_type(
+                        self.ctx.types,
+                        callee_type,
+                    )
+                    .is_some_and(|shape| !shape.type_params.is_empty())
+                        || crate::query_boundaries::common::callable_shape_for_type(
+                            self.ctx.types,
+                            callee_type,
+                        )
+                        .is_some_and(|shape| {
+                            shape
+                                .call_signatures
+                                .iter()
+                                .any(|sig| !sig.type_params.is_empty())
+                        }),
                 is_super_call: false,
                 is_optional_chain: false,
                 allow_contextual_mismatch_deferral: true,
