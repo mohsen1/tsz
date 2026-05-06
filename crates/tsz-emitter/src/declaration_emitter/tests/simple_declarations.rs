@@ -551,7 +551,7 @@ export class Next {}
 
     assert!(
         output.contains(
-            "export declare const make: (value: string) => {\n    /** field docs */\n    field: (next: number) => void;\n    /** method docs */\n    method: (next: number) => void;\n};"
+            "export declare const make: (value: string) => {\n    /** field docs */\n    field: (next: number) => void;\n    /** method docs */\n    method(next: number): void;\n};"
         ),
         "Expected returned object literal member JSDoc to stay with members: {output}"
     );
