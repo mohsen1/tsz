@@ -945,10 +945,9 @@ fn extract_module_specifier_from_import_change(new_text: &str) -> Option<String>
         (idx + "from ".len(), '\'')
     } else if let Some(idx) = new_text.find("require(\"") {
         (idx + "require(".len(), '"')
-    } else if let Some(idx) = new_text.find("require('") {
-        (idx + "require(".len(), '\'')
     } else {
-        return None;
+        let idx = new_text.find("require('")?;
+        (idx + "require(".len(), '\'')
     };
 
     let rest = &new_text[prefix_len..];

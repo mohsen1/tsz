@@ -489,11 +489,7 @@ impl<'a> CheckerState<'a> {
         // boundary so the policy is co-located.
         if result.is_none() && !ignore_libs {
             // Get the identifier name
-            let name = if let Some(ident) = self.ctx.arena.get_identifier_at(idx) {
-                ident.escaped_text.as_str()
-            } else {
-                return None;
-            };
+            let name = self.ctx.arena.get_identifier_at(idx)?.escaped_text.as_str();
             // Check lib_contexts directly for global symbols
             for (lib_idx, lib_ctx) in self.ctx.lib_contexts.iter().enumerate() {
                 if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
