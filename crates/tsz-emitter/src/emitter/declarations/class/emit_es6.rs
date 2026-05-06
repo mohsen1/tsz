@@ -73,8 +73,13 @@ fn collect_private_auto_accessors_with_reserved(
         let base = format!("_{class_name}_{clean_name}");
         let get_var_name = make_unique_private_name(&format!("{base}_get"), used_names);
         let set_var_name = make_unique_private_name(&format!("{base}_set"), used_names);
-        let storage_name =
-            make_unique_private_name(&format!("{base}_accessor_storage"), used_names);
+        let storage_name = if printer.ctx.options.legacy_decorators {
+            used_names.insert(base.clone());
+            let storage_stem = make_unique_private_name(&base, used_names);
+            make_unique_private_name(&format!("{storage_stem}_accessor_storage"), used_names)
+        } else {
+            make_unique_private_name(&format!("{base}_accessor_storage"), used_names)
+        };
         accessors.push(PrivateAutoAccessorInfo {
             member_idx,
             name: clean_name.to_string(),
@@ -2035,10 +2040,12 @@ impl<'a> Printer<'a> {
                     // Bodyless methods are erased (abstract methods without body,
                     // overload signatures). Abstract methods WITH a body (an error
                     // in TS) are still emitted by tsc, so we must not erase them.
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_method_decl(member_node)
-                        .is_some_and(|m| m.body.is_none()),
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        self.arena.get_method_decl(member_node).is_some_and(|m| {
+                            m.body.is_none()
+                                && !self.has_recovered_declaration_trailing_comma(member_node)
+                        })
+                    }
                     // Abstract accessors without body are erased. Bodyless non-abstract
                     // accessors (error case) are kept — tsc emits them as `{}`.
                     // Abstract accessors WITH a body (error case) are also kept.
@@ -2476,7 +2483,7 @@ impl<'a> Printer<'a> {
         // For class declarations: use separate statements `ClassName.field = value;`
         let emit_private_inits_before_static_elements = !needs_private_comma_expr
             && has_any_private_lowering
-            && static_initializer_class_alias.is_some()
+            && (static_initializer_class_alias.is_some() || has_static_privates)
             && (!static_field_inits.is_empty() || !deferred_static_blocks.is_empty());
         let mut emitted_private_auto_accessors_pre_static = false;
         if emit_private_inits_before_static_elements {

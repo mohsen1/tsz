@@ -13,6 +13,25 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn is_global_this_surface_type(&self, type_id: TypeId) -> bool {
+        let Some(shape) = query::object_shape_for_type(self.ctx.types, type_id) else {
+            return false;
+        };
+
+        let has_global_this = shape.properties.iter().any(|prop| {
+            self.ctx.types.resolve_atom(prop.name) == "globalThis"
+                && prop.type_id == TypeId::UNKNOWN
+        });
+        let has_global_value = shape.properties.iter().any(|prop| {
+            matches!(
+                self.ctx.types.resolve_atom(prop.name).as_str(),
+                "Array" | "Object" | "String" | "Number" | "Boolean" | "Function"
+            )
+        });
+
+        has_global_this && has_global_value && shape.string_index.is_none()
+    }
+
     fn element_access_receiver_declared_element_display(
         &mut self,
         idx: NodeIndex,
@@ -1079,6 +1098,23 @@ impl<'a> CheckerState<'a> {
             || type_id == TypeId::ANY
             || crate::query_boundaries::common::is_error_type(self.ctx.types, type_id)
         {
+            return;
+        }
+
+        if self.is_global_this_surface_type(type_id)
+            && self.ctx.no_implicit_any()
+            && !self.is_js_file()
+        {
+            use crate::diagnostics::{diagnostic_messages, format_message};
+            self.error_at_anchor(
+                idx,
+                DiagnosticAnchorKind::PropertyToken,
+                &format_message(
+                    diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+                    &["typeof globalThis"],
+                ),
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+            );
             return;
         }
 

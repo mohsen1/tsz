@@ -268,6 +268,35 @@ console.log(value);
 }
 
 #[test]
+fn nested_object_rest_lowers_when_outer_pattern_has_no_rest() {
+    // Regression for `narrowingDestructuring`: when the outer object pattern has
+    // no rest element but a nested element does (e.g. `{ f: { a, ...spread } }`),
+    // the lowering pass must still introduce a nested temp and a `__rest` call.
+    // The bug was a partial `needs_temp` predicate that only fired when the outer
+    // pattern itself carried a rest element, leaving the source un-lowered.
+    let output = emit_with_target(
+        r#"
+declare const value: { f: { a: number; b: string; c: number } };
+const { f: { a, ...spread } } = value;
+"#,
+        ScriptTarget::ES2017,
+    );
+
+    assert!(
+        output.contains("__rest("),
+        "Nested object rest must be lowered to a __rest() call.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("...spread"),
+        "Lowered output must not retain the rest spread syntax.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("value.f"),
+        "Lowering should thread `value.f` into a temp before the __rest call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_destructuring_nested_object() {
     let output = emit_es5("const {a: {b}} = obj;\n");
     assert!(
