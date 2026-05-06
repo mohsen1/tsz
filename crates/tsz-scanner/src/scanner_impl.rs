@@ -3351,12 +3351,8 @@ fn is_identifier_start(ch: u32) -> bool {
             || ch == CharacterCodes::DOLLAR;
     }
 
-    // Unicode path: Use Rust's char::is_alphabetic() which covers:
-    // Lu (Uppercase Letter), Ll (Lowercase Letter), Lt (Titlecase Letter),
-    // Lm (Modifier Letter), Lo (Other Letter), Nl (Letter Number)
-    // This correctly rejects U+00A0 (Whitespace), U+2026 (Punctuation), U+2194 (Symbol)
     if let Some(c) = char::from_u32(ch) {
-        return c.is_alphabetic();
+        return unicode_ident::is_xid_start(c);
     }
 
     false
