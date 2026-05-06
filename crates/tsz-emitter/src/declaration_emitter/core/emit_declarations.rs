@@ -432,14 +432,14 @@ impl<'a> DeclarationEmitter<'a> {
             };
             let module = module_part.trim().trim_end_matches(';').trim();
             for specifier in named.split(',') {
-                let name = specifier
-                    .trim()
+                let import_specifier = specifier.trim();
+                let name = import_specifier
                     .split_once(" as ")
-                    .map_or_else(|| specifier.trim(), |(_, alias)| alias.trim());
+                    .map_or(import_specifier, |(_, alias)| alias.trim());
                 if name.is_empty() {
                     continue;
                 }
-                let import_line = format!("import {{ {name} }} from {module};");
+                let import_line = format!("import {{ {import_specifier} }} from {module};");
                 if !output.contains(&import_line) && output.contains(&format!(": {name}<")) {
                     output.insert_str(0, &(import_line + "\n"));
                 }

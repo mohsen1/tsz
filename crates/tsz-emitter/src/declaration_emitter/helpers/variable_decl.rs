@@ -571,18 +571,22 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return;
         }
-        let Some(module) = self
-            .imported_value_module_specifier_from_syntax(access.expression)
-            .or_else(|| self.named_import_module_for_local(&receiver_name))
+        let Some((specifier, module)) = self
+            .named_import_specifier_for_local(&receiver_name)
             .or_else(|| {
-                self.source_file_text
-                    .as_deref()
-                    .and_then(|text| self.named_import_module_from_text(text, &receiver_name))
+                self.imported_value_module_specifier_from_syntax(access.expression)
+                    .map(|module| (receiver_name.clone(), module))
+            })
+            .or_else(|| {
+                self.source_file_text.as_deref().and_then(|text| {
+                    self.named_import_module_from_text(text, &receiver_name)
+                        .map(|module| (receiver_name.clone(), module))
+                })
             })
         else {
             return;
         };
-        let import_line = format!("import {{ {receiver_name} }} from \"{module}\";");
+        let import_line = format!("import {{ {specifier} }} from \"{module}\";");
         if self.writer.get_output().contains(&import_line) {
             return;
         }
@@ -594,15 +598,18 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(type_name) = Self::leading_type_reference_name(type_text) else {
             return;
         };
-        let Some(module) = self
-            .source_file_text
-            .as_deref()
-            .and_then(|text| self.named_import_module_from_text(text, type_name))
-            .or_else(|| self.named_import_module_for_local(type_name))
+        let Some((specifier, module)) =
+            self.named_import_specifier_for_local(type_name)
+                .or_else(|| {
+                    self.source_file_text.as_deref().and_then(|text| {
+                        self.named_import_module_from_text(text, type_name)
+                            .map(|module| (type_name.to_string(), module))
+                    })
+                })
         else {
             return;
         };
-        let import_line = format!("import {{ {type_name} }} from \"{module}\";");
+        let import_line = format!("import {{ {specifier} }} from \"{module}\";");
         if self.writer.get_output().contains(&import_line) {
             return;
         }
@@ -610,7 +617,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emitted_module_indicator = true;
     }
 
-    fn named_import_module_for_local(&self, local_name: &str) -> Option<String> {
+    fn named_import_specifier_for_local(&self, local_name: &str) -> Option<(String, String)> {
         let source_file = self
             .current_source_file_idx
             .and_then(|source_file_idx| self.arena.get(source_file_idx))
@@ -647,7 +654,16 @@ impl<'a> DeclarationEmitter<'a> {
                         continue;
                     };
                     if self.get_identifier_text(specifier.name).as_deref() == Some(local_name) {
-                        return Some(module_lit.text.clone());
+                        let imported_name = specifier
+                            .property_name
+                            .is_some()
+                            .then(|| self.get_identifier_text(specifier.property_name))
+                            .flatten();
+                        let specifier_text = imported_name.map_or_else(
+                            || local_name.to_string(),
+                            |imported_name| format!("{imported_name} as {local_name}"),
+                        );
+                        return Some((specifier_text, module_lit.text.clone()));
                     }
                 }
             }
