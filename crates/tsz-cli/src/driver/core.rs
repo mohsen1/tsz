@@ -2935,6 +2935,10 @@ fn apply_cli_overrides_with_config_options(
         options.allow_synthetic_default_imports = true;
         options.checker.allow_synthetic_default_imports = true;
     }
+    if let Some(allow_synthetic_default_imports) = args.allow_synthetic_default_imports {
+        options.allow_synthetic_default_imports = allow_synthetic_default_imports;
+        options.checker.allow_synthetic_default_imports = allow_synthetic_default_imports;
+    }
     if args.no_emit {
         options.no_emit = true;
     }
@@ -2944,6 +2948,9 @@ fn apply_cli_overrides_with_config_options(
     if args.no_resolve {
         options.no_resolve = true;
         options.checker.no_resolve = true;
+    }
+    if args.allow_umd_global_access {
+        options.checker.allow_umd_global_access = true;
     }
     if args.preserve_symlinks {
         options.preserve_symlinks = true;

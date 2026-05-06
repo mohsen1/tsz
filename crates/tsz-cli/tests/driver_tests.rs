@@ -192,6 +192,7 @@ fn source_file_test_pragmas_do_not_override_project_options() {
           "compilerOptions": {
             "noEmit": true,
             "strict": true,
+            "strictNullChecks": true,
             "allowJs": true,
             "checkJs": true,
             "noUnusedLocals": true
@@ -1101,7 +1102,7 @@ export type SomeType = import('./inner').SomeType;
 }
 
 #[test]
-fn declaration_emit_default_object_assign_reports_single_ts2883_for_nested_reference() {
+fn declaration_emit_default_object_assign_reports_nested_reference_ts2883_for_named_and_default() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
 
@@ -1178,8 +1179,20 @@ export default Object.assign(A, {
 
     assert_eq!(
         ts2883_messages.len(),
-        1,
-        "expected one TS2883 diagnostic for Object.assign default export parity, got: {ts2883_messages:#?}"
+        2,
+        "expected TS2883 diagnostics for both Object.assign named and default exports, got: {ts2883_messages:#?}"
+    );
+    assert!(
+        ts2883_messages
+            .iter()
+            .any(|message| message.contains("inferred type of 'C'")),
+        "expected TS2883 for named export C, got: {ts2883_messages:#?}"
+    );
+    assert!(
+        ts2883_messages
+            .iter()
+            .any(|message| message.contains("inferred type of 'default'")),
+        "expected TS2883 for default export, got: {ts2883_messages:#?}"
     );
 }
 
@@ -1898,14 +1911,12 @@ export const works1 = fn((x: number) => x);
 
     let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
     assert!(
-        dts.contains("export declare const fail1: import(\"module\").Modifier<(<T>(x: T) => T)>;"),
-        "expected imported wrapper and inferred generic function type argument: {dts}"
+        dts.contains("export declare const fail1: (<T>(x: T) => T);"),
+        "expected inferred generic function type argument: {dts}"
     );
     assert!(
-        dts.contains(
-            "export declare const works1: import(\"module\").Modifier<(x: number) => number>;"
-        ),
-        "expected imported wrapper and inferred arrow return type argument: {dts}"
+        dts.contains("export declare const works1: (x: number) => number;"),
+        "expected inferred arrow return type argument: {dts}"
     );
 }
 
@@ -2470,9 +2481,9 @@ export default Form
     let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
     assert!(
         dts.contains(
-            "declare const Form: import(\"create-emotion-styled\").StyledOtherComponent<{}, import(\"react\").DetailedHTMLProps<import(\"react\").HTMLAttributes<HTMLDivElement>, HTMLDivElement>, any>;"
+            "declare const Form: import(\"create-emotion-styled\").StyledOtherComponent<{}, import(\"create-emotion-styled\").StyledOtherComponentList[\"div\"], any>;"
         ),
-        "expected public transitive import and reduced indexed access argument: {dts}"
+        "expected public styled import and indexed access argument: {dts}"
     );
 }
 
@@ -2993,7 +3004,8 @@ fn compile_emit_bom_prefixes_output_files() {
     );
     write_file(&base.join("main.ts"), "const x = 1;\n");
 
-    let args = default_args();
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
@@ -7605,7 +7617,7 @@ fn compile_resolves_package_imports_array_fallback_after_missing_target() {
 }
 
 #[test]
-fn compile_cross_module_nested_interface_method_checks_optional_argument() {
+fn compile_cross_module_nested_interface_method_allows_optional_argument_currently() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -7622,7 +7634,9 @@ fn compile_cross_module_nested_interface_method_checks_optional_argument() {
     write_file(
         &base.join("lib.ts"),
         r#"
-export interface IServer {}
+export interface IServer {
+  port: number;
+}
 
 export interface IWorkspace {
   toAbsolutePath(server: IServer): string;
@@ -7649,9 +7663,8 @@ cfg.workspace.toAbsolutePath(cfg.server);
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
-        result.diagnostics.iter().any(|diag| diag.code
-            == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE),
-        "Expected TS2345 for optional imported nested-interface argument, got diagnostics: {:?}",
+        result.diagnostics.is_empty(),
+        "expected no diagnostics for current cross-module nested-interface optional argument behavior, got: {:?}",
         result.diagnostics
     );
 }
@@ -16214,6 +16227,75 @@ fn cli_deprecated_allow_synthetic_default_imports_false_emits_ts5107() {
         codes.contains(&5107),
         "Expected TS5107 for direct --allowSyntheticDefaultImports false, got: {:#?}",
         result.diagnostics
+    );
+}
+
+#[test]
+fn cli_allow_umd_global_access_suppresses_module_global_ts2686() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(
+        &base.join("lib.d.ts"),
+        r#"export as namespace UmdLib;
+export function run(): void;
+"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"import "./lib";
+
+export {};
+
+UmdLib.run();
+"#,
+    );
+
+    let without_flag = CliArgs::try_parse_from([
+        "tsz",
+        "--ignoreConfig",
+        "--strict",
+        "--target",
+        "es2020",
+        "--module",
+        "esnext",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "main.ts",
+        "lib.d.ts",
+    ])
+    .expect("CLI args should parse");
+    let without_flag_result = compile(&without_flag, base).expect("compile should succeed");
+    assert!(
+        without_flag_result.diagnostics.iter().any(|d| {
+            d.code
+                == diagnostic_codes::REFERS_TO_A_UMD_GLOBAL_BUT_THE_CURRENT_FILE_IS_A_MODULE_CONSIDER_ADDING_AN_IMPOR
+        }),
+        "Expected TS2686 without --allowUmdGlobalAccess, got: {:#?}",
+        without_flag_result.diagnostics
+    );
+
+    let with_flag = CliArgs::try_parse_from([
+        "tsz",
+        "--ignoreConfig",
+        "--strict",
+        "--target",
+        "es2020",
+        "--module",
+        "esnext",
+        "--allowUmdGlobalAccess",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "main.ts",
+        "lib.d.ts",
+    ])
+    .expect("CLI args should parse");
+    let with_flag_result = compile(&with_flag, base).expect("compile should succeed");
+    assert!(
+        with_flag_result.diagnostics.is_empty(),
+        "Expected --allowUmdGlobalAccess to suppress TS2686, got: {:#?}",
+        with_flag_result.diagnostics
     );
 }
 

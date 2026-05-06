@@ -336,7 +336,6 @@ impl Server {
                 "es2015" => ModuleKind::ES2015,
                 "es2020" => ModuleKind::ES2020,
                 "es2022" => ModuleKind::ES2022,
-                "esnext" => ModuleKind::ESNext,
                 "node16" => ModuleKind::Node16,
                 "node18" => ModuleKind::Node18,
                 "node20" => ModuleKind::Node20,
