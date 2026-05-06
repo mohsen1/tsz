@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/params-contextual-literal-regression-20260506-185439`
-- **PR**: TBD
-- **Status**: implemented; awaiting PR
+- **PR**: #4232
+- **Status**: PR opened
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
