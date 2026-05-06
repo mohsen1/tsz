@@ -1602,7 +1602,7 @@ impl<'a> CheckerState<'a> {
                 // alias/default-export symbols while the active resolution set tracks
                 // the declaration symbol; check both to avoid recursion leaks.
                 let canonical_base_sym =
-                    base_class_decl.and_then(|decl_idx| self.ctx.binder.get_node_symbol(decl_idx));
+                    base_class_decl.and_then(|decl_idx| self.class_declaration_symbol(decl_idx));
                 let base_in_resolution_set = self
                     .ctx
                     .class_instance_resolution_set
@@ -1707,7 +1707,7 @@ impl<'a> CheckerState<'a> {
 
                 // CRITICAL: Check global resolution set BEFORE recursing into base class
                 // This prevents infinite recursion when we have forward references in cycles
-                if let Some(base_class_sym) = self.ctx.binder.get_node_symbol(base_class_idx) {
+                if let Some(base_class_sym) = self.class_declaration_symbol(base_class_idx) {
                     if self
                         .ctx
                         .class_instance_resolution_set
