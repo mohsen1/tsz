@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/checker-in-keyword-typeguard-diagnostics`
-- **PR**: Pending
+- **PR**: https://github.com/mohsen1/tsz/pull/3618
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
