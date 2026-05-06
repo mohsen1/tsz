@@ -930,6 +930,40 @@ fn parse_reserved_word_as_let_name_emits_ts1389() {
 }
 
 #[test]
+fn parse_let_array_binding_starting_with_reserved_word_recovers_like_tsc() {
+    let source = "let [true] = x;";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let true_pos = source.find("true").unwrap() as u32;
+    let close_bracket_pos = source.find(']').unwrap() as u32;
+    let equals_pos = source.find('=').unwrap() as u32;
+
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED
+                && diag.start == true_pos
+        }),
+        "expected TS1181 at reserved array binding element, got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::EXPECTED
+                && diag.start == close_bracket_pos
+                && diag.message == "';' expected."
+        }),
+        "expected TS1005 semicolon recovery at close bracket, got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                && diag.start == equals_pos
+        }),
+        "expected TS1128 at equals recovery token, got {diags:?}"
+    );
+}
+
+#[test]
 fn parse_contextual_keyword_as_var_name_no_ts1389() {
     // Contextual keywords (type, interface, etc.) should NOT trigger TS1389
     // — they're valid as variable names.
@@ -1259,6 +1293,33 @@ fn bare_var_statement_in_class_body_recovers_as_ts1068_then_ts1128() {
             diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
         ],
         "bare variable statements in class bodies should recover as TS1068 + TS1128, got {diags:?}"
+    );
+}
+
+#[test]
+fn invalid_surrogate_escapes_in_class_member_names_report_ts1127() {
+    let source = r"class C { \uD800\uDEA7: string; }";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let invalid_positions: Vec<u32> = diags
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::INVALID_CHARACTER)
+        .map(|d| d.start)
+        .collect();
+    let backslash_positions: Vec<u32> = source
+        .match_indices('\\')
+        .map(|(pos, _)| pos as u32)
+        .collect();
+
+    assert_eq!(
+        invalid_positions, backslash_positions,
+        "invalid surrogate escapes should report TS1127 at each backslash, got {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code
+            == diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED),
+        "invalid surrogate escapes should not fall into class-member TS1068 recovery, got {diags:?}"
     );
 }
 

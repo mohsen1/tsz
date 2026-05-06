@@ -768,6 +768,43 @@ fn import_async_equals_still_works() {
     );
 }
 
+/// `import defer from = require(...)` should parse as an import declaration
+/// with `defer` as the modifier and `from` as the default import name. The
+/// malformed `=` then reports the missing module-specifier `from` keyword at
+/// that token rather than falling into import-equals recovery.
+#[test]
+fn import_defer_from_equals_reports_from_expected() {
+    let source = r#"import defer from = require("m");"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+    let equals_pos = source.find('=').expect("source should contain equals") as u32;
+    let fingerprints: Vec<(u32, u32, &str)> = diags
+        .iter()
+        .map(|d| (d.code, d.start, d.message.as_str()))
+        .collect();
+
+    assert!(
+        fingerprints
+            .iter()
+            .any(|(c, p, m)| *c == TS1005 && *p == equals_pos && m.contains("'from'")),
+        "expected TS1005 `'from' expected.` at `=`, got {fingerprints:?}"
+    );
+    assert!(
+        !fingerprints
+            .iter()
+            .any(|(c, _, m)| *c == TS1005 && m.contains("'='")),
+        "must not route through import-equals recovery, got {fingerprints:?}"
+    );
+    assert!(
+        !fingerprints
+            .iter()
+            .any(|(c, _, m)| *c == TS1005 && m.contains("';'")),
+        "must not cascade a semicolon diagnostic, got {fingerprints:?}"
+    );
+}
+
 // === ES Decorator misplacement tests (tsc parity) ===
 
 /// `abstract @dec class C {}` at statement level should emit TS1434

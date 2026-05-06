@@ -632,15 +632,8 @@ impl<'a> CheckerState<'a> {
         let name_ident = self.ctx.arena.get_identifier(name_node)?;
         let prop_name = name_ident.escaped_text.as_str();
 
-        // Resolve the expression (left side) to a symbol
-        let expr_sym_id = self.resolve_identifier_symbol(access_data.expression)?;
-        let expr_symbol = self.ctx.binder.get_symbol(expr_sym_id)?;
-
-        // Look for the property name in the symbol's exports (for namespaces/modules)
-        let enum_sym_id = expr_symbol
-            .exports
-            .as_ref()
-            .and_then(|exports| exports.get(prop_name))?;
+        let expr_sym_id = self.resolve_property_access_left_symbol(access_data.expression)?;
+        let enum_sym_id = self.resolve_exported_member_symbol(expr_sym_id, prop_name)?;
 
         // Check if it's an enum (not an enum member)
         let enum_symbol = self.ctx.binder.get_symbol(enum_sym_id)?;
@@ -672,22 +665,8 @@ impl<'a> CheckerState<'a> {
         let right_ident = self.ctx.arena.get_identifier(right_node)?;
         let prop_name = right_ident.escaped_text.as_str();
 
-        // Resolve the left side to a symbol
-        let left_node = self.ctx.arena.get(qname_data.left)?;
-        let left_sym_id = if left_node.kind == SyntaxKind::Identifier as u16 {
-            self.resolve_identifier_symbol(qname_data.left)?
-        } else {
-            // Nested qualified names not handled for now
-            return None;
-        };
-
-        let left_symbol = self.ctx.binder.get_symbol(left_sym_id)?;
-
-        // Look for the property name in the symbol's exports
-        let enum_sym_id = left_symbol
-            .exports
-            .as_ref()
-            .and_then(|exports| exports.get(prop_name))?;
+        let left_sym_id = self.resolve_qualified_name_left_symbol(qname_data.left)?;
+        let enum_sym_id = self.resolve_exported_member_symbol(left_sym_id, prop_name)?;
 
         // Check if it's an enum (not an enum member)
         let enum_symbol = self.ctx.binder.get_symbol(enum_sym_id)?;
@@ -703,6 +682,58 @@ impl<'a> CheckerState<'a> {
             .definition_store
             .register_type_to_def(enum_obj, def_id);
         Some(enum_obj)
+    }
+
+    fn resolve_exported_member_symbol(
+        &self,
+        container_sym_id: SymbolId,
+        prop_name: &str,
+    ) -> Option<SymbolId> {
+        let container_symbol = self.ctx.binder.get_symbol(container_sym_id)?;
+        container_symbol
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(prop_name))
+    }
+
+    fn resolve_qualified_name_left_symbol(&mut self, name_idx: NodeIndex) -> Option<SymbolId> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if name_node.kind == SyntaxKind::Identifier as u16 {
+            return self.resolve_identifier_symbol(name_idx);
+        }
+
+        if name_node.kind != syntax_kind_ext::QUALIFIED_NAME {
+            return None;
+        }
+
+        let qname_data = self.ctx.arena.get_qualified_name(name_node)?;
+        let right_name = self
+            .ctx
+            .arena
+            .get_identifier_text(qname_data.right)?
+            .to_owned();
+        let left_sym_id = self.resolve_qualified_name_left_symbol(qname_data.left)?;
+        self.resolve_exported_member_symbol(left_sym_id, &right_name)
+    }
+
+    fn resolve_property_access_left_symbol(&mut self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return self.resolve_identifier_symbol(expr_idx);
+        }
+
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access_data = self.ctx.arena.get_access_expr(expr_node)?;
+        let right_name = self
+            .ctx
+            .arena
+            .get_identifier_text(access_data.name_or_argument)?
+            .to_owned();
+        let left_sym_id = self.resolve_property_access_left_symbol(access_data.expression)?;
+        self.resolve_exported_member_symbol(left_sym_id, &right_name)
     }
 
     pub(crate) fn is_bare_var_declaration_node(&self, decl_idx: NodeIndex) -> bool {

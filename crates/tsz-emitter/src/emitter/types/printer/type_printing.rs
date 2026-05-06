@@ -2176,7 +2176,7 @@ impl<'a> TypePrinter<'a> {
             )
         } else {
             format!(
-                "{{ {readonly_prefix}[{param_name} in {constraint}{as_clause}]{optional_suffix}: {template} }}"
+                "{{ {readonly_prefix}[{param_name} in {constraint}{as_clause}]{optional_suffix}: {template}; }}"
             )
         }
     }

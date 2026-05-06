@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BinaryHeap;
 use std::path::{Path, PathBuf};
 
-use crate::config::{CompilerOptions, TsConfig};
+use crate::config::{CompilerOptions, TsConfig, load_tsconfig};
 
 /// A project reference as specified in tsconfig.json
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -445,6 +445,8 @@ pub fn load_project(config_path: &Path) -> Result<ResolvedProject> {
 
     let config = parse_tsconfig_with_references(&source)
         .with_context(|| format!("failed to parse tsconfig: {}", config_path.display()))?;
+    let effective_config = load_tsconfig(config_path)
+        .with_context(|| format!("failed to load tsconfig: {}", config_path.display()))?;
 
     let root_dir = config_path
         .parent()
@@ -456,33 +458,27 @@ pub fn load_project(config_path: &Path) -> Result<ResolvedProject> {
     // Resolve project references
     let resolved_references = resolve_project_references(&root_dir, &config.references)?;
 
-    // Check composite from the deserialized CompilerOptions field
-    let is_composite = config
-        .base
-        .compiler_options
+    let effective_options = effective_config.compiler_options.as_ref();
+
+    // Check build-sensitive options from the inherited compiler options.
+    let is_composite = effective_options
         .as_ref()
         .and_then(|opts| opts.composite)
         .unwrap_or(false);
 
     // Check noEmit
-    let no_emit = config
-        .base
-        .compiler_options
+    let no_emit = effective_options
         .as_ref()
         .and_then(|opts| opts.no_emit)
         .unwrap_or(false);
 
     // Get output directories
-    let declaration_dir = config
-        .base
-        .compiler_options
+    let declaration_dir = effective_options
         .as_ref()
         .and_then(|opts| opts.declaration_dir.as_ref())
         .map(|d| root_dir.join(d));
 
-    let out_dir = config
-        .base
-        .compiler_options
+    let out_dir = effective_options
         .as_ref()
         .and_then(|opts| opts.out_dir.as_ref())
         .map(|d| root_dir.join(d));
