@@ -622,11 +622,20 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                         i += 2;
                         continue;
                     }
-                    // Plain bool flag: skip both (flag is not set)
+                    // Plain bool flag: clap can't represent an explicit `false`,
+                    // so strip the `--flag false` pair and forward the intent
+                    // through a hidden side-channel arg. The override pipeline
+                    // reads `args.explicitly_disabled_bool_flags` and uses it to
+                    // flip a `true` value loaded from `tsconfig.json` to `false`.
                     if let Some(&prev_idx) = flag_positions.get(&flag_name) {
                         skip_positions[prev_idx] = true;
                     }
                     flag_positions.remove(&flag_name);
+                    let bare = flag_name.trim_start_matches("--");
+                    final_result.push(OsString::from(format!(
+                        "--__explicitly-disabled-bool-flag={bare}"
+                    )));
+                    skip_positions.push(false);
                     i += 2;
                     continue;
                 } else if next_lower == "true" {
@@ -2409,10 +2418,22 @@ fn show_config_apply_cli_overrides(
         map.insert("ignoreDeprecations".into(), Value::String(v.clone()));
     }
 
+    // `--flag false` for plain `bool` flags is forwarded through this hidden
+    // side-channel by `preprocess_args`. Explicit `false` must round-trip into
+    // `--showConfig` output so a CLI override of a `tsconfig.json` `true` value
+    // is visible to the caller, matching `tsc --showConfig --flag false`.
+    let disabled_bool_flags: rustc_hash::FxHashSet<&str> = args
+        .explicitly_disabled_bool_flags
+        .iter()
+        .map(String::as_str)
+        .collect();
+
     macro_rules! set_if_true {
         ($f:ident, $k:expr) => {
             if args.$f {
                 map.insert($k.into(), Value::Bool(true));
+            } else if disabled_bool_flags.contains($k) {
+                map.insert($k.into(), Value::Bool(false));
             }
         };
     }
