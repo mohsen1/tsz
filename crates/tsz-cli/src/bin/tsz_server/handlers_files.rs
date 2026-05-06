@@ -213,6 +213,53 @@ impl Server {
                 }
             }
         }
+        if let Some(changed) = request
+            .arguments
+            .get("changedFiles")
+            .and_then(|v| v.as_array())
+        {
+            for entry in changed {
+                let Some(file) = entry.get("fileName").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(text_changes) = entry.get("textChanges").and_then(|v| v.as_array()) else {
+                    continue;
+                };
+                let Some(mut content) = self.open_files.get(file).cloned() else {
+                    continue;
+                };
+
+                for change in text_changes {
+                    let Some(start) = change.get("start") else {
+                        continue;
+                    };
+                    let Some(end) = change.get("end") else {
+                        continue;
+                    };
+                    let line = start
+                        .get("line")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(1) as u32;
+                    let offset = start
+                        .get("offset")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(1) as u32;
+                    let end_line = end
+                        .get("line")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(line as u64) as u32;
+                    let end_offset = end
+                        .get("offset")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(offset as u64) as u32;
+                    let new_text = change.get("newText").and_then(|v| v.as_str()).unwrap_or("");
+                    content =
+                        Self::apply_change(&content, line, offset, end_line, end_offset, new_text);
+                }
+
+                self.open_files.insert(file.to_string(), content);
+            }
+        }
         if let Some(closed) = request
             .arguments
             .get("closedFiles")

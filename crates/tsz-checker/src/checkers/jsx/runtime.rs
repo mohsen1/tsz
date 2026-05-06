@@ -165,6 +165,10 @@ pub(crate) fn extract_jsx_frag_pragma(source: &str) -> Option<String> {
 /// Scans ALL block comments for `@jsxRuntime classic` or `@jsxRuntime automatic`.
 /// The last occurrence wins (matching tsc behavior).
 pub(crate) fn extract_jsx_runtime_pragma(source: &str) -> Option<&'static str> {
+    if !source.contains("@jsxRuntime") {
+        return None;
+    }
+
     let mut result = None;
     let bytes = source.as_bytes();
     let mut pos = 0;

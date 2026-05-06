@@ -262,6 +262,26 @@ fn jsx_hyphenated_unicode_escape_reports_from_full_name_start() {
 }
 
 #[test]
+fn jsx_attribute_name_allows_hyphen_followed_by_digit() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        x: { "data-123": "ok" };
+    }
+}
+
+const ok = <x data-123="ok" />;
+"#;
+    let diagnostics = parse_diagnostics(source);
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no parser diagnostics for digit-starting hyphen segment, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsx_attribute_names_starting_with_number_or_minus_follow_tsc_recovery() {
     let source = "declare namespace JSX {\n\tinterface Element { }\n\tinterface IntrinsicElements {\n\t\ttest1: { \"data-foo\"?: string };\n\t\ttest2: { \"data-foo\"?: string };\n\t}\n}\n\n<test1 32data={32} />;\n<test2 -data={32} />;\n";
     let diagnostics = parse_diagnostics(source);

@@ -70,6 +70,29 @@ fn split_response_line_adjacent_quotes() {
     assert_eq!(split_response_line(r#"foo"bar"baz"#), vec!["foobarbaz"]);
 }
 
+#[test]
+fn preprocess_response_file_hash_line_is_not_a_comment() {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "tsz_response_hash_{}_{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before epoch")
+            .as_nanos()
+    ));
+    std::fs::write(&path, "# comment\n--pretty false\na.ts\n").expect("write response file");
+
+    let response_arg = format!("@{}", path.display());
+    let result = preprocess_strs(&["tsz", response_arg.as_str()]);
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(
+        result,
+        vec!["tsz", "#", "comment", "--pretty=false", "a.ts"]
+    );
+}
+
 // ==================== Case-insensitive flag normalization ====================
 
 #[test]

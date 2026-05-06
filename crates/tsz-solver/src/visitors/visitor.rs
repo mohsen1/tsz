@@ -978,7 +978,7 @@ impl<'a> RecursiveTypeCollector<'a> {
         }
 
         self.collected.insert(type_id);
-        self.visit_key(&key);
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || self.visit_key(&key));
         self.guard.leave(type_id);
     }
 
