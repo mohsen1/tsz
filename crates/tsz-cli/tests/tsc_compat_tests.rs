@@ -45,6 +45,43 @@ fn write_file(path: &Path, contents: &str) {
 }
 
 #[test]
+fn list_files_only_accepts_bare_relative_project_config_path() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("listfiles_bare_relative_project").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"include":["src/**/*"],"compilerOptions":{"noEmit":true,"noLib":true}}"#,
+    );
+    write_file(&temp.path.join("src/a.ts"), "const a = 1;\n");
+
+    let output = Command::new(tsz_bin)
+        .args([
+            "-p",
+            "tsconfig.json",
+            "--pretty",
+            "false",
+            "--listFilesOnly",
+        ])
+        .current_dir(&temp.path)
+        .output()
+        .expect("run tsz --listFilesOnly");
+
+    let stdout = normalize_output(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize_output(&String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "tsz --listFilesOnly should accept a bare relative project config path.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("src/a.ts"),
+        "expected discovered source file in stdout, got:\n{stdout}"
+    );
+}
+
+#[test]
 fn declaration_emit_expands_foreign_import_mapped_keys_from_nested_package() {
     let temp = TempDir::new("foreign_mapped_keys").expect("temp dir");
 

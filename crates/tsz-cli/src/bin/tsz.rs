@@ -2959,10 +2959,15 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         args.project
             .as_ref()
             .map(|p| {
-                if p.is_dir() {
-                    p.join("tsconfig.json")
+                let resolved = if p.is_relative() {
+                    cwd.join(p)
                 } else {
                     p.clone()
+                };
+                if resolved.is_dir() {
+                    resolved.join("tsconfig.json")
+                } else {
+                    resolved
                 }
             })
             .or_else(|| {
