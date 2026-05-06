@@ -39,12 +39,12 @@ struct FunctionTypeTextParts {
     return_type: String,
 }
 
-struct CallableDeclParts<'b> {
-    modifiers: Option<&'b NodeList>,
-    type_parameters: Option<&'b NodeList>,
-    parameters: &'b NodeList,
-    type_annotation: NodeIndex,
-    body: NodeIndex,
+pub(in crate::declaration_emitter) struct CallableDeclParts<'b> {
+    pub(in crate::declaration_emitter) modifiers: Option<&'b NodeList>,
+    pub(in crate::declaration_emitter) type_parameters: Option<&'b NodeList>,
+    pub(in crate::declaration_emitter) parameters: &'b NodeList,
+    pub(in crate::declaration_emitter) type_annotation: NodeIndex,
+    pub(in crate::declaration_emitter) body: NodeIndex,
 }
 
 impl<'a> DeclarationEmitter<'a> {
@@ -1289,7 +1289,7 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn with_symbol_declarations<T>(
+    pub(crate) fn with_symbol_declarations<T>(
         &self,
         sym_id: SymbolId,
         mut f: impl FnMut(&NodeArena, NodeIndex) -> Option<T>,
@@ -1536,7 +1536,11 @@ impl<'a> DeclarationEmitter<'a> {
         b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
     }
 
-    fn identifier_text_from_arena(&self, arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    pub(crate) fn identifier_text_from_arena(
+        &self,
+        arena: &NodeArena,
+        idx: NodeIndex,
+    ) -> Option<String> {
         let node = arena.get(idx)?;
         arena
             .get_identifier(node)
@@ -4065,7 +4069,7 @@ impl<'a> DeclarationEmitter<'a> {
         substitutions
     }
 
-    fn function_signature_accepts_call_arguments(
+    pub(in crate::declaration_emitter) fn function_signature_accepts_call_arguments(
         &self,
         source_arena: &NodeArena,
         parameters: &NodeList,
@@ -4094,7 +4098,7 @@ impl<'a> DeclarationEmitter<'a> {
         arg_count >= required_count && (has_rest || arg_count <= parameters.nodes.len())
     }
 
-    fn callable_decl_parts_from_node<'b>(
+    pub(in crate::declaration_emitter) fn callable_decl_parts_from_node<'b>(
         source_arena: &'b NodeArena,
         decl_node: &'b Node,
     ) -> Option<CallableDeclParts<'b>> {
