@@ -567,6 +567,20 @@ impl<'a> CheckerState<'a> {
         prop_name: &str,
         type_id: TypeId,
     ) -> Option<&'static str> {
+        let primitive_type_name = match type_id {
+            TypeId::STRING => Some("String"),
+            TypeId::NUMBER => Some("Number"),
+            TypeId::BOOLEAN => Some("Boolean"),
+            TypeId::SYMBOL => Some("Symbol"),
+            TypeId::BIGINT => Some("Bigint"),
+            _ => None,
+        };
+        if let Some(type_name) = primitive_type_name
+            && let Some(lib) = get_lib_for_type_property(type_name, prop_name)
+        {
+            return Some(lib);
+        }
+
         if let Some(type_name) = self.get_type_symbol_name(type_id)
             && let Some(lib) = get_lib_for_type_property(&type_name, prop_name)
         {

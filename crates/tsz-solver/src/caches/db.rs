@@ -180,6 +180,14 @@ pub trait TypeDatabase {
     /// See `TypeInterner::store_union_origin` for the full contract.
     fn store_union_origin(&self, _union_type_id: TypeId, _origin_members: Vec<TypeId>) {}
 
+    /// Replace display-origin members for a union in a diagnostic-specific context.
+    fn replace_union_origin_for_display(
+        &self,
+        _union_type_id: TypeId,
+        _origin_members: Vec<TypeId>,
+    ) {
+    }
+
     /// Look up the as-written origin members for a flattened Union TypeId.
     fn get_union_origin(&self, _type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
         None
@@ -589,6 +597,10 @@ impl TypeDatabase for TypeInterner {
 
     fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
         Self::store_union_origin(self, union_type_id, origin_members);
+    }
+
+    fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        Self::replace_union_origin_for_display(self, union_type_id, origin_members);
     }
 
     fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
@@ -1085,6 +1097,9 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Returns the variance of each type parameter for the given `DefId`.
     /// Returns None if the `DefId` is not a generic type or variance cannot be determined.
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>>;
+
+    /// Store a resolver-computed variance mask for reuse by later relation checks.
+    fn insert_type_param_variance(&self, _def_id: DefId, _variance: Arc<[Variance]>) {}
 }
 
 impl QueryDatabase for TypeInterner {

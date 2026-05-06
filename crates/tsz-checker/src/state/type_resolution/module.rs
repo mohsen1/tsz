@@ -9,6 +9,7 @@ use crate::module_resolution::module_specifier_candidates;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -2251,6 +2252,41 @@ impl<'a> CheckerState<'a> {
         export_name: &str,
         visited_aliases: &mut AliasCycleTracker,
     ) -> Option<tsz_binder::SymbolId> {
+        let cache_key = (
+            self.ctx.current_file_idx,
+            module_specifier.to_string(),
+            export_name.to_string(),
+        );
+        if let Some(sym_id) = self
+            .ctx
+            .export_equals_named_cache
+            .borrow()
+            .get(&cache_key)
+            .copied()
+        {
+            return Some(sym_id);
+        }
+
+        let resolved = self.resolve_named_export_via_export_equals_tracked_uncached(
+            module_specifier,
+            export_name,
+            visited_aliases,
+        );
+        if let Some(sym_id) = resolved {
+            self.ctx
+                .export_equals_named_cache
+                .borrow_mut()
+                .insert(cache_key, sym_id);
+        }
+        resolved
+    }
+
+    fn resolve_named_export_via_export_equals_tracked_uncached(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        visited_aliases: &mut AliasCycleTracker,
+    ) -> Option<tsz_binder::SymbolId> {
         let symbol_export_named_member =
             |symbol: &tsz_binder::Symbol, member_name: &str| -> Option<tsz_binder::SymbolId> {
                 if let Some(exports) = symbol.exports.as_ref()
@@ -2287,6 +2323,16 @@ impl<'a> CheckerState<'a> {
         };
 
         let lookup_by_name = |name: &str| -> Vec<tsz_binder::SymbolId> {
+            if let Some(cached) = self
+                .ctx
+                .symbol_name_candidates_cache
+                .borrow()
+                .get(name)
+                .cloned()
+            {
+                return cached;
+            }
+
             let mut result: Vec<tsz_binder::SymbolId> = self
                 .ctx
                 .binder
@@ -2294,14 +2340,19 @@ impl<'a> CheckerState<'a> {
                 .find_all_by_name(name)
                 .to_vec();
             if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                let mut seen: FxHashSet<tsz_binder::SymbolId> = result.iter().copied().collect();
                 for binder in all_binders.iter() {
                     for &sym_id in binder.get_symbols().find_all_by_name(name) {
-                        if !result.contains(&sym_id) {
+                        if seen.insert(sym_id) {
                             result.push(sym_id);
                         }
                     }
                 }
             }
+            self.ctx
+                .symbol_name_candidates_cache
+                .borrow_mut()
+                .insert(name.to_string(), result.clone());
             result
         };
         let prefer_value_named_member = |member_id: tsz_binder::SymbolId| -> tsz_binder::SymbolId {
@@ -2342,10 +2393,9 @@ impl<'a> CheckerState<'a> {
             member_id
         };
 
-        let resolve_from_exports = |exports: &tsz_binder::SymbolTable,
-                                    visited_aliases: &mut AliasCycleTracker|
+        let resolve_from_export_equals_sym = |export_equals_sym: tsz_binder::SymbolId,
+                                              visited_aliases: &mut AliasCycleTracker|
          -> Option<tsz_binder::SymbolId> {
-            let export_equals_sym = exports.get("export=")?;
             if export_name == "default" {
                 return Some(export_equals_sym);
             }
@@ -2424,6 +2474,12 @@ impl<'a> CheckerState<'a> {
             }
 
             None
+        };
+        let resolve_from_exports = |exports: &tsz_binder::SymbolTable,
+                                    visited_aliases: &mut AliasCycleTracker|
+         -> Option<tsz_binder::SymbolId> {
+            let export_equals_sym = exports.get("export=")?;
+            resolve_from_export_equals_sym(export_equals_sym, visited_aliases)
         };
 
         let candidates = module_specifier_candidates(module_specifier);
@@ -2513,10 +2569,8 @@ impl<'a> CheckerState<'a> {
                     for &(file_idx, export_equals_sym_id) in entries {
                         self.ctx
                             .register_symbol_file_target(export_equals_sym_id, file_idx);
-                        let mut export_equals_only = tsz_binder::SymbolTable::new();
-                        export_equals_only.set("export=".to_string(), export_equals_sym_id);
                         if let Some(sym_id) =
-                            resolve_from_exports(&export_equals_only, visited_aliases)
+                            resolve_from_export_equals_sym(export_equals_sym_id, visited_aliases)
                         {
                             return Some(sym_id);
                         }

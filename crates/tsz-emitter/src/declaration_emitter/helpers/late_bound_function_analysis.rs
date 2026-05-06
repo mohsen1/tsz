@@ -264,6 +264,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
         root_name: &str,
+        root_symbol: Option<SymbolId>,
     ) -> Option<LateBoundAssignmentMember> {
         let expr_idx = self
             .arena
@@ -299,6 +300,15 @@ impl<'a> DeclarationEmitter<'a> {
                     .as_deref()
                     == Some(root_name));
         if !receiver_matches_root {
+            return None;
+        }
+        if let Some(root_symbol) = root_symbol
+            && let Some(receiver_name) = self.get_identifier_text(receiver_idx)
+            && receiver_name == root_name
+            && let Some(receiver_symbol) =
+                self.resolve_identifier_symbol(receiver_idx, &receiver_name)
+            && receiver_symbol != root_symbol
+        {
             return None;
         }
 
@@ -345,6 +355,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         node_idx: NodeIndex,
         root_name: &str,
+        root_symbol: Option<SymbolId>,
         declared_members: &FxHashSet<String>,
         members: &mut Vec<LateBoundAssignmentMember>,
     ) {
@@ -361,7 +372,8 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        if let Some(member) = self.late_bound_assignment_member_for_expression(node_idx, root_name)
+        if let Some(member) =
+            self.late_bound_assignment_member_for_expression(node_idx, root_name, root_symbol)
         {
             Self::record_late_bound_assignment_member(members, member, declared_members);
         }
@@ -371,6 +383,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.collect_late_bound_assignment_members_from_node(
                     stmt_idx,
                     root_name,
+                    root_symbol,
                     declared_members,
                     members,
                 );
@@ -383,6 +396,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.collect_late_bound_assignment_members_from_node(
                     loop_data.statement,
                     root_name,
+                    root_symbol,
                     declared_members,
                     members,
                 );
@@ -390,6 +404,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.collect_late_bound_assignment_members_from_node(
                         loop_data.condition,
                         root_name,
+                        root_symbol,
                         declared_members,
                         members,
                     );
@@ -401,6 +416,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.collect_late_bound_assignment_members_from_node(
                     loop_data.initializer,
                     root_name,
+                    root_symbol,
                     declared_members,
                     members,
                 );
@@ -409,6 +425,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.collect_late_bound_assignment_members_from_node(
                     loop_data.condition,
                     root_name,
+                    root_symbol,
                     declared_members,
                     members,
                 );
@@ -416,6 +433,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.collect_late_bound_assignment_members_from_node(
                 loop_data.statement,
                 root_name,
+                root_symbol,
                 declared_members,
                 members,
             );
@@ -423,6 +441,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.collect_late_bound_assignment_members_from_node(
                     loop_data.incrementor,
                     root_name,
+                    root_symbol,
                     declared_members,
                     members,
                 );
@@ -434,18 +453,21 @@ impl<'a> DeclarationEmitter<'a> {
             self.collect_late_bound_assignment_members_from_node(
                 for_in_of.initializer,
                 root_name,
+                root_symbol,
                 declared_members,
                 members,
             );
             self.collect_late_bound_assignment_members_from_node(
                 for_in_of.expression,
                 root_name,
+                root_symbol,
                 declared_members,
                 members,
             );
             self.collect_late_bound_assignment_members_from_node(
                 for_in_of.statement,
                 root_name,
+                root_symbol,
                 declared_members,
                 members,
             );
@@ -456,6 +478,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.collect_late_bound_assignment_members_from_node(
                 child_idx,
                 root_name,
+                root_symbol,
                 declared_members,
                 members,
             );
@@ -561,6 +584,11 @@ impl<'a> DeclarationEmitter<'a> {
         if self.source_is_js_file && self.js_export_equals_names.contains(&root_name) {
             return Vec::new();
         }
+        let root_symbol = self.binder.and_then(|binder| {
+            binder
+                .get_node_symbol(root_name_idx)
+                .or_else(|| binder.file_locals.get(&root_name))
+        });
         let Some(source_file) = self.arena.source_files.first() else {
             return Vec::new();
         };
@@ -571,6 +599,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.collect_late_bound_assignment_members_from_node(
                 stmt_idx,
                 &root_name,
+                root_symbol,
                 &declared_members,
                 &mut members,
             );

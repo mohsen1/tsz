@@ -471,12 +471,7 @@ impl<'a> CheckerState<'a> {
                 match name.as_str() {
                     "undefined" => return TypeId::UNDEFINED,
                     "NaN" | "Infinity" => return TypeId::NUMBER,
-                    // Bare `typeof globalThis` must not behave like `unknown`.
-                    // `unknown` satisfies arbitrary required-object constraints in
-                    // the relation layer, masking TS2344. Qualified/global-like
-                    // accesses (`typeof globalThis.Symbol`, `Window & typeof
-                    // globalThis`) are handled by dedicated paths above.
-                    "globalThis" => return factory.object(Vec::new()),
+                    "globalThis" => return self.get_global_this_type(type_query.expr_name),
                     _ => {}
                 }
                 if self.is_known_global_value_name(&name) {
