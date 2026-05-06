@@ -650,7 +650,7 @@ impl<'a> Printer<'a> {
                             && let Some(ident) = self.arena.identifiers.get(*name_id as usize)
                         {
                             self.pending_commonjs_class_export_name =
-                                Some(ident.escaped_text.clone());
+                                Some((idx, ident.escaped_text.clone()));
                         }
                         let prev_module = self.ctx.options.module;
                         let prev_original = self.ctx.original_module_kind;
@@ -663,7 +663,9 @@ impl<'a> Printer<'a> {
                         // If the deferred export was NOT consumed (e.g. the class had no
                         // static blocks/fields, so emit_class_es6_with_options was not
                         // reached, or the class was ambient), emit it now as a fallback.
-                        if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+                        if let Some((_, class_name)) =
+                            self.pending_commonjs_class_export_name.take()
+                        {
                             if !self.writer.is_at_line_start() {
                                 self.write_line();
                             }
@@ -1073,7 +1075,7 @@ impl<'a> Printer<'a> {
                 emitter.set_function_name(name.to_string());
             } else if let Some(ref name) = self.anonymous_default_export_name {
                 emitter.set_function_name(name.clone());
-            } else if let Some(ref name) = self.pending_commonjs_class_export_name {
+            } else if let Some((_, ref name)) = self.pending_commonjs_class_export_name {
                 emitter.set_function_name(name.clone());
             }
         }
@@ -1477,7 +1479,8 @@ impl<'a> Printer<'a> {
                     if let Some(name_id) = names.first()
                         && let Some(ident) = self.arena.identifiers.get(*name_id as usize)
                     {
-                        self.pending_commonjs_class_export_name = Some(ident.escaped_text.clone());
+                        self.pending_commonjs_class_export_name =
+                            Some((idx, ident.escaped_text.clone()));
                     }
                     let prev_module = self.ctx.options.module;
                     let prev_original = self.ctx.original_module_kind;
@@ -1491,7 +1494,7 @@ impl<'a> Printer<'a> {
                     }
                     self.ctx.options.module = prev_module;
                     self.ctx.original_module_kind = prev_original;
-                    if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+                    if let Some((_, class_name)) = self.pending_commonjs_class_export_name.take() {
                         if !self.writer.is_at_line_start() {
                             self.write_line();
                         }
