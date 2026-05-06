@@ -2655,6 +2655,9 @@ fn apply_cli_overrides_with_config_options(
     if let Some(root_dir) = args.root_dir.as_ref() {
         options.root_dir = Some(root_dir.clone());
     }
+    if let Some(base_url) = args.base_url.as_ref() {
+        options.base_url = Some(base_url.clone());
+    }
     if let Some(declaration_dir) = args.declaration_dir.as_ref() {
         options.declaration_dir = Some(declaration_dir.clone());
     }

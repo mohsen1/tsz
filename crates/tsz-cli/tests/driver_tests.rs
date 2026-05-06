@@ -5363,6 +5363,35 @@ fn compile_resolves_paths_mappings() {
 }
 
 #[test]
+fn cli_base_url_resolves_bare_imports() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        r#"import { value } from "foo";
+
+value.toFixed();
+"#,
+    );
+    write_file(&base.join("src/foo.ts"), "export const value = 1;\n");
+
+    let mut args = default_args();
+    args.base_url = Some(PathBuf::from("src"));
+    args.ignore_deprecations = Some("6.0".to_string());
+    args.no_emit = true;
+    args.strict = true;
+    args.files = vec![PathBuf::from("main.ts")];
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected CLI --baseUrl to resolve bare import, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_paths_wildcard_priority_uses_prefix_length() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
