@@ -3400,7 +3400,7 @@ fn is_identifier_part(ch: u32) -> bool {
     is_unicode_combining_mark(ch)
 }
 
-/// Unicode Other_ID_Continue code points that ECMAScript admits as
+/// Unicode `Other_ID_Continue` code points that ECMAScript admits as
 /// identifier continuation characters even though they are not alphabetic,
 /// decimal digits, join controls, or combining marks.
 const fn is_unicode_other_id_continue(ch: u32) -> bool {
