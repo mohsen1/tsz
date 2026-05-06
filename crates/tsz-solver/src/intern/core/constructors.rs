@@ -446,6 +446,9 @@ impl TypeInterner {
                 id,
                 builtin_key,
                 data: None,
+                obj_symbol: None,
+                obj_anon_shape: None,
+                callable_symbol: None,
                 alloc_order: None,
             };
         }
@@ -453,10 +456,37 @@ impl TypeInterner {
         let data = self.lookup(id);
         let alloc_order = self.lookup_alloc_order(id);
 
+        let mut obj_symbol = None;
+        let mut obj_anon_shape = None;
+        let mut callable_symbol = None;
+
+        if let Some(ref d) = data {
+            match d {
+                TypeData::Object(s) | TypeData::ObjectWithIndex(s) => {
+                    let shape = self.object_shape(*s);
+                    if let Some(sym) = shape.symbol {
+                        obj_symbol = Some(sym.0);
+                    } else {
+                        obj_anon_shape = Some(s.0);
+                    }
+                }
+                TypeData::Callable(s) => {
+                    let shape = self.callable_shape(*s);
+                    if let Some(sym) = shape.symbol {
+                        callable_symbol = Some(sym.0);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         CachedUnionMember {
             id,
             builtin_key,
             data,
+            obj_symbol,
+            obj_anon_shape,
+            callable_symbol,
             alloc_order,
         }
     }
@@ -538,6 +568,29 @@ impl TypeInterner {
                         return cmp;
                     }
                 }
+                (TypeData::Object(_), TypeData::Object(_))
+                | (TypeData::ObjectWithIndex(_), TypeData::ObjectWithIndex(_))
+                | (TypeData::Object(_), TypeData::ObjectWithIndex(_))
+                | (TypeData::ObjectWithIndex(_), TypeData::Object(_)) => {
+                    // Use pre-fetched symbol/shape data instead of re-looking up
+                    // shapes. Compare option presence as part of the key; falling
+                    // through to allocation order when only one side has a symbol
+                    // can create non-transitive triples with symbol-keyed pairs.
+                    let cmp = Self::compare_optional_u32(a.obj_symbol, b.obj_symbol);
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                    let cmp = Self::compare_optional_u32(a.obj_anon_shape, b.obj_anon_shape);
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                }
+                (TypeData::Callable(_), TypeData::Callable(_)) => {
+                    let cmp = Self::compare_optional_u32(a.callable_symbol, b.callable_symbol);
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                }
                 (TypeData::Application(app1), TypeData::Application(app2)) => {
                     // Keep application ordering total by comparing the stable raw
                     // component key sequence instead of recursing into union-member ordering.
@@ -574,6 +627,15 @@ impl TypeInterner {
         }
 
         a.id.0.cmp(&b.id.0)
+    }
+
+    fn compare_optional_u32(a: Option<u32>, b: Option<u32>) -> std::cmp::Ordering {
+        match (a, b) {
+            (Some(a), Some(b)) => a.cmp(&b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
     }
 
     const fn cached_union_member_rank(member: &CachedUnionMember) -> u8 {

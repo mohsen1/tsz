@@ -247,6 +247,12 @@ pub(super) struct CachedUnionMember {
     pub(super) builtin_key: Option<u32>,
     /// Result of `self.lookup(id)` - the TypeData for non-builtin types
     pub(super) data: Option<TypeData>,
+    /// For Object/ObjectWithIndex: the symbol's raw u32 (if the shape has a symbol)
+    pub(super) obj_symbol: Option<u32>,
+    /// For anonymous Object/ObjectWithIndex: the `ShapeId`'s raw u32
+    pub(super) obj_anon_shape: Option<u32>,
+    /// For Callable: the symbol's raw u32 (if the shape has a symbol)
+    pub(super) callable_symbol: Option<u32>,
     /// Monotonic allocation counter for source-order sorting
     pub(super) alloc_order: Option<u32>,
 }
