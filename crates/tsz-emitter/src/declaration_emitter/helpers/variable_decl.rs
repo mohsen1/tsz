@@ -182,7 +182,10 @@ impl<'a> DeclarationEmitter<'a> {
                     .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
                 && let Some(type_text) = self.preferred_expression_type_text(initializer)
             {
-                if let Some(name_text) = self.get_identifier_text(decl_name)
+                let has_public_import_type = Self::type_text_starts_with_import_type(&type_text)
+                    && !self.import_type_uses_private_package_subpath(&type_text);
+                if !has_public_import_type
+                    && let Some(name_text) = self.get_identifier_text(decl_name)
                     && let Some(name_node) = self.arena.get(decl_name)
                     && let Some(file_path) = self.current_file_path.clone()
                 {
@@ -343,7 +346,11 @@ impl<'a> DeclarationEmitter<'a> {
                     // named-reference diagnostics, while this preserves nested
                     // declaration-site imports that the inferred type graph can
                     // lose.
-                    if has_initializer {
+                    let has_public_import_type = directly_nameable_type_text.is_some_and(|text| {
+                        Self::type_text_starts_with_import_type(text)
+                            && !self.import_type_uses_private_package_subpath(text)
+                    });
+                    if has_initializer && !has_public_import_type {
                         self.check_call_expression_return_type_portability(
                             initializer,
                             &name_text,

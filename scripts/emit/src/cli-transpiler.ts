@@ -425,6 +425,8 @@ export class CliTranspiler {
       fs.symlinkSync(targetPath, linkPath, type);
     }
 
+    this.writeRootConfigForEmbeddedTsconfig(testDir, files);
+
     try {
       const targetArg = targetToCliArg(target);
       const moduleArg = moduleToCliArg(module);
@@ -734,5 +736,40 @@ export class CliTranspiler {
     if (fs.existsSync(this.tempDir)) {
       fs.rmSync(this.tempDir, { recursive: true, force: true });
     }
+  }
+
+  private writeRootConfigForEmbeddedTsconfig(testDir: string, files: SourceInputFile[]): void {
+    if (files.some(file => file.name.replace(/^\/+/, '').replace(/\\/g, '/') === 'tsconfig.json')) {
+      return;
+    }
+
+    const embedded = files.find(file => file.name.replace(/\\/g, '/').endsWith('/tsconfig.json'));
+    if (!embedded) return;
+
+    let config: unknown;
+    try {
+      config = JSON.parse(embedded.content);
+    } catch {
+      return;
+    }
+    if (!config || typeof config !== 'object') return;
+
+    const configObject = config as Record<string, unknown>;
+    const compilerOptions = configObject.compilerOptions;
+    if (!compilerOptions || typeof compilerOptions !== 'object') return;
+
+    const rootConfig = {
+      ...configObject,
+      compilerOptions: { ...(compilerOptions as Record<string, unknown>) },
+    };
+    const rootCompilerOptions = rootConfig.compilerOptions as Record<string, unknown>;
+    const configDir = path.posix.dirname(embedded.name.replace(/^\/+/, '').replace(/\\/g, '/'));
+    if (typeof rootCompilerOptions.baseUrl === 'string') {
+      rootCompilerOptions.baseUrl = path.posix
+        .normalize(path.posix.join(configDir, rootCompilerOptions.baseUrl))
+        .replace(/^\.$/, '');
+    }
+
+    fs.writeFileSync(path.join(testDir, 'tsconfig.json'), JSON.stringify(rootConfig, null, 2), 'utf-8');
   }
 }
