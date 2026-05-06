@@ -1095,6 +1095,39 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn explicit_generic_function_has_fully_annotated_signature(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+        if func
+            .type_parameters
+            .as_ref()
+            .is_none_or(|params| params.nodes.is_empty())
+            || func.type_annotation.is_none()
+        {
+            return false;
+        }
+        func.parameters.nodes.iter().all(|param_idx| {
+            self.ctx
+                .arena
+                .get(*param_idx)
+                .and_then(|param| self.ctx.arena.get_parameter(param))
+                .is_some_and(|param| param.type_annotation.is_some())
+        })
+    }
+
     pub(crate) fn expression_needs_contextual_signature_instantiation(
         &mut self,
         idx: NodeIndex,

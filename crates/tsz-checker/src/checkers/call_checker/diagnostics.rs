@@ -2,11 +2,13 @@
 
 use crate::context::TypingRequest;
 use crate::diagnostics::diagnostic_codes;
-use crate::query_boundaries::checkers::call::stable_call_recovery_return_type;
+use crate::query_boundaries::checkers::call::{
+    array_element_type_for_type, stable_call_recovery_return_type, tuple_elements_for_type,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{ParamInfo, TypeId};
 
 impl<'a> CheckerState<'a> {
     pub(crate) const fn should_preserve_speculative_call_diagnostic(
@@ -112,6 +114,105 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    pub(super) fn type_is_or_constrained_to_top_rest_any_callable(&self, type_id: TypeId) -> bool {
+        if let Some(constraint) =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
+        {
+            return self.type_is_or_constrained_to_top_rest_any_callable(constraint);
+        }
+        let Some(shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            type_id,
+        ) else {
+            return false;
+        };
+        if shape.is_constructor || shape.params.len() != 1 || !shape.params[0].rest {
+            return false;
+        }
+        let rest_type = shape.params[0].type_id;
+        let rest_elem = array_element_type_for_type(self.ctx.types, rest_type).or_else(|| {
+            tuple_elements_for_type(self.ctx.types, rest_type).and_then(|elems| {
+                elems
+                    .into_iter()
+                    .find(|elem| elem.rest)
+                    .map(|elem| elem.type_id)
+            })
+        });
+        (rest_elem.is_some_and(|elem| elem == TypeId::ANY || elem == TypeId::UNKNOWN)
+            && (shape.return_type == TypeId::ANY || shape.return_type == TypeId::UNKNOWN))
+            || self
+                .format_type(type_id)
+                .starts_with("(...args: Array<any>) =>")
+    }
+
+    pub(super) fn overload_candidate_has_only_retained_generic_rest_any_callback_body_errors(
+        &self,
+        args: &[NodeIndex],
+        params: &[ParamInfo],
+        snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> bool {
+        let speculative = self.ctx.speculative_diagnostics_since(snap);
+        let param_for_arg = |index: usize| {
+            params
+                .get(index)
+                .or_else(|| params.last().filter(|param| param.rest))
+                .map(|param| param.type_id)
+        };
+        let arg_accepts_provisional_body_errors = |this: &Self, arg_index: usize, arg_idx| {
+            this.explicit_generic_function_has_fully_annotated_signature(arg_idx)
+                && param_for_arg(arg_index).is_some_and(|param_type| {
+                    this.type_is_or_constrained_to_top_rest_any_callable(param_type)
+                })
+        };
+
+        let mut found = false;
+        for diag in speculative
+            .iter()
+            .filter(|diag| Self::CALLBACK_BODY_REJECTION_CODES.contains(&diag.code))
+        {
+            let Some((arg_index, &arg_idx)) = args.iter().enumerate().find(|&(_, &arg_idx)| {
+                self.is_callback_like_argument(arg_idx)
+                    && self
+                        .callback_body_spans(arg_idx)
+                        .into_iter()
+                        .any(|(start, end)| diag.start >= start && diag.start < end)
+            }) else {
+                return false;
+            };
+            if !arg_accepts_provisional_body_errors(self, arg_index, arg_idx) {
+                return false;
+            }
+            found = true;
+        }
+
+        for node_id in self
+            .ctx
+            .no_overload_call_nodes
+            .iter()
+            .filter(|node_id| !snap.no_overload_call_nodes.contains(node_id))
+        {
+            let idx = NodeIndex(*node_id);
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            let Some((arg_index, &arg_idx)) = args.iter().enumerate().find(|&(_, &arg_idx)| {
+                self.is_callback_like_argument(arg_idx)
+                    && self
+                        .callback_body_spans(arg_idx)
+                        .into_iter()
+                        .any(|(start, end)| node.pos >= start && node.pos < end)
+            }) else {
+                return false;
+            };
+            if !arg_accepts_provisional_body_errors(self, arg_index, arg_idx) {
+                return false;
+            }
+            found = true;
+        }
+
+        found
     }
 
     pub(super) fn prune_callback_body_diagnostics(
