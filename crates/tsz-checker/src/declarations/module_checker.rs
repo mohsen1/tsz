@@ -169,9 +169,24 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // tsc still reports TS2792/TS2307 for unresolved re-export specifiers
-        // under AMD/System/classic-resolution (issue #3077). The deprecation
-        // noise (TS5107) those modes emit is additive, not a substitute.
+        // AMD/System/classic-resolution: tsc suppresses the secondary missing-
+        // module diagnostic in favor of the TS5107 deprecation diagnostic
+        // unless the user has set `ignoreDeprecations` to silence TS5107
+        // (issue #3077). When deprecation is silenced, surface the
+        // missing-module diagnostic; otherwise stay quiet.
+        {
+            let module_kind = self.ctx.compiler_options.module;
+            let is_system_or_amd = matches!(
+                module_kind,
+                tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
+            );
+            let is_classic_style =
+                is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution;
+            if is_classic_style && !self.ctx.compiler_options.ignore_deprecations {
+                self.ctx.import_resolution_stack.pop();
+                return;
+            }
+        }
 
         // Emit module-not-found diagnostic for unresolved export specifiers.
         // Unlike imports, tsc reports these per re-export site, so we must not

@@ -1213,12 +1213,24 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
-                // tsc still reports TS2792/TS2307 for unresolved value imports
-                // under `module: amd|system` and classic `moduleResolution`
-                // (issue #3077). The deprecation noise (TS5107) those modes
-                // emit is a separate, additive diagnostic — not a substitute
-                // for missing-module reporting — so we don't short-circuit the
-                // resolution-failure path on module/resolution kind alone.
+                // tsc emits TS2792/TS2307 for unresolved value imports under
+                // AMD/System/classic-resolution only when the user has silenced
+                // the TS5107 deprecation diagnostic via `ignoreDeprecations`
+                // (issue #3077). When TS5107 is the visible signal that the
+                // user is in a deprecated mode, the secondary missing-module
+                // diagnostic is suppressed in favor of the deprecation
+                // diagnostic — `ignore_deprecations` flips that suppression.
+                let module_kind = self.ctx.compiler_options.module;
+                let is_system_or_amd = matches!(
+                    module_kind,
+                    tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
+                );
+                let is_classic_style =
+                    is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution;
+                if is_classic_style && !self.ctx.compiler_options.ignore_deprecations {
+                    self.ctx.import_resolution_stack.pop();
+                    return;
+                }
 
                 // Side-effect imports use TS2882 instead of TS2307/TS2792,
                 // but only when noUncheckedSideEffectImports is enabled.
@@ -1606,10 +1618,21 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // AMD/System/classic-resolution still emit TS2792 here too
-        // (issue #3077). See the matching note at the resolution-error branch
-        // above; the fallback path falls through to TS2792 via
-        // `module_not_found_diagnostic_for_site`.
+        // AMD/System/classic-resolution: same suppression rule as the
+        // resolution-error branch above (issue #3077). When the user is in a
+        // deprecated mode and has not silenced TS5107, suppress the secondary
+        // missing-module diagnostic in favor of the deprecation.
+        let module_kind = self.ctx.compiler_options.module;
+        let is_system_or_amd = matches!(
+            module_kind,
+            tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
+        );
+        let is_classic_style =
+            is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution;
+        if is_classic_style && !self.ctx.compiler_options.ignore_deprecations {
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
 
         tracing::trace!(%module_name, "check_import_declaration: fallback - emitting module-not-found error");
 

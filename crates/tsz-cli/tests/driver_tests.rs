@@ -1073,17 +1073,19 @@ import "unaliasedModule2";
         "Expected one TS5107 deprecation diagnostic, got diagnostics: {:?}",
         result.diagnostics
     );
-    // tsc still reports the missing-module diagnostic under `module: amd`
-    // (issue #3077): TS2792 is the "Did you mean to set the moduleResolution
-    // option to nodenext...?" hint that fires for non-Node module kinds.
+    // tsc only emits TS5107 here (no TS2307/TS2792). Under `module: amd`
+    // without `ignoreDeprecations`, the deprecation diagnostic is the
+    // user-visible signal and tsc suppresses the secondary missing-module
+    // diagnostic. See `ts2792_emitted_for_missing_import_under_module_amd`
+    // for the inverse case where `ignoreDeprecations: 6.0` re-enables TS2792.
     assert!(
         !codes.contains(&2307),
         "Did not expect TS2307 under module: amd, got diagnostics: {:?}",
         result.diagnostics
     );
     assert!(
-        codes.contains(&2792),
-        "Expected TS2792 for unresolved imports under module: amd alongside TS5107 deprecation, got diagnostics: {:?}",
+        !codes.contains(&2792),
+        "Did not expect TS2792 under module: amd without ignoreDeprecations (TS5107 is the visible signal), got diagnostics: {:?}",
         result.diagnostics
     );
 }

@@ -682,46 +682,50 @@ impl ModuleResolver {
                     };
                 }
 
-                // TS7016: When an *imported* JS module resolves but `allowJs`
-                // is disabled, emit TS7016 ("Could not find a declaration
-                // file...") at the import site instead of routing through the
-                // root-file TS6504 path.
+                // TS7016 emission for imported JS modules.
                 //
-                // tsc reserves TS6504 for JS *root* files explicitly listed
-                // in the program; the CLI emits that separately. Imported JS
-                // — relative, extensionless relative, dynamic import,
-                // re-export, or package import — all surface as TS7016 with
-                // the resolved path quoted in the message. We mark the
-                // specifier as "resolved" so TS2307 is suppressed and the
-                // import binds as `any`, but we do not add the JS file to
-                // the program file list (which would re-trigger TS6504 root
-                // detection).
+                // Two independent rules apply, in priority order:
                 //
-                // External CJS `require()` is the historical exception: tsc
-                // adds those JS files to the program (so cross-file `any`
-                // binding works through node-style require), and the
-                // `resolved_untyped_js` path preserves that.
-                if resolved_module.extension.is_javascript()
-                    && request.no_implicit_any
-                    && !self.allow_js
-                {
-                    if resolved_module.is_external && matches!(import_kind, ImportKind::CjsRequire)
-                    {
-                        ModuleLookupResult::resolved_untyped_js(
-                            resolved_module.resolved_path,
-                            request.no_implicit_any,
+                // 1. **External CJS `require()` of an untyped JS module** -
+                //    surface TS7016 with the resolved path preserved so the
+                //    import binds to the JS file as `any`. tsc fires this
+                //    regardless of `allowJs` because the message means "no
+                //    type declarations were found", which is an *additive*
+                //    diagnostic to allowJs's "JS files are accepted". The
+                //    test corpus exercises this with `allowJs: true` plus
+                //    `noImplicitAny: true` (e.g.
+                //    `compiler/importNonExportedMember12.ts`,
+                //    `conformance/salsa/namespaceAssignmentToRequireAlias.ts`).
+                //
+                // 2. **Imported JS without `allowJs`** (any other shape -
+                //    relative, extensionless relative, dynamic import,
+                //    re-export, ESM package import) - surface TS7016 at the
+                //    import site (issue #3050). We mark the specifier as
+                //    "resolved" but do not add the JS file to the program
+                //    file list, since the CLI's program-level TS6504 path
+                //    would otherwise re-flag it as a forbidden JS root.
+                //    `allowJs` is the gate here because, with `allowJs:
+                //    true`, the JS file is meant to be type-checked as JS,
+                //    not flagged as "missing declaration file".
+                let is_imported_js =
+                    resolved_module.extension.is_javascript() && request.no_implicit_any;
+                let is_external_cjs_require =
+                    resolved_module.is_external && matches!(import_kind, ImportKind::CjsRequire);
+                if is_imported_js && is_external_cjs_require {
+                    ModuleLookupResult::resolved_untyped_js(
+                        resolved_module.resolved_path,
+                        request.no_implicit_any,
+                        specifier,
+                    )
+                } else if is_imported_js && !self.allow_js {
+                    ModuleLookupResult::resolved_with_error(
+                        COULD_NOT_FIND_DECLARATION_FILE,
+                        format!(
+                            "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
                             specifier,
-                        )
-                    } else {
-                        ModuleLookupResult::resolved_with_error(
-                            COULD_NOT_FIND_DECLARATION_FILE,
-                            format!(
-                                "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
-                                specifier,
-                                resolved_module.resolved_path.display()
-                            ),
-                        )
-                    }
+                            resolved_module.resolved_path.display()
+                        ),
+                    )
                 } else {
                     ModuleLookupResult::resolved(resolved_module.resolved_path)
                         .with_resolved_using_ts_extension(

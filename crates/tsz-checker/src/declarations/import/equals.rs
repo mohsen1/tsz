@@ -1026,10 +1026,17 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            // AMD/System/classic-resolution still emit TS2792/TS2307 for
-            // unresolved `import = require(...)` calls (issue #3077). The
-            // deprecation diagnostic for those modes is additive, not a
-            // substitute.
+            // AMD/System/classic-resolution: suppress missing-module diagnostic
+            // when the deprecation diagnostic (TS5107) is the visible signal
+            // (i.e., user has not set `ignoreDeprecations`). When TS5107 is
+            // silenced, surface TS2792/TS2307 normally — issue #3077.
+            let module_kind = self.ctx.compiler_options.module;
+            let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
+            let is_classic_style =
+                is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution;
+            if is_classic_style && !self.ctx.compiler_options.ignore_deprecations {
+                return;
+            }
             let mut error_code = error.code;
             let mut error_message = error.message.clone();
             if error_code
@@ -1061,9 +1068,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // tsc still reports the missing-module diagnostic under AMD/System/
-        // classic-resolution (issue #3077); the helper picks TS2792 vs TS2307
-        // based on whether nodenext would actually have helped.
+        // AMD/System/classic-resolution: same suppression rule as the
+        // resolution-error branch above (issue #3077). Suppress missing-module
+        // diagnostic only when TS5107 deprecation is being emitted; when
+        // `ignoreDeprecations` is set, surface the missing-module diagnostic.
+        let module_kind = self.ctx.compiler_options.module;
+        let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
+        let is_classic_style =
+            is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution;
+        if is_classic_style && !self.ctx.compiler_options.ignore_deprecations {
+            return;
+        }
         if self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
             return;
         }
