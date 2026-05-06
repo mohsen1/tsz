@@ -3,7 +3,7 @@
 //! Handles type resolution and diagnostics for private identifier (`#field`)
 //! property accesses on class instances and static sides.
 
-use crate::query_boundaries::common::lazy_def_id;
+use crate::query_boundaries::common::{callable_shape_for_type, lazy_def_id};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -37,6 +37,12 @@ impl<'a> CheckerState<'a> {
             // check cached constructor identity, then assignability, then whether
             // the object type structurally has the same private member.
             (None, Some((declaring_class, _))) => {
+                if let Some(object_class) = callable_shape_for_type(self.ctx.types, object_type)
+                    .and_then(|shape| shape.symbol)
+                    .and_then(|sym_id| self.get_class_declaration_from_symbol(sym_id))
+                {
+                    return object_class == declaring_class;
+                }
                 let cached_ctor = self
                     .ctx
                     .class_constructor_type_cache
