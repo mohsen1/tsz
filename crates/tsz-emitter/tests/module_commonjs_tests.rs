@@ -260,6 +260,36 @@ fn test_collect_export_names_skips_external_export_import_equals() {
 }
 
 #[test]
+fn test_collect_export_names_skips_namespace_alias_to_exported_interface() {
+    // `export import b = a.I;` where `a.I` is an *exported* interface inside
+    // an exported namespace resolves to a type-only member that is reachable
+    // from outside `a`. tsc elides both the void-0 preamble and the runtime
+    // assignment in that case.
+    let export_names = parse_collect_exports(
+        "export namespace a {\n    export interface I {}\n}\nexport import b = a.I;\nexport var x: b;\n",
+    );
+    assert_eq!(
+        export_names,
+        vec!["x"],
+        "Only the runtime variable `x` should be initialized; the type-only alias `b` is elided"
+    );
+}
+
+#[test]
+fn test_collect_export_names_keeps_namespace_alias_to_non_exported_interface() {
+    // `import a = x.c;` where `c` is *non-exported* inside `x` cannot be
+    // resolved from outside the namespace. tsc preserves the runtime assignment
+    // (a broken-at-runtime emit) and the void-0 preamble.
+    let export_names =
+        parse_collect_exports("namespace x { interface c {} }\nexport import a = x.c;\n");
+    assert_eq!(
+        export_names,
+        vec!["a"],
+        "Non-exported inner interface keeps the runtime alias and its void-0 preamble"
+    );
+}
+
+#[test]
 fn test_collect_export_names_ignores_type_only_declarations() {
     let export_names =
         parse_collect_exports("export type Foo = number; export interface Bar { x: number; }");
