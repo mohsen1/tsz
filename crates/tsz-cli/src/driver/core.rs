@@ -32,7 +32,9 @@ use tsz_common::file_extensions::{
     JS_FAMILY_EXTENSIONS, JSON_EXTENSION, TS_FAMILY_EXTENSIONS, is_json_file,
 };
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
-use super::emit::{EmitOutputsContext, emit_outputs, normalize_type_roots, write_outputs};
+use super::emit::{
+    EmitOutputsContext, emit_outputs, normalize_root_dirs, normalize_type_roots, write_outputs,
+};
 pub(crate) use super::emit::{normalize_base_url, normalize_output_dir, normalize_root_dir};
 use super::resolution::{
     ModuleResolutionCache, build_duplicate_package_redirects, canonicalize_or_owned,
@@ -1050,10 +1052,12 @@ fn compile_inner(
     let out_dir = normalize_output_dir(&base_dir, resolved.out_dir.clone());
     let declaration_dir = normalize_output_dir(&base_dir, resolved.declaration_dir.clone());
     let base_url = normalize_base_url(&base_dir, resolved.base_url.clone());
+    let root_dirs = normalize_root_dirs(&base_dir, resolved.root_dirs.clone());
     resolved.root_dir = root_dir.clone();
     resolved.out_dir = out_dir.clone();
     resolved.declaration_dir = declaration_dir.clone();
     resolved.base_url = base_url;
+    resolved.root_dirs = root_dirs;
     resolved.type_roots = normalize_type_roots(&base_dir, resolved.type_roots.clone());
 
     let discovery = build_discovery_options(
@@ -1432,6 +1436,10 @@ fn compile_inner(
         resolved.checker.no_types_and_symbols || sources_have_no_types_and_symbols(&sources);
     let lib_paths =
         resolve_effective_lib_paths(&resolved, &sources, &base_dir, disable_default_libs)?;
+    config_diagnostics.extend(collect_source_reference_lib_diagnostics(
+        &sources,
+        resolved.checker.no_lib,
+    ));
     let typescript_dom_replacement_globals = scan_typescript_dom_replacement_globals(&lib_paths);
     let lib_path_refs: Vec<&Path> = lib_paths.iter().map(PathBuf::as_path).collect();
 
@@ -2167,7 +2175,9 @@ fn resolve_effective_lib_paths(
             // Source-file `/// <reference lib="..." />` directives may name libs
             // that no longer exist in this TS version (e.g. rxjs references
             // `esnext.asynciterable`, since folded into `es2018.asynciterable`).
-            // Match tsc's behavior and silently skip unknown ones.
+            // The transitive resolver silently skips unknown names at this
+            // layer; user-facing TS2726 for invalid initial names is emitted
+            // separately by `collect_source_reference_lib_diagnostics`.
             let expanded_source_paths =
                 resolve_lib_files_with_options_transitive(&source_reference_libs, true)?;
             append_unique_lib_names(&mut lib_names, lib_names_from_paths(&expanded_source_paths));
@@ -2201,6 +2211,50 @@ fn collect_source_reference_libs(sources: &[SourceEntry]) -> Vec<String> {
         append_unique_lib_names(&mut lib_names, refs);
     }
     lib_names
+}
+
+/// Emit `TS2726` for user-authored source-file `/// <reference lib="..." />`
+/// directives whose value is empty or names a lib that does not exist.
+///
+/// `tsc` reports invalid initial lib names from user source files as
+/// `TS2726 Cannot find lib definition for '<name>'.` anchored at the lib
+/// attribute value. Transitive lib-to-lib references *inside* lib files
+/// remain silently skipped — that policy lives in the resolver in
+/// `tsz-core::config::resolve_lib_files_with_options_transitive`.
+///
+/// `no_lib` mirrors `--noLib`: when set, `tsc` ignores all lib references,
+/// so we skip diagnostic emission too.
+fn collect_source_reference_lib_diagnostics(
+    sources: &[SourceEntry],
+    no_lib: bool,
+) -> Vec<Diagnostic> {
+    if no_lib {
+        return Vec::new();
+    }
+    let mut diagnostics = Vec::new();
+    for source in sources {
+        let positioned = if let Some(text) = source.text.as_deref() {
+            tsz::config::extract_lib_references_with_positions(text)
+        } else {
+            std::fs::read_to_string(&source.path)
+                .map(|text| tsz::config::extract_lib_references_with_positions(&text))
+                .unwrap_or_default()
+        };
+        for reference in positioned {
+            if tsz::config::is_known_lib_name(&reference.raw) {
+                continue;
+            }
+            let message = format!("Cannot find lib definition for '{}'.", reference.raw.trim());
+            diagnostics.push(Diagnostic::error(
+                source.path.to_string_lossy().into_owned(),
+                reference.start,
+                reference.length,
+                message,
+                diagnostic_codes::CANNOT_FIND_LIB_DEFINITION_FOR,
+            ));
+        }
+    }
+    diagnostics
 }
 
 fn append_unique_lib_names(target: &mut Vec<String>, additional: Vec<String>) {
@@ -2665,6 +2719,9 @@ fn apply_cli_overrides_with_config_options(
     if let Some(base_url) = args.base_url.as_ref() {
         options.base_url = Some(base_url.clone());
     }
+    if let Some(root_dirs) = args.root_dirs.as_ref() {
+        options.root_dirs = root_dirs.clone();
+    }
     if let Some(declaration_dir) = args.declaration_dir.as_ref() {
         options.declaration_dir = Some(declaration_dir.clone());
     }
@@ -2694,6 +2751,9 @@ fn apply_cli_overrides_with_config_options(
     }
     if args.source_map {
         options.source_map = true;
+    }
+    if args.inline_source_map {
+        options.inline_source_map = true;
     }
     if args.emit_bom {
         options.emit_bom = true;

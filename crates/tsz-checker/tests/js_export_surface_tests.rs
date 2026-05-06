@@ -2656,6 +2656,40 @@ module.exports.justProperty = "string";
 }
 
 #[test]
+fn test_commonjs_direct_export_property_overlap_reports_ts2323_with_prelude_file() {
+    let diagnostics = check_commonjs_file_with_prelude(
+        "requires.d.ts",
+        r#"
+declare var module: { exports: any };
+declare function require(name: string): any;
+"#,
+        "mod1.js",
+        r#"
+module.exports.bothBefore = "string";
+A.justExport = 4;
+A.bothBefore = 2;
+A.bothAfter = 3;
+module.exports = A;
+function A() {
+    this.p = 1;
+}
+module.exports.bothAfter = "string";
+module.exports.justProperty = "string";
+"#,
+    );
+
+    let ts2323: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2323)
+        .collect();
+    assert_eq!(
+        ts2323.len(),
+        4,
+        "Expected TS2323 on overlapping CommonJS exported property declarations with a preceding declaration file, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_commonjs_direct_export_property_overlap_rejects_number_only_js_require_consumers() {
     let diagnostics = check_commonjs_two_files(
         "mod1.js",

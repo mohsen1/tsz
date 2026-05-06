@@ -227,6 +227,43 @@ type NestedTuple = UseNestedArray<[[]]>;
 }
 
 #[test]
+fn test_fake_readonly_array_surface_does_not_satisfy_readonly_array_constraint() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface ReadonlyArray<T> {
+    readonly length: number;
+    readonly [n: number]: T;
+    concat(...items: T[]): T[];
+    slice(start?: number, end?: number): T[];
+    join(separator?: string): string;
+    indexOf(searchElement: T): number;
+    lastIndexOf(searchElement: T): number;
+    every(callbackfn: (value: T) => boolean): boolean;
+}
+
+interface Fake {
+    readonly length: number;
+    readonly [n: number]: string;
+    concat: any;
+    slice: any;
+}
+
+type Box<X extends readonly string[]> = X;
+type A = Box<Fake>;
+"#,
+    );
+
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        !ts2344_errors.is_empty(),
+        "Fake array-like surfaces should not satisfy readonly array constraints. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_mapped_key_infer_subset_satisfies_keyof_constraint() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

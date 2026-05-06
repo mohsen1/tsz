@@ -22,4 +22,5 @@ mod type_node_context;
 pub(crate) mod type_node_helpers;
 mod type_node_lowering;
 mod type_node_resolution;
+mod unique_symbol_arena;
 pub(crate) mod utilities;
