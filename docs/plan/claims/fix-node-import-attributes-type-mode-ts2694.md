@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/node-import-attributes-type-mode-ts2694`
-- **PR**: TBD
+- **PR**: #3598
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 - **Claimed**: 2026-05-06 02:17:15 UTC
