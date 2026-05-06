@@ -446,9 +446,6 @@ impl TypeInterner {
                 id,
                 builtin_key,
                 data: None,
-                obj_symbol: None,
-                obj_anon_shape: None,
-                callable_symbol: None,
                 alloc_order: None,
             };
         }
@@ -456,37 +453,10 @@ impl TypeInterner {
         let data = self.lookup(id);
         let alloc_order = self.lookup_alloc_order(id);
 
-        let mut obj_symbol = None;
-        let mut obj_anon_shape = None;
-        let mut callable_symbol = None;
-
-        if let Some(ref d) = data {
-            match d {
-                TypeData::Object(s) | TypeData::ObjectWithIndex(s) => {
-                    let shape = self.object_shape(*s);
-                    if let Some(sym) = shape.symbol {
-                        obj_symbol = Some(sym.0);
-                    } else {
-                        obj_anon_shape = Some(s.0);
-                    }
-                }
-                TypeData::Callable(s) => {
-                    let shape = self.callable_shape(*s);
-                    if let Some(sym) = shape.symbol {
-                        callable_symbol = Some(sym.0);
-                    }
-                }
-                _ => {}
-            }
-        }
-
         CachedUnionMember {
             id,
             builtin_key,
             data,
-            obj_symbol,
-            obj_anon_shape,
-            callable_symbol,
             alloc_order,
         }
     }
