@@ -15226,12 +15226,10 @@ fn test_const_type_param_array_to_readonly_array() {
 
     // With const, declared array types remain arrays inside the readonly wrapper.
     match interner.lookup(result) {
-        Some(TypeData::ReadonlyType(inner)) => {
-            match interner.lookup(inner) {
-                Some(TypeData::Array(element)) => assert_eq!(element, one),
-                other => panic!("Expected Array inside ReadonlyType, got {other:?}"),
-            }
-        }
+        Some(TypeData::ReadonlyType(inner)) => match interner.lookup(inner) {
+            Some(TypeData::Array(element)) => assert_eq!(element, one),
+            other => panic!("Expected Array inside ReadonlyType, got {other:?}"),
+        },
         other => panic!("Expected ReadonlyType, got {other:?}"),
     }
 }
