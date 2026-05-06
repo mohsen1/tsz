@@ -128,7 +128,8 @@ impl<'a> DeclarationEmitter<'a> {
             // Well-known symbol names are valid declaration method names even when
             // the symbol expression's type is unavailable in the current cache.
             && !is_symbol_computed_name
-            // Literal computed method names are valid declaration method names.
+            // Literal/reference computed method names are valid declaration method
+            // names when the referenced key is usable as a declaration property.
             // Keep them as methods unless optional syntax forces a property.
             && !computed_name_forces_method_syntax
             && (method.question_token || computed_key_requires_property_syntax);
@@ -498,9 +499,28 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
 
-        expr_node.kind == SyntaxKind::StringLiteral as u16
+        if expr_node.kind == SyntaxKind::StringLiteral as u16
             || expr_node.kind == SyntaxKind::NumericLiteral as u16
             || expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+        {
+            return true;
+        }
+
+        if expr_node.kind != SyntaxKind::Identifier as u16
+            && expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+
+        let Some(type_id) = self.get_node_type_or_names(&[expr_idx, name_idx]) else {
+            return false;
+        };
+        type_id != tsz_solver::types::TypeId::ANY
+            && self
+                .type_interner
+                .is_some_and(|interner| {
+                    type_queries::is_type_usable_as_property_name(interner, type_id)
+                })
     }
 
     pub(in crate::declaration_emitter) fn emit_constructor_declaration(
