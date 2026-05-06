@@ -249,7 +249,7 @@ fn tuple_item_lookup_mapped_type_expands_literal_keys() {
 }
 
 #[test]
-fn tuple_item_lookup_mapped_type_expands_compact_string_key() {
+fn tuple_item_lookup_mapped_type_expands_inline_compact_string_key() {
     let input = r#"{
     [Item in readonly [{
     readonly name: "a";
