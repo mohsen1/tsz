@@ -918,7 +918,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // IMPORTANT: Defer `this` errors to after argument checking — TSC reports
         // argument errors (TS2345) before `this` context errors (TS2684).
         let mut deferred_this_error =
-            if let Some(combined_this) = self.compute_union_this_type(&members) {
+            if let Some(combined_this) = self.compute_union_this_type(members) {
                 let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
                 if !self.checker.is_assignable_to(actual_this, combined_this) {
                     Some(CallResult::ThisTypeMismatch {
@@ -940,7 +940,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // resolves each member's overloads independently — this matches tsc's
         // behavior for cases like `(A[] | B[]).filter(cb)` where each array type
         // has overloaded `filter` but per-member resolution succeeds.
-        let sig_lists = self.collect_union_call_signature_lists(&members);
+        let sig_lists = self.collect_union_call_signature_lists(members);
         let has_multi_overload_members =
             sig_lists.iter().filter(|(_, sigs)| sigs.len() > 1).count();
         // `force_not_callable_with_this_mismatch` controls a fallback in
@@ -1118,7 +1118,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Try to compute a combined signature for the union.
         // TypeScript computes combined arity (max required params across members)
         // and intersected parameter types with unioned return types.
-        let combined = self.try_compute_combined_union_signature(&members);
+        let combined = self.try_compute_combined_union_signature(members);
 
         // Phase 1: Argument count validation using combined signature.
         // This catches cases where members have different param counts —
@@ -1148,7 +1148,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Combined signature already validated arity; skip old bounds check
             UnionCallSignatureCompatibility::Unknown
         } else {
-            let compat = self.union_call_signature_bounds(&members);
+            let compat = self.union_call_signature_bounds(members);
             if matches!(compat, UnionCallSignatureCompatibility::Incompatible) {
                 return CallResult::NotCallable {
                     type_id: union_type,
