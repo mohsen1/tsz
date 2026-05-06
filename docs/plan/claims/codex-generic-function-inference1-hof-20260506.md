@@ -19,12 +19,27 @@ generic constraint on the composed `pipe(foo)` result, then add a focused
 regression that removes these false assignment diagnostics without weakening
 ordinary function assignment checks.
 
+## Implementation
+
+When a higher-order call produces a non-generic function shape that still
+contains nonlocal type parameters, subtype checking now hoists matching
+nonlocal parameters before comparing against a generic target signature. If the
+source parameter was widened to the target constraint object, the check rewrites
+that exact constraint-shaped position back to the hoisted type parameter before
+the normal generic-function comparison.
+
+Added a focused checker regression covering both `pipe(foo)` and
+`pipe(foo, foo)` assignment to `<T extends { value: T }>(x: T) => T`.
+
 ## Verification
 
-- Focused Rust regression for the changed higher-order inference path.
-- Filtered conformance for `compiler/genericFunctionInference1.ts` with
-  `--print-fingerprints`.
+- `CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=1 cargo test -p tsz-checker --test generic_call_inference_tests pipe_preserves_self_constrained_generic_function_result -- --exact --nocapture`
+- `CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=1 cargo test -p tsz-checker --test generic_call_inference_tests -- --nocapture`
+- `CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=1 cargo build --profile dist-fast -p tsz-cli -p tsz-conformance --target-dir .target-dist`
+- `.target-dist/dist-fast/tsz-conformance --test-dir <tmp> --cache-file scripts/conformance/tsc-cache-full.json --tsz-binary .target-dist/dist-fast/tsz --workers 1 --verbose --print-fingerprints --print-test-files --no-batch --timeout 60`
+
+Filtered conformance result: `FINAL RESULTS: 1/1 passed (100.0%)`.
 
 ## Status
 
-Claimed on 2026-05-06 before implementation.
+Implemented and verified on 2026-05-06.
