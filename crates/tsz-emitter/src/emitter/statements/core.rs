@@ -44,6 +44,7 @@ impl<'a> Printer<'a> {
             && self.is_single_line(node)
         {
             self.ctx.block_scope_state.enter_function_scope();
+            self.register_pending_function_body_parameters();
             self.map_opening_brace(node);
             self.write("{ ");
             self.emit_pending_object_rest_param_preamble(true);
@@ -174,6 +175,7 @@ impl<'a> Printer<'a> {
         if should_emit_single_line {
             if is_function_body_block {
                 self.ctx.block_scope_state.enter_function_scope();
+                self.register_pending_function_body_parameters();
             } else {
                 self.ctx.block_scope_state.enter_scope();
             }
@@ -209,6 +211,7 @@ impl<'a> Printer<'a> {
 
         if is_function_body_block {
             self.ctx.block_scope_state.enter_function_scope();
+            self.register_pending_function_body_parameters();
         } else {
             self.ctx.block_scope_state.enter_scope();
         }

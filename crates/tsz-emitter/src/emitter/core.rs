@@ -366,6 +366,13 @@ pub struct Printer<'a> {
     /// Marker that the next block emission is a function body.
     pub(crate) emitting_function_body_block: bool,
 
+    /// Parameter nodes for the next function body block.
+    ///
+    /// ES5 block-scoped lowering needs parameters in the function's scope map
+    /// before body declarations are emitted, so `let x` can become `var x_1`
+    /// when it would otherwise collide with parameter `x`.
+    pub(crate) pending_function_body_parameters: Vec<NodeIndex>,
+
     /// The name of the current namespace we're emitting inside (if any).
     /// Used for nested exported namespaces to emit proper IIFE parameters.
     pub(crate) current_namespace_name: Option<String>,
@@ -893,6 +900,7 @@ impl<'a> Printer<'a> {
             enum_namespace_export: None,
             namespace_export_inner: false,
             emitting_function_body_block: false,
+            pending_function_body_parameters: Vec::new(),
             current_namespace_name: None,
             parent_namespace_name: None,
             anonymous_default_export_name: None,

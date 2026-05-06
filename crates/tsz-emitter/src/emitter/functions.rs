@@ -223,6 +223,10 @@ impl<'a> Printer<'a> {
             }
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
+            let prev_pending_function_body_parameters = std::mem::replace(
+                &mut self.pending_function_body_parameters,
+                func.parameters.nodes.clone(),
+            );
             self.function_scope_depth += 1;
             self.arrow_function_scope_depth += 1;
             let prev_declared = std::mem::take(&mut self.declared_namespace_names);
@@ -230,6 +234,7 @@ impl<'a> Printer<'a> {
             self.declared_namespace_names = prev_declared;
             self.arrow_function_scope_depth -= 1;
             self.function_scope_depth -= 1;
+            self.pending_function_body_parameters = prev_pending_function_body_parameters;
             self.emitting_function_body_block = prev_emitting_function_body_block;
         }
 
@@ -1098,6 +1103,10 @@ impl<'a> Printer<'a> {
         // Push temp scope and block scope for function body - each function gets fresh variables.
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
+        let prev_pending_function_body_parameters = std::mem::replace(
+            &mut self.pending_function_body_parameters,
+            func.parameters.nodes.clone(),
+        );
         self.ctx.block_scope_state.enter_scope();
         self.push_temp_scope();
         // Save/restore declared_namespace_names so enum/namespace names from the
@@ -1128,6 +1137,7 @@ impl<'a> Printer<'a> {
         self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
+        self.pending_function_body_parameters = prev_pending_function_body_parameters;
         self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
         if self_paren {
@@ -1537,6 +1547,46 @@ impl<'a> Printer<'a> {
         // scanning from name_node.end would place these comments INSIDE the
         // parameter list. The caller (statement-level comment emission) handles
         // trailing comments after the whole function declaration.
+    }
+
+    pub(in crate::emitter) fn register_pending_function_body_parameters(&mut self) {
+        let params = std::mem::take(&mut self.pending_function_body_parameters);
+        for param_idx in params {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            self.register_function_parameter_binding_name(param.name);
+        }
+    }
+
+    fn register_function_parameter_binding_name(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+
+        if name_node.is_identifier() {
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                let name = self.arena.resolve_identifier_text(ident);
+                if !name.is_empty() && name != "this" {
+                    self.ctx.block_scope_state.register_function_parameter(name);
+                }
+            }
+        } else if matches!(
+            name_node.kind,
+            syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
+        ) && let Some(pattern) = self.arena.get_binding_pattern(name_node)
+        {
+            for &elem_idx in &pattern.elements.nodes {
+                if let Some(elem_node) = self.arena.get(elem_idx)
+                    && let Some(elem) = self.arena.get_binding_element(elem_node)
+                {
+                    self.register_function_parameter_binding_name(elem.name);
+                }
+            }
+        }
     }
 
     fn next_object_rest_param_temp_name(
