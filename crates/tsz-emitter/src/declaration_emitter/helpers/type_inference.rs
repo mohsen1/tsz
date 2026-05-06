@@ -3227,15 +3227,6 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn is_simple_identifier_text(text: &str) -> bool {
-        let mut chars = text.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        (first == '_' || first == '$' || first.is_ascii_alphabetic())
-            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-    }
-
     pub(in crate::declaration_emitter) fn type_reference_name_text(
         &self,
         name_idx: NodeIndex,
@@ -3249,24 +3240,6 @@ impl<'a> DeclarationEmitter<'a> {
             return self.get_identifier_text(qualified.right);
         }
         None
-    }
-
-    pub(in crate::declaration_emitter) fn serialized_property_name_length(
-        &self,
-        name: &str,
-    ) -> usize {
-        let mut chars = name.chars();
-        let Some(first) = chars.next() else {
-            return 2;
-        };
-        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
-            return name.len() + 2;
-        }
-        if chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()) {
-            name.len()
-        } else {
-            name.len() + 2
-        }
     }
 
     pub(in crate::declaration_emitter) fn skip_parenthesized_expression(
@@ -5694,6 +5667,11 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let body_node = self.arena.get(body_idx)?;
         let block = self.arena.get_block(body_node)?;
+        if let Some(type_text) =
+            self.function_body_numeric_literal_return_union_type_text(&block.statements)
+        {
+            return Some(type_text);
+        }
         let mut preferred = None;
         if self.collect_unique_return_type_text_from_block(&block.statements, &mut preferred) {
             preferred
@@ -5707,6 +5685,12 @@ impl<'a> DeclarationEmitter<'a> {
         source_type_text: &str,
         inferred_return_type: tsz_solver::types::TypeId,
     ) -> bool {
+        if Self::numeric_literal_union_widens_to_number(
+            source_type_text,
+            &self.print_type_id(inferred_return_type),
+        ) {
+            return true;
+        }
         if source_type_text.contains("{\n    new ")
             && source_type_text.contains(" & ")
             && self.print_type_id(inferred_return_type) != source_type_text
@@ -5768,21 +5752,24 @@ impl<'a> DeclarationEmitter<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         source_type_text: &str,
     ) -> String {
+        let source_type_text = self
+            .simplify_uniform_object_keyof_index_access_text(source_type_text)
+            .unwrap_or_else(|| source_type_text.to_string());
         if !source_type_text.contains(": unknown;") {
-            return source_type_text.to_string();
+            return source_type_text;
         }
 
         let Some(class_expr_idx) = self.direct_returned_class_expression(func.body) else {
-            return source_type_text.to_string();
+            return source_type_text;
         };
         let Some(class_node) = self.arena.get(class_expr_idx) else {
-            return source_type_text.to_string();
+            return source_type_text;
         };
         let Some(class) = self.arena.get_class(class_node) else {
-            return source_type_text.to_string();
+            return source_type_text;
         };
 
-        let mut rewritten = source_type_text.to_string();
+        let mut rewritten = source_type_text;
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -6033,6 +6020,19 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
                 self.arena.get_case_clause(stmt_node).is_some_and(|clause| {
                     self.collect_unique_return_type_text_from_block(&clause.statements, preferred)
+                })
+            }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                self.arena.get_switch(stmt_node).is_some_and(|switch_data| {
+                    self.arena
+                        .get(switch_data.case_block)
+                        .and_then(|case_block_node| self.arena.get_block(case_block_node))
+                        .is_some_and(|block| {
+                            self.collect_unique_return_type_text_from_block(
+                                &block.statements,
+                                preferred,
+                            )
+                        })
                 })
             }
             _ => true,

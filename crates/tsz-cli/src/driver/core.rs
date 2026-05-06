@@ -421,7 +421,7 @@ fn compilation_cache_to_build_info(
 ) -> BuildInfo {
     use crate::incremental::{
         BuildInfoOptions, CachedDiagnostic, CachedRelatedInformation, EmitSignature,
-        FileInfo as IncrementalFileInfo,
+        FileInfo as IncrementalFileInfo, compute_file_version,
     };
     use std::collections::BTreeMap;
 
@@ -437,8 +437,9 @@ fn compilation_cache_to_build_info(
             .to_string_lossy()
             .replace('\\', "/");
 
-        // Create file info with version (hash) and signature
-        let version = format!("{hash:016x}");
+        // `version` is compared against the source file content on the next
+        // build, while `signature` tracks the exported API shape.
+        let version = compute_file_version(path).unwrap_or_else(|_| format!("{hash:016x}"));
         let signature = Some(format!("{hash:016x}"));
         file_infos.insert(
             relative_path.clone(),
