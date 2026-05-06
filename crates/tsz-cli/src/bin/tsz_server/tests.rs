@@ -4322,3 +4322,72 @@ fn test_project_info_no_lib_suppresses_lib_files() {
         "noLib must suppress all lib files, got {files:?}"
     );
 }
+
+mod brace_code_map {
+    use super::super::{build_code_map, scan_forward};
+
+    fn match_brace(src: &str, open_pos: usize) -> Option<usize> {
+        let bytes = src.as_bytes();
+        let map = build_code_map(bytes);
+        assert!(
+            map[open_pos],
+            "test setup error: open position {open_pos} is not in code"
+        );
+        scan_forward(bytes, &map, open_pos, b'{', b'}')
+    }
+
+    #[test]
+    fn brace_match_skips_close_brace_inside_regex_literal() {
+        // Repro from issue #4013: the `}` inside `/}/` must be ignored when
+        // matching the outer block braces.
+        let src = "if (true) { const r = /}/; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_skips_close_brace_inside_regex_character_class() {
+        // `[}]` is a character class containing only `}`; outer braces still
+        // pair with the trailing `}`.
+        let src = "{ const r = /[}]/; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_handles_regex_with_flags() {
+        let src = "{ const r = /}/gi; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_treats_division_as_code_not_regex() {
+        // After a value-producing token (`)`), `/` is division, not a regex.
+        // The `}` inside the comment is non-code; `b` and `c` are identifiers.
+        // This guards against the regex heuristic mis-firing on division.
+        let src = "{ let x = (a) / b / c; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_handles_regex_after_return_keyword() {
+        let src = "function f() { return /}/.test(\"\"); }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_handles_regex_with_escaped_slash() {
+        let src = "{ const r = /\\/}/; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+}
