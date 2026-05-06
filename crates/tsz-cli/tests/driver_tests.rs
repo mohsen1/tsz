@@ -13266,6 +13266,56 @@ export function copy(a: number[]): number[] {
 }
 
 #[test]
+fn compile_es5_downlevel_iteration_single_call_spread_uses_read() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "outDir": "dist",
+            "downlevelIteration": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["src/calls.ts"]
+        }"#,
+    );
+
+    write_file(
+        &base.join("src/calls.ts"),
+        r#"
+function f(...args: any[]) {
+    return args.join("|");
+}
+const s: any = "ab";
+export const value = f(...s);
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Should compile without errors: {:?}",
+        result.diagnostics
+    );
+
+    let js = std::fs::read_to_string(base.join("dist/src/calls.js")).expect("read js");
+    assert!(
+        js.contains("f.apply(void 0, __spreadArray([], __read(s), false))"),
+        "single call spread with downlevelIteration should read iterables before apply:\n{js}"
+    );
+    assert!(
+        !js.contains("f.apply(void 0, s)"),
+        "single call spread must not pass iterable directly to apply:\n{js}"
+    );
+}
+
+#[test]
 fn compile_object_spread() {
     // Test object spread operator compilation
     let temp = TempDir::new().expect("temp dir");
