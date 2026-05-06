@@ -558,6 +558,11 @@ impl<'a> Printer<'a> {
 
         self.write_line();
         self.increase_indent();
+        let generator_hoist_byte_offset = self.writer.len();
+        let generator_hoist_line = self.writer.current_line();
+        let hoisted_assignment_start = self.hoisted_assignment_temps.len();
+        let hoisted_for_of_start = self.hoisted_for_of_temps.len();
+        let hoisted_value_start = self.hoisted_assignment_value_temps.len();
 
         // Emit function body with await→yield substitution
         let saved_yield = self.ctx.emit_await_as_yield;
@@ -581,6 +586,34 @@ impl<'a> Printer<'a> {
                 self.emit(stmt);
                 self.write_line();
             }
+        }
+        let mut ref_vars = Vec::new();
+        ref_vars.extend(
+            self.hoisted_assignment_temps
+                .drain(hoisted_assignment_start..),
+        );
+        ref_vars.extend(self.hoisted_for_of_temps.drain(hoisted_for_of_start..));
+        if !ref_vars.is_empty() {
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
+            self.writer.insert_line_at(
+                generator_hoist_byte_offset,
+                generator_hoist_line,
+                &var_decl,
+            );
+        }
+        if !self.hoisted_assignment_value_temps[hoisted_value_start..].is_empty() {
+            let value_vars = self
+                .hoisted_assignment_value_temps
+                .drain(hoisted_value_start..)
+                .collect::<Vec<_>>();
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let var_decl = format!("{}var {};", indent, value_vars.join(", "));
+            self.writer.insert_line_at(
+                generator_hoist_byte_offset,
+                generator_hoist_line,
+                &var_decl,
+            );
         }
         self.function_scope_depth -= 1;
         self.ctx.emit_await_as_yield = saved_yield;

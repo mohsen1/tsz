@@ -118,7 +118,7 @@ mod tests {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let options = PrinterOptions {
-            target: ScriptTarget::ES2017,
+            target: ScriptTarget::ES2015,
             ..Default::default()
         };
         let ctx = EmitContext::with_options(options.clone());
@@ -129,9 +129,7 @@ mod tests {
         printer.emit(root);
         let output = printer.get_output().to_string();
 
-        let function_start = output
-            .find("async function f()")
-            .expect("function should emit");
+        let function_start = output.find("function f()").expect("function should emit");
         let source_scope = &output[..function_start];
 
         assert!(
@@ -139,8 +137,8 @@ mod tests {
             "for-await temps should not be hoisted outside the function.\nOutput:\n{output}"
         );
         assert!(
-            output[function_start..].contains("var _a, e_1, _b, _c;"),
-            "for-await temps should still be declared in the function body.\nOutput:\n{output}"
+            output.contains("function* () {\n        var _a, e_1, _b, _c;"),
+            "for-await temps should be hoisted inside the generated async body.\nOutput:\n{output}"
         );
     }
 
