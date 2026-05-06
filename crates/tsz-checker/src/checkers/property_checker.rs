@@ -112,12 +112,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if self.receiver_property_visibility(object_type, property_name)
-            == Some(tsz_solver::Visibility::Public)
-        {
-            return true;
-        }
-
         // TypeScript allows `super["x"]` element-access forms without applying
         // the stricter method-only/private-protected checks used for `super.x`.
         if self.is_super_expression(object_expr) && !is_property_identifier {
@@ -340,8 +334,7 @@ impl<'a> CheckerState<'a> {
                         .intersection_protected_owner_name(object_type, property_name)
                         .unwrap_or_else(|| access_info.declaring_class_name.clone());
                     let message = format!(
-                        "Property '{}' is protected and only accessible within class '{}' and its subclasses.",
-                        property_name, declaring_class_name
+                        "Property '{property_name}' is protected and only accessible within class '{declaring_class_name}' and its subclasses."
                     );
                     self.error_at_node(
                         error_node,
@@ -674,8 +667,7 @@ impl<'a> CheckerState<'a> {
                             .intersection_protected_owner_name(object_type, property_name)
                             .unwrap_or_else(|| access_info.declaring_class_name.clone());
                         let message = format!(
-                            "Property '{}' is protected and only accessible within class '{}' and its subclasses.",
-                            property_name, declaring_class_name
+                            "Property '{property_name}' is protected and only accessible within class '{declaring_class_name}' and its subclasses."
                         );
                         self.error_at_node(
                             error_node,
@@ -696,63 +688,11 @@ impl<'a> CheckerState<'a> {
         object_type: tsz_solver::TypeId,
         property_name: &str,
     ) -> Option<tsz_solver::Visibility> {
-        fn merge(
-            left: tsz_solver::Visibility,
-            right: tsz_solver::Visibility,
-        ) -> tsz_solver::Visibility {
-            match (left, right) {
-                (tsz_solver::Visibility::Private, _) | (_, tsz_solver::Visibility::Private) => {
-                    tsz_solver::Visibility::Private
-                }
-                (tsz_solver::Visibility::Public, _) | (_, tsz_solver::Visibility::Public) => {
-                    tsz_solver::Visibility::Public
-                }
-                (tsz_solver::Visibility::Protected, tsz_solver::Visibility::Protected) => {
-                    tsz_solver::Visibility::Protected
-                }
-            }
-        }
-
-        let find_in_props = |types: &dyn tsz_solver::TypeDatabase,
-                             props: &[tsz_solver::PropertyInfo]| {
-            props
-                .iter()
-                .find(|prop| types.resolve_atom_ref(prop.name).as_ref() == property_name)
-                .map(|prop| prop.visibility)
-        };
-
-        if object_type.is_intrinsic() {
-            return None;
-        }
-
-        match self.ctx.types.lookup(object_type) {
-            Some(tsz_solver::TypeData::Object(shape_id))
-            | Some(tsz_solver::TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                find_in_props(self.ctx.types, &shape.properties)
-            }
-            Some(tsz_solver::TypeData::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                find_in_props(self.ctx.types, &shape.properties)
-            }
-            Some(tsz_solver::TypeData::Intersection(list_id)) => {
-                let members = self.ctx.types.type_list(list_id).to_vec();
-                let mut visibility = None;
-                for member in members {
-                    let Some(member_visibility) =
-                        self.receiver_property_visibility(member, property_name)
-                    else {
-                        continue;
-                    };
-                    visibility = Some(match visibility {
-                        Some(current) => merge(current, member_visibility),
-                        None => member_visibility,
-                    });
-                }
-                visibility
-            }
-            _ => None,
-        }
+        crate::query_boundaries::property_access::receiver_property_visibility(
+            self.ctx.types,
+            object_type,
+            property_name,
+        )
     }
 
     fn intersection_protected_owner_name(
@@ -1022,11 +962,12 @@ impl<'a> CheckerState<'a> {
             .types
             .get_display_alias(object_type)
             .unwrap_or(object_type);
-        let Some(tsz_solver::TypeData::Intersection(list_id)) = self.ctx.types.lookup(source_type)
-        else {
+        let Some(members) = crate::query_boundaries::property_access::intersection_members(
+            self.ctx.types,
+            source_type,
+        ) else {
             return false;
         };
-        let members = self.ctx.types.type_list(list_id).to_vec();
         if members.len() < 2 {
             return false;
         }

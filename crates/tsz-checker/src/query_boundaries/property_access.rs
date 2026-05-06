@@ -2,6 +2,7 @@ use tsz_common::Atom;
 use tsz_solver::{FunctionShape, QueryDatabase, TypeDatabase, TypeId};
 
 pub(crate) use super::common::PropertyAccessResult;
+pub(crate) use super::common::intersection_members;
 pub(crate) use super::common::{
     array_element_type, callable_shape_for_type as callable_shape, is_string_type, unwrap_readonly,
 };
@@ -16,6 +17,14 @@ pub(crate) fn resolve_property_access(
     prop_name: &str,
 ) -> PropertyAccessResult {
     resolve_property_access_with_options(db, obj_type, prop_name, false)
+}
+
+pub(crate) fn receiver_property_visibility(
+    db: &dyn TypeDatabase,
+    object_type: TypeId,
+    property_name: &str,
+) -> Option<tsz_solver::Visibility> {
+    tsz_solver::type_queries::receiver_property_visibility(db, object_type, property_name)
 }
 
 pub(crate) fn resolve_property_access_with_options(
