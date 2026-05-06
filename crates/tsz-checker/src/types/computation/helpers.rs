@@ -219,6 +219,15 @@ impl<'a> CheckerState<'a> {
         // assigned to a `const` with a literal union annotation, e.g.:
         //   const c1 = cond ? "foo" : "bar";        // should be "foo" | "bar"
         //   const c2: "foo" | "bar" = c1;            // should pass
+        if crate::query_boundaries::common::literal_value(self.ctx.types, when_true).is_some()
+            || crate::query_boundaries::common::literal_value(self.ctx.types, when_false).is_some()
+        {
+            return self
+                .ctx
+                .types
+                .factory()
+                .union_preserve_members(vec![when_true, when_false]);
+        }
 
         // Use Solver API for type computation (Solver-First architecture)
         expr_ops::compute_conditional_expression_type(

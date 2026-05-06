@@ -14,7 +14,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{PropertyInfo, TypeId, Visibility};
+use tsz_solver::{ObjectFlags, PropertyInfo, TypeId, Visibility};
 
 const SPREAD_DISPLAY_ORDER_OFFSET: u32 = 1_000_000;
 const SPREAD_DISPLAY_ORDER_STRIDE: u32 = 10_000;
@@ -64,6 +64,18 @@ fn remove_synthetic_missing_union_spread_props(member_props: &mut [Vec<PropertyI
 /// like `a: 1` in `{ a: 1 } satisfies unknown` widens to `number`.
 fn is_literal_permissive_context(ctx: TypeId) -> bool {
     ctx == TypeId::UNKNOWN || ctx == TypeId::ANY || ctx == TypeId::NEVER
+}
+
+fn is_fresh_literal_indexed_object(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    let Some(tsz_solver::TypeData::ObjectWithIndex(shape_id)) = db.lookup(type_id) else {
+        return false;
+    };
+    db.object_shape(shape_id)
+        .flags
+        .contains(ObjectFlags::FRESH_LITERAL)
 }
 
 fn is_single_quoted_string_property_name_node(
@@ -1248,8 +1260,14 @@ impl<'a> CheckerState<'a> {
                             crate::call_checker::CallableContext::none(),
                         ),
                     );
-                    let value_type =
+                    let mut value_type =
                         self.get_type_of_node_with_request(prop.initializer, &property_request);
+                    if self.ctx.in_const_assertion
+                        && let Some(literal_type) =
+                            self.literal_type_from_initializer(prop.initializer)
+                    {
+                        value_type = literal_type;
+                    }
 
                     if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
                         number_index_types.push(value_type);
@@ -2699,22 +2717,14 @@ impl<'a> CheckerState<'a> {
                         } else {
                             spread_props.clone()
                         };
-                        let idx_resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
-                        if let Some(value_type) = idx_resolver.resolve_string_index(resolved_spread)
-                        {
-                            spread_string_index_types.push(value_type);
-                        }
-                        if let Some(value_type) = idx_resolver.resolve_number_index(resolved_spread)
-                        {
-                            spread_number_index_types.push(value_type);
-                        }
-
                         // Propagate index signatures from spread source.
                         // When spreading an object with index signatures (e.g.,
                         // `{ ...roindex }` where `roindex: { readonly [x: string]: number }`),
                         // the result should inherit the index signatures (with readonly removed).
                         // These are collected separately and only included in the final type
                         // when the literal has no explicit (non-spread) properties, matching tsc.
+                        if spread_props.is_empty()
+                            && !is_fresh_literal_indexed_object(self.ctx.types, resolved_spread)
                         {
                             use crate::query_boundaries::common::IndexSignatureResolver;
                             let resolver = IndexSignatureResolver::new(self.ctx.types);
