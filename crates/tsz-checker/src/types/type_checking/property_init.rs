@@ -344,7 +344,7 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+            k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
                 if let Some(call) = self.ctx.arena.get_call_expr(node) {
                     self.collect_static_block_accesses_recursive(
                         call.expression,
@@ -572,7 +572,7 @@ impl<'a> CheckerState<'a> {
                     self.collect_static_accesses_recursive(binary.right, class_name, accesses);
                 }
             }
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+            k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
                 if let Some(call) = self.ctx.arena.get_call_expr(node) {
                     self.collect_static_accesses_recursive(call.expression, class_name, accesses);
                     if let Some(ref args) = call.arguments {
@@ -807,7 +807,7 @@ impl<'a> CheckerState<'a> {
                     self.collect_this_accesses_recursive(binary.right, accesses);
                 }
             }
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+            k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
                 if let Some(call) = self.ctx.arena.get_call_expr(node) {
                     self.collect_this_accesses_recursive(call.expression, accesses);
                     if let Some(ref args) = call.arguments {

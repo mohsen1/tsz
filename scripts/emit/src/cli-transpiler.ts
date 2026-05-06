@@ -667,6 +667,27 @@ export class CliTranspiler {
           }
           return basenameMatches[basenameMatches.length - 1];
         }
+        if (!dtsMode) {
+          const jsStem = (fileName: string): string => {
+            return path.posix.basename(fileName).replace(/\.(js|jsx|mjs|cjs)$/i, '');
+          };
+          const requestedStem = jsStem(normalizedName);
+          const stemMatches = existingOutputs.filter(candidate => {
+            return jsStem(normalizeOutputRelPath(candidate)) === requestedStem;
+          });
+          if (stemMatches.length > 0) {
+            if (expectedContent != null) {
+              const normalizedExpected = normalizeComparableOutput(expectedContent);
+              for (const candidate of stemMatches) {
+                const candidateContent = fs.readFileSync(candidate, 'utf-8');
+                if (normalizeComparableOutput(candidateContent) === normalizedExpected) {
+                  return candidate;
+                }
+              }
+            }
+            return stemMatches[stemMatches.length - 1];
+          }
+        }
         const directPath = path.join(testDir, normalizedName);
         if (fs.existsSync(directPath)) return directPath;
         return null;

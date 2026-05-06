@@ -422,6 +422,7 @@ impl<'a> Printer<'a> {
             let quote = bytes[i];
             let mut j = i + 1;
             let mut escaped = false;
+            let mut broke_on_line_terminator = false;
             while j < bytes.len() {
                 let b = bytes[j];
                 if escaped {
@@ -442,15 +443,32 @@ impl<'a> Printer<'a> {
 
                 // Unterminated literal fallback: use parser end range.
                 if b == b'\n' || b == b'\r' {
+                    broke_on_line_terminator = true;
                     break;
                 }
 
                 j += 1;
             }
 
-            let end = std::cmp::min(node.end as usize, bytes.len());
+            let mut end = std::cmp::min(node.end as usize, bytes.len());
+            if !broke_on_line_terminator && j >= bytes.len() {
+                end = bytes.len();
+            }
             if end > i {
-                Some(text[i..end].to_string())
+                let mut raw = text[i..end].to_string();
+                let mut appended_source_semicolon = false;
+                if broke_on_line_terminator
+                    && end < bytes.len()
+                    && bytes[end] == b';'
+                    && raw.ends_with(quote as char)
+                {
+                    raw.push(';');
+                    appended_source_semicolon = true;
+                }
+                if broke_on_line_terminator && !appended_source_semicolon && raw.ends_with(';') {
+                    raw.push(';');
+                }
+                Some(raw)
             } else {
                 None
             }
@@ -967,6 +985,28 @@ mod tests {
         assert!(
             !output.contains("var x = \"\\u{00000000000067\";"),
             "ES5 should not synthesize a closing quote for incomplete codepoint escapes.\nGot: {output}"
+        );
+    }
+
+    #[test]
+    fn recovered_multiline_string_literals_preserve_source_semicolon_and_eof_space() {
+        use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+
+        let source = "var es1 = \"line 1\n\";\nvar es13 = \" ";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(&parser.arena, PrinterOptions::default());
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var es1 = \"line 1;\n\";;"),
+            "Recovered multiline string literals should preserve source semicolons.\nGot: {output}"
+        );
+        assert!(
+            output.contains("var es13 = \" ;"),
+            "EOF-terminated string literal recovery should preserve trailing source text.\nGot: {output}"
         );
     }
 

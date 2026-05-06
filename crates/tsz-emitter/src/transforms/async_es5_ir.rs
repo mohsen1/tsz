@@ -685,14 +685,17 @@ impl<'a> AsyncES5Transformer<'a> {
         }
         let mut generator_body = self.build_generator_body(body_idx, has_yield, &[]);
         let hoisted_var_groups = Self::extract_and_remove_var_decl_groups(&mut generator_body);
-        let hoisted_vars = hoisted_var_groups.into_iter().flatten();
         let ir_params: Vec<IRParam> = params.iter().map(|p| IRParam::new(p.clone())).collect();
         let mut body = Vec::new();
-        for var_name in hoisted_vars {
-            body.push(IRNode::VarDecl {
-                name: var_name.into(),
-                initializer: None,
-            });
+        for group in hoisted_var_groups {
+            let declarations = group
+                .into_iter()
+                .map(|name| IRNode::VarDecl {
+                    name: name.into(),
+                    initializer: None,
+                })
+                .collect();
+            body.push(IRNode::VarDeclList(declarations));
         }
         if self.state.captures_arguments {
             body.push(IRNode::VarDecl {
