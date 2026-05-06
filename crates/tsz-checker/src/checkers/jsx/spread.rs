@@ -82,6 +82,11 @@ impl<'a> CheckerState<'a> {
 
         let spread_has_type_params =
             crate::query_boundaries::common::contains_type_parameters(self.ctx.types, spread_type);
+        let spread_source_has_type_params =
+            crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                spread_source_type,
+            );
 
         // For concrete spread types, whole-type assignability is the fast path and
         // also prevents false positives from imprecise per-property extraction.
@@ -403,9 +408,13 @@ impl<'a> CheckerState<'a> {
         }
 
         if has_type_mismatch {
-            let spread_name = merged_attrs_display
-                .map(str::to_string)
-                .unwrap_or_else(|| self.format_type(spread_source_type));
+            let spread_name = if spread_source_has_type_params {
+                self.format_type(spread_source_type)
+            } else {
+                merged_attrs_display
+                    .map(str::to_string)
+                    .unwrap_or_else(|| self.format_type(spread_source_type))
+            };
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&spread_name, &props_display],
