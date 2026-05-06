@@ -3,7 +3,7 @@
 - **Date**: 2026-05-06
 - **Branch**: `fix/thisless-functions-ts18046-regression-20260506-165500`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
@@ -16,9 +16,11 @@ the root cause without a target-specific suppression.
 
 ## Files Touched
 
-- TBD after investigation.
+- `crates/tsz-checker/src/types/computation/call_inference.rs`
+- `crates/tsz-cli/tests/driver_tests.rs`
 
 ## Verification
 
-- Focused Rust regression in the owning checker/solver area.
-- `./scripts/conformance/conformance.sh run --filter "thislessFunctionsNotContextSensitive1" --verbose`.
+- `cargo fmt --check`
+- `CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=.target/nextest-local cargo nextest run -p tsz-cli -E 'test(compile_project_nested_thisless_module_state_avoids_ts18046)'`
+- `./scripts/conformance/conformance.sh run --filter "thislessFunctionsNotContextSensitive1" --verbose`
