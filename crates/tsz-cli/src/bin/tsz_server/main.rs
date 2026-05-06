@@ -946,7 +946,7 @@ impl Server {
             "change" => self.handle_change(seq, &request),
             "reset" | "tsz/reset" => self.handle_reset(seq, &request),
             "configure" => self.handle_configure(seq, &request),
-            "quickinfo" => self.handle_quickinfo(seq, &request),
+            "quickinfo" | "quickinfo-full" => self.handle_quickinfo(seq, &request),
             "definition"
             | "typeDefinition"
             | "definition-full"
@@ -957,18 +957,20 @@ impl Server {
             }
             "references" => self.handle_references(seq, &request),
             "references-full" => self.handle_references_full(seq, &request),
-            "completions" | "completionInfo" => self.handle_completions(seq, &request),
+            "completions" | "completionInfo" | "completions-full" => {
+                self.handle_completions(seq, &request)
+            }
             "completionEntryDetails" | "completionEntryDetails-full" => {
                 self.handle_completion_details(seq, &request)
             }
-            "signatureHelp" => self.handle_signature_help(seq, &request),
+            "signatureHelp" | "signatureHelp-full" => self.handle_signature_help(seq, &request),
             "semanticDiagnosticsSync" => self.handle_semantic_diagnostics_sync(seq, &request),
             "syntacticDiagnosticsSync" => self.handle_syntactic_diagnostics_sync(seq, &request),
             "suggestionDiagnosticsSync" => self.handle_suggestion_diagnostics_sync(seq, &request),
             "geterr" => self.handle_geterr(seq, &request),
             "geterrForProject" => self.handle_geterr_for_project(seq, &request),
             "navtree" | "navtree-full" => self.handle_navtree(seq, &request),
-            "navbar" => self.handle_navbar(seq, &request),
+            "navbar" | "navbar-full" => self.handle_navbar(seq, &request),
             "navto" | "navTo" | "navto-full" | "navTo-full" => self.handle_navto(seq, &request),
             "documentHighlights" => self.handle_document_highlights(seq, &request),
             "rename" | "rename-full" => self.handle_rename(seq, &request),
@@ -980,7 +982,7 @@ impl Server {
             "getEditsForRefactor" => self.handle_get_edits_for_refactor(seq, &request),
             "organizeImports" => self.handle_organize_imports(seq, &request),
             "getEditsForFileRename" => self.handle_get_edits_for_file_rename(seq, &request),
-            "format" => self.handle_format(seq, &request),
+            "format" | "format-full" => self.handle_format(seq, &request),
             "formatonkey" => self.handle_format_on_key(seq, &request),
             "projectInfo" => self.handle_project_info(seq, &request),
             "compilerOptionsForInferredProjects" => {
@@ -1002,9 +1004,9 @@ impl Server {
                 self.handle_call_hierarchy(seq, &request)
             }
             "mapCode" => self.handle_map_code(seq, &request),
-            "fileReferences" => self.handle_file_references(seq, &request),
+            "fileReferences" | "fileReferences-full" => self.handle_file_references(seq, &request),
             "implementation" | "implementation-full" => self.handle_implementation(seq, &request),
-            "getOutliningSpans" => self.handle_outlining_spans(seq, &request),
+            "getOutliningSpans" | "outliningSpans" => self.handle_outlining_spans(seq, &request),
             "brace" => self.handle_brace(seq, &request),
             "tszPerformance" | "performance" => self.handle_tsz_performance(seq, &request),
             "emitOutput" | "emit-output" => self.handle_emit_output(seq, &request),

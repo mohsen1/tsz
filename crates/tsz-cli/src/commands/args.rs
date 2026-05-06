@@ -537,7 +537,7 @@ pub struct CliArgs {
     #[arg(long = "generateTrace", alias = "generate-trace")]
     pub generate_trace: Option<PathBuf>,
 
-    /// Emit a v8 CPU profile of the compiler run for debugging.
+    /// TypeScript compatibility option. tsz cannot emit V8 CPU profiles; use --generateTrace.
     #[arg(long = "generateCpuProfile", alias = "generate-cpu-profile")]
     pub generate_cpu_profile: Option<PathBuf>,
 

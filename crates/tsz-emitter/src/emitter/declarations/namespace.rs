@@ -1,8 +1,8 @@
 use super::super::Printer;
 use crate::transforms::ir::IRNode;
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 #[path = "namespace_export_destructuring.rs"]
@@ -261,7 +261,12 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
-        self.emit_namespace_iife(&module, parent_name.as_deref());
+        let parent_source_path = self.current_namespace_source_path.clone();
+        self.emit_namespace_iife(
+            &module,
+            parent_name.as_deref(),
+            parent_source_path.as_deref(),
+        );
     }
 
     pub(in crate::emitter) fn emit_recovered_template_module_declaration(
@@ -395,8 +400,12 @@ impl<'a> Printer<'a> {
         &mut self,
         module: &tsz_parser::parser::node::ModuleData,
         parent_name: Option<&str>,
+        parent_source_path: Option<&str>,
     ) {
         let name = self.get_identifier_text_idx(module.name);
+        let source_path = parent_source_path
+            .filter(|parent| !parent.is_empty())
+            .map_or_else(|| name.clone(), |parent| format!("{parent}.{name}"));
         if let Some(parent) = parent_name
             && !name.is_empty()
         {
@@ -484,7 +493,7 @@ impl<'a> Printer<'a> {
                 if let Some(inner_module) = self.arena.get_module(body_node) {
                     let inner_module = inner_module.clone();
                     let prev_declared = std::mem::take(&mut self.declared_namespace_names);
-                    self.emit_namespace_iife(&inner_module, Some(&iife_param));
+                    self.emit_namespace_iife(&inner_module, Some(&iife_param), Some(&source_path));
                     self.declared_namespace_names = prev_declared;
                 }
             } else {
@@ -496,6 +505,7 @@ impl<'a> Printer<'a> {
                 // IIFE creates a new function scope), and inner names don't leak out.
                 let prev_declared = std::mem::take(&mut self.declared_namespace_names);
                 let prev_scope_end = self.namespace_scope_end;
+                let prev_source_path = self.current_namespace_source_path.clone();
                 self.in_namespace_iife = true;
                 // Set the scope end so import alias reference searching is
                 // limited to this namespace body (not sibling namespaces).
@@ -507,11 +517,13 @@ impl<'a> Printer<'a> {
                     .map(std::borrow::ToOwned::to_owned)
                     .or_else(|| prev_ns_name.clone());
                 self.current_namespace_name = Some(iife_param.clone());
+                self.current_namespace_source_path = Some(source_path.clone());
                 self.emit_namespace_body_statements(module, &iife_param);
                 self.in_namespace_iife = prev;
                 self.namespace_scope_end = prev_scope_end;
                 self.current_namespace_name = prev_ns_name;
                 self.parent_namespace_name = prev_parent_ns;
+                self.current_namespace_source_path = prev_source_path;
                 self.declared_namespace_names = prev_declared;
             }
         }
@@ -1457,6 +1469,97 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn collect_all_namespace_exports(&mut self, statements: &NodeList) {
+        for &stmt_idx in &statements.nodes {
+            self.collect_namespace_exports_from_statement(stmt_idx, None, false);
+        }
+    }
+
+    fn collect_namespace_exports_from_statement(
+        &mut self,
+        stmt_idx: NodeIndex,
+        parent_path: Option<&str>,
+        exported_to_parent: bool,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                if let Some(inner_node) = self.arena.get(export.export_clause) {
+                    if inner_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                        self.collect_namespace_exports_from_statement(
+                            export.export_clause,
+                            parent_path,
+                            true,
+                        );
+                    } else if let Some(path) = parent_path {
+                        let names = self.get_export_names_from_clause(export.export_clause);
+                        self.namespace_all_exported_names
+                            .entry(path.to_string())
+                            .or_default()
+                            .extend(names);
+                    }
+                }
+            }
+            return;
+        }
+
+        if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            self.collect_namespace_exports_from_module(stmt_node, parent_path, exported_to_parent);
+            return;
+        }
+
+        if self.statement_has_export_modifier(stmt_node)
+            && let Some(path) = parent_path
+        {
+            let names = self.get_export_names_from_clause(stmt_idx);
+            self.namespace_all_exported_names
+                .entry(path.to_string())
+                .or_default()
+                .extend(names);
+        }
+    }
+
+    fn collect_namespace_exports_from_module(
+        &mut self,
+        module_node: &Node,
+        parent_path: Option<&str>,
+        exported_to_parent: bool,
+    ) {
+        let Some(module) = self.arena.get_module(module_node) else {
+            return;
+        };
+        let name = self.get_identifier_text_idx(module.name);
+        if name.is_empty() {
+            return;
+        }
+        if exported_to_parent && let Some(parent) = parent_path {
+            self.namespace_all_exported_names
+                .entry(parent.to_string())
+                .or_default()
+                .insert(name.clone());
+        }
+
+        let path = parent_path.map_or_else(|| name.clone(), |parent| format!("{parent}.{name}"));
+        let Some(body_node) = self.arena.get(module.body) else {
+            return;
+        };
+        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            self.collect_namespace_exports_from_module(body_node, Some(&path), true);
+            return;
+        }
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return;
+        };
+        let Some(stmts) = block.statements.clone() else {
+            return;
+        };
+        for stmt_idx in stmts.nodes {
+            self.collect_namespace_exports_from_statement(stmt_idx, Some(&path), false);
+        }
+    }
+
     /// Emit body statements of a namespace IIFE, handling exports.
     fn emit_namespace_body_statements(
         &mut self,
@@ -1480,6 +1583,11 @@ impl<'a> Printer<'a> {
             let prev_current_class_fn_enum =
                 std::mem::take(&mut self.namespace_current_class_fn_enum_names);
             let mut local_exports = self.collect_namespace_exported_names(module);
+            if let Some(source_path) = self.current_namespace_source_path.as_ref()
+                && let Some(exports) = self.namespace_all_exported_names.get(source_path)
+            {
+                local_exports.extend(exports.iter().cloned());
+            }
             let leaf_name = self.get_identifier_text_idx(module.name);
             if !leaf_name.is_empty() {
                 local_exports
@@ -1557,21 +1665,32 @@ impl<'a> Printer<'a> {
                 .collect_namespace_current_class_fn_enum_names(module)
                 .into_iter()
                 .collect();
-            // Merge in exports from prior blocks of the same namespace (cross-block sharing)
-            //
-            // The scope-qualified key distinguishes same-named namespaces at
-            // different scopes (e.g., m1.m2 vs m4.m2). Reopenings at the same
-            // scope share the same parent, so they get the same key.
+            for name in &self.namespace_current_class_fn_enum_names {
+                local_exports.remove(name);
+                parent_exports.remove(name);
+                ancestor_qualifiers.remove(name);
+            }
+            if let Some(source_path) = self.current_namespace_source_path.as_ref()
+                && let Some((parent_source_path, _)) = source_path.rsplit_once('.')
+                && let Some(parent_qualifier) = self.parent_namespace_name.as_ref()
+                && let Some(exports) = self.namespace_all_exported_names.get(parent_source_path)
+            {
+                parent_exports.extend(exports.iter().cloned());
+                for name in exports {
+                    ancestor_qualifiers.insert(name.clone(), parent_qualifier.clone());
+                }
+            }
+            for name in &prev_current_class_fn_enum {
+                parent_exports.remove(name);
+                ancestor_qualifiers.remove(name);
+            }
+            // Merge prior same-scope namespace exports for reopened blocks.
             let class_fn_enum_root_name = if let Some(ref parent) = self.parent_namespace_name {
                 format!("{parent}.{leaf_name}")
             } else {
                 leaf_name.clone()
             };
             if !leaf_name.is_empty() {
-                // Merge prior var exports into local set first: a `var`
-                // declared in an earlier block of the same namespace lives
-                // on the namespace object only (its IIFE has exited), so
-                // any reference here must qualify as `ns.x`.
                 let entry = self
                     .namespace_prior_exports
                     .entry(class_fn_enum_root_name.clone())
@@ -1597,25 +1716,8 @@ impl<'a> Printer<'a> {
                         );
                 }
 
-                // Class/fn/enum names from EARLIER reopenings of this same
-                // namespace must also qualify in this block (their IIFE
-                // has exited too) — but THIS block's own class/fn/enum
-                // declarations stay unqualified, since they're emitted as
-                // locals inside the current IIFE. Tracking these in a
-                // separate map keeps them out of the var-keyed
-                // `namespace_prior_exports` so nested namespaces (which
-                // read parent's var exports as their qualification set)
-                // do NOT see them and keep them unqualified — matching
-                // tsc's reliance on the surrounding IIFE's lexical scope.
-                //
-                // Only merge into local_exports here (so identifier emission
-                // in THIS block sees prior-block class names). The
-                // class_entry.extend(class_fn_enum_names) call that records
-                // THIS block's class/fn/enum names is deferred until AFTER
-                // statement iteration completes (see end of this function),
-                // so that nested namespaces inside this block reading the
-                // parent entry won't see this block's own class/fn/enum
-                // names — those remain in lexical scope and stay unqualified.
+                // Prior class/function/enum exports qualify in reopened blocks;
+                // this block's own declarations are recorded only after emission.
                 let class_entry = self
                     .namespace_prior_class_fn_enum_exports
                     .entry(class_fn_enum_root_name.clone())
@@ -1887,15 +1989,8 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            // Now that statement iteration is complete, record THIS block's
-            // class/fn/enum names so that LATER reopenings of the same
-            // namespace (and nested namespaces inside those later
-            // reopenings) see them as needing qualification. Doing this
-            // AFTER the loop is critical: if we did it before, a nested
-            // namespace inside the current block reading the parent's
-            // class/fn/enum entry would incorrectly see this block's own
-            // class/fn/enum names (which are still in lexical scope as IIFE
-            // locals here) and qualify references that should stay bare.
+            // Record this block's class/fn/enum names only after nested namespaces
+            // have emitted so same-block lexical references stay bare.
             if !leaf_name.is_empty() {
                 if ns_name != leaf_name {
                     self.namespace_prior_class_fn_enum_exports
