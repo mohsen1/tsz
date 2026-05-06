@@ -1155,6 +1155,21 @@ impl<'a> CheckerState<'a> {
                         comment.end,
                         &source_text,
                     );
+                } else if !Self::is_simple_type_name(simple_expr) {
+                    let template_params: Vec<String> = Self::jsdoc_template_type_params(&content)
+                        .into_iter()
+                        .map(|(name, _is_const)| name)
+                        .collect();
+                    let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+                    self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
+                    self.report_jsdoc_unresolved_inner_type_leaves(
+                        simple_expr,
+                        comment.pos,
+                        comment.end,
+                        &source_text,
+                        &template_params,
+                    );
+                    self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                 }
             }
 
@@ -1819,6 +1834,21 @@ impl<'a> CheckerState<'a> {
                         && matches!(expr, "exports" | "module" | "require" | "global"));
                 if !skip_cannot_find_name {
                     self.emit_jsdoc_cannot_find_name(expr, comment.pos, comment.end, &source_text);
+                } else if !Self::is_simple_type_name(expr) && !expr.is_empty() {
+                    let template_params: Vec<String> = Self::jsdoc_template_type_params(&content)
+                        .into_iter()
+                        .map(|(name, _is_const)| name)
+                        .collect();
+                    let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+                    self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
+                    self.report_jsdoc_unresolved_inner_type_leaves(
+                        expr,
+                        comment.pos,
+                        comment.end,
+                        &source_text,
+                        &template_params,
+                    );
+                    self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                 }
             }
         }
@@ -2291,7 +2321,24 @@ impl<'a> CheckerState<'a> {
                 || trimmed.starts_with("@return{");
             if is_param_or_return && let Some(open_pos_in_line) = line.find('{') {
                 let after_open = &line[open_pos_in_line + 1..];
-                if let Some(close_rel) = after_open.find('}') {
+                // Balance nested braces so `@param {{ a: T }} obj` extracts
+                // the full `{ a: T }` body, not just `{ a: T`.
+                let mut depth = 1usize;
+                let mut close_rel = None;
+                for (i, ch) in after_open.char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close_rel = Some(i);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(close_rel) = close_rel {
                     let raw_type = &after_open[..close_rel];
                     let type_expr = raw_type.trim();
                     if !type_expr.is_empty() {
