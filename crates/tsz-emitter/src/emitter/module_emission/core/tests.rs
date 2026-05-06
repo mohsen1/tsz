@@ -1701,3 +1701,25 @@ class Test {
         "Metadata return type should use the CommonJS import substitution.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn script_import_equals_to_interface_preserves_alias_emit() {
+    let source = "interface I { id: number; }\nimport i = I;\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var i = I;"),
+        "Top-level script import-equals aliases should be preserved even when the target is type-only.\nOutput:\n{output}"
+    );
+}

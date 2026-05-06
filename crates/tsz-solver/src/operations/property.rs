@@ -651,6 +651,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 } else {
                     self.interner().intersection(results)
                 };
+                type_id = self
+                    .db
+                    .evaluate_type_with_options(type_id, self.no_unchecked_indexed_access);
 
                 // Compute write type as intersection of member write types.
                 // This handles divergent accessor intersections like `(A & B)['prop']`
@@ -662,6 +665,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 } else {
                     self.interner().intersection(write_results)
                 };
+                let computed_write_type = self.db.evaluate_type_with_options(
+                    computed_write_type,
+                    self.no_unchecked_indexed_access,
+                );
 
                 // Do NOT bind `this` here. When a method like `self(): this`
                 // is on an intersection member, `this` must resolve to the

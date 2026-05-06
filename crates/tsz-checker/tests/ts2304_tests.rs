@@ -819,3 +819,83 @@ function fn4(cb) {}
         "@template T should be in scope for arrow-return position, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_jsdoc_compound_type_unresolved_walker_skips_assertion_predicate_target() {
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/** @typedef {(check: boolean) => asserts check} AssertFunc */
+/** @type {AssertFunc} */
+const assert = check => {};
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert!(
+        ts2304.is_empty(),
+        "Assertion predicate target names are values, not unresolved JSDoc types: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_compound_type_unresolved_walker_skips_signature_local_template() {
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/** @type {<T>(param?: T) => T | undefined} */
+function typed(param) {
+    return param;
+}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'T'"))
+        .collect();
+    assert!(
+        ts2304.is_empty(),
+        "Signature-local generic T should be in scope for JSDoc function type leaves: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_compound_type_unresolved_walker_skips_dotted_namespace_leaf() {
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @param {!Array<!lf.schema.Table>} scope
+ */
+function begin(scope) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'lf.schema.Table'"))
+        .collect();
+    assert!(
+        ts2304.is_empty(),
+        "Qualified JSDoc leaves should not be reported as plain TS2304 names: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_compound_type_unresolved_walker_skips_intrinsic_unknown() {
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @param {(value: unknown) => unknown} cb
+ */
+function call(cb) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'unknown'"))
+        .collect();
+    assert!(
+        ts2304.is_empty(),
+        "Intrinsic JSDoc type names should not be emitted as TS2304: {diagnostics:?}"
+    );
+}

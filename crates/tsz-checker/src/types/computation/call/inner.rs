@@ -664,6 +664,7 @@ impl<'a> CheckerState<'a> {
                     args,
                     arg_types: &overload_resolution.arg_types,
                     callee_type: callee_type_for_resolution,
+                    callee_has_declared_generic_signature: false,
                     is_super_call: false,
                     is_optional_chain: nullish_cause.is_some(),
                     allow_contextual_mismatch_deferral: false,
@@ -2961,6 +2962,18 @@ impl<'a> CheckerState<'a> {
             args,
             arg_types: &arg_types,
             callee_type: callee_type_for_call,
+            callee_has_declared_generic_signature: common::function_shape_for_type(
+                self.ctx.types,
+                callee_type_for_resolution,
+            )
+            .is_some_and(|shape| !shape.type_params.is_empty())
+                || common::callable_shape_for_type(self.ctx.types, callee_type_for_resolution)
+                    .is_some_and(|shape| {
+                        shape
+                            .call_signatures
+                            .iter()
+                            .any(|sig| !sig.type_params.is_empty())
+                    }),
             is_super_call,
             is_optional_chain: nullish_cause.is_some(),
             allow_contextual_mismatch_deferral,

@@ -73,6 +73,7 @@ interface CompilerFlagOptions {
   stripInternal?: boolean;
   outFile?: string;
   outDir?: string;
+  declarationDir?: string;
   rootDir?: string;
 }
 
@@ -123,6 +124,7 @@ function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): v
   if (opts.stripInternal) args.push('--stripInternal');
   if (opts.outFile) args.push('--outFile', opts.outFile.replace(/^[/\\]+/, ''));
   if (opts.outDir) args.push('--outDir', opts.outDir);
+  if (opts.declarationDir) args.push('--declarationDir', opts.declarationDir);
   if (opts.rootDir) args.push('--rootDir', opts.rootDir);
 }
 
@@ -263,6 +265,7 @@ export class CliTranspiler {
       stripInternal?: boolean;
       outFile?: string;
       outDir?: string;
+      declarationDir?: string;
       rootDir?: string;
       sourceFiles?: SourceInputFile[];
       links?: LinkInput[];
@@ -305,6 +308,7 @@ export class CliTranspiler {
       stripInternal = false,
       outFile,
       outDir,
+      declarationDir,
       rootDir,
       sourceFiles,
       links = [],
@@ -369,6 +373,16 @@ export class CliTranspiler {
         }
         return path.join(testDir, outDir.replace(/^[/\\]+/, ''), relStem);
       })();
+      const declarationRelStem = (() => {
+        const declarationOutputDir = declarationDir ?? outDir;
+        if (!declarationOutputDir) return null;
+        const normalizedRoot = rootDir?.replace(/^[/\\]+/, '').replace(/\\/g, '/').replace(/\/+$/, '');
+        let relStem = relName.replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
+        if (normalizedRoot && (relStem === normalizedRoot || relStem.startsWith(`${normalizedRoot}/`))) {
+          relStem = relStem.slice(normalizedRoot.length).replace(/^\/+/, '');
+        }
+        return path.join(testDir, declarationOutputDir.replace(/^[/\\]+/, ''), relStem);
+      })();
       // For TS→JS: .ts→.js, .tsx→.jsx, .mts→.mjs, .cts→.cjs
       // For JS→JS (allowJs): output has same extension as input
       const sourceDefaultJsPath =
@@ -396,10 +410,10 @@ export class CliTranspiler {
         dtsPath: `${stem}.d.ts`,
         dtsCandidates: [
           ...(outputDtsPath ? [outputDtsPath] : []),
-          ...(outputRelStem ? [
-            `${outputRelStem}.d.ts`,
-            `${outputRelStem}.d.mts`,
-            `${outputRelStem}.d.cts`,
+          ...(declarationRelStem ? [
+            `${declarationRelStem}.d.ts`,
+            `${declarationRelStem}.d.mts`,
+            `${declarationRelStem}.d.cts`,
           ] : []),
           `${stem}.d.ts`,
           `${stem}.d.mts`,
@@ -434,6 +448,11 @@ export class CliTranspiler {
       // Build args array (no shell parsing needed with execFile)
       const args: string[] = [];
       if (declaration) args.push('--declaration');
+      // The emit harness stages embedded @filename tsconfig.json files next to
+      // explicit command-line inputs. That mirrors tsc baseline fixtures, but
+      // the CLI intentionally rejects "files + discovered tsconfig" unless
+      // --ignoreConfig is set.
+      if (inputFiles.length > 0) args.push('--ignoreConfig');
       // Skip type checking and lib loading for JS-only emit -- the emitter
       // only needs syntax. Type checking accounts for ~77% of per-test time
       // and lib loading accounts for another ~50% of the remainder.
@@ -482,6 +501,7 @@ export class CliTranspiler {
         stripInternal,
         outFile,
         outDir,
+        declarationDir,
         rootDir,
       });
       const trailingArgs = ['--target', targetArg, '--module', moduleArg, ...inputFiles];
@@ -544,7 +564,7 @@ export class CliTranspiler {
           }
         } else {
           const retryArgs = ['--declaration', '--noCheck', '--noLib'];
-          if (hasEmbeddedTsconfig) {
+          if (inputFiles.length > 0 || hasEmbeddedTsconfig) {
             retryArgs.push('--ignoreConfig');
           }
           appendCompilerOptionFlags(retryArgs, {
@@ -577,6 +597,7 @@ export class CliTranspiler {
             stripInternal,
             outFile,
             outDir,
+            declarationDir,
             rootDir,
           });
           retryArgs.push(...trailingArgs);
@@ -662,9 +683,14 @@ export class CliTranspiler {
       };
 
       const readFirstExisting = (candidates: string[]): string | null => {
+        const existing = firstExistingOutput(candidates);
+        return existing?.content ?? null;
+      };
+
+      const firstExistingOutput = (candidates: string[]): { path: string; content: string } | null => {
         for (const candidate of candidates) {
           if (fs.existsSync(candidate)) {
-            return fs.readFileSync(candidate, 'utf-8');
+            return { path: candidate, content: fs.readFileSync(candidate, 'utf-8') };
           }
         }
         return null;
@@ -706,7 +732,10 @@ export class CliTranspiler {
       }
 
       if (declaration) {
-        const namedDts = readNamedOutput(expectedDtsFileName, true, expectedDtsContent);
+        const hasMultifileDtsExpectation = expectedDtsContent?.includes('//// [') === true;
+        const namedDts = hasMultifileDtsExpectation
+          ? null
+          : readNamedOutput(expectedDtsFileName, true, expectedDtsContent);
         if (namedDts !== null) {
           dts = namedDts;
         } else {
@@ -714,9 +743,12 @@ export class CliTranspiler {
           for (const out of [...expectedOutputs].sort((a, b) => {
             return normalizeOutputRelPath(a.dtsPath).localeCompare(normalizeOutputRelPath(b.dtsPath));
           })) {
-            const dtsChunk = readFirstExisting(out.dtsCandidates);
-            if (dtsChunk !== null) {
-              dtsChunks.push(dtsChunk);
+            const dtsOutput = firstExistingOutput(out.dtsCandidates);
+            if (dtsOutput !== null) {
+              if (hasMultifileDtsExpectation && dtsChunks.length > 0) {
+                dtsChunks.push(`//// [${normalizeOutputRelPath(dtsOutput.path)}]\n`);
+              }
+              dtsChunks.push(dtsOutput.content);
             }
           }
           dts = dtsChunks.length > 0 ? dtsChunks.join('') : null;
@@ -768,10 +800,17 @@ export class CliTranspiler {
     const configObject = config as Record<string, unknown>;
     const compilerOptions = configObject.compilerOptions;
     if (!compilerOptions || typeof compilerOptions !== 'object') return;
+    const embeddedCompilerOptions = compilerOptions as Record<string, unknown>;
+    if (
+      typeof embeddedCompilerOptions.baseUrl !== 'string' &&
+      embeddedCompilerOptions.paths === undefined
+    ) {
+      return;
+    }
 
     const rootConfig = {
       ...configObject,
-      compilerOptions: { ...(compilerOptions as Record<string, unknown>) },
+      compilerOptions: { ...embeddedCompilerOptions },
     };
     const rootCompilerOptions = rootConfig.compilerOptions as Record<string, unknown>;
     const configDir = path.posix.dirname(embedded.name.replace(/^\/+/, '').replace(/\\/g, '/'));
