@@ -429,10 +429,6 @@ pub(crate) fn is_empty_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     tsz_solver::is_empty_object_type(db, type_id)
 }
 
-pub(crate) fn is_object_intrinsic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::OBJECT || tsz_solver::intrinsic_kind(db, type_id) == Some(IntrinsicKind::Object)
-}
-
 /// True when a type would render with a user-visible name (interface, class,
 /// type alias, type parameter, application, lazy ref, intrinsic, etc.). False
 /// for anonymous structural shapes like `{ p: number; q: string; }`. Used by
