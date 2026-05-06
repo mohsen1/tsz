@@ -63,6 +63,52 @@ use tsz::parser::ParserState;
 use tsz::parser::base::NodeIndex;
 use tsz::parser::node::NodeArena;
 
+fn deserialize_target_option<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_tsserver_enum_option(deserializer, |value| {
+        tsz::emitter::ScriptTarget::from_ts_numeric(value).map(|target| target.as_ts_str())
+    })
+}
+
+fn deserialize_module_option<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_tsserver_enum_option(deserializer, |value| {
+        tsz::ModuleKind::from_ts_numeric(value).map(|module| module.as_ts_str())
+    })
+}
+
+fn deserialize_tsserver_enum_option<'de, D, F>(
+    deserializer: D,
+    map_numeric: F,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    F: Fn(u32) -> Option<&'static str>,
+{
+    let Some(value) = Option::<serde_json::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::String(value) => Ok(Some(value)),
+        serde_json::Value::Number(number) => {
+            let mapped = number
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .and_then(map_numeric);
+            Ok(Some(
+                mapped.map_or_else(|| number.to_string(), str::to_string),
+            ))
+        }
+        _ => Ok(None),
+    }
+}
+
 // Diagnostic code for "File appears to be binary."
 const TS1490_FILE_APPEARS_TO_BE_BINARY: i32 = 1490;
 
@@ -370,9 +416,9 @@ struct CheckOptions {
     no_lib: bool,
     #[serde(default)]
     lib: Option<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_target_option")]
     target: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_module_option")]
     module: Option<String>,
     #[serde(default)]
     experimental_decorators: bool,
@@ -994,17 +1040,18 @@ impl Server {
             "getCompilerOptionsDiagnostics" => {
                 self.handle_compiler_options_diagnostics(seq, &request)
             }
-            "reload" | "reloadProjects" => self.handle_reload(seq, &request),
+            "reload" => self.handle_reload(seq, &request),
+            "reloadProjects" => self.handle_reload_projects(seq, &request),
             "status" => self.stub_response(
                 seq,
                 &request,
-                Some(serde_json::json!({"version": env!("CARGO_PKG_VERSION")})),
+                Some(serde_json::json!({"version": tsz_cli::help::TSC_VERSION})),
             ),
             "compileOnSaveAffectedFileList" => {
                 self.handle_compile_on_save_affected_file_list(seq, &request)
             }
             "compileOnSaveEmitFile" => self.handle_compile_on_save_emit_file(seq, &request),
-            "saveto" | "watchChange" => self.stub_response(seq, &request, None),
+            "saveto" => self.handle_save_to(seq, &request),
             "exit" => TsServerResponse {
                 seq,
                 msg_type: "response".to_string(),

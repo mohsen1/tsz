@@ -17,6 +17,22 @@
 use tsz_checker::test_utils::check_source_codes;
 
 #[test]
+fn await_promise_of_generic_type_alias_preserves_alias_type() {
+    let source = r#"
+type Box<T> = { data: T };
+async function f(p: Promise<Box<number>>) {
+    const r = await p;
+    r.data.toFixed();
+}
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2339),
+        "unexpected TS2339 after `await p` where p: Promise<Box<number>> - the await loop must stop at Box<number>, not unwrap further into `number`. got: {codes:?}"
+    );
+}
+
+#[test]
 fn await_promise_of_generic_interface_preserves_interface_type() {
     // Minimal repro from `destructureOfVariableSameAsShorthand.ts`.
     let source = r#"

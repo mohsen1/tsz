@@ -449,7 +449,6 @@ impl Server {
                 "es2015" | "es6" => ModuleKind::ES2015,
                 "es2020" => ModuleKind::ES2020,
                 "es2022" => ModuleKind::ES2022,
-                "esnext" => ModuleKind::ESNext,
                 "node16" => ModuleKind::Node16,
                 "node18" => ModuleKind::Node18,
                 "node20" => ModuleKind::Node20,
@@ -1669,6 +1668,24 @@ impl Server {
         )
     }
 
+    pub(crate) fn handle_reload_projects(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        self.lib_cache.clear();
+        self.unified_lib_cache = None;
+
+        let paths: Vec<String> = self.open_files.keys().cloned().collect();
+        for path in &paths {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                self.open_files.insert(path.clone(), content);
+            }
+        }
+
+        self.stub_response(seq, request, None)
+    }
+
     pub(crate) fn handle_compiler_options_for_inferred(
         &mut self,
         seq: u64,
@@ -1809,7 +1826,7 @@ impl Server {
             .unwrap_or(false);
         let mut projects: Vec<(&String, &Vec<String>)> =
             self.external_project_files.iter().collect();
-        projects.sort_by(|(left, _), (right, _)| left.cmp(right));
+        projects.sort_by_key(|(left, _)| *left);
 
         let body: Vec<serde_json::Value> = projects
             .into_iter()

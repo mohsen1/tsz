@@ -656,7 +656,7 @@ impl<'a> CheckerState<'a> {
         let find_member = |props: &[tsz_solver::PropertyInfo]| {
             props.iter().find_map(|prop| {
                 let prop_name = self.ctx.types.resolve_atom(prop.name);
-                if prop_name.starts_with("__private_brand_")
+                if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name)
                     || required_property_name.is_some_and(|required| prop.name != required)
                     || prop.visibility == tsz_solver::Visibility::Public
                 {

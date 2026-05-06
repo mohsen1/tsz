@@ -309,11 +309,6 @@ impl<'a> CheckerState<'a> {
                 &filled,
             );
             let fallback_name = self.format_type_diagnostic(instantiated);
-            let fallback_is_nominal_lib_object =
-                self.is_nominal_lib_object_type_name(&fallback_name);
-            if !fallback_is_nominal_lib_object {
-                continue;
-            }
             let resolved_fallback = self
                 .is_well_known_lib_type_name(&fallback_name)
                 .then(|| self.resolve_lib_type_by_name(&fallback_name))
@@ -326,6 +321,8 @@ impl<'a> CheckerState<'a> {
                 } else {
                     evaluated
                 };
+            let fallback_is_nominal_lib_object =
+                self.is_nominal_lib_object_type_name(&fallback_name);
             let current_satisfies_fallback = current.is_none_or(|mapped| {
                 let primitive_fails_nominal_lib_object =
                     common::is_primitive_type(self.ctx.types, mapped)

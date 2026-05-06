@@ -119,6 +119,10 @@ pub struct PrinterOptions {
     pub legacy_decorators: bool,
     /// Emit design-type metadata for decorated declarations (`__metadata` style)
     pub emit_decorator_metadata: bool,
+    /// True when emitting without default library declarations.
+    pub no_lib: bool,
+    /// True when `--isolatedModules` is enabled.
+    pub isolated_modules: bool,
     /// Emit interop helpers (`__importStar`, `__importDefault`) for CJS/ESM interop
     pub es_module_interop: bool,
     /// When true, treat all non-declaration files as modules (moduleDetection=force)
@@ -149,6 +153,8 @@ pub struct PrinterOptions {
     pub external_const_enum_values: FxHashMap<String, FxHashMap<String, EnumValue>>,
     /// Local binding names that refer to external const enums.
     pub external_const_enum_bindings: FxHashSet<String>,
+    /// External ambient modules whose `export =` target is type-only.
+    pub type_only_export_equals_modules: FxHashSet<String>,
     /// Import helpers from tslib instead of inlining them
     pub import_helpers: bool,
     /// JSX emit mode
@@ -197,6 +203,8 @@ impl Default for PrinterOptions {
             use_define_for_class_fields: false,
             legacy_decorators: false,
             emit_decorator_metadata: false,
+            no_lib: false,
+            isolated_modules: false,
             es_module_interop: false,
             module_detection_force: false,
             module_detection_legacy: false,
@@ -206,6 +214,7 @@ impl Default for PrinterOptions {
             no_const_enum_inlining: false,
             external_const_enum_values: FxHashMap::default(),
             external_const_enum_bindings: FxHashSet::default(),
+            type_only_export_equals_modules: FxHashSet::default(),
             import_helpers: false,
             jsx: JsxEmit::Preserve,
             jsx_factory: None,
@@ -418,7 +427,7 @@ pub struct Printer<'a> {
 
     /// For CommonJS class exports, emit `exports.X = X;` immediately after class
     /// declaration and before post-class lowered statements (static fields/blocks).
-    pub(crate) pending_commonjs_class_export_name: Option<String>,
+    pub(crate) pending_commonjs_class_export_name: Option<(NodeIndex, String)>,
 
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(crate) declared_namespace_names: FxHashSet<String>,

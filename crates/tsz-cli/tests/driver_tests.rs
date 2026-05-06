@@ -851,40 +851,89 @@ fn compile_source_reference_lib_known_name_does_not_report_ts2726() {
 }
 
 #[test]
-fn compile_triple_slash_reference_rejects_prefixed_path_attribute() {
-    let temp = TempDir::new().expect("temp dir");
-    let base = temp.path.as_path();
+fn compile_triple_slash_reference_attribute_must_match_exactly() {
+    // Regression for #3375: triple-slash reference attributes must be matched
+    // as exact attribute names. `notpath="..."` must NOT be treated as
+    // `path="..."`. tsc reports TS1084 for the invalid directive and does not
+    // pull in the bogus referenced file, so the global declared in extra.d.ts
+    // must be unresolved (TS2304).
+    //
+    // The bogus and valid cases use separate compilations because ambient
+    // declarations from extra.d.ts become global across the entire program
+    // once any file in the program pulls it in - sharing one project would
+    // mask the leak the bug demonstrates.
 
+    // === Bogus attribute: must NOT pull in extra.d.ts; must emit TS1084. ===
+    let bogus_temp = TempDir::new().expect("temp dir (bogus)");
+    let bogus_base = bogus_temp.path.as_path();
     write_file(
-        &base.join("extra.d.ts"),
-        r#"declare const extraGlobal: number;
-"#,
+        &bogus_base.join("extra.d.ts"),
+        "declare const extraGlobal: number;\n",
     );
     write_file(
-        &base.join("main.ts"),
+        &bogus_base.join("main.ts"),
         r#"/// <reference notpath="./extra.d.ts" />
 extraGlobal.toFixed();
 "#,
     );
     write_file(
-        &base.join("tsconfig.json"),
+        &bogus_base.join("tsconfig.json"),
         r#"{
-          "compilerOptions": {
-            "noEmit": true,
-            "strict": true
-          },
+          "compilerOptions": { "noEmit": true, "strict": true },
           "files": ["main.ts"]
         }"#,
     );
 
-    let mut args = default_args();
-    args.project = Some(base.join("tsconfig.json"));
+    let mut bogus_args = default_args();
+    bogus_args.project = Some(bogus_base.join("tsconfig.json"));
+    let bogus_result = compile(&bogus_args, bogus_base).expect("bogus compile should succeed");
+    let bogus_codes: Vec<u32> = bogus_result.diagnostics.iter().map(|d| d.code).collect();
 
-    let result = compile(&args, base).expect("compile should succeed");
     assert!(
-        result.diagnostics.iter().any(|d| d.code == 1084),
-        "Expected TS1084 for invalid reference directive syntax, got diagnostics: {:?}",
-        result.diagnostics
+        bogus_codes.contains(&1084),
+        "Expected TS1084 (invalid reference directive) for `notpath=`; got: {:?}",
+        bogus_result.diagnostics
+    );
+    assert!(
+        bogus_codes.contains(&2304),
+        "Expected TS2304 (cannot find `extraGlobal`) - bogus reference must not pull in extra.d.ts; got: {:?}",
+        bogus_result.diagnostics
+    );
+
+    // === Control: a valid path attribute must still resolve and type-check. ===
+    let valid_temp = TempDir::new().expect("temp dir (valid)");
+    let valid_base = valid_temp.path.as_path();
+    write_file(
+        &valid_base.join("extra.d.ts"),
+        "declare const extraGlobal: number;\n",
+    );
+    write_file(
+        &valid_base.join("main.ts"),
+        r#"/// <reference path="./extra.d.ts" />
+extraGlobal.toFixed();
+"#,
+    );
+    write_file(
+        &valid_base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": { "noEmit": true, "strict": true },
+          "files": ["main.ts"]
+        }"#,
+    );
+
+    let mut valid_args = default_args();
+    valid_args.project = Some(valid_base.join("tsconfig.json"));
+    let valid_result = compile(&valid_args, valid_base).expect("valid compile should succeed");
+    let valid_codes: Vec<u32> = valid_result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !valid_codes.contains(&1084),
+        "Valid `path=` directive must not be flagged TS1084; got: {:?}",
+        valid_result.diagnostics
+    );
+    assert!(
+        !valid_codes.contains(&2304),
+        "Valid `path=` directive must pull in extra.d.ts so `extraGlobal` resolves; got: {:?}",
+        valid_result.diagnostics
     );
 }
 
@@ -1911,7 +1960,7 @@ export const works1 = fn((x: number) => x);
 
     let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
     assert!(
-        dts.contains("export declare const fail1: (<T>(x: T) => T);"),
+        dts.contains("export declare const fail1: <T>(x: T) => T;"),
         "expected inferred generic function type argument: {dts}"
     );
     assert!(
@@ -7966,7 +8015,11 @@ fn compile_resolves_package_imports_prefers_import_condition_for_esm() {
 }
 
 #[test]
-fn compile_prefers_browser_exports_for_bundler() {
+fn compile_bundler_does_not_default_to_browser_condition() {
+    // Per tsc 6.0, `moduleResolution: "bundler"` does NOT add `browser` to
+    // the default condition set; the user must opt in via `customConditions`.
+    // Here, with no opt-in, the resolver must select the `default` branch
+    // (a clean .d.ts), not the malformed `browser.d.ts`.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -7991,7 +8044,64 @@ fn compile_prefers_browser_exports_for_bundler() {
           "exports": {
             ".": {
               "browser": "./browser.d.ts",
-              "node": "./node.d.ts"
+              "default": "./default.d.ts"
+            }
+          }
+        }"#,
+    );
+    // The browser branch contains a syntax error; if bundler still picked
+    // it up by default, we'd see diagnostics in browser.d.ts.
+    write_file(
+        &base.join("node_modules/pkg/browser.d.ts"),
+        "export const widget = ;",
+    );
+    write_file(
+        &base.join("node_modules/pkg/default.d.ts"),
+        "export const widget = 1;",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    // Picking the `default` branch produces a clean compile.
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.file.contains("node_modules/pkg/browser.d.ts")),
+        "bundler must not default to the `browser` exports branch"
+    );
+}
+
+#[test]
+fn compile_bundler_uses_browser_condition_when_in_custom_conditions() {
+    // Opting `browser` into `customConditions` re-enables it for bundler.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "moduleResolution": "bundler",
+            "customConditions": ["browser"],
+            "noEmitOnError": true
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        "import { widget } from 'pkg'; export { widget };",
+    );
+    write_file(
+        &base.join("node_modules/pkg/package.json"),
+        r#"{
+          "exports": {
+            ".": {
+              "browser": "./browser.d.ts",
+              "default": "./default.d.ts"
             }
           }
         }"#,
@@ -8001,7 +8111,7 @@ fn compile_prefers_browser_exports_for_bundler() {
         "export const widget = ;",
     );
     write_file(
-        &base.join("node_modules/pkg/node.d.ts"),
+        &base.join("node_modules/pkg/default.d.ts"),
         "export const widget = 1;",
     );
 
@@ -15054,6 +15164,61 @@ f;
 }
 
 #[test]
+fn checked_js_async_jsdoc_shadowed_promise_typedef_reports_ts1064() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "module": "commonjs",
+    "target": "es2020",
+    "types": []
+  },
+  "files": ["main.js"]
+}"#,
+    );
+    write_file(
+        &base.join("main.js"),
+        r#"// @ts-check
+export {};
+
+/**
+ * @template T
+ * @typedef {{ value: T }} Promise
+ */
+
+/** @type {function(): Promise<string>} */
+const f = async () => "ok";
+
+f;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == 1064 && d.message_text.contains("Promise<Promise<string>>")),
+        "expected TS1064 for shadowed Promise typedef, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 2322),
+        "expected assignment mismatch alongside TS1064, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn checked_js_external_module_typedef_does_not_suppress_generic_arg_ts2304() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
@@ -15795,7 +15960,7 @@ fn ts2592_emitted_for_unresolved_jquery_global_without_ts2304() {
 }
 
 #[test]
-fn missing_external_globals_without_types_use_install_only_diagnostics() {
+fn missing_external_globals_without_types_use_types_field_diagnostics() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
 
@@ -15824,9 +15989,9 @@ describe("suite", () => {});
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     for code in [
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
     ] {
         assert!(
             codes.contains(&code),
@@ -15835,13 +16000,13 @@ describe("suite", () => {});
         );
     }
     for code in [
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
     ] {
         assert!(
             !codes.contains(&code),
-            "Did not expect types-field diagnostic {code}, got diagnostics: {:?}",
+            "Did not expect install-only diagnostic {code}, got diagnostics: {:?}",
             result.diagnostics
         );
     }
@@ -15934,13 +16099,12 @@ Buffer.from("x");
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
-    let ts2580 = diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE;
     let ts2591 = diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2;
 
     assert_eq!(
-        codes.iter().filter(|&&code| code == ts2580).count(),
+        codes.iter().filter(|&&code| code == ts2591).count(),
         2,
-        "Expected TS2580 for process and Buffer in checked JS, got diagnostics: {:?}",
+        "Expected TS2591 for process and Buffer in checked JS, got diagnostics: {:?}",
         result.diagnostics
     );
     assert!(
@@ -15960,11 +16124,6 @@ Buffer.from("x");
             result.diagnostics
         );
     }
-    assert!(
-        !codes.contains(&ts2591),
-        "Did not expect TS2591, got diagnostics: {:?}",
-        result.diagnostics
-    );
     assert!(
         result
             .diagnostics

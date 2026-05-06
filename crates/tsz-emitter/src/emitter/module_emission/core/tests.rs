@@ -1,5 +1,5 @@
 use crate::context::emit::EmitContext;
-use crate::emitter::{ModuleKind, Printer, PrinterOptions};
+use crate::emitter::{JsxEmit, ModuleKind, Printer, PrinterOptions};
 use crate::lowering::LoweringPass;
 use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
@@ -203,6 +203,49 @@ export = Foo;
 }
 
 #[test]
+fn for_of_assignment_object_rest_uses_iteration_temp() {
+    let source = r#"let array: { x: number, y: string }[];
+for (let { x, ...restOf } of array) {
+    [x, restOf];
+}
+let xx: number;
+let rrestOff: { y: string };
+for ({ x: xx, ...rrestOff } of array ) {
+    [xx, rrestOff];
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("for (let _a of array) {"),
+        "Object-rest binding for-of should keep using a loop temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (let _b of array) {"),
+        "Object-rest assignment for-of should introduce a loop temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("({ x: xx } = _b, rrestOff = __rest(_b, [\"x\"]));"),
+        "Object-rest assignment should be emitted inside the loop body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Object.assign({ x: xx }, rrestOff) of array"),
+        "Object-rest assignment must not be emitted as an object-spread expression in the for-of header.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_arrow_this_capture_skips_multiple_user_bindings() {
     let source = r#"export function make(this: { value: string }) {
   const _this = "first user binding";
@@ -318,6 +361,44 @@ fn nested_classes_preserve_outer_private_name_scope() {
     assert!(
         !output.contains("A.;"),
         "Private field access should not drop the private identifier.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn reserved_private_constructor_method_is_not_extracted() {
+    let source = r#"class A {
+    #constructor() {}
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::None,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _A_instances, _A_constructor;"),
+        "Reserved private constructor should still reserve tsc's helper name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("#constructor() { }"),
+        "Reserved private constructor should remain in the class body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_A_instances = new WeakSet();"),
+        "Instance brand WeakSet should still be initialized.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_A_constructor = function"),
+        "Reserved private constructor should not be extracted into a helper function.\nOutput:\n{output}"
     );
 }
 
@@ -516,6 +597,41 @@ export async function f() {
     assert!(
         output.contains("return tslib_1;"),
         "Source reads should still use the user binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_import_helpers_jsx_spread_uses_tslib_assign() {
+    let source = r#"declare var React: any;
+declare var o: any;
+export const x = <span {...o} />;
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        jsx: JsxEmit::React,
+        import_helpers: true,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var tslib_1 = require(\"tslib\");"),
+        "JSX spread should request the tslib helper import.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("React.createElement(\"span\", tslib_1.__assign({}, o))"),
+        "ES5 JSX spread should call the imported __assign helper.\nOutput:\n{output}"
     );
 }
 
@@ -1021,6 +1137,36 @@ fn inline_cjs_export_skips_initializerless_vars() {
     );
 }
 
+#[test]
+fn transformed_class_expression_var_export_emits_inline_assignment() {
+    let source = "export var noPrivates = class {\n    static getTags() { }\n    tags() { }\n    private static ps = -1;\n    private p = 12;\n};\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.noPrivates = (_a = class {"),
+        "Transformed class expression export should inline the comma expression.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var noPrivates ="),
+        "Transformed class expression export should not keep a redundant local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.noPrivates = noPrivates;"),
+        "Transformed class expression export should not need a trailing self-assignment.\nOutput:\n{output}"
+    );
+}
+
 /// Merged enum declarations in ESM should only have `export` on the first
 /// declaration's `var` statement. Subsequent IIFEs should be bare.
 #[test]
@@ -1120,6 +1266,53 @@ fn decorated_class_export_no_duplicate_exports() {
     assert!(
         output.contains("exports.A = A = __decorate("),
         "Should contain the decorator assignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn cjs_exported_class_with_mixin_heritage_exports_after_outer_class() {
+    let source = r#"export const Mixin = null as any;
+export class Base {}
+export class XmlElement2 extends Mixin(
+    [Base],
+    (base: any) => {
+        class XmlElement2 extends base {
+            num = 0;
+        }
+        return XmlElement2;
+    }) { }
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let return_pos = output
+        .find("return XmlElement2;")
+        .expect("mixin callback should return the local class");
+    let export_pos = output
+        .find("exports.XmlElement2 = XmlElement2;")
+        .expect("outer class export assignment should be emitted");
+
+    assert!(
+        return_pos < export_pos,
+        "Outer class export assignment must not be emitted inside the mixin callback.\nOutput:\n{output}"
+    );
+    let outer_close_pos = output
+        .find("}) {\n}\nexports.XmlElement2 = XmlElement2;")
+        .expect("outer class should close before its export assignment");
+    assert!(
+        return_pos < outer_close_pos && outer_close_pos <= export_pos,
+        "Outer class export assignment should follow the complete class declaration.\nOutput:\n{output}"
     );
 }
 
@@ -1289,5 +1482,27 @@ export { default as Foo } from "./b";
     assert!(
         output.contains("\"Foo\": b_1_1[\"default\"]"),
         "System re-export setter should read default with bracket access.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn interface_var_member_recovery_emits_var_statement() {
+    let source = "interface Foo<T> {\n    var x: T<>;\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var x;"),
+        "Malformed var members in interfaces should recover as a variable statement.\nOutput:\n{output}"
     );
 }

@@ -534,12 +534,25 @@ fn collect_export_name_from_declaration(
                 if import_equals_uses_external_module_ref(arena, import_decl.module_specifier) {
                     return;
                 }
+                if arena
+                    .get(import_decl.module_specifier)
+                    .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+                    && !is_import_alias_referencing_value(
+                        arena,
+                        import_decl.module_specifier,
+                        statements,
+                        preserve_const_enums,
+                    )
+                {
+                    return;
+                }
+
                 // For a qualified `export import A = X.Y` chain, the alias
                 // is type-only when *the exported member* `Y` of namespace
                 // `X` is itself an interface or type alias. A non-exported
                 // type member inside `X` cannot be reached from outside, so
                 // tsc resolves the chain to nothing and preserves the
-                // (broken-at-runtime) `exports.A = X.Y;`. Mirror that —
+                // (broken-at-runtime) `exports.A = X.Y;`. Mirror that:
                 // only elide when the inner member is an *exported*
                 // type-only declaration.
                 if import_alias_resolves_to_exported_type_only(
