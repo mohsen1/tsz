@@ -37,11 +37,20 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn file_has_jsdoc_typedef_named(&self, file_idx: usize, export_name: &str) -> bool {
-        self.ctx
-            .get_arena_for_file(file_idx as u32)
-            .source_files
-            .iter()
-            .any(|source_file| Self::source_file_has_jsdoc_typedef_named(source_file, export_name))
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        arena.source_files.iter().any(|source_file| {
+            if !source_file.text.contains("@typedef")
+                && !source_file.text.contains("@callback")
+                && !source_file.text.contains("@import")
+            {
+                return false;
+            }
+            if !export_name.is_empty() && !source_file.text.contains(export_name) {
+                return false;
+            }
+
+            Self::source_file_has_jsdoc_typedef_named(source_file, export_name)
+        })
     }
 
     pub(crate) fn file_has_jsdoc_typedef_namespace_root(
@@ -49,13 +58,21 @@ impl<'a> CheckerState<'a> {
         file_idx: usize,
         export_name: &str,
     ) -> bool {
-        self.ctx
-            .get_arena_for_file(file_idx as u32)
-            .source_files
-            .iter()
-            .any(|source_file| {
-                Self::source_file_has_jsdoc_typedef_namespace_root(source_file, export_name)
-            })
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        arena.source_files.iter().any(|source_file| {
+            if !source_file.text.contains("@namespace")
+                && !source_file.text.contains("@typedef")
+                && !source_file.text.contains("@callback")
+                && !source_file.text.contains("@import")
+            {
+                return false;
+            }
+            if !source_file.text.contains(export_name) {
+                return false;
+            }
+
+            Self::source_file_has_jsdoc_typedef_namespace_root(source_file, export_name)
+        })
     }
 
     pub(crate) fn report_namespace_value_access_for_type_only_import_equals_expr(
