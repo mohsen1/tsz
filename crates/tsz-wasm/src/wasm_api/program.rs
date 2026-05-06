@@ -541,15 +541,7 @@ impl TsProgram {
                 module,
             );
 
-            // Create output file name (.ts -> .js)
-            let output_name = bound_file
-                .file_name
-                .strip_suffix(".ts")
-                .or_else(|| bound_file.file_name.strip_suffix(".tsx"))
-                .map_or_else(
-                    || format!("{}.js", bound_file.file_name),
-                    |s| format!("{s}.js"),
-                );
+            let output_name = js_output_name(&bound_file.file_name);
 
             emitted_files.push(serde_json::json!({
                 "name": output_name,
@@ -617,6 +609,23 @@ impl TsProgram {
         self.type_checker = None;
         self.source_files.clear();
     }
+}
+
+fn js_output_name(file_name: &str) -> String {
+    if let Some(stem) = file_name.strip_suffix(".mts") {
+        return format!("{stem}.mjs");
+    }
+    if let Some(stem) = file_name.strip_suffix(".cts") {
+        return format!("{stem}.cjs");
+    }
+    if let Some(stem) = file_name
+        .strip_suffix(".tsx")
+        .or_else(|| file_name.strip_suffix(".ts"))
+    {
+        return format!("{stem}.js");
+    }
+
+    format!("{file_name}.js")
 }
 
 impl Default for TsProgram {

@@ -1115,6 +1115,7 @@ impl ParserState {
             SyntaxKind::DotDotDotToken => "...",
             SyntaxKind::Identifier => "identifier",
             SyntaxKind::TryKeyword => "try",
+            SyntaxKind::WhileKeyword => "while",
             SyntaxKind::FromKeyword => "from",
             SyntaxKind::AsKeyword => "as",
             SyntaxKind::OfKeyword => "of",
@@ -1847,12 +1848,10 @@ impl ParserState {
         )
     }
 
-    /// Check if current token is a reserved word that, when encountered at the
-    /// start of a statement, begins a construct whose grammar is `kw ( expr )`.
-    /// These are the keywords whose cascade (`'(' expected.`, `')' expected.`)
-    /// tsc emits when recovery re-parses the token as a statement.
+    /// Check if current token is a reserved word that namespace-import recovery
+    /// should leave for statement parsing.
     #[inline]
-    pub(crate) const fn is_paren_statement_starter_reserved_word(&self) -> bool {
+    pub(crate) const fn is_namespace_import_recovery_statement_starter(&self) -> bool {
         matches!(
             self.current_token,
             SyntaxKind::WhileKeyword
@@ -1860,6 +1859,9 @@ impl ParserState {
                 | SyntaxKind::IfKeyword
                 | SyntaxKind::SwitchKeyword
                 | SyntaxKind::WithKeyword
+                | SyntaxKind::DoKeyword
+                | SyntaxKind::TryKeyword
+                | SyntaxKind::ReturnKeyword
         )
     }
 

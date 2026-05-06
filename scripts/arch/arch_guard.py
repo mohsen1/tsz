@@ -429,6 +429,7 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/queries/lib.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers_helpers.rs",
+            "crates/tsz-checker/src/types/type_node.rs",
             "crates/tsz-checker/src/types/utilities/core.rs",
             "crates/tsz-checker/src/types/utilities/enum_utils.rs",
         },

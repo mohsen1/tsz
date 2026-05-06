@@ -319,6 +319,94 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(crate) fn nearest_leading_comment_contains(
+        &self,
+        pos: u32,
+        lower_bound: u32,
+        needle: &str,
+    ) -> bool {
+        let Some(ref text) = self.source_file_text else {
+            return false;
+        };
+        self.all_comments
+            .iter()
+            .rfind(|comment| comment.end <= pos && comment.pos >= lower_bound)
+            .is_some_and(|comment| {
+                text[comment.pos as usize..comment.end as usize].contains(needle)
+            })
+    }
+
+    pub(crate) fn emit_strip_internal_constructor_parameter_comment(
+        &mut self,
+        param_pos: u32,
+        lower_bound: u32,
+        allow_plain_block: bool,
+    ) {
+        if self.remove_comments {
+            return;
+        }
+        let Some(ref text) = self.source_file_text else {
+            return;
+        };
+        let text = text.clone();
+        let Some(comment) = self
+            .all_comments
+            .iter()
+            .rfind(|comment| {
+                if comment.end > param_pos || comment.pos < lower_bound {
+                    return false;
+                }
+                let ct = &text[comment.pos as usize..comment.end as usize];
+                ct.starts_with("/**") || (allow_plain_block && ct.starts_with("/*"))
+            })
+            .cloned()
+        else {
+            return;
+        };
+
+        let bytes = text.as_bytes();
+        let c_pos = comment.pos as usize;
+        let c_end = comment.end as usize;
+        let ct = &text[c_pos..c_end];
+        let has_prior_comment = self
+            .all_comments
+            .iter()
+            .any(|candidate| candidate.pos >= lower_bound && candidate.end <= comment.pos);
+        let has_newline = {
+            let mut pos = c_pos;
+            let mut found = false;
+            while pos > 0 {
+                pos -= 1;
+                match bytes[pos] {
+                    b'\n' => {
+                        found = true;
+                        break;
+                    }
+                    b' ' | b'\t' | b'\r' => continue,
+                    _ => break,
+                }
+            }
+            found
+        };
+        let own_line = ct.starts_with("/**") && (lower_bound == 0 || has_prior_comment);
+
+        if own_line {
+            self.write_line();
+            self.write_indent();
+            self.write(ct);
+            self.write_line();
+            self.write_indent();
+        } else if has_newline {
+            self.write_line();
+            self.write_indent();
+            self.write(ct);
+            self.write(" ");
+        } else {
+            self.write(ct);
+            self.write(" ");
+        }
+    }
+
     /// Check if there is a trailing block comment on the same source line as `node_end`,
     /// and if so, emit it (space-separated) before the caller emits a newline.
     /// Returns true if a trailing comment was emitted.

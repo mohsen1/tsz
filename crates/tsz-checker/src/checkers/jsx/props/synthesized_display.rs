@@ -138,4 +138,82 @@ impl<'a> CheckerState<'a> {
         }
         Some(format!("{{ {}; }}", fragments.join("; ")))
     }
+
+    /// Format the effective JSX attributes object for spread assignability
+    /// diagnostics. tsc prints properties in overwrite order: later attributes
+    /// and spreads first, with earlier contributors included only when they are
+    /// not shadowed by a later property.
+    pub(super) fn format_jsx_attrs_effective_source_for_spread_assignability(
+        &mut self,
+        attributes_idx: NodeIndex,
+        props_type: TypeId,
+        request: &TypingRequest,
+    ) -> Option<String> {
+        let attrs_node = self.ctx.arena.get(attributes_idx)?;
+        let attrs = self.ctx.arena.get_jsx_attributes(attrs_node)?;
+
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut fragments = Vec::new();
+        for &attr_idx in attrs.properties.nodes.iter().rev() {
+            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+                continue;
+            };
+
+            if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
+                let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
+                    continue;
+                };
+                let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
+                    continue;
+                };
+                let Some(attr_name) = self.get_jsx_attribute_name(name_node) else {
+                    continue;
+                };
+                if attr_name == "key" || attr_name == "ref" || !seen.insert(attr_name.clone()) {
+                    continue;
+                }
+
+                let attr_value_type = if attr_data.initializer.is_none() {
+                    TypeId::BOOLEAN_TRUE
+                } else {
+                    self.compute_jsx_attr_value_type_without_context(attr_data.initializer)
+                };
+                fragments
+                    .push(self.format_jsx_synthesized_prop_fragment(&attr_name, attr_value_type));
+            } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
+                    continue;
+                };
+                let spread_request = request.read().normal_origin().contextual(props_type);
+                let spread_type = self.compute_normalized_jsx_spread_type_with_request(
+                    spread_data.expression,
+                    &spread_request,
+                );
+                if matches!(spread_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+                    continue;
+                }
+                if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    spread_type,
+                ) {
+                    let mut props_by_decl: Vec<&tsz_solver::PropertyInfo> =
+                        shape.properties.iter().collect();
+                    props_by_decl.sort_by_key(|p| p.declaration_order);
+                    for prop in props_by_decl {
+                        let name = self.ctx.types.resolve_atom(prop.name).to_string();
+                        if name == "key" || name == "ref" || !seen.insert(name.clone()) {
+                            continue;
+                        }
+                        fragments
+                            .push(self.format_jsx_synthesized_prop_fragment(&name, prop.type_id));
+                    }
+                }
+            }
+        }
+
+        if fragments.is_empty() {
+            return None;
+        }
+        Some(format!("{{ {}; }}", fragments.join("; ")))
+    }
 }

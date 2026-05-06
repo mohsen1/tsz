@@ -818,6 +818,26 @@ fn test_collect_module_specifiers_require_has_correct_kind() {
 }
 
 #[test]
+fn test_collect_module_specifiers_export_import_require_has_correct_kind() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"export import dep = require("./dep");"#;
+    let file_name = "test.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let requires: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::CjsRequire)
+        .map(|(s, _, _, _)| s.as_str())
+        .collect();
+    assert!(
+        requires.contains(&"./dep"),
+        "Should find exported CommonJS require, got: {specifiers:?}"
+    );
+}
+
+#[test]
 fn test_collect_module_specifiers_dynamic_import_has_correct_kind() {
     use tsz::module_resolver::ImportKind;
     let text = r#"import("./foo").then(x => x);"#;
