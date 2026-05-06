@@ -1495,52 +1495,70 @@ impl Server {
                 file.to_string(),
             );
 
-            // Extract the range from arguments, default to entire file
-            let start = match request
+            let protocol_span = request
                 .arguments
                 .get("start")
                 .and_then(serde_json::Value::as_u64)
-            {
-                Some(_) => {
-                    let line = request
+                .zip(
+                    request
                         .arguments
-                        .get("startLine")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(1) as u32;
-                    let offset = request
-                        .arguments
-                        .get("startOffset")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(1) as u32;
-                    Self::tsserver_to_lsp_position(line, offset)
-                }
-                None => Position::new(0, 0),
+                        .get("length")
+                        .and_then(serde_json::Value::as_u64),
+                )
+                .map(|(start, length)| {
+                    let source_len = source_text.len() as u64;
+                    let start = start.min(source_len) as u32;
+                    let end = start
+                        .saturating_add(length.min(u32::MAX as u64) as u32)
+                        .min(source_text.len() as u32);
+                    (start, end)
+                });
+
+            let range = if let Some((start, end)) = protocol_span {
+                Range::new(
+                    line_map.offset_to_position(start, &source_text),
+                    line_map.offset_to_position(end, &source_text),
+                )
+            } else {
+                let start = request
+                    .arguments
+                    .get("startLine")
+                    .and_then(serde_json::Value::as_u64)
+                    .zip(
+                        request
+                            .arguments
+                            .get("startOffset")
+                            .and_then(serde_json::Value::as_u64),
+                    )
+                    .map_or(Position::new(0, 0), |(line, offset)| {
+                        Self::tsserver_to_lsp_position(line as u32, offset as u32)
+                    });
+                let end = request
+                    .arguments
+                    .get("endLine")
+                    .and_then(serde_json::Value::as_u64)
+                    .zip(
+                        request
+                            .arguments
+                            .get("endOffset")
+                            .and_then(serde_json::Value::as_u64),
+                    )
+                    .map_or(Position::new(u32::MAX, u32::MAX), |(line, offset)| {
+                        Self::tsserver_to_lsp_position(line as u32, offset as u32)
+                    });
+                Range::new(start, end)
             };
-            let end = match request
-                .arguments
-                .get("end")
-                .and_then(serde_json::Value::as_u64)
-            {
-                Some(_) => {
-                    let line = request
-                        .arguments
-                        .get("endLine")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(u32::MAX as u64) as u32;
-                    let offset = request
-                        .arguments
-                        .get("endOffset")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(u32::MAX as u64) as u32;
-                    Self::tsserver_to_lsp_position(line, offset)
-                }
-                None => Position::new(u32::MAX, u32::MAX),
-            };
-            let range = Range::new(start, end);
 
             let hints = provider.provide_inlay_hints(root, range);
             let body: Vec<serde_json::Value> = hints
                 .iter()
+                .filter(|hint| {
+                    protocol_span.is_none_or(|(start, end)| {
+                        line_map
+                            .position_to_offset(hint.position, &source_text)
+                            .is_some_and(|position| position >= start && position < end)
+                    })
+                })
                 .map(|hint| {
                     let kind = match hint.kind {
                         InlayHintKind::Parameter => "Parameter",
