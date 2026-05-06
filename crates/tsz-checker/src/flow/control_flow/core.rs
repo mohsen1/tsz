@@ -26,9 +26,7 @@ pub struct CallPredicateMap {
 }
 
 impl CallPredicateMap {
-    pub(crate) fn iter(
-        &self,
-    ) -> impl Iterator<Item = (&u32, &(TypePredicate, Vec<ParamInfo>))> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&u32, &(TypePredicate, Vec<ParamInfo>))> {
         self.predicates.iter()
     }
 
