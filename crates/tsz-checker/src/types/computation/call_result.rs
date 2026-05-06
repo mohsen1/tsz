@@ -343,6 +343,7 @@ impl<'a> CheckerState<'a> {
 
     fn preferred_literal_expected_for_mismatch(
         &self,
+        callee_type: TypeId,
         arg_types: &[TypeId],
         args: &[NodeIndex],
         actual: TypeId,
@@ -357,6 +358,16 @@ impl<'a> CheckerState<'a> {
         }
         let actual_display_type = common::widen_argument_type_for_display(self.ctx.types, actual);
         if !common::is_primitive_type(self.ctx.types, actual_display_type) {
+            return expected;
+        }
+        let callee_has_generic_signature =
+            common::callable_shape_for_type(self.ctx.types, callee_type).is_some_and(|shape| {
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| !sig.type_params.is_empty())
+            });
+        if !callee_has_generic_signature {
             return expected;
         }
         arg_types
@@ -740,6 +751,7 @@ impl<'a> CheckerState<'a> {
                         .generic_callable_mismatch_display_target(actual, expected)
                         .unwrap_or(expected);
                     self.preferred_literal_expected_for_mismatch(
+                        callee_type,
                         arg_types,
                         args,
                         reported_actual,
