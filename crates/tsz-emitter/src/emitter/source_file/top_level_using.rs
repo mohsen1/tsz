@@ -1106,13 +1106,31 @@ impl<'a> Printer<'a> {
         {
             emitted = stripped.to_string();
         }
+        // Default-exported decorated classes emitted *inside* a System
+        // top-level `using` block are threaded through a `_default`
+        // tracker variable that lives at the System closure scope. This
+        // applies to BOTH named classes (`@dec export default class C
+        // { }` → `exports_1("default", _default = C);`) and anonymous
+        // classes (`@dec export default class { }` →
+        // `exports_1("default", _default = default_1);`). Native
+        // `using` (ES2025+) skips the tracker since the export sits at
+        // module top level rather than inside a try/catch.
+        let local_expr = if export_name == "default"
+            && self.in_system_execute_body
+            && self.in_top_level_using_scope
+            && !self.ctx.options.target.supports_es2025()
+        {
+            format!("_default = {binding_name}")
+        } else {
+            binding_name.to_string()
+        };
         let export_stmt = if let Some(indent) = leading_indent.as_ref() {
             format!(
                 "{indent}{}",
-                self.top_level_using_export_binding_stmt(export_name, binding_name)
+                self.top_level_using_export_binding_stmt(export_name, &local_expr)
             )
         } else {
-            self.top_level_using_export_binding_stmt(export_name, binding_name)
+            self.top_level_using_export_binding_stmt(export_name, &local_expr)
         };
 
         if export_name == "default" {
