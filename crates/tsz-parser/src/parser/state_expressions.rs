@@ -2437,7 +2437,23 @@ impl ParserState {
                         // through to the property-access path, which would call
                         // parse_identifier_name() and emit the spurious TS1003.
                         self.parse_expected(SyntaxKind::OpenParenToken);
-                        break;
+                        let call_expr = self.arena.add_call_expr(
+                            syntax_kind_ext::CALL_EXPRESSION,
+                            start_pos,
+                            self.token_pos(),
+                            CallExprData {
+                                expression: expr,
+                                type_arguments: Some(type_args),
+                                arguments: Some(self.make_node_list(Vec::new())),
+                            },
+                        );
+                        let optional_chain_flag =
+                            self.u16_from_node_flags(node_flags::OPTIONAL_CHAIN);
+                        if let Some(call_node) = self.arena.get_mut(call_expr) {
+                            call_node.flags |= optional_chain_flag;
+                        }
+                        expr = call_expr;
+                        continue;
                     }
                     if self.is_token(SyntaxKind::OpenBracketToken) {
                         // expr?.[index]
