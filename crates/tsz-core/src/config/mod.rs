@@ -635,6 +635,9 @@ pub fn resolve_compiler_options(
     options: Option<&CompilerOptions>,
 ) -> Result<ResolvedCompilerOptions> {
     let mut resolved = ResolvedCompilerOptions::default();
+    // TypeScript 6 defaults alwaysStrict emit on. An explicit
+    // alwaysStrict=false below can still suppress the prologue.
+    resolved.printer.always_strict = true;
     let Some(options) = options else {
         resolved.checker.target = checker_target_from_emitter(resolved.printer.target);
         resolved.lib_files = resolve_default_lib_files(resolved.printer.target)?;
@@ -5083,6 +5086,10 @@ mod tests {
         // When no options at all, module_explicitly_set should be false.
         let resolved = resolve_compiler_options(None).unwrap();
         assert!(!resolved.checker.module_explicitly_set);
+        assert!(
+            resolved.printer.always_strict,
+            "printer alwaysStrict should default to true with no compiler options"
+        );
     }
 
     #[test]
@@ -6501,6 +6508,10 @@ mod tests {
             resolved.checker.always_strict,
             "alwaysStrict should remain true by default when strict: false"
         );
+        assert!(
+            resolved.printer.always_strict,
+            "printer alwaysStrict should remain true by default when strict: false"
+        );
     }
 
     #[test]
@@ -6545,6 +6556,10 @@ mod tests {
             resolved.checker.always_strict,
             "alwaysStrict should fall back to the TS 6.0 default when provided as a string-typed boolean"
         );
+        assert!(
+            resolved.printer.always_strict,
+            "printer alwaysStrict should fall back to the TS 6.0 default when provided as a string-typed boolean"
+        );
     }
 
     #[test]
@@ -6561,6 +6576,10 @@ mod tests {
         assert!(
             !resolved.checker.always_strict,
             "explicit alwaysStrict=false should still disable alwaysStrict"
+        );
+        assert!(
+            !resolved.printer.always_strict,
+            "explicit alwaysStrict=false should still disable printer alwaysStrict"
         );
     }
 
