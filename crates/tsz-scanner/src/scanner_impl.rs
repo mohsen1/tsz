@@ -2479,14 +2479,14 @@ impl ScannerState {
                     if let Some(text) = decoded.as_mut() {
                         text.push('-');
                     }
-                    // After hyphen, we need more identifier characters
+                    // After a JSX hyphen, continuation may start with any identifier part.
                     if self.pos >= self.end {
                         continue;
                     }
                     let part_start = self.char_code_unchecked(self.pos);
                     if part_start == CharacterCodes::BACKSLASH {
                         if let Some(code_point) = self.peek_unicode_escape()
-                            && is_identifier_start(code_point)
+                            && is_identifier_part(code_point)
                         {
                             let text =
                                 decoded.get_or_insert_with(|| self.source[start..self.pos].into());
@@ -2519,7 +2519,7 @@ impl ScannerState {
                                 self.pos += self.char_len_at(self.pos);
                             }
                         }
-                    } else if is_identifier_start(part_start) {
+                    } else if is_identifier_part(part_start) {
                         loop {
                             let ch = self.char_code_unchecked(self.pos);
                             if !is_identifier_part(ch) {

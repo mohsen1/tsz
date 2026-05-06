@@ -5826,6 +5826,45 @@ var spread1 = <div x='' {...foo} y='' />;"#,
 }
 
 #[test]
+fn compile_jsx_attribute_name_allows_hyphen_followed_by_digit() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "jsx": "preserve",
+            "noEmit": true
+          },
+          "files": ["index.tsx"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.tsx"),
+        r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        x: { "data-123": "ok" };
+    }
+}
+
+const ok = <x data-123="ok" />;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics for JSX attribute name with digit-starting hyphen segment, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_with_project_dir_resolves_package_exported_tsconfig_extends() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
