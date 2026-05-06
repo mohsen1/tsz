@@ -8,6 +8,8 @@
 
 use tsz_binder::SymbolId;
 
+use crate::query_boundaries::common::type_id_is_known_to_db;
+
 use super::CheckerContext;
 
 impl<'a> CheckerContext<'a> {
@@ -40,7 +42,7 @@ impl<'a> CheckerContext<'a> {
         ) {
             return None;
         }
-        if !cached_type.is_intrinsic() && self.types.lookup(cached_type).is_none() {
+        if !type_id_is_known_to_db(self.types, cached_type) {
             return None;
         }
         Some((cached_type, params))
@@ -116,7 +118,7 @@ impl<'a> CheckerContext<'a> {
         ) {
             return None;
         }
-        if !cached_type.is_intrinsic() && self.types.lookup(cached_type).is_none() {
+        if !type_id_is_known_to_db(self.types, cached_type) {
             return None;
         }
         Some(cached_type)
@@ -192,7 +194,7 @@ impl<'a> CheckerContext<'a> {
         ) {
             return None;
         }
-        if !cached_type.is_intrinsic() && self.types.lookup(cached_type).is_none() {
+        if !type_id_is_known_to_db(self.types, cached_type) {
             return None;
         }
         Some(cached_type)
@@ -267,7 +269,7 @@ impl<'a> CheckerContext<'a> {
             0,
             0,
         )?;
-        if !cached_type.is_intrinsic() && self.types.lookup(cached_type).is_none() {
+        if !type_id_is_known_to_db(self.types, cached_type) {
             return None;
         }
         Some((cached_type, params))
@@ -311,7 +313,9 @@ mod tests {
         let ctx = shared_context(&arena, &binder, &types, Arc::clone(&store));
         let stale_type = TypeId(10_000);
 
-        assert!(types.lookup(stale_type).is_none());
+        assert!(!crate::query_boundaries::common::type_id_is_known_to_db(
+            &types, stale_type
+        ));
 
         store.cache_resolved_cross_file_query(
             crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
