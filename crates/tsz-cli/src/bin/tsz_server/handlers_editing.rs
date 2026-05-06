@@ -1684,7 +1684,11 @@ impl Server {
                 }
             }
 
-            Some(serde_json::json!(edits))
+            Some(Self::comment_edits_for_protocol(
+                request,
+                &source_text,
+                edits,
+            ))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
@@ -1854,9 +1858,51 @@ impl Server {
                 }
             }
 
-            Some(serde_json::json!(edits))
+            Some(Self::comment_edits_for_protocol(
+                request,
+                &source_text,
+                edits,
+            ))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    fn comment_edits_for_protocol(
+        request: &TsServerRequest,
+        source_text: &str,
+        edits: Vec<serde_json::Value>,
+    ) -> serde_json::Value {
+        if !request.command.ends_with("-full") {
+            return serde_json::json!(edits);
+        }
+
+        let text_changes: Vec<serde_json::Value> = edits
+            .into_iter()
+            .filter_map(|edit| {
+                let start = edit.get("start")?;
+                let end = edit.get("end")?;
+                let start_line = start.get("line")?.as_u64()? as u32;
+                let start_offset = start.get("offset")?.as_u64()? as u32;
+                let end_line = end.get("line")?.as_u64()? as u32;
+                let end_offset = end.get("offset")?.as_u64()? as u32;
+                let new_text = edit
+                    .get("newText")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!(""));
+                let start_byte = Self::line_offset_to_byte(source_text, start_line, start_offset);
+                let end_byte = Self::line_offset_to_byte(source_text, end_line, end_offset);
+
+                Some(serde_json::json!({
+                    "newText": new_text,
+                    "span": {
+                        "start": start_byte,
+                        "length": end_byte.saturating_sub(start_byte)
+                    }
+                }))
+            })
+            .collect();
+
+        serde_json::json!(text_changes)
     }
 
     /// Convert byte position to 1-based line/offset for multiline comment handler
@@ -2000,7 +2046,11 @@ impl Server {
                 }
             }
 
-            Some(serde_json::json!(edits))
+            Some(Self::comment_edits_for_protocol(
+                request,
+                &source_text,
+                edits,
+            ))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
@@ -2079,7 +2129,11 @@ impl Server {
                 }
             }
 
-            Some(serde_json::json!(edits))
+            Some(Self::comment_edits_for_protocol(
+                request,
+                &source_text,
+                edits,
+            ))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
