@@ -2,6 +2,8 @@
 
 use crate::context::CheckerOptions;
 use crate::context::ResolutionError;
+use crate::context::ResolutionModeOverride;
+use crate::context::ResolutionRequestKind;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
@@ -514,5 +516,68 @@ fn ts2835_does_not_leak_from_extensionless_specifier_to_extensioned_sibling() {
             .iter()
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn resolution_request_errors_do_not_leak_between_import_kinds() {
+    let src = "import m = require(\"./target\");\nimport(\"./target\");\nexport {};\n";
+
+    let mut parser = ParserState::new("/proj/main.cts".to_string(), src.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "/proj/main.cts".to_string(),
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::Node16,
+            ..CheckerOptions::default()
+        },
+    );
+    checker.ctx.set_current_file_idx(0);
+
+    let mut errors = FxHashMap::default();
+    errors.insert(
+        (
+            0usize,
+            "./target".to_string(),
+            Some(ResolutionModeOverride::Require),
+            ResolutionRequestKind::DynamicImport,
+        ),
+        ResolutionError {
+            code: 2835,
+            message: "dynamic import requires an explicit extension".to_string(),
+        },
+    );
+    checker
+        .ctx
+        .set_resolved_module_request_errors(Arc::new(errors));
+
+    assert!(
+        checker
+            .ctx
+            .get_resolution_error_for_request(
+                "./target",
+                Some(ResolutionModeOverride::Require),
+                ResolutionRequestKind::CjsRequire,
+            )
+            .is_none(),
+        "dynamic-import resolution errors must not attach to require-like imports"
+    );
+    assert_eq!(
+        checker
+            .ctx
+            .get_resolution_error_for_request(
+                "./target",
+                Some(ResolutionModeOverride::Require),
+                ResolutionRequestKind::DynamicImport,
+            )
+            .map(|error| error.code),
+        Some(2835)
     );
 }

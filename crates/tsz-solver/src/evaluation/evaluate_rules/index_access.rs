@@ -1637,11 +1637,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 | TypeData::IndexAccess(_, _)
                 | TypeData::Mapped(_)
                 | TypeData::KeyOf(_)
-                | TypeData::Lazy(_)
                 | TypeData::TemplateLiteral(_)
                 | TypeData::StringIntrinsic { .. }
                 | TypeData::ReadonlyType(_)
-                | TypeData::TypeQuery(_),
+                | TypeData::TypeQuery(_)
+                | TypeData::Lazy(_),
             ) => self.evaluate(result),
             _ => result,
         }
