@@ -950,9 +950,23 @@ impl<'a> TypePrinter<'a> {
             } else {
                 &shape.properties
             };
+            let emitted_method_names: Vec<Atom> = props
+                .iter()
+                .filter(|property| {
+                    !should_skip_property(property)
+                        && property.is_method
+                        && !property.readonly
+                        && nested
+                            .print_property_as_method(property, shape.symbol)
+                            .is_some()
+                })
+                .map(|property| property.name)
+                .collect();
 
             for property in props {
-                if should_skip_property(property) {
+                if should_skip_property(property)
+                    || (!property.is_method && emitted_method_names.contains(&property.name))
+                {
                     continue;
                 }
                 let mut line = String::new();
@@ -1072,9 +1086,23 @@ impl<'a> TypePrinter<'a> {
             } else {
                 &shape.properties
             };
+            let emitted_method_names_flat: Vec<Atom> = props_flat
+                .iter()
+                .filter(|property| {
+                    !should_skip_property(property)
+                        && property.is_method
+                        && !property.readonly
+                        && self
+                            .print_property_as_method(property, shape.symbol)
+                            .is_some()
+                })
+                .map(|property| property.name)
+                .collect();
 
             for property in props_flat {
-                if should_skip_property(property) {
+                if should_skip_property(property)
+                    || (!property.is_method && emitted_method_names_flat.contains(&property.name))
+                {
                     continue;
                 }
                 let mut member = String::new();
