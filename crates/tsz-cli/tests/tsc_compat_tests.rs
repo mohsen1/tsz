@@ -118,6 +118,71 @@ fn list_files_only_resolve_json_module_does_not_list_unimported_json_roots() {
 }
 
 #[test]
+fn show_config_and_list_files_only_find_parent_tsconfig() {
+    let temp = TempDir::new("special_modes_parent_tsconfig").expect("temp dir");
+    write_file(&temp.path.join("p/a.ts"), "let parentConfigFile = 1;\n");
+    write_file(
+        &temp.path.join("p/tsconfig.json"),
+        r#"{
+  "compilerOptions": { "target": "es2015", "strict": true, "noEmit": true },
+  "files": ["a.ts"]
+}
+"#,
+    );
+    std::fs::create_dir_all(temp.path.join("p/sub")).expect("create subdir");
+    let cwd = temp.path.join("p/sub");
+
+    let (show_code, show_output) =
+        run_tsz_with_exit_code(&cwd, &["--showConfig", "--pretty", "false"])
+            .expect("tsz should run");
+    assert_eq!(show_code, 0, "showConfig should succeed: {show_output}");
+    assert!(
+        show_output.contains("\"target\": \"es6\""),
+        "showConfig should load parent compiler options: {show_output}"
+    );
+    assert!(
+        show_output.contains("\"./a.ts\""),
+        "showConfig should list parent project files relative to config: {show_output}"
+    );
+
+    let (list_code, list_output) =
+        run_tsz_with_exit_code(&cwd, &["--listFilesOnly", "--pretty", "false"])
+            .expect("tsz should run");
+    assert_eq!(list_code, 0, "listFilesOnly should succeed: {list_output}");
+    assert!(
+        list_output.contains("p/a.ts"),
+        "listFilesOnly should list the parent project file: {list_output}"
+    );
+}
+
+#[test]
+fn special_modes_ignore_config_with_no_inputs_follow_no_input_behavior() {
+    let temp = TempDir::new("special_modes_ignore_config_no_inputs").expect("temp dir");
+
+    let (show_code, show_output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--showConfig", "--ignoreConfig", "--pretty", "false"],
+    )
+    .expect("tsz should run");
+    assert_eq!(show_code, 1, "showConfig should fail: {show_output}");
+    assert!(
+        show_output.contains("error TS5081: Cannot find a tsconfig.json file"),
+        "showConfig should report TS5081: {show_output}"
+    );
+
+    let (list_code, list_output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--listFilesOnly", "--ignoreConfig", "--pretty", "false"],
+    )
+    .expect("tsz should run");
+    assert_eq!(list_code, 1, "listFilesOnly should fail: {list_output}");
+    assert!(
+        list_output.contains("Version "),
+        "listFilesOnly should print no-input help/version output: {list_output}"
+    );
+}
+
+#[test]
 fn trace_resolution_prints_relative_import_resolution() {
     let Some(tsz_bin) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");

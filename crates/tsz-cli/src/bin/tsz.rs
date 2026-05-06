@@ -1799,7 +1799,14 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use tsz_cli::config::{load_tsconfig, resolve_compiler_options};
     use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
-    // --ignoreConfig: skip tsconfig loading
+    if args.ignore_config && args.files.is_empty() {
+        println!(
+            "error TS5081: Cannot find a tsconfig.json file at the current directory: {}.",
+            cwd.display()
+        );
+        std::process::exit(1);
+    }
+
     let tsconfig_path = if args.ignore_config {
         None
     } else {
@@ -1819,7 +1826,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
                     resolved
                 }
             })
-            .or_else(|| Some(cwd.join("tsconfig.json")))
+            .or_else(|| driver::find_tsconfig(cwd))
     };
 
     // When no tsconfig.json is found (and --ignoreConfig is not set), emit the
@@ -2988,7 +2995,12 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use tsz_cli::driver::apply_cli_overrides;
     use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
-    // --ignoreConfig: skip tsconfig loading
+    if args.ignore_config && args.files.is_empty() {
+        println!("Version {TSC_VERSION}");
+        println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
+        std::process::exit(1);
+    }
+
     let tsconfig_path = if args.ignore_config {
         None
     } else {
@@ -3006,10 +3018,7 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
                     resolved
                 }
             })
-            .or_else(|| {
-                let default_path = cwd.join("tsconfig.json");
-                default_path.exists().then_some(default_path)
-            })
+            .or_else(|| driver::find_tsconfig(cwd))
     };
 
     let config = if let Some(path) = tsconfig_path.as_ref() {
