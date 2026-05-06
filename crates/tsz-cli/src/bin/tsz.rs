@@ -2019,13 +2019,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     // Build file paths relative to tsconfig dir with "./" prefix (matching tsc)
     let file_paths: Vec<String> = discovered_files
         .iter()
-        .map(|f| {
-            if let Ok(rel) = f.strip_prefix(base_dir) {
-                format!("./{}", rel.display())
-            } else {
-                f.display().to_string()
-            }
-        })
+        .map(|f| show_config_display_path(base_dir, f))
         .collect();
 
     // Issue 6: Auto-add outDir to exclude array (tsc behavior)
@@ -2117,7 +2111,8 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         if let Some(ref include) = cfg.include {
             output.push_str(",\n    \"include\": [\n");
             for (i, v) in include.iter().enumerate() {
-                output.push_str(&format!("        \"{v}\""));
+                let display = show_config_display_selector(base_dir, v);
+                output.push_str(&format!("        \"{display}\""));
                 if i + 1 < include.len() {
                     output.push(',');
                 }
@@ -2129,7 +2124,8 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         if !effective_exclude.is_empty() {
             output.push_str(",\n    \"exclude\": [\n");
             for (i, v) in effective_exclude.iter().enumerate() {
-                output.push_str(&format!("        \"{v}\""));
+                let display = show_config_display_selector(base_dir, v);
+                output.push_str(&format!("        \"{display}\""));
                 if i + 1 < effective_exclude.len() {
                     output.push(',');
                 }
@@ -2143,6 +2139,54 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     print!("{output}");
 
     Ok(())
+}
+
+fn show_config_display_selector(base_dir: &std::path::Path, selector: &str) -> String {
+    let path = std::path::Path::new(selector);
+    if path.is_absolute() {
+        show_config_display_path(base_dir, path)
+    } else {
+        selector.to_string()
+    }
+}
+
+fn show_config_display_path(base_dir: &std::path::Path, path: &std::path::Path) -> String {
+    let relative = if path.is_absolute() {
+        show_config_diff_paths(path, base_dir).unwrap_or_else(|| path.to_path_buf())
+    } else {
+        path.to_path_buf()
+    };
+    let display = relative.to_string_lossy();
+    if display.starts_with("../") || display.starts_with("./") || display == ".." {
+        display.into_owned()
+    } else {
+        format!("./{display}")
+    }
+}
+
+fn show_config_diff_paths(
+    path: &std::path::Path,
+    base: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let path_components: Vec<std::path::Component<'_>> = path.components().collect();
+    let base_components: Vec<std::path::Component<'_>> = base.components().collect();
+    let common_len = path_components
+        .iter()
+        .zip(base_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    if common_len == 0 && path.is_absolute() && base.is_absolute() {
+        return None;
+    }
+
+    let mut result = std::path::PathBuf::new();
+    for _ in common_len..base_components.len() {
+        result.push("..");
+    }
+    for component in &path_components[common_len..] {
+        result.push(component);
+    }
+    Some(result)
 }
 
 /// Convert merged `CompilerOptions` (from extends-resolved `TsConfig`) into a JSON map

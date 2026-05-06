@@ -2190,6 +2190,57 @@ fn show_config_check_js_implied_allow_js_includes_js_files() {
 }
 
 #[test]
+fn show_config_renders_inherited_root_selectors_relative_to_child_config() {
+    let temp = TempDir::new("show_config_inherited_root_selectors").expect("temp dir");
+    let base = temp.path.join("base");
+    let child = temp.path.join("child");
+    std::fs::create_dir_all(base.join("src")).expect("create base src");
+    std::fs::create_dir_all(&child).expect("create child");
+    write_file(&base.join("src/a.ts"), "export const x = 1;\n");
+    write_file(
+        &base.join("tsconfig.base.json"),
+        r#"{
+  "include": ["src"]
+}
+"#,
+    );
+    write_file(
+        &child.join("tsconfig.json"),
+        r#"{
+  "extends": "../base/tsconfig.base.json"
+}
+"#,
+    );
+
+    let output = run_tsz(&child, &["--showConfig"]).expect("tsz should run");
+    let json: serde_json::Value = serde_json::from_str(&output)
+        .unwrap_or_else(|_| panic!("invalid showConfig JSON:\n{output}"));
+    let files = json
+        .get("files")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("missing files in showConfig output:\n{output}"));
+    let include = json
+        .get("include")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("missing include in showConfig output:\n{output}"));
+
+    assert_eq!(
+        files,
+        &[serde_json::Value::String("../base/src/a.ts".to_string())],
+        "inherited discovered file should render relative to child config: {output}"
+    );
+    assert_eq!(
+        include,
+        &[serde_json::Value::String("../base/src".to_string())],
+        "inherited include should render relative to child config: {output}"
+    );
+    assert!(
+        !output.contains(temp.path.to_string_lossy().as_ref()),
+        "showConfig should not leak absolute temp paths: {output}"
+    );
+}
+
+#[test]
 fn show_config_rejects_tsconfig_only_cli_options() {
     let temp = TempDir::new("show_config_tsconfig_only_cli_options").expect("temp dir");
     write_file(&temp.path.join("index.ts"), "export {};\n");
