@@ -1031,6 +1031,25 @@ impl<'a> Printer<'a> {
         {
             return;
         }
+        // Even when the alias has the `export` modifier, skip the runtime
+        // assignment when the qualified target chain resolves to an
+        // *exported* interface or type alias (e.g. `export import b = a.I`
+        // where namespace `a` exports `interface I`). tsc emits neither the
+        // void-0 preamble nor `exports.b = a.I;` in that case. Non-exported
+        // inner members are unreachable from outside the namespace and tsc
+        // preserves the (broken) runtime emit, so we must not elide there.
+        if is_exported_var {
+            let stmts = self.scope_statements_for_runtime_lookup(None);
+            if !stmts.is_empty()
+                && crate::transforms::module_commonjs::import_alias_resolves_to_exported_type_only(
+                    self.arena,
+                    import.module_specifier,
+                    &stmts,
+                )
+            {
+                return;
+            }
+        }
 
         // Inside namespace IIFEs, elide namespace aliases (`import X = Y;`)
         // when X is never referenced in the remaining source.  tsc uses the
