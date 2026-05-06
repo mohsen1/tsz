@@ -2812,6 +2812,21 @@ fn test_invalid_unicode_escape_as_variable_name_no_var_decl_cascade() {
 }
 
 #[test]
+fn test_escaped_combining_mark_as_variable_name_reports_ts1127() {
+    let source = r"var \u0345 = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 1127 && d.start == source.find('\\').unwrap() as u32),
+        "Expected TS1127 at escaped combining mark, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_class_method_string_names_use_string_literal_nodes() {
     let source = r#"
 class C {

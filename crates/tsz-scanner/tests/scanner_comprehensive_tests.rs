@@ -901,6 +901,13 @@ mod identifier_scanning {
     }
 
     #[test]
+    fn unicode_escape_combining_mark_not_identifier_start() {
+        let mut scanner = ScannerState::new("\\u0345 = 1;".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::Unknown);
+    }
+
+    #[test]
     fn unicode_escape_mid_identifier() {
         // foo\u0042ar = "fooBar"
         let mut scanner = ScannerState::new("foo\\u0042ar".to_string(), true);
