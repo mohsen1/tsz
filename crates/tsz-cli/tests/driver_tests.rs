@@ -6419,6 +6419,68 @@ fn compile_resolves_node_modules_types_versions_prefers_specific_range() {
 }
 
 #[test]
+fn compile_resolves_node_modules_types_versions_default_uses_patch_version() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "moduleResolution": "node",
+            "module": "commonjs",
+            "target": "es2020",
+            "noEmit": true,
+            "skipLibCheck": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        r#"import { widget } from "pkg/feature/widget";
+
+const exact: 603 = widget;
+"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg/package.json"),
+        r#"{
+          "name": "pkg",
+          "version": "1.0.0",
+          "typesVersions": {
+            ">=6.0.3": {
+              "feature/*": ["types/ts603/feature/*"]
+            },
+            "*": {
+              "feature/*": ["types/fallback/feature/*"]
+            }
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg/types/ts603/feature/widget.d.ts"),
+        "export const widget: 603;\n",
+    );
+    write_file(
+        &base.join("node_modules/pkg/types/fallback/feature/widget.d.ts"),
+        "export const widget: 600;\n",
+    );
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "default typesVersions compiler version should select >=6.0.3 entry, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_resolves_node_modules_types_versions_respects_cli_version_override() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
