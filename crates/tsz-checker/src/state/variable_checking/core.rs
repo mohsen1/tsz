@@ -660,14 +660,11 @@ impl<'a> CheckerState<'a> {
         {
             self.emit_strict_mode_reserved_word_error(var_decl.name, name, true);
         }
-        // TS1100: `eval` or `arguments` used as a variable name in strict mode.
-        // In class bodies, `arguments` is reported as TS1210 instead, so only
-        // emit TS1100 for `eval` there (not `arguments`).
+        // TS1210: `eval` or `arguments` used as a local binding in a class body.
         if !is_ambient
-            && !self.has_syntax_parse_errors()
             && self.is_strict_mode_for_node(var_decl.name)
             && let Some(ref name) = var_name
-            && name.as_str() == "arguments"
+            && crate::state_checking::is_eval_or_arguments(name)
             && in_non_ambient_class
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -685,7 +682,7 @@ impl<'a> CheckerState<'a> {
             && self.is_strict_mode_for_node(var_decl.name)
             && let Some(ref name) = var_name
             && crate::state_checking::is_eval_or_arguments(name)
-            && !(in_non_ambient_class && name.as_str() == "arguments")
+            && !in_non_ambient_class
         {
             self.emit_eval_or_arguments_strict_mode_error(var_decl.name, name);
         }
@@ -1636,6 +1633,7 @@ impl<'a> CheckerState<'a> {
                 && self
                     .get_require_module_specifier(var_decl.initializer)
                     .is_some();
+            let mut type_annotation_circular_for_ts2502 = false;
             if var_decl.type_annotation.is_some() && !is_redeclaration_for_ts2502 {
                 let accessor_circular =
                     self.type_literal_has_circular_accessor_reference(var_decl.type_annotation);
@@ -1673,6 +1671,7 @@ impl<'a> CheckerState<'a> {
                         "'{name}' is referenced directly or indirectly in its own type annotation."
                     );
                     self.error_at_node(var_decl.name, &message, 2502);
+                    type_annotation_circular_for_ts2502 = true;
                     final_type = TypeId::ANY;
                 }
             }
@@ -1746,7 +1745,9 @@ impl<'a> CheckerState<'a> {
             // `compute_final_type` may return a cached type for for-in/for-of loops,
             // so we must override that for bare redeclarations.
             let is_in_for_in_or_for_of = self.is_var_decl_in_for_in_or_for_of(decl_idx);
-            let raw_declared_type = if let Some(jsdoc_type) = jsdoc_declared_type {
+            let raw_declared_type = if type_annotation_circular_for_ts2502 {
+                TypeId::ANY
+            } else if let Some(jsdoc_type) = jsdoc_declared_type {
                 jsdoc_type
             } else if var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_none()

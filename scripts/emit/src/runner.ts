@@ -667,6 +667,38 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
         baseline.jsFileName = expectedJsName;
       }
     }
+    if (!outFile && sourceFileName && baseline.jsFileName) {
+      const jsSourceBasenames = new Set(
+        sourceFiles
+          .filter(file => /\.(js|jsx|mjs|cjs)$/.test(file.name))
+          .map(file => path.basename(file.name)),
+      );
+      const expectedJsLooksLikeSourceInput =
+        /\.(js|jsx|mjs|cjs)$/.test(baseline.jsFileName) &&
+        jsSourceBasenames.has(baseline.jsFileName);
+      if (expectedJsLooksLikeSourceInput) {
+        const sourceBase = path.basename(sourceFileName).replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
+        const sourceExt = sourceFileName.match(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/)?.[1] ?? 'ts';
+        const expectedJsExt =
+          sourceExt === 'tsx' || sourceExt === 'jsx' ? 'jsx' :
+          sourceExt === 'mts' || sourceExt === 'mjs' ? 'mjs' :
+          sourceExt === 'cts' || sourceExt === 'cjs' ? 'cjs' : 'js';
+        const expectedJsName = `${sourceBase}.${expectedJsExt}`;
+        if (baseline.files.has(expectedJsName) && !jsSourceBasenames.has(expectedJsName)) {
+          baseline.js = baseline.files.get(expectedJsName) ?? baseline.js;
+          baseline.jsFileName = expectedJsName;
+        } else {
+          for (const [name, fileContent] of baseline.files) {
+            if (!/\.(js|jsx|mjs|cjs)$/.test(name) || jsSourceBasenames.has(path.basename(name))) {
+              continue;
+            }
+            baseline.js = fileContent;
+            baseline.jsFileName = name;
+            break;
+          }
+        }
+      }
+    }
 
     return {
       baselineFile,

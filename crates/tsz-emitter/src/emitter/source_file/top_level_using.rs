@@ -1408,6 +1408,13 @@ impl<'a> Printer<'a> {
                     }
                     self.write_line();
                     self.write_export_binding_start(export_name);
+                    // Inside a top-level using-block, the export must hop
+                    // through the closure's `_default` tracker so re-exports
+                    // observe the post-decorator value
+                    // (`exports_1("default", _default = default_1);`).
+                    if self.in_top_level_using_scope {
+                        self.write("_default = ");
+                    }
                     self.write(&binding_name);
                     self.write_export_binding_end();
                 } else if self.in_system_execute_body

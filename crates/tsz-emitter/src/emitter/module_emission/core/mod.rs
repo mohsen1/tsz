@@ -1028,6 +1028,7 @@ impl<'a> Printer<'a> {
     /// `emit_name` preserves unicode escapes from the source to match tsc output.
     pub(in crate::emitter) fn try_collect_inline_cjs_exports(
         &self,
+        node_idx: NodeIndex,
         node: &Node,
     ) -> Option<Vec<(String, String, NodeIndex)>> {
         let var_stmt = self.arena.get_variable(node)?;
@@ -1062,13 +1063,17 @@ impl<'a> Printer<'a> {
                 }
 
                 // tsc uses split form (const x = val; exports.x = x;) for
-                // arrow functions, function expressions, and class expressions.
-                // Only primitive/object/call initializers use inline form.
+                // arrow functions, function expressions, and plain class
+                // expressions. Transformed class expressions can lower to a
+                // comma expression, and tsc emits that directly into
+                // `exports.x = (...)`.
                 if let Some(init_node) = self.arena.get(decl.initializer) {
                     let k = init_node.kind;
                     if k == syntax_kind_ext::ARROW_FUNCTION
                         || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                        || k == syntax_kind_ext::CLASS_EXPRESSION
+                        || (k == syntax_kind_ext::CLASS_EXPRESSION
+                            && !self.transforms.has_transform(decl.initializer)
+                            && !self.transforms.has_transform(node_idx))
                     {
                         return None;
                     }

@@ -606,6 +606,12 @@ impl<'a> FlowAnalyzer<'a> {
 
         // 1. Check for optional chaining on the call
         let is_optional = self.is_optional_call(condition, call);
+        if self
+            .call_type_predicates
+            .is_some_and(|calls| calls.is_invalid_assertion_call(condition.0))
+        {
+            return None;
+        }
 
         // 2. Check for instantiated predicate from generic call resolution first.
         // Generic functions like `isDefined<T>(value: T | undefined): value is T` need

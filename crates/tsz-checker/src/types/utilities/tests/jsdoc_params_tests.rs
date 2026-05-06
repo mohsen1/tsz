@@ -504,6 +504,26 @@ fn jsdoc_extract_type_tag_expr_no_closing_brace() {
     assert!(CheckerState::jsdoc_extract_type_tag_expr(jsdoc).is_none());
 }
 
+#[test]
+fn jsdoc_extract_type_tag_expr_object_literal_balances_braces() {
+    // `@type {{ a: T }}` wraps an object literal type — the outer braces
+    // delimit the type expression, the inner braces are the object literal.
+    let jsdoc = "* @type {{ a: number }}";
+    assert_eq!(
+        CheckerState::jsdoc_extract_type_tag_expr(jsdoc),
+        Some("{ a: number }".to_string())
+    );
+}
+
+#[test]
+fn jsdoc_extract_type_tag_expr_nested_object_literal() {
+    let jsdoc = "* @type {{ a: { b: number } }}";
+    assert_eq!(
+        CheckerState::jsdoc_extract_type_tag_expr(jsdoc),
+        Some("{ a: { b: number } }".to_string())
+    );
+}
+
 // =========================================================================
 // jsdoc_template_type_params
 // =========================================================================

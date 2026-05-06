@@ -6,8 +6,16 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> Printer<'a> {
+    fn write_jsx_assign_helper(&mut self) {
+        if self.ctx.target_es5 {
+            self.write_helper("__assign");
+        } else {
+            self.write("Object.assign");
+        }
+    }
+
     /// Emit classic spread attrs: handles mixes of spread and named attrs.
-    /// Uses `Object.assign` when there are spreads mixed with named props.
+    /// Uses `__assign`/`Object.assign` when there are spreads mixed with named props.
     pub(in super::super) fn emit_jsx_spread_attrs_classic(&mut self, attrs: &[JsxAttrInfo]) {
         // Group consecutive named attrs and emit them as object literals,
         // interleaved with spread expressions.
@@ -87,8 +95,9 @@ impl<'a> Printer<'a> {
             }
             self.write(" }");
         } else {
-            // ES2015-ES2017: Object.assign
-            self.write("Object.assign(");
+            // ES5: __assign helper; ES2015-ES2017: Object.assign.
+            self.write_jsx_assign_helper();
+            self.write("(");
             for (i, group) in groups.iter().enumerate() {
                 if i > 0 {
                     self.write(", ");
@@ -258,7 +267,8 @@ impl<'a> Printer<'a> {
             }
         }
 
-        self.write("Object.assign(");
+        self.write_jsx_assign_helper();
+        self.write("(");
 
         // If first segment is a Spread (or no segments), start with empty object
         let starts_with_spread = matches!(segments.first(), Some(Segment::Spread(_)));

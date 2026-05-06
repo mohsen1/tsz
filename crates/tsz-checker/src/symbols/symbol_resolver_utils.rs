@@ -775,9 +775,12 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Report a type query missing member error.
+    /// Report a qualified namespace/member lookup error.
     ///
-    /// For `typeof A.B` where `B` is not found in `A`'s exports, emits TS2694.
+    /// For `typeof A.B` where `B` is not found in a local value namespace/object,
+    /// emits TS2339. Import-query paths keep the existing exported-member
+    /// diagnostic, since those are module export lookups. Other type-space
+    /// qualified names keep TS2694/TS2724.
     /// Returns true if an error was reported.
     pub(crate) fn report_type_query_missing_member(&mut self, idx: NodeIndex) -> bool {
         let node = match self.ctx.arena.get(idx) {
@@ -887,6 +890,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if left_symbol.import_module.is_none() && self.is_inside_type_query(idx) {
+            let left_text = self
+                .entity_name_text(qn.left)
+                .unwrap_or_else(|| left_symbol.escaped_name.clone());
+            let Some(right_node) = self.ctx.arena.get(qn.right) else {
+                return false;
+            };
+            self.ctx.error(
+                right_node.pos,
+                right_node.end - right_node.pos,
+                format!("Property '{right_name}' does not exist on type 'typeof {left_text}'."),
+                crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+            );
+            return true;
+        }
+
         let export_names: Vec<String> = left_symbol
             .exports
             .as_ref()
@@ -904,6 +923,26 @@ impl<'a> CheckerState<'a> {
         };
         self.report_name_resolution_failure(&req, &failure);
         true
+    }
+
+    fn is_inside_type_query(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..MAX_TREE_WALK_ITERATIONS {
+            let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+                return false;
+            };
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::TYPE_QUERY {
+                return true;
+            }
+            current = parent;
+        }
+        false
     }
 
     // =========================================================================
