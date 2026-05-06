@@ -1561,7 +1561,12 @@ impl TypeInterner {
         origin.iter().any(|&id| {
             matches!(
                 self.lookup(id),
-                Some(TypeData::KeyOf(_) | TypeData::IndexAccess(_, _) | TypeData::Literal(_))
+                Some(
+                    TypeData::Application(_)
+                        | TypeData::KeyOf(_)
+                        | TypeData::IndexAccess(_, _)
+                        | TypeData::Literal(_)
+                )
             )
         })
     }
