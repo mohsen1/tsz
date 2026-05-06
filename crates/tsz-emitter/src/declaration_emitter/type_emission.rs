@@ -994,19 +994,9 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(inner_node) {
-                    if lit.text.contains('_') {
-                        if let Some(v) = lit.value {
-                            if v.fract() == 0.0 && v.abs() < 1e20 {
-                                self.write(&format!("{}", v as i64));
-                            } else {
-                                self.write(&v.to_string());
-                            }
-                        } else {
-                            self.write(&lit.text.replace('_', ""));
-                        }
-                    } else {
-                        self.write(&lit.text);
-                    }
+                    self.write(&Self::declaration_numeric_literal_text(
+                        &lit.text, lit.value,
+                    ));
                 }
             }
             k if k == SyntaxKind::BigIntLiteral as u16 => {

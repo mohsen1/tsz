@@ -3357,6 +3357,7 @@ const fn is_deprecation_diagnostic_code(code: u32) -> bool {
 
 const fn cli_target_value(target: Target) -> &'static str {
     match target {
+        Target::Es3 => "es3",
         Target::Es5 => "es5",
         Target::Es2015 => "es2015",
         Target::Es2016 => "es2016",

@@ -101,17 +101,7 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
                 }
 
                 let path = entry.path();
-                if !(is_ts_file(path)
-                    || (options.allow_js && is_js_file(path))
-                    || (options.resolve_json_module && is_json_file(path)))
-                {
-                    continue;
-                }
-
-                // tsc never includes config files (tsconfig.json, jsconfig.json) as
-                // program inputs, even when resolveJsonModule is enabled. Skip them
-                // during pattern-based discovery.
-                if is_json_file(path) && is_config_json(path) {
+                if !(is_ts_file(path) || (options.allow_js && is_js_file(path))) {
                     continue;
                 }
 
@@ -426,16 +416,6 @@ fn ensure_file_exists(path: &Path, original: &Path) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Returns true for tsconfig.json / jsconfig.json files, which tsc excludes
-/// from program inputs even when resolveJsonModule is enabled.
-fn is_config_json(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|f| f.to_str())
-        .is_some_and(|name| {
-            name.eq_ignore_ascii_case("tsconfig.json") || name.eq_ignore_ascii_case("jsconfig.json")
-        })
 }
 
 /// When both a `.d.ts` declaration file and a `.ts`/`.tsx` source file exist
@@ -875,7 +855,7 @@ mod tests {
     }
 
     #[test]
-    fn test_discover_pattern_matched_json_file_requires_resolve_json_module() {
+    fn test_discover_pattern_matched_json_file_is_not_a_root() {
         let dir = std::env::temp_dir().join("tsz_fs_test_pattern_json");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("src")).unwrap();
@@ -897,7 +877,7 @@ mod tests {
         let result = discover_ts_files(&options).unwrap();
         assert!(
             !result.iter().any(|p| p.ends_with("data.json")),
-            ".json file should NOT be included from pattern without resolveJsonModule"
+            ".json file should not be included from patterns"
         );
 
         let options_with_json = FileDiscoveryOptions {
@@ -906,15 +886,15 @@ mod tests {
         };
         let result_with_json = discover_ts_files(&options_with_json).unwrap();
         assert!(
-            result_with_json.iter().any(|p| p.ends_with("data.json")),
-            ".json file should be included from pattern with resolveJsonModule"
+            !result_with_json.iter().any(|p| p.ends_with("data.json")),
+            "resolveJsonModule should not make pattern-matched JSON files roots"
         );
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn test_discover_excludes_tsconfig_json_even_with_resolve_json_module() {
+    fn test_discover_excludes_json_from_default_include_even_with_resolve_json_module() {
         let dir = std::env::temp_dir().join("tsz_fs_test_config_json_excluded");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -940,10 +920,7 @@ mod tests {
             result.iter().any(|p| p.ends_with("app.ts")),
             "should discover .ts files"
         );
-        assert!(
-            result.iter().any(|p| p.ends_with("data.json")),
-            "should discover regular .json files with resolveJsonModule"
-        );
+        assert!(!result.iter().any(|p| p.ends_with("data.json")));
         assert!(
             !result.iter().any(|p| p.ends_with("tsconfig.json")),
             "tsconfig.json must not be included as program input"
@@ -957,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn test_discover_excludes_config_json_for_explicit_json_include() {
+    fn test_discover_excludes_json_for_explicit_json_include() {
         let dir = std::env::temp_dir().join("tsz_fs_test_explicit_config_json_excluded");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -979,8 +956,8 @@ mod tests {
 
         let result = discover_ts_files(&options).unwrap();
         assert!(
-            result.iter().any(|p| p.ends_with("data.json")),
-            "explicit JSON include should discover regular JSON files"
+            !result.iter().any(|p| p.ends_with("data.json")),
+            "explicit JSON include should not make JSON files roots"
         );
         assert!(
             !result.iter().any(|p| p.ends_with("tsconfig.json")),
