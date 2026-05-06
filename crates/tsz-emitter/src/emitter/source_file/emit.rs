@@ -85,8 +85,6 @@ impl<'a> Printer<'a> {
         self.commonjs_tslib_import_binding = "tslib_1".to_string();
         self.ctx.arguments_capture_counter = 0;
         self.first_for_of_emitted = false;
-        self.namespace_all_exported_names.clear();
-        self.collect_all_namespace_exports(&source.statements);
 
         // Pre-pass: collect const enum values for inlining at usage sites.
         // tsc replaces property/element access to const enum members with their

@@ -223,25 +223,3 @@ fn dotted_namespace_reference_to_sibling_qualifies_parent_namespace() {
         "Sibling namespace reference should not be emitted as a bare identifier.\nOutput:\n{output}"
     );
 }
-
-#[test]
-fn reopened_dotted_namespace_qualifies_merged_exports_by_source_path() {
-    let source = "namespace my.data.foo {\n  export function child() {}\n}\nnamespace my.data {\n  export function buz() {}\n}\nnamespace my.data {\n  function data(my) {\n    foo.child();\n  }\n}\nnamespace my.data.foo {\n  function data(my, foo) {\n    buz();\n  }\n}";
-
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
-
-    assert!(
-        output.contains("data_1.foo.child();"),
-        "Reopened parent namespace should qualify dotted child namespace references.\nOutput:\n{output}"
-    );
-    assert!(
-        output.contains("data_2.buz();"),
-        "Nested namespace should qualify merged parent exports through the parent IIFE parameter.\nOutput:\n{output}"
-    );
-}
