@@ -2302,6 +2302,97 @@ fn show_config_includes_supported_direct_and_inherited_options() {
     );
 }
 
+#[test]
+fn show_config_direct_base_url_and_root_dirs_stay_relative() {
+    let temp = TempDir::new("show_config_direct_path_options").expect("temp dir");
+    std::fs::create_dir_all(temp.path.join("src")).expect("create src");
+    std::fs::create_dir_all(temp.path.join("generated")).expect("create generated");
+    write_file(&temp.path.join("src/a.ts"), "export {}\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": "src",
+    "rootDirs": ["src", "generated"],
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "files": ["src/a.ts"]
+}
+"#,
+    );
+
+    let output =
+        run_tsz(&temp.path, &["--showConfig", "--pretty", "false"]).expect("tsz should run");
+    let json: serde_json::Value = serde_json::from_str(&output)
+        .unwrap_or_else(|_| panic!("invalid showConfig JSON:\n{output}"));
+    let options = json
+        .get("compilerOptions")
+        .and_then(|v| v.as_object())
+        .unwrap_or_else(|| panic!("missing compilerOptions in showConfig output:\n{output}"));
+
+    assert_eq!(
+        options.get("baseUrl"),
+        Some(&serde_json::Value::String("./src".to_string())),
+        "direct baseUrl should stay config-relative: {output}"
+    );
+    assert_eq!(
+        options.get("rootDirs"),
+        Some(&serde_json::json!(["./src", "./generated"])),
+        "direct rootDirs should stay config-relative: {output}"
+    );
+    assert!(
+        !output.contains(temp.path.to_string_lossy().as_ref()),
+        "showConfig leaked the temp directory in path options:\n{output}"
+    );
+}
+
+#[test]
+fn show_config_inherited_base_url_and_root_dirs_stay_declaring_relative() {
+    let temp = TempDir::new("show_config_inherited_path_options").expect("temp dir");
+    std::fs::create_dir_all(temp.path.join("base/src")).expect("create base src");
+    std::fs::create_dir_all(temp.path.join("base/generated")).expect("create base generated");
+    std::fs::create_dir_all(temp.path.join("app/src")).expect("create app src");
+    write_file(&temp.path.join("app/src/a.ts"), "export {}\n");
+    write_file(
+        &temp.path.join("base/tsconfig.base.json"),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "rootDirs": ["src", "generated"]
+  }
+}
+"#,
+    );
+    write_file(
+        &temp.path.join("app/tsconfig.json"),
+        r#"{
+  "extends": "../base/tsconfig.base.json",
+  "files": ["src/a.ts"]
+}
+"#,
+    );
+
+    let output = run_tsz(&temp.path.join("app"), &["--showConfig"]).expect("tsz should run");
+    let json: serde_json::Value = serde_json::from_str(&output)
+        .unwrap_or_else(|_| panic!("invalid showConfig JSON:\n{output}"));
+    let options = json
+        .get("compilerOptions")
+        .and_then(|v| v.as_object())
+        .unwrap_or_else(|| panic!("missing compilerOptions in showConfig output:\n{output}"));
+
+    assert_eq!(
+        options.get("baseUrl"),
+        Some(&serde_json::Value::String("../base".to_string())),
+        "inherited baseUrl should render relative to the child config: {output}"
+    );
+    assert_eq!(
+        options.get("rootDirs"),
+        Some(&serde_json::json!(["../base/src", "../base/generated"])),
+        "inherited rootDirs should render relative to the child config: {output}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // --init
 // ---------------------------------------------------------------------------
