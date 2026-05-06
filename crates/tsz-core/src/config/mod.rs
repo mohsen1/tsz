@@ -2368,7 +2368,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
-        // TS6046: Validate option values for target, module, moduleResolution, jsx, lib.
+        // TS6046: Validate option values for target, module, moduleResolution, jsx,
+        // moduleDetection, newLine, and lib.
         // If a value is invalid, emit TS6046 and null it out so resolve_compiler_options
         // doesn't see it and bail.
         validate_option_value(
@@ -2409,6 +2410,26 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             VALID_JSX_VALUES,
             "--jsx",
             VALID_JSX_DISPLAY,
+            &mut diagnostics,
+        );
+        validate_option_value(
+            compiler_opts,
+            "moduleDetection",
+            &stripped,
+            file_path,
+            VALID_MODULE_DETECTION_VALUES,
+            "--moduleDetection",
+            VALID_MODULE_DETECTION_DISPLAY,
+            &mut diagnostics,
+        );
+        validate_option_value(
+            compiler_opts,
+            "newLine",
+            &stripped,
+            file_path,
+            VALID_NEW_LINE_VALUES,
+            "--newLine",
+            VALID_NEW_LINE_DISPLAY,
             &mut diagnostics,
         );
         validate_lib_values(compiler_opts, &stripped, file_path, &mut diagnostics);
@@ -4605,6 +4626,14 @@ const VALID_JSX_VALUES: &[&str] = &[
 ];
 const VALID_JSX_DISPLAY: &str = "'preserve', 'react', 'react-native', 'react-jsx', 'react-jsxdev'";
 
+/// Valid `--moduleDetection` values (normalized).
+const VALID_MODULE_DETECTION_VALUES: &[&str] = &["auto", "legacy", "force"];
+const VALID_MODULE_DETECTION_DISPLAY: &str = "'auto', 'legacy', 'force'";
+
+/// Valid `--newLine` values (normalized).
+const VALID_NEW_LINE_VALUES: &[&str] = &["crlf", "lf"];
+const VALID_NEW_LINE_DISPLAY: &str = "'crlf', 'lf'";
+
 /// Valid `--lib` values (normalized). This list matches tsc 6.0's accepted lib names.
 const VALID_LIB_VALUES: &[&str] = &[
     "es5",
@@ -5066,6 +5095,8 @@ mod tests {
             ("target", "es2020,esnext", "--target"),
             ("module", "commonjs,esnext", "--module"),
             ("moduleResolution", "node,bundler", "--moduleResolution"),
+            ("moduleDetection", "auto,force", "--moduleDetection"),
+            ("newLine", "lf,crlf", "--newLine"),
         ] {
             let source = format!(r#"{{"compilerOptions":{{"{option}":"{value}"}}}}"#);
             let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
@@ -5089,6 +5120,50 @@ mod tests {
                 diagnostic.start,
                 source.find(&format!(r#""{value}""#)).unwrap() as u32
             );
+        }
+    }
+
+    #[test]
+    fn test_ts6046_emitted_for_invalid_module_detection_and_new_line() {
+        for (option, value, flag, expected_values) in [
+            (
+                "moduleDetection",
+                "bogus",
+                "--moduleDetection",
+                "'auto', 'legacy', 'force'",
+            ),
+            ("newLine", "bogus", "--newLine", "'crlf', 'lf'"),
+        ] {
+            let source = format!(r#"{{"compilerOptions":{{"{option}":"{value}"}}}}"#);
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            let diagnostic = parsed
+                .diagnostics
+                .iter()
+                .find(|diag| diag.code == diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Expected TS6046 for compilerOptions.{option}, got: {:?}",
+                        parsed.diagnostics
+                    )
+                });
+
+            assert!(
+                diagnostic.message_text.contains(flag)
+                    && diagnostic.message_text.contains(expected_values),
+                "Unexpected TS6046 message for compilerOptions.{option}: {}",
+                diagnostic.message_text
+            );
+            assert_eq!(
+                diagnostic.start,
+                source.find(&format!(r#""{value}""#)).unwrap() as u32
+            );
+
+            let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref())
+                .expect("invalid enum value should be nulled before resolution");
+            if option == "moduleDetection" {
+                assert!(!resolved.printer.module_detection_force);
+                assert!(!resolved.printer.module_detection_legacy);
+            }
         }
     }
 
