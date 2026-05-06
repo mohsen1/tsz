@@ -523,8 +523,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
             .is_some_and(|array_base| array_base == base)
         {
-            return crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db)
-                .to_vec();
+            let array_params =
+                crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db);
+            if !array_params.is_empty() {
+                return array_params.to_vec();
+            }
         }
 
         if let Some(sym_id) = symbol {
@@ -674,6 +677,30 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 type_id: self.interner().application(app.base, app.args.clone()),
                 property_name: prop_atom,
             };
+        }
+
+        // Array<T> from merged lib declarations is represented as a structural
+        // intersection. Instantiating the base before member lookup keeps method
+        // parameters like push(...items: T[]) bound to the actual array element
+        // type instead of leaking the raw lib T into call checking.
+        if crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
+            .is_some_and(|array_base| array_base == app.base)
+            && matches!(base_key, TypeData::Intersection(_))
+        {
+            let type_params =
+                crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db);
+            if !type_params.is_empty() {
+                let substitution =
+                    TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+                let instantiated_base = self.instantiate_type_cached(app.base, &substitution);
+                if instantiated_base != app.base {
+                    return self.resolve_property_access_inner(
+                        instantiated_base,
+                        prop_name,
+                        Some(prop_atom),
+                    );
+                }
+            }
         }
 
         // We only handle Lazy types (def_id references)
@@ -1139,6 +1166,30 @@ impl<'a> PropertyAccessEvaluator<'a> {
     ) -> PropertyAccessResult {
         if prop_name == "toString" || prop_name == "valueOf" {
             return PropertyAccessResult::simple(TypeId::ANY);
+        }
+
+        let boxed_loaded = if let Some(boxed_type) =
+            crate::def::resolver::TypeResolver::get_boxed_type(self.db, IntrinsicKind::Symbol)
+        {
+            let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+            if !result.is_not_found() {
+                return result;
+            }
+            true
+        } else {
+            false
+        };
+
+        if boxed_loaded
+            && crate::objects::apparent::is_post_es5_primitive_member(
+                IntrinsicKind::Symbol,
+                prop_name,
+            )
+        {
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: TypeId::SYMBOL,
+                property_name: prop_atom,
+            };
         }
 
         self.resolve_apparent_property(IntrinsicKind::Symbol, TypeId::SYMBOL, prop_name, prop_atom)

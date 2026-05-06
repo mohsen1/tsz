@@ -508,7 +508,7 @@ impl<'a> QueryCache<'a> {
                 + std::mem::size_of::<TypeId>();
             size += map.capacity() * base_entry;
             // SmallVec spills to heap when > 4 elements; account for spilled entries.
-            for (key, _) in map.iter() {
+            for key in map.keys() {
                 if key.1.spilled() {
                     size += key.1.capacity() * std::mem::size_of::<TypeId>();
                 }
@@ -531,7 +531,7 @@ impl<'a> QueryCache<'a> {
                 * (BUCKET_OVERHEAD
                     + std::mem::size_of::<TypeId>()
                     + std::mem::size_of::<Vec<PropertyInfo>>());
-            for (_, props) in map.iter() {
+            for props in map.values() {
                 size += props.capacity() * std::mem::size_of::<PropertyInfo>();
             }
         }
@@ -571,7 +571,7 @@ impl<'a> QueryCache<'a> {
                     + std::mem::size_of::<DefId>()
                     + std::mem::size_of::<Arc<[Variance]>>());
             // Account for the Arc-allocated slice contents
-            for (_, arc) in map.iter() {
+            for arc in map.values() {
                 size += arc.len() * std::mem::size_of::<Variance>();
             }
         }
@@ -1102,6 +1102,11 @@ impl TypeDatabase for QueryCache<'_> {
     fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
         self.interner
             .store_union_origin(union_type_id, origin_members);
+    }
+
+    fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        self.interner
+            .replace_union_origin_for_display(union_type_id, origin_members);
     }
 
     fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
@@ -1792,6 +1797,10 @@ impl QueryDatabase for QueryCache<'_> {
             .insert(def_id, Arc::clone(&result));
 
         Some(result)
+    }
+
+    fn insert_type_param_variance(&self, def_id: DefId, variance: Arc<[Variance]>) {
+        self.variance_cache.borrow_mut().insert(def_id, variance);
     }
 
     fn canonical_id(&self, type_id: TypeId) -> TypeId {

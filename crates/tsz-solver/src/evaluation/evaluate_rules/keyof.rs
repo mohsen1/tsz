@@ -619,13 +619,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 match self.interner().lookup(element.type_id) {
                     Some(TypeData::Tuple(rest_elements)) => {
                         let rest_elements = self.interner().tuple_list(rest_elements);
-                        match self.append_tuple_indices(&rest_elements, index, out) {
-                            Some(next) => {
-                                index = next;
-                                continue;
-                            }
-                            None => return None,
-                        }
+                        index = self.append_tuple_indices(&rest_elements, index, out)?;
+                        continue;
                     }
                     _ => return None,
                 }

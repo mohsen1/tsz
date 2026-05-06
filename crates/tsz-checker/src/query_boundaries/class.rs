@@ -151,6 +151,49 @@ fn needs_strict_generic_target_callable_recheck(
         && has_own_signature_type_params(checker, target)
 }
 
+fn construct_signature_source_captures_nonlocal_type_param(
+    checker: &CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let source = unwrap_single_property_value_type(checker, source);
+    let target = unwrap_single_property_value_type(checker, target);
+    let Some(source_signatures) =
+        crate::query_boundaries::common::construct_signatures_for_type(checker.ctx.types, source)
+    else {
+        return false;
+    };
+    let Some(target_signatures) =
+        crate::query_boundaries::common::construct_signatures_for_type(checker.ctx.types, target)
+    else {
+        return false;
+    };
+    if !target_signatures
+        .iter()
+        .any(|target_sig| !target_sig.type_params.is_empty())
+    {
+        return false;
+    }
+
+    source_signatures.iter().any(|source_sig| {
+        source_sig.type_params.is_empty()
+            && (source_sig.params.iter().any(|param| {
+                crate::query_boundaries::common::contains_type_parameters(
+                    checker.ctx.types,
+                    param.type_id,
+                )
+            }) || source_sig.this_type.is_some_and(|this_type| {
+                crate::query_boundaries::common::contains_type_parameters(
+                    checker.ctx.types,
+                    this_type,
+                )
+            }) || crate::query_boundaries::common::contains_type_parameters(
+                checker.ctx.types,
+                source_sig.return_type,
+            ))
+    })
+}
+
 fn generic_construct_requires_optional_target_param_recheck(
     checker: &CheckerState<'_>,
     source: TypeId,
@@ -661,6 +704,13 @@ pub(crate) fn should_report_property_type_mismatch(
 
     if outcome.related {
         if generic_construct_requires_optional_target_param_recheck(
+            checker,
+            relation_source,
+            relation_target,
+        ) {
+            return true;
+        }
+        if construct_signature_source_captures_nonlocal_type_param(
             checker,
             relation_source,
             relation_target,
