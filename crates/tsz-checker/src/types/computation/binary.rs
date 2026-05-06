@@ -497,7 +497,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 ty,
             ) {
-                None => "{}".to_string(),
+                None => format!("NonNullable<{}>", self.format_type(ty)),
                 Some(c) => self.format_type(c),
             };
         }
@@ -2470,15 +2470,6 @@ impl<'a> CheckerState<'a> {
 
         if right_type == TypeId::UNKNOWN {
             self.error_is_of_type_unknown(right_idx);
-        } else if !self.is_valid_in_operator_rhs(right_type) {
-            // Route through the check_assignable_or_report(...) gateway family
-            // so computation-layer mismatches stay on the centralized path.
-            let _ = self.check_assignable_or_report_at_exact_anchor(
-                right_type,
-                TypeId::OBJECT,
-                right_idx,
-                right_idx,
-            );
         } else if self.type_may_represent_primitive(right_type)
             || self.truthiness_narrowed_from_unknown(right_idx, right_type)
         {
@@ -2487,6 +2478,15 @@ impl<'a> CheckerState<'a> {
                 right_idx,
                 tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND,
                 &[&type_str],
+            );
+        } else if !self.is_valid_in_operator_rhs(right_type) {
+            // Route through the check_assignable_or_report(...) gateway family
+            // so computation-layer mismatches stay on the centralized path.
+            let _ = self.check_assignable_or_report_at_exact_anchor(
+                right_type,
+                TypeId::OBJECT,
+                right_idx,
+                right_idx,
             );
         }
 

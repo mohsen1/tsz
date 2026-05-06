@@ -24,7 +24,8 @@ use crate::diagnostics::{
     get_message_template,
 };
 use crate::types::{
-    MappedModifier, StringIntrinsicKind, TypeData, TypeId, TypeListId, TypeParamInfo,
+    IntrinsicKind, MappedModifier, ObjectFlags, ObjectShape, StringIntrinsicKind, TypeData, TypeId,
+    TypeListId, TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -1257,6 +1258,9 @@ impl<'a> TypeFormatter<'a> {
                 if let Some(name) = self.resolve_object_shape_name(&shape) {
                     return name.into();
                 }
+                if let Some(record_display) = self.format_in_operator_record(&shape) {
+                    return record_display.into();
+                }
                 // Use display properties (pre-widened literal types) when enabled.
                 if self.use_display_properties
                     && let Some(display_props) = self.interner.get_display_properties(type_id)
@@ -1267,6 +1271,9 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
+                if let Some(record_display) = self.format_in_operator_record(&shape) {
+                    return record_display.into();
+                }
                 if let Some(name) = self.resolve_object_shape_name(&shape) {
                     return name.into();
                 }
@@ -1990,6 +1997,31 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::Error => Cow::Borrowed("error"),
         }
+    }
+
+    fn format_in_operator_record(&mut self, shape: &ObjectShape) -> Option<String> {
+        if !shape.flags.contains(ObjectFlags::IN_OPERATOR_RECORD)
+            || shape.properties.len() != 1
+            || shape.string_index.is_some()
+            || shape.number_index.is_some()
+        {
+            return None;
+        }
+
+        let prop = &shape.properties[0];
+        if prop.type_id != TypeId::UNKNOWN || prop.optional || prop.is_method {
+            return None;
+        }
+
+        let key = self.atom(prop.name);
+        let key_display = if prop.is_symbol_named {
+            key.to_string()
+        } else if key.parse::<f64>().is_ok() {
+            key.to_string()
+        } else {
+            format!("\"{key}\"")
+        };
+        Some(format!("Record<{key_display}, unknown>"))
     }
 
     /// Strip TypeScript/JavaScript file extensions from module specifier
