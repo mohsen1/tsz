@@ -6,10 +6,12 @@ use crate::context::TypingRequest;
 use crate::context::speculation::FullSnapshot;
 use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
 use crate::query_boundaries::common::{ContextualTypeContext, PendingDiagnosticBuilder};
+use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
+use std::fmt::Write;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{CallSignature, TypeId, TypeParamInfo};
 
 use super::{CallableContext, OverloadResolution, SelectedTypePredicate};
 
@@ -21,6 +23,91 @@ type BestTypeMismatch = (
 );
 
 impl<'a> CheckerState<'a> {
+    fn overload_signature_for_inference(
+        &mut self,
+        sig: &CallSignature,
+        signature_index: usize,
+        arg_types: &[TypeId],
+        contextual_type: Option<TypeId>,
+    ) -> CallSignature {
+        if sig.type_params.is_empty() {
+            return sig.clone();
+        }
+
+        let collides = sig.type_params.iter().any(|tp| {
+            arg_types
+                .iter()
+                .copied()
+                .chain(contextual_type)
+                .flat_map(|ty| {
+                    crate::query_boundaries::common::collect_referenced_types(self.ctx.types, ty)
+                })
+                .any(|referenced| {
+                    crate::query_boundaries::common::type_param_info(self.ctx.types, referenced)
+                        .is_some_and(|referenced_tp| referenced_tp.name == tp.name)
+                })
+        });
+        if !collides {
+            return sig.clone();
+        }
+
+        let mut substitution = TypeSubstitution::new();
+        let mut renamed_type_params = Vec::with_capacity(sig.type_params.len());
+        let mut name_buf = String::with_capacity(48);
+        for (index, tp) in sig.type_params.iter().enumerate() {
+            name_buf.clear();
+            write!(name_buf, "__overload_sig_{signature_index}_tp_{index}")
+                .expect("write to String is infallible");
+            let fresh_name = self.ctx.types.intern_string(&name_buf);
+            let fresh_type = self.ctx.types.factory().type_param(TypeParamInfo {
+                name: fresh_name,
+                constraint: None,
+                default: None,
+                is_const: tp.is_const,
+            });
+            substitution.insert(tp.name, fresh_type);
+            renamed_type_params.push(TypeParamInfo {
+                name: fresh_name,
+                constraint: tp
+                    .constraint
+                    .map(|constraint| instantiate_type(self.ctx.types, constraint, &substitution)),
+                default: tp
+                    .default
+                    .map(|default| instantiate_type(self.ctx.types, default, &substitution)),
+                is_const: tp.is_const,
+            });
+        }
+
+        CallSignature {
+            params: sig
+                .params
+                .iter()
+                .map(|param| tsz_solver::ParamInfo {
+                    name: param.name,
+                    type_id: instantiate_type(self.ctx.types, param.type_id, &substitution),
+                    optional: param.optional,
+                    rest: param.rest,
+                })
+                .collect(),
+            return_type: instantiate_type(self.ctx.types, sig.return_type, &substitution),
+            this_type: sig
+                .this_type
+                .map(|this_type| instantiate_type(self.ctx.types, this_type, &substitution)),
+            type_params: renamed_type_params,
+            type_predicate: sig
+                .type_predicate
+                .map(|predicate| tsz_solver::TypePredicate {
+                    asserts: predicate.asserts,
+                    target: predicate.target,
+                    type_id: predicate
+                        .type_id
+                        .map(|ty| instantiate_type(self.ctx.types, ty, &substitution)),
+                    parameter_index: predicate.parameter_index,
+                }),
+            is_method: sig.is_method,
+        }
+    }
+
     fn selected_overload_type_predicate(
         sig: &tsz_solver::CallSignature,
         instantiated_predicate: SelectedTypePredicate,
@@ -97,8 +184,7 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         // Union of all signatures provides contextual typing
-        let union_contextual =
-            tsz_solver::utils::union_or_single(self.ctx.types, signature_types.clone());
+        let union_contextual = tsz_solver::utils::union_or_single(self.ctx.types, signature_types);
 
         let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
@@ -216,7 +302,22 @@ impl<'a> CheckerState<'a> {
         // a fallback and continue trying later overloads which might have better
         // return context inference.
         let mut no_rcs_fallback: Option<NoReturnContextFallback> = None;
-        for (idx, (sig, &func_type)) in signatures.iter().zip(signature_types.iter()).enumerate() {
+        for (idx, original_sig) in signatures.iter().enumerate() {
+            let sig = self.overload_signature_for_inference(
+                original_sig,
+                idx,
+                &arg_types,
+                contextual_type,
+            );
+            let func_type = factory.function(FunctionShape {
+                params: sig.params.clone(),
+                this_type: sig.this_type,
+                return_type: sig.return_type,
+                type_params: sig.type_params.clone(),
+                type_predicate: sig.type_predicate,
+                is_constructor: false,
+                is_method: sig.is_method,
+            });
             tracing::debug!("Trying overload {} with {} args", idx, arg_types.len());
             self.ensure_relation_input_ready(func_type);
             let resolved_func_type =
@@ -229,7 +330,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     func_type
                 };
-            let (result, instantiated_predicate, instantiated_params) = self
+            let (mut result, instantiated_predicate, instantiated_params) = self
                 .resolve_call_with_checker_adapter(
                     resolved_func_type,
                     &arg_types,
@@ -237,8 +338,23 @@ impl<'a> CheckerState<'a> {
                     contextual_type,
                     None,
                 );
+            if let CallResult::ArgumentTypeMismatch {
+                expected,
+                actual,
+                fallback_return,
+                ..
+            } = result
+                && self.type_is_or_constrained_to_top_rest_any_callable(expected)
+                && crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    actual,
+                )
+                .is_some()
+            {
+                result = CallResult::Success(fallback_return);
+            }
             let selected_type_predicate =
-                Self::selected_overload_type_predicate(sig, instantiated_predicate);
+                Self::selected_overload_type_predicate(&sig, instantiated_predicate);
 
             match &result {
                 CallResult::ArgumentTypeMismatch {
@@ -797,7 +913,22 @@ impl<'a> CheckerState<'a> {
         // later overload succeeds, we use this fallback (e.g., for single-overload
         // constraint violations that must still resolve to a return type).
         let mut constraint_violation_fallback: Option<(TypeId, Vec<TypeId>)> = None;
-        for (sig, &func_type) in signatures.iter().zip(signature_types.iter()) {
+        for (idx, original_sig) in signatures.iter().enumerate() {
+            let sig = self.overload_signature_for_inference(
+                original_sig,
+                idx,
+                &arg_types,
+                contextual_type,
+            );
+            let func_type = factory.function(FunctionShape {
+                params: sig.params.clone(),
+                this_type: sig.this_type,
+                return_type: sig.return_type,
+                type_params: sig.type_params.clone(),
+                type_predicate: sig.type_predicate,
+                is_constructor: false,
+                is_method: sig.is_method,
+            });
             self.ctx.rollback_full(&overload_snap);
             let sig_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
@@ -1153,8 +1284,23 @@ impl<'a> CheckerState<'a> {
                     contextual_type,
                     actual_this_type,
                 );
+            if let CallResult::ArgumentTypeMismatch {
+                expected,
+                actual,
+                fallback_return,
+                ..
+            } = result
+                && self.type_is_or_constrained_to_top_rest_any_callable(expected)
+                && crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    actual,
+                )
+                .is_some()
+            {
+                result = CallResult::Success(fallback_return);
+            }
             let mut selected_type_predicate =
-                Self::selected_overload_type_predicate(sig, instantiated_predicate);
+                Self::selected_overload_type_predicate(&sig, instantiated_predicate);
             let sig_shape = FunctionShape {
                 params: sig.params.clone(),
                 return_type: sig.return_type,
@@ -1355,8 +1501,15 @@ impl<'a> CheckerState<'a> {
                         let request = TypingRequest::with_contextual_type(param_type);
                         let _ = self.get_type_of_node_with_request(arg_idx, &request);
                     }
+                    let retained_generic_rest_any_body_errors = self
+                        .overload_candidate_has_only_retained_generic_rest_any_callback_body_errors(
+                            args,
+                            &sig.params,
+                            &candidate_snap,
+                        );
                     if has_multiple_arity_compatible_signatures
                         && self.overload_candidate_has_callback_body_errors(args, &candidate_snap)
+                        && !retained_generic_rest_any_body_errors
                     {
                         all_arg_count_mismatches = false;
                         has_non_count_non_type_failure = true;
