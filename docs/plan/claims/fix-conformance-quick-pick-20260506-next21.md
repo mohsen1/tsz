@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/conformance-quick-pick-20260506-next21`
-- **PR**: TBD
+- **PR**: #3680
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance)
 
