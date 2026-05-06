@@ -53,7 +53,7 @@ fn test_definition_empty_response_is_valid_array() {
 }
 
 #[test]
-fn test_rename_trigger_span_uses_protocol_end_position() {
+fn test_rename_trigger_span_uses_text_span_length() {
     let mut server = make_server();
     server
         .open_files
@@ -82,14 +82,14 @@ fn test_rename_trigger_span_uses_protocol_end_position() {
         Some(&serde_json::json!({ "line": 2, "offset": 1 })),
         "triggerSpan should start at the requested identifier: {body:?}"
     );
-    assert_eq!(
-        trigger_span.get("end"),
-        Some(&serde_json::json!({ "line": 2, "offset": 2 })),
-        "triggerSpan should use protocol end position: {body:?}"
-    );
     assert!(
-        trigger_span.get("length").is_none(),
-        "triggerSpan must not use TextSpan length shape: {body:?}"
+        trigger_span.get("end").is_none(),
+        "triggerSpan must use TextSpan length shape, not protocol end shape: {body:?}"
+    );
+    assert_eq!(
+        trigger_span.get("length"),
+        Some(&serde_json::json!(1)),
+        "triggerSpan length should cover the requested identifier: {body:?}"
     );
 }
 
