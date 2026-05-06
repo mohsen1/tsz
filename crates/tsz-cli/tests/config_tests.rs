@@ -93,12 +93,23 @@ fn load_tsconfig_merges_extends() {
 
     let config = load_tsconfig(&child_path).expect("should load config");
     let options = config.compiler_options.expect("compilerOptions missing");
+    let canonical_temp = temp.path.canonicalize().expect("canonical temp dir");
 
     assert_eq!(options.target.as_deref(), Some("es2015"));
     assert_eq!(options.module.as_deref(), Some("commonjs"));
     assert_eq!(options.strict, Some(false));
-    assert_eq!(config.include, Some(vec!["src".to_string()]));
-    assert_eq!(config.exclude, Some(vec!["dist".to_string()]));
+    assert_eq!(
+        config.include,
+        Some(vec![
+            canonical_temp.join("src").to_string_lossy().into_owned()
+        ])
+    );
+    assert_eq!(
+        config.exclude,
+        Some(vec![
+            canonical_temp.join("dist").to_string_lossy().into_owned()
+        ])
+    );
     assert_eq!(config.files, Some(vec!["main.ts".to_string()]));
 }
 
