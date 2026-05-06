@@ -316,6 +316,45 @@ impl ParserState {
                 }
             }
 
+            fn scan_braced_unicode_escape_value(
+                parser: &mut ParserState,
+                emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
+                body: &[u8],
+                end: usize,
+                pos: &mut usize,
+            ) {
+                *pos += 1;
+                let hex_start = *pos;
+                let mut value = 0u32;
+                let mut overflow = false;
+                while *pos < end && body[*pos] != b'}' {
+                    if let Some(digit) = (body[*pos] as char).to_digit(16)
+                        && !overflow
+                    {
+                        if let Some(next) = value.checked_mul(16).and_then(|v| v.checked_add(digit))
+                        {
+                            value = next;
+                        } else {
+                            overflow = true;
+                        }
+                    }
+                    *pos += 1;
+                }
+
+                if *pos < end {
+                    if overflow || value > 0x10FFFF {
+                        emit(
+                            parser,
+                            hex_start,
+                            (*pos - hex_start) as u32,
+                            diagnostic_messages::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE,
+                            diagnostic_codes::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE,
+                        );
+                    }
+                    *pos += 1;
+                }
+            }
+
             fn is_identifier_part_for_regex_flags(ch: char) -> bool {
                 if ch.is_ascii() {
                     matches!(
@@ -449,13 +488,7 @@ impl ParserState {
                     b'u' => {
                         *pos += 1;
                         if *pos < end && body[*pos] == b'{' {
-                            *pos += 1;
-                            while *pos < end && body[*pos] != b'}' {
-                                *pos += 1;
-                            }
-                            if *pos < end {
-                                *pos += 1;
-                            }
+                            scan_braced_unicode_escape_value(parser, emit, body, end, pos);
                         } else {
                             let mut digits = 0usize;
                             while *pos < end && digits < 4 && body[*pos].is_ascii_hexdigit() {
