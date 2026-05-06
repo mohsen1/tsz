@@ -389,6 +389,64 @@ fn test_cli_module_resolution_preserves_config_package_json_resolution_false() {
 }
 
 #[test]
+fn test_cli_no_unchecked_side_effect_imports_overrides_config_false() {
+    let args =
+        CliArgs::try_parse_from(["tsz", "--noUncheckedSideEffectImports"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.no_unchecked_side_effect_imports = false;
+    let config_options = CompilerOptions {
+        no_unchecked_side_effect_imports: Some(false),
+        ..Default::default()
+    };
+    super::apply_cli_overrides_with_config_options(&mut options, &args, Some(&config_options))
+        .expect("apply overrides");
+
+    assert!(options.checker.no_unchecked_side_effect_imports);
+}
+
+#[test]
+fn test_compile_no_unchecked_side_effect_imports_cli_reenables_ts2882() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(dir.path().join("index.ts"), "import \"./missing.css\";\n").expect("write source");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "noEmit": true,
+    "noUncheckedSideEffectImports": false
+  },
+  "files": ["index.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let config_args = CliArgs::try_parse_from(["tsz", "-p", "tsconfig.json"]).expect("parse args");
+    let config_result = compile(&config_args, dir.path()).expect("compile config");
+    assert!(
+        config_result
+            .diagnostics
+            .iter()
+            .all(|diag| diag.code != 2882),
+        "config false should suppress TS2882, got: {:?}",
+        config_result.diagnostics
+    );
+
+    let cli_args = CliArgs::try_parse_from([
+        "tsz",
+        "-p",
+        "tsconfig.json",
+        "--noUncheckedSideEffectImports",
+    ])
+    .expect("parse args");
+    let cli_result = compile(&cli_args, dir.path()).expect("compile cli override");
+    assert!(
+        cli_result.diagnostics.iter().any(|diag| diag.code == 2882),
+        "CLI override should re-enable TS2882, got: {:?}",
+        cli_result.diagnostics
+    );
+}
+
+#[test]
 fn test_cli_overrides_apply_type_and_declaration_options() {
     let args = CliArgs::try_parse_from([
         "tsz",
@@ -418,6 +476,30 @@ fn test_cli_overrides_apply_type_and_declaration_options() {
         options.declaration_dir.as_deref(),
         Some(Path::new("declarations"))
     );
+}
+
+#[test]
+fn test_cli_overrides_apply_umd_and_synthetic_default_interop_options() {
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--allowUmdGlobalAccess",
+        "--allowSyntheticDefaultImports",
+        "false",
+    ])
+    .expect("parse args");
+    let mut options = ResolvedCompilerOptions {
+        allow_synthetic_default_imports: true,
+        checker: tsz::checker::context::CheckerOptions {
+            allow_synthetic_default_imports: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(options.checker.allow_umd_global_access);
+    assert!(!options.allow_synthetic_default_imports);
+    assert!(!options.checker.allow_synthetic_default_imports);
 }
 
 #[test]

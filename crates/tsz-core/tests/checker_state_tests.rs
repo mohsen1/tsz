@@ -13484,7 +13484,6 @@ const bad = NS["Foo"];
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_namespace_type_only_nested_member_value_error() {
     use crate::parser::ParserState;
 
@@ -13517,10 +13516,10 @@ const bad = Outer.Inner.Foo;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let count = codes.iter().filter(|&&code| code == 2693).count();
+    let count = codes.iter().filter(|&&code| code == 2708).count();
     assert_eq!(
         count, 1,
-        "Expected one 2693 error for nested type-only namespace member used as value, got: {codes:?}"
+        "Expected one 2708 error for nested type-only namespace member used as value, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2339),
@@ -13611,7 +13610,6 @@ const bad = Alias.Foo;
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_namespace_type_only_nested_member_via_alias_value_error() {
     use crate::parser::ParserState;
 
@@ -13645,10 +13643,10 @@ const bad = Alias.Inner.Foo;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let count = codes.iter().filter(|&&code| code == 2693).count();
+    let count = codes.iter().filter(|&&code| code == 2708).count();
     assert_eq!(
         count, 1,
-        "Expected one 2693 error for nested type-only namespace member via alias, got: {codes:?}"
+        "Expected one 2708 error for nested type-only namespace member via alias, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2339),

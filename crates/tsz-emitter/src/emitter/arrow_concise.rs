@@ -16,9 +16,11 @@ impl<'a> Printer<'a> {
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
         self.function_scope_depth += 1;
+        self.arrow_function_scope_depth += 1;
         self.write("return ");
         self.emit(body);
         self.write(";");
+        self.arrow_function_scope_depth -= 1;
         self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
 

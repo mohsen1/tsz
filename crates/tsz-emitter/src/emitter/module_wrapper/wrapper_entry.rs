@@ -740,7 +740,8 @@ impl<'a> Printer<'a> {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
-            if self.statement_is_top_level_using(stmt_node) {
+            let stmt_is_top_level_using = self.statement_is_top_level_using(stmt_node);
+            if stmt_is_top_level_using {
                 seen_top_level_using = true;
             }
             if let Some(dep_var) = system_plan.import_vars.get(&stmt_node.pos)
@@ -1061,6 +1062,9 @@ impl<'a> Printer<'a> {
                         names.insert(insert_at, "_default".to_string());
                     }
                 }
+                if stmt_is_top_level_using {
+                    Self::push_system_top_level_using_env_name(&mut names, &mut seen);
+                }
                 continue;
             }
             let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
@@ -1122,10 +1126,9 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
-        }
-
-        if has_top_level_using && seen.insert("env_1".to_string()) {
-            names.push("env_1".to_string());
+            if stmt_is_top_level_using {
+                Self::push_system_top_level_using_env_name(&mut names, &mut seen);
+            }
         }
 
         for name in deferred_named_export_names {
@@ -1135,6 +1138,12 @@ impl<'a> Printer<'a> {
         }
 
         names
+    }
+
+    fn push_system_top_level_using_env_name(names: &mut Vec<String>, seen: &mut HashSet<String>) {
+        if seen.insert("env_1".to_string()) {
+            names.push("env_1".to_string());
+        }
     }
 
     fn collect_system_empty_binding_temps_from_variable_statement(

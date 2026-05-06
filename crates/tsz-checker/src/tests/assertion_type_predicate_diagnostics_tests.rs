@@ -1,7 +1,7 @@
 //! Regression coverage for assertion-function target diagnostics and reachability.
 
 use crate::context::CheckerOptions;
-use crate::test_utils::{check_source, check_source_codes};
+use crate::test_utils::{check_source, check_source_codes, check_source_strict_codes};
 
 #[test]
 fn unannotated_assertion_identifier_emits_ts2775() {
@@ -16,6 +16,29 @@ function f(x: unknown) {
     assert!(
         codes.contains(&2775),
         "expected TS2775 for assertion variable without explicit declaration type, got {codes:?}"
+    );
+}
+
+#[test]
+fn invalid_assertion_alias_does_not_narrow_after_ts2775() {
+    let codes = check_source_strict_codes(
+        r#"
+function assertString(x: unknown): asserts x is string {
+    if (typeof x !== "string") throw "";
+}
+const f = assertString;
+let v: unknown;
+f(v);
+v.toUpperCase();
+"#,
+    );
+    assert!(
+        codes.contains(&2775),
+        "expected TS2775 for assertion alias without explicit type annotation, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&18046),
+        "invalid assertion alias must not narrow unknown value, got {codes:?}"
     );
 }
 

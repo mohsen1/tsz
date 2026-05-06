@@ -15,7 +15,7 @@ use crate::types::{
 };
 use crate::visitor::{
     callable_shape_id, function_shape_id, index_access_parts, keyof_inner_type, literal_string,
-    object_shape_id, object_with_index_shape_id, type_param_info, union_list_id,
+    mapped_type_id, object_shape_id, object_with_index_shape_id, type_param_info, union_list_id,
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
@@ -63,7 +63,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     pub(crate) fn can_use_object_intersection_fast_path(&self, members: &[TypeId]) -> bool {
-        if members.len() < INTERSECTION_OBJECT_FAST_PATH_THRESHOLD {
+        let has_finite_mapped_member = members.iter().any(|&member| {
+            let resolved = self.resolve_lazy_type(member);
+            mapped_type_id(self.interner, resolved).is_some_and(|mapped_id| {
+                crate::type_queries::collect_finite_mapped_property_names(self.interner, mapped_id)
+                    .is_some()
+            })
+        });
+
+        if members.len() < INTERSECTION_OBJECT_FAST_PATH_THRESHOLD && !has_finite_mapped_member {
             return false;
         }
 
@@ -76,6 +84,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 || function_shape_id(self.interner, resolved).is_some()
             {
                 return false;
+            }
+
+            if mapped_type_id(self.interner, resolved).is_some_and(|mapped_id| {
+                crate::type_queries::collect_finite_mapped_property_names(self.interner, mapped_id)
+                    .is_some()
+            }) {
+                continue;
             }
 
             let Some(shape_id) = object_shape_id(self.interner, resolved)

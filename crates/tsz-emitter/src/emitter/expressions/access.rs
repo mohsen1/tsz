@@ -1127,6 +1127,7 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
@@ -1140,6 +1141,16 @@ mod tests {
         printer.finish().code
     }
 
+    fn emit_js(source: &str) -> String {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = EmitterPrinter::with_options(&parser.arena, PrinterOptions::default());
+        printer.set_source_text(source);
+        printer.emit(root);
+        printer.get_output().to_string()
+    }
+
     #[test]
     fn property_access_preserves_comments_between_base_and_dot() {
         let output = emit_es6(
@@ -1151,6 +1162,20 @@ mod tests {
                 r#"this.then(x => result) /*S*/.then(x => "abc") /*string*/.then(x => x.length) /*number*/"#
             ),
             "Comments between a property-access base and dot must stay before the dot.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn erased_object_literal_assertion_call_keeps_call_inside_grouping() {
+        let output = emit_js("class A { }\n(<A>{}).toString();\n");
+
+        assert!(
+            output.contains("({}.toString());"),
+            "Call on erased object-literal assertion should stay inside object-literal grouping.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("(({}.toString)())"),
+            "Call on erased object-literal assertion should not parenthesize the callee separately.\nOutput:\n{output}"
         );
     }
 

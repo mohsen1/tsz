@@ -31,6 +31,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parenthesized_expression_preserves_comments_around_close_paren() {
+        let source = "/*1*/(/*2*/ \"foo\" /*3*/)/*4*/;\n// open\n/*1*/(\n    // next\n    /*2*/\"foo\"\n    //close\n    /*3*/)/*4*/;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("/*1*/ ( /*2*/\"foo\" /*3*/) /*4*/;"),
+            "Same-line parenthesized comments should stay before the semicolon.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("//close\n/*3*/ ) /*4*/;"),
+            "Multiline parenthesized comments should stay around the closing paren.\nOutput:\n{output}"
+        );
+    }
+
     /// Dynamic `import('path')` expressions must emit the `import` keyword.
     /// Previously the emitter's `emit_node_by_kind` dispatch had no handler for
     /// `SyntaxKind::ImportKeyword`, so the keyword was silently dropped and the
@@ -278,6 +300,31 @@ mod tests {
         assert!(
             !output.contains("yield // comment"),
             "yield must not be directly followed by the line comment (ASI hazard).\nOutput:\n{output}"
+        );
+    }
+
+    /// A line comment that starts on the same source line as `(` should remain
+    /// on that line; the following newline still prevents ASI after `yield`.
+    #[test]
+    fn yield_preserves_same_line_open_paren_comment_in_type_assertion() {
+        let source =
+            "const value = 1;\nfunction* g(): any {\n  yield ( // keep\n    value as any);\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("yield ( // keep\n    value);"),
+            "Same-line comment after `yield (` should stay on the opening paren line.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("yield (\n    // keep"),
+            "Same-line comment after `yield (` must not be forced onto a new line.\nOutput:\n{output}"
         );
     }
 

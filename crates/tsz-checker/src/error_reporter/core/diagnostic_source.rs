@@ -587,6 +587,7 @@ impl<'a> CheckerState<'a> {
         annotation_text: &str,
     ) -> String {
         let mut formatted = annotation_text.trim().to_string();
+        formatted = Self::normalize_annotation_literal_property_display_text(&formatted);
         if formatted.contains(':') {
             formatted = formatted.replace(" }", "; }");
         }

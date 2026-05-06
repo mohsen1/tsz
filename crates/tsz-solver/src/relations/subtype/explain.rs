@@ -16,11 +16,38 @@ use crate::types::{
 use crate::utils;
 use crate::visitor::is_type_parameter;
 use crate::visitor::{
-    array_element_type, callable_shape_id, function_shape_id, intrinsic_kind, literal_value,
-    object_shape_id, object_with_index_shape_id, readonly_inner_type, tuple_list_id, union_list_id,
+    application_id, array_element_type, callable_shape_id, function_shape_id, intrinsic_kind,
+    literal_value, object_shape_id, object_with_index_shape_id, readonly_inner_type, tuple_list_id,
+    union_list_id,
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn shape_or_type_requires_declared_index_signature(
+        &self,
+        shape: &ObjectShape,
+        type_id: TypeId,
+    ) -> bool {
+        let is_named_non_enum = |shape: &ObjectShape| {
+            shape.symbol.is_some()
+                && !shape
+                    .flags
+                    .contains(crate::types::ObjectFlags::ENUM_NAMESPACE)
+        };
+        if is_named_non_enum(shape) {
+            return true;
+        }
+
+        let receiver_shape = object_with_index_shape_id(self.interner, type_id).or_else(|| {
+            let app_id = application_id(self.interner, type_id)?;
+            let app = self.interner.type_application(app_id);
+            object_with_index_shape_id(self.interner, app.base)
+        });
+
+        receiver_shape
+            .map(|shape_id| self.interner.object_shape(shape_id))
+            .is_some_and(|shape| is_named_non_enum(&shape))
+    }
+
     /// Collect source properties including those from intersection members.
     /// This ensures merged types (e.g., `{ a: string } & { b: number }`) have
     /// all properties available for missing property checks.
@@ -1038,7 +1065,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         target_value_type: t_number_idx.value_type,
                     });
                 }
-            } else if source_shape.symbol.is_some() {
+            } else if self.shape_or_type_requires_declared_index_signature(source_shape, source) {
                 return Some(SubtypeFailureReason::MissingIndexSignature {
                     index_kind: "number",
                 });

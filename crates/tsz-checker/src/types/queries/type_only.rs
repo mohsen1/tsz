@@ -704,6 +704,79 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn type_only_namespace_member_access_name(
+        &self,
+        access_idx: NodeIndex,
+    ) -> Option<String> {
+        let access_node = self.ctx.arena.get(access_idx)?;
+        if access_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(access_node)?;
+        let property_name = self
+            .ctx
+            .arena
+            .get_identifier_at(access.name_or_argument)?
+            .escaped_text
+            .as_str();
+
+        let root_idx = self.leftmost_entity_name_node(access.expression)?;
+        let root_name = self.ctx.arena.identifier_text_owned(root_idx)?;
+        if self
+            .resolve_identifier_symbol(root_idx)
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|symbol| symbol.import_module.is_some())
+        {
+            return None;
+        }
+
+        let base_sym_id = self.resolve_qualified_symbol(access.expression)?;
+        let lib_binders = self.get_lib_binders();
+        let base_symbol = self.get_cross_file_symbol(base_sym_id).or_else(|| {
+            self.ctx
+                .binder
+                .get_symbol_with_libs(base_sym_id, &lib_binders)
+        })?;
+        if !base_symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+            && base_symbol
+                .exports
+                .as_ref()
+                .is_none_or(|exports| exports.is_empty())
+        {
+            return None;
+        }
+
+        let member_sym_id = self.resolve_qualified_symbol(access_idx)?;
+        let member_symbol = self.get_cross_file_symbol(member_sym_id).or_else(|| {
+            self.ctx
+                .binder
+                .get_symbol_with_libs(member_sym_id, &lib_binders)
+        })?;
+        if self.symbol_member_is_type_only(member_sym_id, Some(property_name)) {
+            return Some(root_name);
+        }
+
+        let has_value = member_symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::ALIAS);
+        let has_type = member_symbol.has_any_flags(symbol_flags::TYPE);
+        (has_type && !has_value).then_some(root_name)
+    }
+
+    fn leftmost_entity_name_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return Some(idx);
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.ctx.arena.get_access_expr(node)?;
+            return self.leftmost_entity_name_node(access.expression);
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qualified = self.ctx.arena.get_qualified_name(node)?;
+            return self.leftmost_entity_name_node(qualified.left);
+        }
+        None
+    }
+
     /// Check if an alias symbol resolves to a type-only symbol.
     ///
     /// Follows alias chains to determine if the ultimate target is type-only
