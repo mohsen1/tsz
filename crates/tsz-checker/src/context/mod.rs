@@ -400,6 +400,10 @@ pub struct CheckerContext<'a> {
     /// different members from the same nested namespace.
     pub nested_namespace_candidates_cache: RefCell<NestedNamespaceCandidatesCache>,
 
+    /// True once `nested_namespace_candidates_cache` has been populated for every
+    /// nested namespace export name visible across all binders.
+    pub nested_namespace_candidates_cache_complete: Cell<bool>,
+
     /// Per-checker cache for same-name symbol candidates across the current binder
     /// and all cross-file binders.
     pub symbol_name_candidates_cache: RefCell<FxHashMap<String, Vec<SymbolId>>>,
@@ -574,14 +578,14 @@ pub struct CheckerContext<'a> {
     /// When a type is defined in a module file, the formatter qualifies its name
     /// as `import("specifier").TypeName` to match tsc's behavior.
     /// Built from the arena's `source_files` during checker construction.
-    pub module_specifiers: FxHashMap<u32, String>,
+    pub module_specifiers: Arc<FxHashMap<u32, String>>,
 
     /// Maps `file_id` -> module specifier preserving any directory prefix,
     /// used by diagnostic cross-module disambiguation. tsc's diagnostic output
     /// uses the project-relative path (e.g. `src/library-a/index`) rather
     /// than the basename so that two files sharing the same basename can be
     /// told apart in `import("<path>").X` messages.
-    pub module_path_specifiers: FxHashMap<u32, String>,
+    pub module_path_specifiers: Arc<FxHashMap<u32, String>>,
 
     /// Maps class instance `TypeIds` to their class declaration `NodeIndex`.
     /// Used by `get_class_decl_from_type` to correctly identify the class
