@@ -348,6 +348,13 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.emit_type_node_text_from_arena(source_arena, type_annotation))
         }?;
         let type_text = if std::ptr::eq(source_arena, self.arena) {
+            // Note: the inner `if let Some(raw_type_text) = ... && ...` was
+            // originally written as a `match` guard, which requires the
+            // unstable `if_let_guard` feature (rust-lang/rust#51114). The
+            // three `Some(printed) if printed != "any" && ...` arms all
+            // share the same precondition, so this collapses them into a
+            // single arm and expresses the per-arm checks as a stable
+            // `let-chain` cascade in the body.
             match printed {
                 Some(printed) if printed != "any" => {
                     if let Some(raw_type_text) = self.local_type_annotation_text(type_annotation) {
