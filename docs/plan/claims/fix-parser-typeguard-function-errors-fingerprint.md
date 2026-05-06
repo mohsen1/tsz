@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/parser-typeguard-function-errors-fingerprint`
-- **PR**: TBD
+- **PR**: #3478
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
