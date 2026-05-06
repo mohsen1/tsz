@@ -206,6 +206,18 @@ pub(super) fn normalize_quickinfo_display_string(display: &str) -> String {
     normalize_single_index_signature_objects(&normalized)
 }
 
+pub(super) fn repair_utf8_mojibake(display: &str) -> String {
+    let mut bytes = Vec::with_capacity(display.len());
+    for ch in display.chars() {
+        let value = ch as u32;
+        if value > u8::MAX as u32 {
+            return display.to_string();
+        }
+        bytes.push(value as u8);
+    }
+    String::from_utf8(bytes).unwrap_or_else(|_| display.to_string())
+}
+
 /// Normalize `) :` to `):` in call signatures.
 pub(super) fn normalize_call_signature_colon_spacing(display: &str) -> String {
     display.replace(") :", "):")

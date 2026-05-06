@@ -170,11 +170,13 @@ pub fn look_ahead_is_import_equals(
         // So `import type from "mod"` → import-declaration (type is modifier, `from`
         // is name, then `from` keyword + string).
         // But `import type from = require(...)` → import-equals (type is modifier,
-        // `from` is name, `=` is not `,`/`from`).
+        // `from` is name, `=` is not `,`/`from`). `defer` does not follow that
+        // path: tsc treats `import defer from =` as an import declaration headed
+        // by `defer`, then reports the missing `from` keyword at `=`.
         if next2 == SyntaxKind::FromKeyword {
             let next3 = scanner.scan();
             scanner.restore_state(snapshot);
-            if next3 == SyntaxKind::EqualsToken {
+            if next1 == SyntaxKind::TypeKeyword && next3 == SyntaxKind::EqualsToken {
                 // `import type from =` → type-only import-equals with `from` as name
                 return true;
             }

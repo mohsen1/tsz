@@ -1514,14 +1514,16 @@ impl ScannerState {
             return;
         }
 
-        let numeric_end = self.pos;
         // OPTIMIZATION: Only allocate token_value if number contains separators
         // Plain numbers (no underscores) can use source slice via get_token_value_ref()
         self.set_numeric_token_value(start);
-        if self.check_for_identifier_start_after_numeric_literal(start, has_exponent)
-            && self.token_value.is_empty()
-        {
-            self.token_value = self.substring(start, numeric_end);
+        // When the recovery branch consumed an `n` BigInt suffix on a non-integer
+        // (e.g. `3en`), `check_for_identifier_start_after_numeric_literal` returns
+        // `true` and `self.pos` is now past the `n`. Re-capture `token_value` from
+        // the full consumed span so emit preserves the source spelling, matching
+        // tsc which prints `3en[null];` for `3en[null]` rather than `3e[null];`.
+        if self.check_for_identifier_start_after_numeric_literal(start, has_exponent) {
+            self.token_value = self.substring(start, self.pos);
         }
         self.token = SyntaxKind::NumericLiteral;
     }
@@ -2479,14 +2481,14 @@ impl ScannerState {
                     if let Some(text) = decoded.as_mut() {
                         text.push('-');
                     }
-                    // After hyphen, we need more identifier characters
+                    // After a JSX hyphen, continuation may start with any identifier part.
                     if self.pos >= self.end {
                         continue;
                     }
                     let part_start = self.char_code_unchecked(self.pos);
                     if part_start == CharacterCodes::BACKSLASH {
                         if let Some(code_point) = self.peek_unicode_escape()
-                            && is_identifier_start(code_point)
+                            && is_identifier_part(code_point)
                         {
                             let text =
                                 decoded.get_or_insert_with(|| self.source[start..self.pos].into());
@@ -2519,7 +2521,7 @@ impl ScannerState {
                                 self.pos += self.char_len_at(self.pos);
                             }
                         }
-                    } else if is_identifier_start(part_start) {
+                    } else if is_identifier_part(part_start) {
                         loop {
                             let ch = self.char_code_unchecked(self.pos);
                             if !is_identifier_part(ch) {
@@ -3351,12 +3353,8 @@ fn is_identifier_start(ch: u32) -> bool {
             || ch == CharacterCodes::DOLLAR;
     }
 
-    // Unicode path: Use Rust's char::is_alphabetic() which covers:
-    // Lu (Uppercase Letter), Ll (Lowercase Letter), Lt (Titlecase Letter),
-    // Lm (Modifier Letter), Lo (Other Letter), Nl (Letter Number)
-    // This correctly rejects U+00A0 (Whitespace), U+2026 (Punctuation), U+2194 (Symbol)
     if let Some(c) = char::from_u32(ch) {
-        return c.is_alphabetic();
+        return unicode_ident::is_xid_start(c);
     }
 
     false
@@ -3660,6 +3658,32 @@ mod tests {
         assert_eq!(tokens[4].1, "0b1010");
         assert_eq!(tokens[5].1, "0o777");
         assert_eq!(tokens[6].1, "1_000");
+    }
+
+    #[test]
+    fn scan_bigint_suffix_on_failed_exponent_preserves_full_text() {
+        // Regression for `identifierStartAfterNumericLiteral`: when a numeric
+        // literal has a failed exponent immediately followed by `n` (e.g.
+        // `3en`, `123en`), tsc treats the `n` as a recovered BigInt suffix
+        // and the literal text spans the full `<digits>en` range. Emit must
+        // preserve that source spelling — printing `3e` instead drops the
+        // `n` and produces `3e[null];` where tsc produces `3en[null];`.
+        let tokens = scan_all("3en 123en");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].0, SyntaxKind::NumericLiteral);
+        assert_eq!(tokens[0].1, "3en");
+        assert_eq!(tokens[1].0, SyntaxKind::NumericLiteral);
+        assert_eq!(tokens[1].1, "123en");
+
+        // Sanity: `1ee` is a different shape — the trailing `e` is not an
+        // `n` BigInt suffix, so the scanner resets pos before `e` and the
+        // numeric token is just `1e`. Emit then renders `1e; e;`.
+        let tokens = scan_all("1ee");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].0, SyntaxKind::NumericLiteral);
+        assert_eq!(tokens[0].1, "1e");
+        assert_eq!(tokens[1].0, SyntaxKind::Identifier);
+        assert_eq!(tokens[1].1, "e");
     }
 
     // ── String literals ───────────────────────────────────────────────
