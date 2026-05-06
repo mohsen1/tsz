@@ -278,7 +278,8 @@ impl Server {
                     "require({quote}{}{quote})",
                     Self::normalize_commonjs_module_specifier(module_specifier)
                 )
-            } else if let Some(rest) = trimmed.strip_prefix("import ") {
+            } else {
+                let rest = trimmed.strip_prefix("import ")?;
                 let (local_name, module_specifier_raw) = rest.split_once(" from ")?;
                 let module_specifier = extract_quoted_text(module_specifier_raw)?;
                 if local_name.contains('{') || local_name.contains('*') {
@@ -294,8 +295,6 @@ impl Server {
                     local_name.trim(),
                     Self::normalize_commonjs_module_specifier(module_specifier)
                 )
-            } else {
-                return None;
             };
         let leading_len = new_text.len().saturating_sub(new_text.trim_start().len());
         let trailing_len = new_text.len().saturating_sub(new_text.trim_end().len());

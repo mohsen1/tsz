@@ -1131,8 +1131,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(ref class_info) = self.ctx.enclosing_class
                         && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
                         && self
-                            .summarize_class_chain(base_idx)
-                            .lookup(&property_name, true, true)
+                            .class_chain_member_kind_name_only(base_idx, &property_name, true, true)
                             .is_some()
                     {
                         use crate::diagnostics::{
@@ -1158,8 +1157,12 @@ impl<'a> CheckerState<'a> {
                             self.resolve_class_for_access(access.expression, object_type_for_access)
                         && !is_static_access
                         && self
-                            .summarize_class_chain(class_idx)
-                            .lookup(&property_name, true, true)
+                            .class_chain_member_kind_name_only(
+                                class_idx,
+                                &property_name,
+                                true,
+                                true,
+                            )
                             .is_some()
                     {
                         use crate::diagnostics::{

@@ -370,10 +370,7 @@ fn filesystem_tslib_declaration(base_dir: &Path) -> Option<std::path::PathBuf> {
         if let Some(tslib_path) = tslib_declaration_in_dir(dir) {
             return Some(tslib_path);
         }
-        match dir.parent() {
-            Some(parent) => dir = parent,
-            None => return None,
-        }
+        dir = dir.parent()?;
     }
 }
 
@@ -1420,6 +1417,9 @@ pub(super) fn filtered_parse_diagnostics(
     // parse diagnostics (tsc does this in plain JS binder errors), but suppress
     // it for expression-recovery cases where TS1109 is the primary diagnostic.
     let has_expression_expected_parse_error = parse_diagnostics.iter().any(|d| d.code == 1109);
+    let has_hard_keyword_interface_ts2427 = parse_diagnostics
+        .iter()
+        .any(is_hard_keyword_interface_name_2427_parse_diagnostic);
     parse_diagnostics
         .iter()
         .filter(|diagnostic| {
@@ -1446,9 +1446,21 @@ pub(super) fn filtered_parse_diagnostics(
             {
                 return false;
             }
+            if has_hard_keyword_interface_ts2427
+                && diagnostic.code == 2427
+                && !is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic)
+            {
+                return false;
+            }
             true
         })
         .collect()
+}
+
+fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagnostic) -> bool {
+    diagnostic.code == 2427
+        && (diagnostic.message == "Interface name cannot be 'void'."
+            || diagnostic.message == "Interface name cannot be 'null'.")
 }
 
 /// Parser-emitted codes that tsc emits via grammarErrorOnNode in the checker.

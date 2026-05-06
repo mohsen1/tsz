@@ -917,7 +917,11 @@ impl<'a> EnumES5Transformer<'a> {
                 if let Some(&val) = self.member_values.get(id.escaped_text.as_str()) {
                     return Some(val as f64);
                 }
-                None
+                match id.escaped_text.as_str() {
+                    "NaN" => Some(f64::NAN),
+                    "Infinity" => Some(f64::INFINITY),
+                    _ => None,
+                }
             }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 let bin = self.arena.get_binary_expr(node)?;
@@ -1471,7 +1475,14 @@ impl<'a> EnumES5Emitter<'a> {
             None => return String::new(),
         };
 
-        let mut printer = IRPrinter::new();
+        // ASTRef nodes (used for string literals to preserve source quote
+        // style) require both arena and source text to print; without them
+        // the printer falls back to "undefined".
+        let arena = self.transformer.arena;
+        let mut printer = match self.transformer.source_text {
+            Some(text) => IRPrinter::with_arena_and_source(arena, text),
+            None => IRPrinter::with_arena(arena),
+        };
         printer.set_indent_level(self.indent_level);
         let result = printer.emit(&ir);
         result.to_string()

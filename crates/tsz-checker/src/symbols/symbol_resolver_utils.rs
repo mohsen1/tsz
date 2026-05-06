@@ -236,7 +236,7 @@ impl<'a> CheckerState<'a> {
     /// a global value (i.e. not a `Parameter` node). Used by
     /// `resolve_lib_global_var_symbol` to filter out parameter symbols that
     /// leak into `lib_symbol_ids`.
-    fn symbol_has_globalable_declaration(
+    pub(crate) fn symbol_has_globalable_declaration(
         &self,
         sym_id: SymbolId,
         sym: &tsz_binder::Symbol,
@@ -1170,11 +1170,8 @@ impl<'a> CheckerState<'a> {
                     return Some(current);
                 }
                 _ => {
-                    if let Some(ext) = arena.get_extended(current) {
-                        current = ext.parent;
-                    } else {
-                        return None;
-                    }
+                    let ext = arena.get_extended(current)?;
+                    current = ext.parent;
                 }
             }
         }

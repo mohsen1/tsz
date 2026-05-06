@@ -116,6 +116,40 @@ fn test_definite_assignment_ts2564_loop_and_try_conservative_paths() {
 }
 
 #[test]
+fn test_definite_assignment_ts2564_while_true_assign_before_break() {
+    let source = r"
+        class C {
+            x: number;
+
+            constructor() {
+                while (true) {
+                    this.x = 1;
+                    break;
+                }
+            }
+        }
+    ";
+
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ),
+        0,
+        "Expected no TS2564 when a definitely-entered loop assigns before a direct break, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_definite_assignment_ts2564_parameter_property_vs_plain_property() {
     let source = r"
         class WithParamProp {

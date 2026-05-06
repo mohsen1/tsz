@@ -520,6 +520,38 @@ fn reset_clears_session_state_but_keeps_server_alive() {
 }
 
 #[test]
+fn organize_imports_sort_and_combine_sorts_named_imports() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/organize-main.ts".to_string(),
+        "import { b, a } from \"./organize-m\";\nconsole.log(1);\n".to_string(),
+    );
+    server.open_files.insert(
+        "/organize-m.ts".to_string(),
+        "export const a = 1;\nexport const b = 2;\n".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "organizeImports",
+        serde_json::json!({
+            "scope": {
+                "type": "file",
+                "args": { "file": "/organize-main.ts" }
+            },
+            "mode": "SortAndCombine"
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("organizeImports should return a body");
+    let changes = body[0]["textChanges"]
+        .as_array()
+        .expect("textChanges should be an array");
+    assert_eq!(changes.len(), 1, "expected one sorting edit, got {body:?}");
+    assert_eq!(changes[0]["newText"], " a, b ");
+}
+
+#[test]
 fn test_synchronize_project_list_returns_empty_list() {
     let mut server = make_server();
     let response = server.handle_tsserver_request(make_request(
@@ -1800,6 +1832,63 @@ fn test_new_commands_are_recognized() {
                     .unwrap_or("")
                     .contains("Unrecognized"),
             "Command '{cmd}' was not recognized"
+        );
+    }
+}
+
+#[test]
+fn test_full_protocol_dispatcher_commands_are_recognized() {
+    let mut server = make_server();
+    let file = "/full-routes.ts";
+    server.open_files.insert(
+        file.to_string(),
+        [
+            "function add(a: number, b: number) {",
+            "  return a + b;",
+            "}",
+            "add(1, 2);",
+            "const value = add;",
+        ]
+        .join("\n"),
+    );
+
+    let requests = [
+        make_request(
+            "quickinfo-full",
+            serde_json::json!({"file": file, "line": 4, "offset": 1}),
+        ),
+        make_request(
+            "completions-full",
+            serde_json::json!({"file": file, "line": 5, "offset": 15}),
+        ),
+        make_request(
+            "signatureHelp-full",
+            serde_json::json!({"file": file, "line": 4, "offset": 6}),
+        ),
+        make_request(
+            "format-full",
+            serde_json::json!({
+                "file": file,
+                "line": 1,
+                "offset": 1,
+                "options": {
+                    "indentSize": 2,
+                    "tabSize": 2,
+                    "convertTabsToSpaces": true,
+                },
+            }),
+        ),
+        make_request("outliningSpans", serde_json::json!({"file": file})),
+        make_request("fileReferences-full", serde_json::json!({"file": file})),
+        make_request("navbar-full", serde_json::json!({"file": file})),
+    ];
+
+    for req in requests {
+        let command = req.command.clone();
+        let resp = server.handle_tsserver_request(req);
+        assert!(
+            resp.success,
+            "{command} should be routed to a handler, got: {resp:?}"
         );
     }
 }
