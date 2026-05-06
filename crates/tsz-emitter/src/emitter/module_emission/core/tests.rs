@@ -1354,6 +1354,42 @@ fn decorated_class_export_no_duplicate_exports() {
 }
 
 #[test]
+fn cjs_deferred_local_export_emits_all_aliases_after_declaration() {
+    let source = r#"export { x }
+export { x as xx }
+export default x;
+
+const x = 'x'
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let default_pos = output.find("exports.default = x;").unwrap();
+    let declaration_pos = output.find("const x = 'x';").unwrap();
+    let export_x_pos = output.find("exports.x = x;").unwrap();
+    let export_xx_pos = output.find("exports.xx = x;").unwrap();
+    assert!(
+        default_pos < declaration_pos,
+        "Default export should stay before the declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        declaration_pos < export_x_pos && export_x_pos < export_xx_pos,
+        "Named aliases should be deferred until after the declaration.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn cjs_exported_class_with_mixin_heritage_exports_after_outer_class() {
     let source = r#"export const Mixin = null as any;
 export class Base {}

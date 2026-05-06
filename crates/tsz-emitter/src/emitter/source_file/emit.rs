@@ -1367,6 +1367,11 @@ impl<'a> Printer<'a> {
         } else {
             rustc_hash::FxHashMap::default()
         };
+        let cjs_deferred_export_bindings_all = if is_top_level_cjs {
+            self.collect_cjs_deferred_export_bindings_all(&source.statements)
+        } else {
+            rustc_hash::FxHashMap::default()
+        };
 
         let mut last_erased_stmt_end: Option<u32> = None;
         let mut last_erased_was_shorthand_module = false;
@@ -1820,9 +1825,13 @@ impl<'a> Printer<'a> {
             {
                 let names = self.get_declaration_export_names(stmt_node);
                 for name in names {
-                    if let Some(export_name) = cjs_deferred_export_bindings.get(&name)
-                        && !self.ctx.module_state.iife_exported_names.contains(&name)
-                    {
+                    if self.ctx.module_state.iife_exported_names.contains(&name) {
+                        continue;
+                    }
+                    let Some(export_names) = cjs_deferred_export_bindings_all.get(&name) else {
+                        continue;
+                    };
+                    for export_name in export_names {
                         if !self.writer.is_at_line_start() {
                             self.write_line();
                         }
