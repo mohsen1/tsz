@@ -113,16 +113,26 @@ impl<'a> CheckerState<'a> {
         }
         // Skip empty object types (`{}`) in the display — tsc simplifies
         // `IntrinsicAttributes & {}` to just `IntrinsicAttributes`.
-        let props_str = preferred_props_display
-            .map(str::to_owned)
-            .unwrap_or_else(|| {
-                let display_props = if component_type.is_none() {
-                    self.jsx_intrinsic_props_display_type(props_type)
-                } else {
-                    props_type
-                };
+        let props_str = if let Some(display) = preferred_props_display {
+            if display.contains("propTypes: infer") || display.contains("defaultProps: infer") {
+                self.jsx_library_managed_structural_props_display(props_type)
+                    .unwrap_or_else(|| display.to_string())
+            } else {
+                display.to_string()
+            }
+        } else {
+            let display_props = if component_type.is_none() {
+                self.jsx_intrinsic_props_display_type(props_type)
+            } else {
+                props_type
+            };
+            if component_type.is_some() {
+                self.jsx_library_managed_structural_props_display(display_props)
+                    .unwrap_or_else(|| self.format_type(display_props))
+            } else {
                 self.format_type(display_props)
-            });
+            }
+        };
         if props_str != "{}" {
             parts.push(props_str);
         }
@@ -278,6 +288,13 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
                 if decl.type_annotation.is_none() {
+                    if let Some(display) = self
+                        .get_jsx_component_props_display_text_from_function_initializer(
+                            decl.initializer,
+                        )
+                    {
+                        return Some(display);
+                    }
                     let init_node = self.ctx.arena.get(decl.initializer)?;
                     let binary = self.ctx.arena.get_binary_expr(init_node)?;
                     let is_logical_alias = matches!(
@@ -316,6 +333,88 @@ impl<'a> CheckerState<'a> {
             }
             _ => None,
         }
+    }
+
+    pub(in crate::checkers_domain::jsx) fn jsx_library_managed_structural_props_display(
+        &mut self,
+        props_type: TypeId,
+    ) -> Option<String> {
+        let raw_display = self.format_type(props_type);
+        if !raw_display.contains("propTypes: infer") && !raw_display.contains("defaultProps: infer")
+        {
+            return None;
+        }
+
+        // When the managed props conditional remains in display form, the
+        // concrete function props are the final fallback branch.
+        if let Some(display) = Self::jsx_final_conditional_else_display(&raw_display) {
+            return Some(display);
+        }
+
+        let normalized = self.normalize_jsx_required_props_target(props_type);
+        let normalized = self.evaluate_type_with_env(normalized);
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, normalized)?;
+        let filtered_props: Vec<_> = shape
+            .properties
+            .iter()
+            .filter(|prop| {
+                let name = self.ctx.types.resolve_atom(prop.name);
+                !(name == "children" && prop.optional)
+            })
+            .cloned()
+            .collect();
+        if filtered_props.is_empty() {
+            return None;
+        }
+
+        Some(self.format_type(self.ctx.types.factory().object(filtered_props)))
+    }
+
+    fn jsx_final_conditional_else_display(display: &str) -> Option<String> {
+        let mut paren_depth = 0i32;
+        let mut brace_depth = 0i32;
+        let mut bracket_depth = 0i32;
+        let mut last_top_level_colon = None;
+
+        for (idx, ch) in display.char_indices() {
+            match ch {
+                '(' => paren_depth += 1,
+                ')' => paren_depth -= 1,
+                '{' => brace_depth += 1,
+                '}' => brace_depth -= 1,
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth -= 1,
+                ':' if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 => {
+                    last_top_level_colon = Some(idx);
+                }
+                _ => {}
+            }
+        }
+
+        let colon = last_top_level_colon?;
+        let tail = display[colon + ':'.len_utf8()..].trim();
+        (tail.starts_with('{') && tail.ends_with('}')).then(|| tail.to_string())
+    }
+
+    fn get_jsx_component_props_display_text_from_function_initializer(
+        &mut self,
+        initializer_idx: NodeIndex,
+    ) -> Option<String> {
+        let initializer = self.ctx.arena.get(initializer_idx)?;
+        if initializer.kind != syntax_kind_ext::ARROW_FUNCTION
+            && initializer.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let function = self.ctx.arena.get_function(initializer)?;
+        let first_param_idx = *function.parameters.nodes.first()?;
+        let first_param_node = self.ctx.arena.get(first_param_idx)?;
+        let first_param = self.ctx.arena.get_parameter(first_param_node)?;
+        if first_param.type_annotation.is_none() {
+            return None;
+        }
+        self.format_jsx_props_display_text_from_type_node(first_param.type_annotation)
     }
 
     fn get_jsx_component_prop_annotation_text_from_declaration(
