@@ -1,8 +1,6 @@
 //! Type Node Checking
 //!
-//! This module handles type resolution from AST type nodes (type annotations,
-//! type references, union types, intersection types, etc.).
-//!
+//! This module handles type resolution from AST type nodes.
 //! It follows the "Check Fast, Explain Slow" pattern where we first
 //! resolve types, then use the solver to explain any failures.
 use super::queries::lib_resolution::keyword_syntax_to_type_id;
@@ -19,7 +17,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 use tsz_solver::recursion::{DepthCounter, RecursionProfile};
-
 /// Type node checker that operates on the shared context.
 ///
 /// This is a stateless checker that borrows the context mutably.
@@ -69,7 +66,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // For now, recompute to ensure correctness
             // TODO: Add cache key based on type param hash for smarter caching
         }
-
         // Compute and cache
         let result = self.compute_type(idx);
         // Don't cache TYPE_REFERENCE results here — CheckerState's
@@ -247,7 +243,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // Recursively resolve each member type
                 member_types.push(self.check(type_idx));
             }
-
             if member_types.is_empty() {
                 return TypeId::UNKNOWN; // Empty intersection is unknown
             }
@@ -712,18 +707,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
-        if _node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-            && let Some(tn) = self.ctx.arena.get(func_data.type_annotation)
-            && tn.kind == syntax_kind_ext::TYPE_PREDICATE
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.ctx.error(
-                tn.pos,
-                tn.end - tn.pos,
-                diagnostic_messages::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO.to_string(),
-                diagnostic_codes::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
-            );
-        }
+        super::type_node_helpers::report_type_predicate_in_constructor_type(
+            self.ctx,
+            _node.kind,
+            func_data.type_annotation,
+        );
 
         // Check parameter type annotations
         for param_idx in &func_data.parameters.nodes {

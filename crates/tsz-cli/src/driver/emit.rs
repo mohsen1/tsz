@@ -570,7 +570,18 @@ pub(crate) fn emit_outputs(
         if matches!(context.options.printer.module, ModuleKind::AMD)
             && context.options.printer.always_strict
         {
-            prepend_use_strict_to_bundle(&mut bundled, new_line);
+            // Only prepend a top-level `"use strict";` when the bundle
+            // contains at least one script (a non-module file). For an
+            // all-modules bundle, every chunk is wrapped in `define(...)`
+            // and emits its own `"use strict";` inside the callback —
+            // tsc does not add a second one at the top of the bundle.
+            let any_script_chunk = js_bundle_chunks.iter().any(|chunk| {
+                let trimmed = chunk.trim_start();
+                !(trimmed.starts_with("define(") || trimmed.starts_with("System.register("))
+            });
+            if any_script_chunk {
+                prepend_use_strict_to_bundle(&mut bundled, new_line);
+            }
         }
         outputs.push(OutputFile {
             path: bundle_path,
