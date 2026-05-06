@@ -102,9 +102,10 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         return watch::run(&args, &cwd);
     }
 
-    // No-input behavior: if no files given, no --project, and no tsconfig.json in cwd,
-    // print version + help and exit 1 (matching tsc v6 behavior).
-    if args.files.is_empty() && args.project.is_none() && !cwd.join("tsconfig.json").exists() {
+    // No-input behavior: if no files given, no --project, and no tsconfig.json
+    // can be discovered from cwd or an ancestor, print version + help and exit
+    // 1 (matching tsc v6 behavior).
+    if args.files.is_empty() && args.project.is_none() && driver::find_tsconfig(&cwd).is_none() {
         println!("Version {TSC_VERSION}");
         println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
         std::process::exit(1);
