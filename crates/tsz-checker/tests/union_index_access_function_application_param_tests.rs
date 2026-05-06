@@ -257,9 +257,9 @@ export {};
     assert_eq!(ts2345.len(), 1, "expected one TS2345, got {diagnostics:?}");
     assert!(
         ts2345[0].message_text.contains(
-            "Argument of type 'Mark<any>' is not assignable to parameter of type 'Mark<any> & Node<any>'."
+            "Argument of type 'Mark<any>' is not assignable to parameter of type 'Node<any> & Mark<any>'."
         ),
-        "signatureCombiningRestParameters4 must preserve source-ordered parameter-intersection display, got {:?}",
+        "signatureCombiningRestParameters4 must preserve tsc's parameter-intersection order, got {:?}",
         ts2345[0].message_text
     );
 }
