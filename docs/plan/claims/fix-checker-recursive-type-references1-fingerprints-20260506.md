@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/recursive-type-references1-fingerprints-20260506`
-- **PR**: Pending
+- **PR**: #3778
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
