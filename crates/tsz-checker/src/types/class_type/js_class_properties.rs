@@ -687,8 +687,7 @@ impl CheckerState<'_> {
                 && !enclosing_has_this_tag
             {
                 let implicit_type = if type_id == TypeId::ANY
-                    || (provisional_open
-                        && (type_id == TypeId::NULL || type_id == TypeId::UNDEFINED))
+                    || (provisional_open && type_id == TypeId::UNDEFINED)
                 {
                     Some("any")
                 } else if crate::query_boundaries::common::array_element_type(
