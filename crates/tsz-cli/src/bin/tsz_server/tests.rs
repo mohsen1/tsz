@@ -191,6 +191,38 @@ fn emit_output_preserves_type_only_module_marker() {
 }
 
 #[test]
+fn save_to_writes_open_file_snapshot_to_tmpfile() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let file = temp.path().join("a.ts");
+    let tmpfile = temp.path().join("copy.ts");
+    let file = file.to_string_lossy().to_string();
+    let tmpfile = tmpfile.to_string_lossy().to_string();
+
+    let mut server = make_server();
+    let open = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": file.clone(),
+            "fileContent": "const value = 123;\n",
+        }),
+    ));
+    assert!(open.success);
+
+    let response = server.handle_tsserver_request(make_request(
+        "saveto",
+        serde_json::json!({
+            "file": file,
+            "tmpfile": tmpfile.clone(),
+        }),
+    ));
+    assert!(response.success);
+    assert_eq!(
+        std::fs::read_to_string(tmpfile).expect("tmpfile should be written"),
+        "const value = 123;\n"
+    );
+}
+
+#[test]
 fn compile_on_save_reports_affected_files_and_emits_file() {
     let temp = tempfile::tempdir().expect("temp dir");
     let root = temp.path();

@@ -91,10 +91,26 @@ fn test_plain_js_binder_errors_use_module_and_cross_function_diagnostics() {
         "plainJSBinderErrors.js",
         r#"
 export default 12
+const yield = 2
+async function f() {
+    const await = 3
+}
 function* g() {
     const yield = 4
 }
 class C {
+    deleted() {
+        function container(f) {
+            delete f
+        }
+        var g = 6
+        delete g
+        delete container
+    }
+    evalArguments() {
+        const eval = 7
+        const arguments = 8
+    }
     label() {
         for(;;) {
             label: var x = 1
@@ -115,6 +131,14 @@ const arguments = 10
     assert!(
         has_error(&diagnostics, 1215),
         "Expected top-level `eval`/`arguments` bindings in a JS module to use TS1215.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 1210),
+        "Expected class-local `eval`/`arguments` bindings in JS to use TS1210.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 1102),
+        "Expected delete-on-identifier in JS class/module strict context to use TS1102.\nGot: {diagnostics:?}"
     );
     assert!(
         has_error(&diagnostics, 1107),

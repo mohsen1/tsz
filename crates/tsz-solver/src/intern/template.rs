@@ -266,7 +266,7 @@ impl TypeInterner {
             .map(|s| self.literal_string(s))
             .collect();
 
-        self.union(members)
+        self.union_preserve_members(members)
     }
 
     /// Normalize template literal spans by merging consecutive text spans
@@ -537,7 +537,7 @@ impl TypeInterner {
         }
 
         Some(
-            self.union(
+            self.union_preserve_members(
                 combinations
                     .into_iter()
                     .map(|combination| self.template_literal(combination))

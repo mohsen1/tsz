@@ -35,7 +35,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let interner = self.type_interner?;
-        tsz_solver::type_queries::is_literal_type(interner, type_id)
+        tsz_solver::type_queries::is_literal_or_literal_union_type(interner, type_id)
             .then(|| self.print_type_id_for_inferred_declaration(type_id))
     }
 

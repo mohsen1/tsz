@@ -260,6 +260,16 @@ fn test_collect_export_names_skips_external_export_import_equals() {
 }
 
 #[test]
+fn test_collect_export_names_ignores_type_only_import_equals_identifier() {
+    let export_names =
+        parse_collect_exports("export namespace C { export interface I {} }\nexport import v = C;");
+    assert!(
+        export_names.is_empty(),
+        "Expected no runtime exports for import-equals aliases to type-only namespaces"
+    );
+}
+
+#[test]
 fn test_collect_export_names_skips_namespace_alias_to_exported_interface() {
     // `export import b = a.I;` where `a.I` is an *exported* interface inside
     // an exported namespace resolves to a type-only member that is reachable
@@ -286,6 +296,16 @@ fn test_collect_export_names_keeps_namespace_alias_to_non_exported_interface() {
         export_names,
         vec!["a"],
         "Non-exported inner interface keeps the runtime alias and its void-0 preamble"
+    );
+}
+
+#[test]
+fn test_collect_export_names_ignores_type_only_import_equals_identifier() {
+    let export_names =
+        parse_collect_exports("export namespace C { export interface I {} }\nexport import v = C;");
+    assert!(
+        export_names.is_empty(),
+        "Expected no runtime exports for import-equals aliases to type-only namespaces"
     );
 }
 
