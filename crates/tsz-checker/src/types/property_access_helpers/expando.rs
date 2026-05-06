@@ -1085,11 +1085,28 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        self.is_expando_property_read(object_expr_idx, property_name)
-            || (self.property_access_is_direct_write_target(property_access_idx)
-                && self
-                    .current_file_commonjs_export_member_name(property_access_idx)
-                    .is_some())
+        if self.is_expando_property_read(object_expr_idx, property_name) {
+            return true;
+        }
+
+        if self.property_access_is_direct_write_target(property_access_idx) {
+            if self
+                .current_file_commonjs_export_member_name(property_access_idx)
+                .is_some()
+            {
+                return true;
+            }
+
+            if let Some(obj_key) =
+                Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx)
+                && !self.class_has_instance_member(&obj_key, property_name)
+                && let Some(sym_id) = self.root_symbol_for_expando_read(object_expr_idx)
+            {
+                return self.root_symbol_supports_js_expando_read(sym_id);
+            }
+        }
+
+        false
     }
 
     /// Check if a property access reads an expando property assigned via `X.prop = value`.
