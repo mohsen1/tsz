@@ -16,7 +16,6 @@ Investigate JSX opening/self-closing element type-argument parsing, lowering, an
 
 ## Verification
 
-Planned:
-
-- focused parser/checker regression
-- filtered conformance for `jsxIntrinsicElementsTypeArgumentErrors`
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz-build-targets/jsx-intrinsic-type-args CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=1 RUSTFLAGS='-Cdebuginfo=0' cargo test -p tsz-checker --test jsx_component_attribute_tests test_jsx_intrinsic_type_args_validate_nested_errors -- --nocapture`
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz-build-targets/jsx-intrinsic-type-args CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=1 RUSTFLAGS='-Cdebuginfo=0' cargo build --profile dist-fast -p tsz-cli -p tsz-conformance`
+- `/Users/mohsen/code/tsz-build-targets/jsx-intrinsic-type-args/dist-fast/tsz-conformance --test-dir TypeScript/tests/cases --cache-file scripts/conformance/tsc-cache-full.json --tsz-binary /Users/mohsen/code/tsz-build-targets/jsx-intrinsic-type-args/dist-fast/tsz --filter jsxIntrinsicElementsTypeArgumentErrors --workers 1 --verbose --print-fingerprints --print-test-files --no-batch --timeout 60` - `1/1 passed`
