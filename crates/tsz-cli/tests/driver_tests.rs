@@ -15054,6 +15054,61 @@ f;
 }
 
 #[test]
+fn checked_js_async_jsdoc_shadowed_promise_typedef_reports_ts1064() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "module": "commonjs",
+    "target": "es2020",
+    "types": []
+  },
+  "files": ["main.js"]
+}"#,
+    );
+    write_file(
+        &base.join("main.js"),
+        r#"// @ts-check
+export {};
+
+/**
+ * @template T
+ * @typedef {{ value: T }} Promise
+ */
+
+/** @type {function(): Promise<string>} */
+const f = async () => "ok";
+
+f;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == 1064 && d.message_text.contains("Promise<Promise<string>>")),
+        "expected TS1064 for shadowed Promise typedef, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 2322),
+        "expected assignment mismatch alongside TS1064, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn checked_js_external_module_typedef_does_not_suppress_generic_arg_ts2304() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
