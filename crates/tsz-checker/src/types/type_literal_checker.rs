@@ -198,7 +198,7 @@ impl<'a> CheckerState<'a> {
 
                 let intrinsic_reference_is_unshadowed = type_param.is_none()
                     && match sym_id {
-                        Some(sym_id) => self.ctx.symbol_is_from_actual_lib(sym_id),
+                        Some(sym_id) => self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id),
                         None => true,
                     };
                 if intrinsic_reference_is_unshadowed {
@@ -297,12 +297,19 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types.application(base, lowered_args)
                     };
                 }
+                let local_array_name =
+                    self.ctx.binder.file_locals.get(name).is_some_and(|sym_id| {
+                        !self.ctx.symbol_is_from_actual_lib(sym_id)
+                            && self.symbol_has_declared_type_meaning(sym_id)
+                    });
+                let array_is_unshadowed =
+                    is_builtin_array && type_param.is_none() && !local_array_name;
+
                 // For Array<T> / ReadonlyArray<T> with type arguments, convert to
                 // proper array types (Array(T) / Readonly(Array(T))) instead of
                 // Application(Lazy(DefId), [T]). This matches what TypeLowering does
                 // and ensures assignability with `T[]` / `readonly T[]`.
-                if is_builtin_array
-                    && type_param.is_none()
+                if array_is_unshadowed
                     && let Some(args) = &type_ref.type_arguments
                     && let Some(&first_arg) = args.nodes.first()
                 {

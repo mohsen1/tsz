@@ -135,6 +135,44 @@ fn get_all_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn iterator_result_with_undefined_return_rejects_required_value_target() {
+    let diagnostics = with_lib_contexts(
+        r#"
+interface IteratorYieldResult<TYield> {
+    done?: false;
+    value: TYield;
+}
+interface IteratorReturnResult<TReturn> {
+    done: true;
+    value: TReturn;
+}
+type IteratorResult<T, TReturn = any> =
+    | IteratorYieldResult<T>
+    | IteratorReturnResult<TReturn>;
+
+interface Next<A> {
+    readonly done?: boolean;
+    readonly value: A;
+}
+
+declare const result: IteratorResult<number, undefined>;
+const r: Next<number> = result;
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected IteratorResult<number, undefined> to reject Next<number>, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn promise_suffixed_generic_wrapper_does_not_suppress_nested_argument_mismatch() {
     let diagnostics = get_all_diagnostics(
         r#"
@@ -5063,6 +5101,40 @@ fn test_ts2322_too_many_parameters_emits_chained_target_signature_elaboration() 
         "expected chained TS2849 'Target signature provides too few arguments' \
          elaboration with counts (2,1); got: {:#?}",
         mismatch.related_information
+    );
+}
+
+#[test]
+fn test_reverse_mapped_contextual_target_display_uses_inferred_application_args() {
+    let source = r#"
+        type Selector<S, R> = (state: S) => R;
+
+        declare function createStructuredSelector<S, T>(
+            selectors: {[K in keyof T]: Selector<S, T[K]>},
+        ): Selector<S, T>;
+
+        const editable = () => ({});
+
+        const mapStateToProps = createStructuredSelector({
+            editable: (state: any, props: any) => editable(),
+        });
+    "#;
+
+    let diags = diagnostics_for_source(source);
+    let mismatch = diags
+        .iter()
+        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diags:#?}"));
+
+    assert!(
+        mismatch.message_text.contains("Selector<unknown, {}>"),
+        "expected contextual target display to use inferred application args; got: {mismatch:#?}"
+    );
+    assert!(
+        !mismatch
+            .message_text
+            .contains("Selector<S, T[\"editable\"]>"),
+        "target display should not expose unresolved reverse-mapped type parameters; got: {mismatch:#?}"
     );
 }
 

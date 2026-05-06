@@ -98,6 +98,18 @@ fn test_single_line_comment_crlf() {
 }
 
 #[test]
+fn test_single_line_comment_unicode_line_separators() {
+    for separator in ["\u{2028}", "\u{2029}"] {
+        let source = format!("// hello{separator}// next");
+        let comments = get_comment_ranges(&source);
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].get_text(&source), "// hello");
+        assert!(comments[0].has_trailing_new_line);
+        assert_eq!(comments[1].get_text(&source), "// next");
+    }
+}
+
+#[test]
 fn test_empty_single_line_comment() {
     let source = "//";
     let comments = get_comment_ranges(source);

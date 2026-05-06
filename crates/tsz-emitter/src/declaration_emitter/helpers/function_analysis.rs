@@ -2078,45 +2078,61 @@ impl<'a> DeclarationEmitter<'a> {
         // tsc behavior when a const variable references another const whose
         // literal value is known (e.g. `const a = "abc"; const b = a` →
         // `declare const b = "abc"`).
-        if expr_node.kind == SyntaxKind::Identifier as u16
-            && let Some(name) = self.get_identifier_text(expr_idx)
-            && let Some(source_file_idx) = self.current_source_file_idx
-            && let Some(source_file_node) = self.arena.get(source_file_idx)
-            && let Some(source_file) = self.arena.get_source_file(source_file_node)
-        {
-            for &stmt_idx in &source_file.statements.nodes {
-                let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                    continue;
-                };
-                if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
-                    continue;
-                }
-                let Some(variable) = self.arena.get_variable(stmt_node) else {
-                    continue;
-                };
-                for &decl_list_idx in &variable.declarations.nodes {
-                    let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                        continue;
-                    };
-                    let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                        continue;
-                    };
-                    for &decl_idx in &decl_list.declarations.nodes {
-                        let Some(decl_node) = self.arena.get(decl_idx) else {
-                            continue;
-                        };
-                        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                            continue;
-                        };
-                        if self.arena.is_const_variable_declaration(decl_idx)
-                            && self.get_identifier_text(decl.name).as_deref() == Some(&name)
-                            && decl.initializer.is_some()
-                        {
-                            return self.const_literal_initializer_text_deep_guarded(
-                                decl.initializer,
-                                guard,
-                            );
-                        }
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            if self.binder.is_some() {
+                let sym_id = self.value_reference_symbol(expr_idx)?;
+                let initializer = self.const_variable_initializer_for_symbol(sym_id)?;
+                return self.const_literal_initializer_text_deep_guarded(initializer, guard);
+            }
+
+            if let Some(initializer) = self.top_level_const_initializer_for_identifier(expr_idx) {
+                return self.const_literal_initializer_text_deep_guarded(initializer, guard);
+            }
+        }
+
+        None
+    }
+
+    fn const_variable_initializer_for_symbol(&self, sym_id: SymbolId) -> Option<NodeIndex> {
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.all_declarations() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if self.arena.is_const_variable_declaration(decl_idx) && decl.initializer.is_some() {
+                return Some(decl.initializer);
+            }
+        }
+        None
+    }
+
+    fn top_level_const_initializer_for_identifier(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let name = self.get_identifier_text(expr_idx)?;
+        let source_file_idx = self.current_source_file_idx?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let variable = self.arena.get_variable(stmt_node)?;
+            for &decl_list_idx in &variable.declarations.nodes {
+                let decl_list_node = self.arena.get(decl_list_idx)?;
+                let decl_list = self.arena.get_variable(decl_list_node)?;
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let decl_node = self.arena.get(decl_idx)?;
+                    let decl = self.arena.get_variable_declaration(decl_node)?;
+                    if self.arena.is_const_variable_declaration(decl_idx)
+                        && self.get_identifier_text(decl.name).as_deref() == Some(&name)
+                        && decl.initializer.is_some()
+                    {
+                        return Some(decl.initializer);
                     }
                 }
             }
@@ -2171,6 +2187,11 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         callee_idx: NodeIndex,
     ) -> Option<&tsz_parser::parser::node::FunctionData> {
+        if self.binder.is_some() {
+            let sym_id = self.value_reference_symbol(callee_idx)?;
+            return self.identity_returning_function_for_symbol(sym_id);
+        }
+
         let callee_name = self.get_identifier_text(callee_idx)?;
         let source_file_idx = self.current_source_file_idx?;
         let source_file_node = self.arena.get(source_file_idx)?;
@@ -2190,6 +2211,26 @@ impl<'a> DeclarationEmitter<'a> {
                 (same_name && func.body.is_some() && func.parameters.nodes.len() == 1)
                     .then_some(func)
             })
+    }
+
+    fn identity_returning_function_for_symbol(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<&tsz_parser::parser::node::FunctionData> {
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.all_declarations() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(func) = self.arena.get_function(decl_node) else {
+                continue;
+            };
+            if func.body.is_some() && func.parameters.nodes.len() == 1 {
+                return Some(func);
+            }
+        }
+        None
     }
 
     /// True when `expr_idx` is a bare `globalThis` identifier. Used by variable

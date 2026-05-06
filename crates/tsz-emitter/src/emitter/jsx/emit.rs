@@ -102,6 +102,9 @@ impl<'a> Printer<'a> {
             self.write(" ");
         }
         self.write("/>");
+        if let Some(tail) = self.recovered_numeric_jsx_tag_tail(node, jsx.tag_name) {
+            self.write(&tail);
+        }
     }
 
     fn emit_jsx_fragment_preserve(&mut self, node: &Node) {
@@ -117,6 +120,29 @@ impl<'a> Printer<'a> {
             self.emit(child);
         }
         self.write("</>");
+    }
+
+    fn recovered_numeric_jsx_tag_tail(&self, node: &Node, tag_name: NodeIndex) -> Option<String> {
+        if !self.arena.is_missing_recovery_identifier(tag_name) {
+            return None;
+        }
+        let source = self.source_text?;
+        let start = std::cmp::min(node.pos as usize, source.len());
+        let end = std::cmp::min(node.end as usize, source.len());
+        if start >= end {
+            return None;
+        }
+        let text = source[start..end].trim_start();
+        let rest = text.strip_prefix('<')?.trim_start();
+        let digits_len = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if digits_len == 0 || rest.as_bytes().get(digits_len) != Some(&b'>') {
+            return None;
+        }
+        Some(rest[..=digits_len].to_string())
     }
 
     // =========================================================================

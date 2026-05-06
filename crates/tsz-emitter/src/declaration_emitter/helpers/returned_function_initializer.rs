@@ -6,6 +6,29 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn async_returned_function_initializer_promise_type_text(
+        &self,
+        outer_func: &tsz_parser::parser::node::FunctionData,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        let is_async = outer_func.is_async
+            || self
+                .arena
+                .has_modifier(&outer_func.modifiers, SyntaxKind::AsyncKeyword);
+        if !is_async {
+            return None;
+        }
+
+        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
+        let returned_name = self.identifier_text_or_source(returned_identifier)?;
+        let annotation =
+            self.local_variable_type_annotation_text_by_name(body_idx, &returned_name)?;
+        let target_name = Self::type_query_identifier_name(&annotation)?;
+        let type_text =
+            self.local_function_initializer_type_text_by_name(outer_func, body_idx, &target_name)?;
+        Some(format!("Promise<({type_text})>"))
+    }
+
     pub(in crate::declaration_emitter) fn returned_function_initializer_type_text(
         &self,
         outer_func: &tsz_parser::parser::node::FunctionData,
@@ -33,6 +56,136 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        None
+    }
+
+    fn type_query_identifier_name(type_text: &str) -> Option<String> {
+        let start = type_text.find("typeof ")? + "typeof ".len();
+        let rest = &type_text[start..];
+        let mut end = 0usize;
+        for (idx, ch) in rest.char_indices() {
+            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                end = idx + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        (end > 0).then(|| rest[..end].to_string())
+    }
+
+    fn local_variable_type_annotation_text_by_name(
+        &self,
+        scope_stmt_idx: NodeIndex,
+        name: &str,
+    ) -> Option<String> {
+        let scope_node = self.arena.get(scope_stmt_idx)?;
+        if scope_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.arena.get_block(scope_node)
+        {
+            return self.local_variable_type_annotation_text_in_statements(&block.statements, name);
+        }
+        self.variable_type_annotation_text_from_statement(scope_stmt_idx, name)
+    }
+
+    fn local_variable_type_annotation_text_in_statements(
+        &self,
+        statements: &NodeList,
+        name: &str,
+    ) -> Option<String> {
+        for &stmt_idx in &statements.nodes {
+            if let Some(type_text) =
+                self.variable_type_annotation_text_from_statement(stmt_idx, name)
+            {
+                return Some(type_text);
+            }
+        }
+        None
+    }
+
+    fn variable_type_annotation_text_from_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        name: &str,
+    ) -> Option<String> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        let stmt = self.arena.get_variable(stmt_node)?;
+        for &decl_list_idx in &stmt.declarations.nodes {
+            let decl_list_node = self.arena.get(decl_list_idx)?;
+            let decl_list = self.arena.get_variable(decl_list_node)?;
+            for &decl_idx in &decl_list.declarations.nodes {
+                let decl_node = self.arena.get(decl_idx)?;
+                let decl = self.arena.get_variable_declaration(decl_node)?;
+                if self.identifier_text_or_source(decl.name).as_deref() == Some(name)
+                    && decl.type_annotation.is_some()
+                {
+                    return self.emit_type_node_text(decl.type_annotation);
+                }
+            }
+        }
+        None
+    }
+
+    fn local_function_initializer_type_text_by_name(
+        &self,
+        outer_func: &tsz_parser::parser::node::FunctionData,
+        scope_stmt_idx: NodeIndex,
+        name: &str,
+    ) -> Option<String> {
+        let scope_node = self.arena.get(scope_stmt_idx)?;
+        if scope_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.arena.get_block(scope_node)
+        {
+            return self.local_function_initializer_type_text_in_statements(
+                outer_func,
+                &block.statements,
+                name,
+            );
+        }
+        self.function_initializer_type_text_from_statement(outer_func, scope_stmt_idx, name)
+    }
+
+    fn local_function_initializer_type_text_in_statements(
+        &self,
+        outer_func: &tsz_parser::parser::node::FunctionData,
+        statements: &NodeList,
+        name: &str,
+    ) -> Option<String> {
+        for &stmt_idx in &statements.nodes {
+            if let Some(type_text) =
+                self.function_initializer_type_text_from_statement(outer_func, stmt_idx, name)
+            {
+                return Some(type_text);
+            }
+        }
+        None
+    }
+
+    fn function_initializer_type_text_from_statement(
+        &self,
+        outer_func: &tsz_parser::parser::node::FunctionData,
+        stmt_idx: NodeIndex,
+        name: &str,
+    ) -> Option<String> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        let stmt = self.arena.get_variable(stmt_node)?;
+        for &decl_list_idx in &stmt.declarations.nodes {
+            let decl_list_node = self.arena.get(decl_list_idx)?;
+            let decl_list = self.arena.get_variable(decl_list_node)?;
+            for &decl_idx in &decl_list.declarations.nodes {
+                let decl_node = self.arena.get(decl_idx)?;
+                let decl = self.arena.get_variable_declaration(decl_node)?;
+                if self.identifier_text_or_source(decl.name).as_deref() == Some(name) {
+                    let init_node = self.arena.get(decl.initializer)?;
+                    if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                        && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+                    {
+                        return None;
+                    }
+                    let inner_func = self.arena.get_function(init_node)?;
+                    return self.source_function_initializer_type_text(outer_func, inner_func);
+                }
+            }
+        }
         None
     }
 
@@ -73,7 +226,7 @@ impl<'a> DeclarationEmitter<'a> {
                     .filter_map(|param_idx| {
                         let param_node = self.arena.get(param_idx)?;
                         let param = self.arena.get_type_parameter(param_node)?;
-                        let name = self.get_identifier_text(param.name)?;
+                        let name = self.identifier_text_or_source(param.name)?;
                         Some(Self::renamed_type_param_name(&name, &inner_renames))
                     })
                     .collect::<Vec<_>>();
@@ -142,7 +295,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let param_node = self.arena.get(param_idx)?;
         let param = self.arena.get_parameter(param_node)?;
-        let name = self.get_identifier_text(param.name)?;
+        let name = self.identifier_text_or_source(param.name)?;
         let type_text = self
             .preferred_annotation_name_text(param.type_annotation)
             .or_else(|| self.emit_type_node_text(param.type_annotation))
@@ -159,6 +312,15 @@ impl<'a> DeclarationEmitter<'a> {
         inner_func: &tsz_parser::parser::node::FunctionData,
         inner_type_param_renames: &[(String, String)],
     ) -> Option<String> {
+        if inner_func.type_annotation.is_some() {
+            let type_text = self
+                .preferred_annotation_name_text(inner_func.type_annotation)
+                .or_else(|| self.emit_type_node_text(inner_func.type_annotation))?;
+            return Some(Self::rename_type_text_identifiers(
+                &type_text,
+                inner_type_param_renames,
+            ));
+        }
         if inner_func.body.is_none() {
             return None;
         }
@@ -237,7 +399,7 @@ impl<'a> DeclarationEmitter<'a> {
         for param_idx in func.parameters.nodes.iter().copied() {
             let param_node = self.arena.get(param_idx)?;
             let param = self.arena.get_parameter(param_node)?;
-            if self.get_identifier_text(param.name).as_deref() != Some(name) {
+            if self.identifier_text_or_source(param.name).as_deref() != Some(name) {
                 continue;
             }
             return self
@@ -252,6 +414,14 @@ impl<'a> DeclarationEmitter<'a> {
             .iter()
             .find_map(|(from, to)| (from == name).then(|| to.clone()))
             .unwrap_or_else(|| name.to_string())
+    }
+
+    fn identifier_text_or_source(&self, idx: NodeIndex) -> Option<String> {
+        self.get_identifier_text(idx).or_else(|| {
+            let node = self.arena.get(idx)?;
+            (node.kind == SyntaxKind::Identifier as u16)
+                .then(|| self.get_source_slice_no_semi(node.pos, node.end))?
+        })
     }
 
     fn rename_type_text_identifiers(text: &str, renames: &[(String, String)]) -> String {

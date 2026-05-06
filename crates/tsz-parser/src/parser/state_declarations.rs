@@ -2603,14 +2603,16 @@ impl ParserState {
         // Namespace import names must still reject reserved words like `while`,
         // but allow contextual keywords such as `type`.
         //
-        // When the name slot holds a reserved word whose statement form is
-        // `kw ( expr )` (e.g. `import * as while from "foo"`), tsc emits
-        // TS1359 at the keyword and then lets statement recovery re-parse the
-        // keyword as the head of a statement, cascading the `'(' expected.` /
-        // `')' expected.` diagnostics onto the following tokens.
+        // When the name slot holds a reserved word that can start a statement
+        // (e.g. `import * as while from "foo"`), tsc emits TS1359 at the
+        // keyword and then lets statement recovery re-parse the keyword as the
+        // head of a statement, cascading statement-specific diagnostics onto
+        // the following tokens.
         // Replicate that by emitting TS1359 here without consuming the token
         // and signaling the import declaration to bail out of its own recovery.
-        let name = if self.is_reserved_word() && self.is_paren_statement_starter_reserved_word() {
+        let name = if self.is_reserved_word()
+            && self.is_namespace_import_recovery_statement_starter()
+        {
             use tsz_common::diagnostics::diagnostic_codes;
             let name_pos = self.token_pos();
             let name_end = self.token_end();

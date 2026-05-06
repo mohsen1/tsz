@@ -1840,6 +1840,13 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> Option<tsz_solver::SubtypeFailureReason> {
+        if self.iterator_result_required_value_mismatch(source, target) {
+            return Some(tsz_solver::SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
+
         if !self.checker_only_assignability_may_apply(source, target) {
             return None;
         }
@@ -1869,6 +1876,37 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 target,
             )
+    }
+
+    fn iterator_result_required_value_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {
+        let source_display = self.format_type(source);
+        let Some((source_name, source_args)) =
+            parse_simple_type_application_display(&source_display)
+        else {
+            return false;
+        };
+        if source_name != "IteratorResult" || source_args.get(1).copied() != Some("undefined") {
+            return false;
+        }
+
+        let target = self.evaluate_type_for_assignability(target);
+        let Some(target_shape) = object_shape_for_type(self.ctx.types, target) else {
+            return false;
+        };
+        let value_name = self.ctx.types.intern_string("value");
+        let Some(value_prop) = target_shape
+            .properties
+            .iter()
+            .find(|prop| prop.name == value_name)
+        else {
+            return false;
+        };
+        if value_prop.optional {
+            return false;
+        }
+        let value_type = value_prop.type_id;
+
+        !self.is_assignable_to(TypeId::UNDEFINED, value_type)
     }
 
     fn iterator_next_type_display_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {
