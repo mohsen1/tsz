@@ -3523,6 +3523,7 @@ impl<'a> DeclarationEmitter<'a> {
 
             let mut type_param_names = Vec::new();
             let mut type_param_substitutions = Vec::new();
+            let mut type_param_fallbacks = Vec::new();
             if let Some(type_params) = callable.type_parameters {
                 for &param_idx in &type_params.nodes {
                     if let Some(param_node) = source_arena.get(param_idx)
@@ -3530,6 +3531,22 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(name_text) =
                             self.identifier_text_from_arena(source_arena, param.name)
                     {
+                        let fallback = if param.default.is_some() {
+                            self.emit_type_node_text_from_arena(source_arena, param.default)
+                                .or_else(|| {
+                                    self.source_slice_from_arena(source_arena, param.default)
+                                })
+                        } else if param.constraint.is_some() {
+                            self.emit_type_node_text_from_arena(source_arena, param.constraint)
+                                .or_else(|| {
+                                    self.source_slice_from_arena(source_arena, param.constraint)
+                                })
+                        } else {
+                            None
+                        };
+                        if let Some(fallback) = fallback {
+                            type_param_fallbacks.push((name_text.clone(), fallback));
+                        }
                         type_param_names.push(name_text);
                     }
                 }
@@ -3551,6 +3568,18 @@ impl<'a> DeclarationEmitter<'a> {
                     );
                 }
             }
+            for (name_text, fallback_text) in &type_param_fallbacks {
+                if type_param_substitutions
+                    .iter()
+                    .any(|(substituted, _)| substituted == name_text)
+                    || !Self::contains_whole_word_in_text(&type_text, name_text)
+                {
+                    continue;
+                }
+                let fallback_text =
+                    Self::replace_whole_words_in_text(fallback_text, &type_param_substitutions);
+                type_param_substitutions.push((name_text.clone(), fallback_text));
+            }
             if explicit_type_args.is_empty()
                 && type_param_substitutions.is_empty()
                 && type_param_names
@@ -3560,6 +3589,18 @@ impl<'a> DeclarationEmitter<'a> {
                 return None;
             }
             type_text = Self::replace_whole_words_in_text(&type_text, &type_param_substitutions);
+            if type_param_names
+                .iter()
+                .any(|name| Self::contains_whole_word_in_text(&type_text, name))
+            {
+                return None;
+            }
+            if Self::leading_type_reference_name(&type_text)
+                .is_some_and(Self::is_builtin_conditional_utility_type_name)
+                && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
+            {
+                return Some(self.print_type_id_expanded_for_inferred_declaration(type_id));
+            }
             if let Some(expanded) =
                 self.event_like_correlated_alias_return_text(source_arena, &type_text, call)
             {
@@ -3636,6 +3677,10 @@ impl<'a> DeclarationEmitter<'a> {
             }
             Some(type_text)
         })
+    }
+
+    fn is_builtin_conditional_utility_type_name(name: &str) -> bool {
+        matches!(name, "Exclude" | "Extract" | "NonNullable")
     }
 
     fn rewrite_typeof_import_default_return_type(

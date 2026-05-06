@@ -809,6 +809,14 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(crate) fn print_type_id_expanded_for_inferred_declaration(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+    ) -> String {
+        let type_id = self.reduce_conditional_aliases_for_inferred_emit(type_id, 0);
+        self.print_type_id_with_policy(type_id, |_, _, _| false)
+    }
+
     pub(in crate::declaration_emitter) fn qualify_current_namespace_self_type_text(
         &self,
         type_text: &str,
