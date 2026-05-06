@@ -178,7 +178,14 @@ impl<'a> DeclarationEmitter<'a> {
                     .expand_portable_mapped_object_text_in_current_context(&type_text)
                     .unwrap_or(type_text);
                 self.write(": ");
-                self.write(&type_text);
+                if keyword == "const"
+                    && let Some(formatted) =
+                        self.call_initializer_unexported_alias_literal_text(initializer)
+                {
+                    self.write(&formatted);
+                } else {
+                    self.write(&type_text);
+                }
             } else if has_initializer
                 && (self.emit_ts_late_bound_function_initializer_type_annotation(
                     decl_name,
@@ -363,6 +370,24 @@ impl<'a> DeclarationEmitter<'a> {
                 if keyword == "const"
                     && let Some(interner) = self.type_interner
                 {
+                    if has_initializer
+                        && let Some(formatted) =
+                            self.call_initializer_unexported_alias_literal_text(initializer)
+                    {
+                        self.write(": ");
+                        self.write(&formatted);
+                        return;
+                    }
+
+                    if let Some(lit) =
+                        Self::enum_member_literal_initializer_value(interner, type_id)
+                    {
+                        let formatted = Self::format_literal_initializer(&lit, interner);
+                        self.write(": ");
+                        self.write(&formatted);
+                        return;
+                    }
+
                     if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
                         let formatted = Self::format_literal_initializer(&lit, interner);
                         self.write(": ");
@@ -861,7 +886,9 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(type_text) = preferred_return_type_text.as_ref()
                     && self.should_prefer_source_return_type_text(type_text, return_type_id)
                 {
-                    self.write(type_text);
+                    let (type_text, _) =
+                        self.function_return_type_text_for_declaration_scope(func, type_text);
+                    self.write(&type_text);
                 } else {
                     let return_type_text = if let Some(ref type_params) = func.type_parameters
                         && !type_params.nodes.is_empty()
@@ -870,6 +897,8 @@ impl<'a> DeclarationEmitter<'a> {
                     } else {
                         self.print_type_id(return_type_id)
                     };
+                    let return_type_text = self
+                        .rewrite_returned_auto_accessor_parameter_unknowns(func, &return_type_text);
                     let return_type_text = self.add_returned_object_member_comments_to_type_text(
                         initializer,
                         &return_type_text,
@@ -1662,5 +1691,13 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => true,
         }
+    }
+
+    fn enum_member_literal_initializer_value(
+        interner: &tsz_solver::TypeInterner,
+        type_id: tsz_solver::types::TypeId,
+    ) -> Option<tsz_solver::types::LiteralValue> {
+        let (_def_id, member_type) = tsz_solver::visitor::enum_components(interner, type_id)?;
+        tsz_solver::visitor::literal_value(interner, member_type)
     }
 }

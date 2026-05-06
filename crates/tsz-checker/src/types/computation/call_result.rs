@@ -202,9 +202,12 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_idx: NodeIndex,
     ) {
-        let display_arg_type = common::widen_literal_type(self.ctx.types, arg_type);
+        let display_arg_type = common::widen_argument_type_for_display(self.ctx.types, arg_type);
         let actual_display = self.format_type_diagnostic(display_arg_type);
-        let mut target_display = self.format_type_diagnostic(param_type);
+        let mut target_display = self
+            .finite_mapped_parameter_display_type(param_type)
+            .map(|display_type| self.format_type_for_assignability_message(display_type))
+            .unwrap_or_else(|| self.format_type_diagnostic(param_type));
         if target_display.contains("Array<") {
             target_display = Self::normalize_array_generic_to_shorthand(&target_display);
         }
@@ -217,6 +220,39 @@ impl<'a> CheckerState<'a> {
             &message,
             diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
         );
+    }
+
+    fn finite_mapped_parameter_display_type(&mut self, param_type: TypeId) -> Option<TypeId> {
+        let mapped_id = common::mapped_type_id(self.ctx.types, param_type)?;
+        let mapped = self.ctx.types.mapped_type(mapped_id);
+        let names = crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
+            self.ctx.types,
+            mapped_id,
+        )?;
+        let mut names: Vec<_> = names.into_iter().collect();
+        names.sort_by(|a, b| {
+            self.ctx
+                .types
+                .resolve_atom_ref(*a)
+                .cmp(&self.ctx.types.resolve_atom_ref(*b))
+        });
+
+        let mut properties = Vec::with_capacity(names.len());
+        for name in names {
+            let property_name = self.ctx.types.resolve_atom_ref(name).to_string();
+            let type_id =
+                crate::query_boundaries::state::checking::get_finite_mapped_property_display_type(
+                    self.ctx.types,
+                    mapped_id,
+                    &property_name,
+                )?;
+            let mut property = tsz_solver::PropertyInfo::new(name, type_id);
+            property.optional = mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add);
+            property.readonly = mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Add);
+            properties.push(property);
+        }
+
+        Some(self.ctx.types.factory().object(properties))
     }
 
     fn stable_call_recovery_return_type(&self, callee_type: TypeId) -> Option<TypeId> {

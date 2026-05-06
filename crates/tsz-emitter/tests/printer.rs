@@ -107,6 +107,23 @@ fn es5_param_destructuring_prologue_keeps_function_body_let_name() {
 }
 
 #[test]
+fn object_spread_recovery_keeps_trailing_empty_object() {
+    let source = "let o9 = { ...matchMedia() { }};\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("let o9 = Object.assign({}, matchMedia()), {};"),
+        "Malformed object spread should preserve the recovered trailing empty object.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn decorated_anonymous_class_expression_sets_empty_function_name() {
     let source = "declare let dec: any;\n(@dec class {});";
     let output = parse_lower_print(

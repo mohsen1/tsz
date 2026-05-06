@@ -2609,7 +2609,7 @@ impl<'a> CheckerState<'a> {
 
         // Store instantiated type predicate from generic call resolution
         // so flow narrowing can use the correct (inferred) predicate type.
-        if let Some(predicate) = instantiated_predicate {
+        let stored_call_predicate = if let Some(predicate) = instantiated_predicate {
             let stored_predicate =
                 call_checker::extract_predicate_signature(self.ctx.types, callee_type_for_call)
                     .filter(|sig| {
@@ -2619,9 +2619,7 @@ impl<'a> CheckerState<'a> {
                     })
                     .map(|sig| (sig.predicate, sig.params))
                     .unwrap_or(predicate);
-            self.ctx
-                .call_type_predicates
-                .insert(idx.0, stored_predicate);
+            Some(stored_predicate)
         } else {
             // For non-generic calls with type predicates (e.g., `isString(x): x is string`),
             // extract the predicate from the callee's signature and store it in
@@ -2638,9 +2636,23 @@ impl<'a> CheckerState<'a> {
                 && let Some(extracted) =
                     call_checker::extract_predicate_signature(self.ctx.types, callee_type_for_call)
             {
+                Some((extracted.predicate, extracted.params))
+            } else {
+                None
+            }
+        };
+
+        if let Some(stored_predicate) = stored_call_predicate {
+            let assertion_target_is_valid = !stored_predicate.0.asserts
+                || matches!(
+                    stored_predicate.0.target,
+                    tsz_solver::TypePredicateTarget::This
+                )
+                || self.validate_assertion_call_target(idx, call.expression);
+            if assertion_target_is_valid {
                 self.ctx
                     .call_type_predicates
-                    .insert(idx.0, (extracted.predicate, extracted.params));
+                    .insert(idx.0, stored_predicate);
             }
         }
 

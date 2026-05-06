@@ -1034,9 +1034,13 @@ impl<'a> CheckerState<'a> {
                         &substitution,
                     );
                     let interface_type = self.evaluate_type_for_assignability(interface_type);
+                    // `symbol_is_from_actual_lib` matches arena-Arc identity which fails
+                    // for cloned or merged lib symbols; keep both fallbacks so the lib
+                    // `Array` is recognized and the display collapses `Array<T>` to `T[]`.
                     let use_global_array_implements_path = interface_name == "Array"
                         && type_args.len() == 1
-                        && self.ctx.symbol_is_from_actual_lib(sym_id);
+                        && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                            || self.ctx.binder.lib_symbol_ids.contains(&sym_id));
                     let (
                         interface_properties,
                         interface_has_index_signature,

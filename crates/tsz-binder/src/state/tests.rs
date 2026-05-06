@@ -203,6 +203,42 @@ class C {}
 }
 
 #[test]
+fn jsdoc_import_tag_binds_string_literal_export_names() {
+    let source = r#"
+/**
+ * @import { "a,b" as CommaName, "as" as AsName, "from" as FromName } from "./dep"
+ */
+class C {}
+"#;
+    let mut parser = ParserState::new("b.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    for (local_name, import_name) in [("CommaName", "a,b"), ("AsName", "as"), ("FromName", "from")]
+    {
+        let sym_id = binder
+            .file_locals
+            .get(local_name)
+            .unwrap_or_else(|| panic!("expected JSDoc import alias {local_name}"));
+        let symbol = binder
+            .symbols
+            .get(sym_id)
+            .unwrap_or_else(|| panic!("expected symbol data for {local_name}"));
+        assert_ne!(symbol.flags & symbol_flags::ALIAS, 0);
+        assert!(symbol.is_type_only);
+        assert_eq!(symbol.import_module.as_deref(), Some("./dep"));
+        assert_eq!(symbol.import_name.as_deref(), Some(import_name));
+    }
+
+    assert!(
+        !binder.file_locals.has("b\""),
+        "quoted names containing commas must not be split as separate imports"
+    );
+}
+
+#[test]
 fn export_as_namespace_records_current_file_namespace_metadata() {
     let source = r"
 export var x: number;
