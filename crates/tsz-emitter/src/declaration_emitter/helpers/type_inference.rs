@@ -351,6 +351,14 @@ impl<'a> DeclarationEmitter<'a> {
             match printed {
                 Some(printed)
                     if printed != "any"
+                        && let Some(raw_type_text) =
+                            self.local_type_annotation_text(type_annotation)
+                        && Self::type_text_starts_with_string_intrinsic(&raw_type_text) =>
+                {
+                    raw_type_text
+                }
+                Some(printed)
+                    if printed != "any"
                         && (!printed.contains("any") || type_text.contains("any"))
                         && printed.contains("typeof ")
                         && !type_text.contains("typeof ") =>
@@ -4081,6 +4089,13 @@ impl<'a> DeclarationEmitter<'a> {
             .then_some(name)
     }
 
+    fn type_text_starts_with_string_intrinsic(type_text: &str) -> bool {
+        matches!(
+            Self::leading_type_reference_name(type_text),
+            Some("Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize")
+        )
+    }
+
     pub(in crate::declaration_emitter) fn function_signature_accepts_call_arguments(
         &self,
         source_arena: &NodeArena,
@@ -5171,6 +5186,22 @@ impl<'a> DeclarationEmitter<'a> {
                 && self.print_type_id(inferred_return_type) != source_type_text;
         }
         !self.print_type_id(inferred_return_type).contains("typeof ")
+    }
+
+    pub(in crate::declaration_emitter) fn source_return_type_is_function_type_param(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> bool {
+        let Some(ref type_params) = func.type_parameters else {
+            return false;
+        };
+        let Some(name) = Self::simple_type_reference_name(source_type_text) else {
+            return false;
+        };
+        self.collect_type_param_names(type_params)
+            .iter()
+            .any(|type_param| type_param == &name)
     }
 
     pub(in crate::declaration_emitter) fn function_return_type_text_for_declaration_scope(
