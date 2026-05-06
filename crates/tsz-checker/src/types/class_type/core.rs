@@ -1063,10 +1063,13 @@ impl<'a> CheckerState<'a> {
                 partial_method_props.len() + deferred_methods.len() + deferred_accessors.len(),
             );
             partial_props.extend(partial_method_props.values().cloned());
+            let mut partial_prop_names: FxHashSet<Atom> =
+                FxHashSet::with_capacity_and_hasher(partial_props.len(), Default::default());
+            partial_prop_names.extend(partial_props.iter().map(|prop| prop.name));
             for (_, method, declaration_order) in &deferred_methods {
                 if let Some(name) = self.get_property_name_resolved(method.name) {
                     let name_atom = self.ctx.types.intern_string(&name);
-                    if !partial_props.iter().any(|p| p.name == name_atom) {
+                    if partial_prop_names.insert(name_atom) {
                         // For methods with explicit return type annotations, use the
                         // declared return type instead of ANY. This allows other methods
                         // that reference `this.method()` during body inference to get the
@@ -1124,7 +1127,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             for deferred in &deferred_accessors {
-                if !partial_props.iter().any(|p| p.name == deferred.name_atom) {
+                if partial_prop_names.insert(deferred.name_atom) {
                     partial_props.push(PropertyInfo {
                         name: deferred.name_atom,
                         type_id: TypeId::ANY,
