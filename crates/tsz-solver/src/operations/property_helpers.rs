@@ -1141,6 +1141,30 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return PropertyAccessResult::simple(TypeId::ANY);
         }
 
+        let boxed_loaded = if let Some(boxed_type) =
+            crate::def::resolver::TypeResolver::get_boxed_type(self.db, IntrinsicKind::Symbol)
+        {
+            let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+            if !result.is_not_found() {
+                return result;
+            }
+            true
+        } else {
+            false
+        };
+
+        if boxed_loaded
+            && crate::objects::apparent::is_post_es5_primitive_member(
+                IntrinsicKind::Symbol,
+                prop_name,
+            )
+        {
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: TypeId::SYMBOL,
+                property_name: prop_atom,
+            };
+        }
+
         self.resolve_apparent_property(IntrinsicKind::Symbol, TypeId::SYMBOL, prop_name, prop_atom)
     }
 
