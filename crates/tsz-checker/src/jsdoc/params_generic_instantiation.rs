@@ -573,6 +573,36 @@ impl<'a> CheckerState<'a> {
             if matches!(trimmed, "Object" | "object") {
                 return false;
             }
+            // Built-in primitive type names. The resolver returns
+            // `TypeId::UNKNOWN` for the literal `unknown` keyword by design,
+            // and the unresolved heuristic below treats `UNKNOWN` as a "could
+            // not resolve" sentinel, so this leaf would otherwise emit a
+            // spurious TS2304 for valid JSDoc like `@type {(v: unknown) => …}`.
+            if matches!(
+                trimmed,
+                "string"
+                    | "String"
+                    | "number"
+                    | "Number"
+                    | "boolean"
+                    | "Boolean"
+                    | "bigint"
+                    | "BigInt"
+                    | "any"
+                    | "unknown"
+                    | "undefined"
+                    | "Undefined"
+                    | "null"
+                    | "Null"
+                    | "void"
+                    | "Void"
+                    | "never"
+                    | "symbol"
+                    | "Symbol"
+                    | "this"
+            ) {
+                return false;
+            }
             let resolved = self.resolve_jsdoc_type_str(trimmed);
             let unresolved = resolved.is_none_or(|ty| {
                 ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
