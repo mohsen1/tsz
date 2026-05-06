@@ -83,6 +83,50 @@ fn no_module_detection_force_skips_esmodule_marker() {
     );
 }
 
+#[test]
+fn commonjs_type_only_reexport_skips_void_zero_preamble() {
+    let source = r#"export { I, I as II } from "./ambient";"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let source_file = parser
+        .arena
+        .get_source_file(parser.arena.get(root).expect("root node must exist"))
+        .expect("source file must exist");
+
+    let mut type_only_nodes = rustc_hash::FxHashSet::default();
+    for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt) = parser.arena.get(stmt_idx) else {
+            continue;
+        };
+        let Some(export_decl) = parser.arena.get_export_decl(stmt) else {
+            continue;
+        };
+        let Some(clause_node) = parser.arena.get(export_decl.export_clause) else {
+            continue;
+        };
+        let Some(named_exports) = parser.arena.get_named_imports(clause_node) else {
+            continue;
+        };
+        type_only_nodes.extend(named_exports.elements.nodes.iter().copied());
+    }
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        type_only_nodes: std::sync::Arc::new(type_only_nodes),
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("exports.I") && !output.contains("exports.II"),
+        "Type-only re-exports should not be preinitialized.\nOutput:\n{output}"
+    );
+}
+
 /// moduleDetection=force should also cause "use strict" to be emitted
 /// for CJS modules (since the file is now treated as a module).
 #[test]
@@ -483,6 +527,54 @@ class A {
     assert!(
         !output.contains("\n_A_x = new WeakMap();"),
         "WeakMap initialization should not be emitted again after the class.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn static_private_initialization_precedes_lowered_static_fields() {
+    let source = r#"// https://github.com/microsoft/TypeScript/issues/44113
+class C {
+    static #qux = 42;
+    static ["bar"] = "test";
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        use_define_for_class_fields: true,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let var_pos = output
+        .find("var _a, _C_qux;")
+        .expect("expected private temp var declaration");
+    let comment_pos = output
+        .find("// https://github.com/microsoft/TypeScript/issues/44113")
+        .expect("expected preserved leading comment");
+    let private_init_pos = output
+        .find("_C_qux = { value: 42 };")
+        .expect("expected static private initialization");
+    let static_field_pos = output
+        .find("Object.defineProperty(C, \"bar\"")
+        .expect("expected lowered static field");
+
+    assert!(
+        var_pos < comment_pos,
+        "Private temp vars should precede attached leading comments.\nOutput:\n{output}"
+    );
+    assert!(
+        private_init_pos < static_field_pos,
+        "Static private state should initialize before lowered static fields.\nOutput:\n{output}"
     );
 }
 
@@ -1350,6 +1442,42 @@ fn decorated_class_export_no_duplicate_exports() {
     assert!(
         output.contains("exports.A = A = __decorate("),
         "Should contain the decorator assignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn cjs_deferred_local_export_emits_all_aliases_after_declaration() {
+    let source = r#"export { x }
+export { x as xx }
+export default x;
+
+const x = 'x'
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let default_pos = output.find("exports.default = x;").unwrap();
+    let declaration_pos = output.find("const x = 'x';").unwrap();
+    let export_x_pos = output.find("exports.x = x;").unwrap();
+    let export_xx_pos = output.find("exports.xx = x;").unwrap();
+    assert!(
+        default_pos < declaration_pos,
+        "Default export should stay before the declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        declaration_pos < export_x_pos && export_x_pos < export_xx_pos,
+        "Named aliases should be deferred until after the declaration.\nOutput:\n{output}"
     );
 }
 
