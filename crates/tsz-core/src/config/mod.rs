@@ -724,9 +724,10 @@ pub fn resolve_compiler_options(
         resolved.resolve_json_module = resolve_json_module;
         resolved.checker.resolve_json_module = resolve_json_module;
     } else {
-        // tsc 6.0 defaults resolveJsonModule to true when not explicitly set.
-        resolved.resolve_json_module = true;
-        resolved.checker.resolve_json_module = true;
+        // tsc 6.0 only implies resolveJsonModule for bundler resolution.
+        let resolve_json_module = matches!(effective_resolution, ModuleResolutionKind::Bundler);
+        resolved.resolve_json_module = resolve_json_module;
+        resolved.checker.resolve_json_module = resolve_json_module;
     }
     if let Some(import_helpers) = options.import_helpers {
         resolved.import_helpers = import_helpers;
@@ -5990,6 +5991,37 @@ mod tests {
             codes.contains(&5070),
             "Expected TS5070 for resolveJsonModule with classic moduleResolution, got: {codes:?}"
         );
+    }
+
+    #[test]
+    fn test_resolve_json_module_not_implied_by_node_resolution() {
+        for source in [
+            r#"{"compilerOptions":{"module":"commonjs","moduleResolution":"node10"}}"#,
+            r#"{"compilerOptions":{"module":"node16","moduleResolution":"node16"}}"#,
+        ] {
+            let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+            let resolved =
+                resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+
+            assert!(
+                !resolved.resolve_json_module,
+                "resolveJsonModule should not be implied for {source}"
+            );
+            assert!(
+                !resolved.checker.resolve_json_module,
+                "checker resolveJsonModule should not be implied for {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_resolve_json_module_implied_by_bundler_resolution() {
+        let source = r#"{"compilerOptions":{"moduleResolution":"bundler"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.resolve_json_module);
+        assert!(resolved.checker.resolve_json_module);
     }
 
     #[test]
