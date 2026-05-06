@@ -1293,7 +1293,7 @@ impl<'a> TypeFormatter<'a> {
                 // input member list as a side-table "origin"; consult it here
                 // before structural display.
                 if let Some(origin) = self.interner.get_union_origin(type_id) {
-                    return self.format_union_origin(origin.as_slice()).into();
+                    return self.format_union(origin.as_slice()).into();
                 }
                 let members = self.interner.type_list(*members);
                 self.format_union(members.as_ref()).into()
