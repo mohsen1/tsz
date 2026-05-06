@@ -421,6 +421,30 @@ const cloneObjectGood = value => /** @type {T} */({ ...value });
 }
 
 #[test]
+fn test_plain_js_strict_binder_parse_diagnostics_are_preserved() {
+    let source = r#"
+export default 12
+const yield = 1
+async function f() {
+    const await = 2
+}
+class C {
+    #constructor = 3
+}
+"#;
+    let mut parser = ParserState::new("plainJSBinderErrors.js".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    for code in [1359, 18012] {
+        assert!(
+            codes.contains(&code),
+            "Expected parser diagnostic TS{code} in plain JS async/class strict contexts. Got: {codes:?}"
+        );
+    }
+}
+
+#[test]
 fn test_parenthesized_destructuring_assignment_is_not_treated_as_missing_arrow() {
     let source = r#"
 class C {

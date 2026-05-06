@@ -43,6 +43,11 @@ pub(crate) fn classify_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> Typ
     tsz_solver::type_queries::classify_type_query(db, type_id)
 }
 
+pub(crate) fn is_object_intrinsic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    type_id == TypeId::OBJECT
+        || tsz_solver::intrinsic_kind(db, type_id) == Some(tsz_solver::IntrinsicKind::Object)
+}
+
 pub(crate) fn get_invalid_index_type_member(
     db: &dyn TypeDatabase,
     type_id: TypeId,

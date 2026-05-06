@@ -7,6 +7,7 @@ use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, node::PropertyDeclData};
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 /// Result from resolving literal string keys against an object type.
@@ -1248,6 +1249,26 @@ impl<'a> CheckerState<'a> {
             let is_binding_pattern = name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
             if !is_binding_pattern {
+                continue;
+            }
+            let Some(pattern_data) = self.ctx.arena.get_binding_pattern(name_node) else {
+                continue;
+            };
+            let direct_identifier_count = pattern_data
+                .elements
+                .nodes
+                .iter()
+                .filter_map(|&element_idx| self.ctx.arena.get(element_idx))
+                .filter_map(|element_node| self.ctx.arena.get_binding_element(element_node))
+                .filter(|element| {
+                    self.ctx
+                        .arena
+                        .get(element.name)
+                        .is_some_and(|name| name.kind == SyntaxKind::Identifier as u16)
+                })
+                .take(2)
+                .count();
+            if direct_identifier_count < 2 {
                 continue;
             }
 

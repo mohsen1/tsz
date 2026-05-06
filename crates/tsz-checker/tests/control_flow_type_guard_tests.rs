@@ -2012,6 +2012,171 @@ if (isString(v)) {
 }
 
 #[test]
+fn inferred_type_predicate_handles_instanceof_object_guard() {
+    let source = r#"
+function isDate(x: object) {
+  return x instanceof Date;
+}
+
+declare let value: object;
+if (isDate(value)) {
+  const date: Date = value;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322 && *code != 2740),
+        "instanceof predicate inference should narrow object to Date; diags={diags:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_in_guard_through_non_null_assertion() {
+    let source = r#"
+type Foo = { foo: string };
+type Bar = Foo & { bar: string };
+
+function isBar(x: Foo | Bar | null) {
+  return "bar" in x!;
+}
+
+declare let value: Foo | Bar;
+if (isBar(value)) {
+  const bar: Bar = value;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322 && *code != 2741),
+        "in-operator predicate inference should narrow to the member-bearing type; diags={diags:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_class_methods() {
+    let source = r#"
+class Inferrer {
+  isNumber(x: number | string) {
+    return typeof x === "number";
+  }
+}
+
+declare let value: number | string;
+const inferrer = new Inferrer();
+if (inferrer.isNumber(value)) {
+  const numberValue: number = value;
+} else {
+  const stringValue: string = value;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "method predicate inference should narrow both branches; ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_same_parameter_or_guards() {
+    let source = r#"
+function isNumberOrString(x: unknown) {
+  return typeof x === "number" || typeof x === "string";
+}
+
+declare let value: unknown;
+if (isNumberOrString(value)) {
+  const primitive: number | string = value;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "OR guards for the same parameter should infer a union predicate; ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_allows_throwing_prefix_path() {
+    let source = r#"
+function assertAndPredicate(x: string | number | Date) {
+  if (x instanceof Date) {
+    throw new Error();
+  }
+  return typeof x === "string";
+}
+
+declare let value: string | number | Date;
+if (assertAndPredicate(value)) {
+  const stringValue: string = value;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "throw-only prefix paths should not block predicate inference; ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_satisfies_boolean_wrapper() {
+    let source = r#"
+const numbers = [1, 2, null, 3].filter((x) => (x != null) satisfies boolean);
+const accepted: number[] = numbers;
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "satisfies boolean should not hide an inferable predicate from filter; ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_safe_double_negation_truthiness() {
+    let source = r#"
+type Item = { value: string };
+const items = [{ value: "a" }, undefined].filter((item) => !!item);
+const accepted: Item[] = items;
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "double-negation truthiness should infer when the falsy branch is only nullish; ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_rejects_number_double_negation_truthiness() {
+    let source = r#"
+const isTruthy = (x: number | null) => !!x;
+declare let value: number | null;
+if (isTruthy(value)) {
+  const accepted: number = value;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type 'number | null' is not assignable to type 'number'")
+        }),
+        "number|null truthiness must not infer because 0 makes the false branch non-nullish; diags={diags:#?}"
+    );
+}
+
+#[test]
 fn inferred_type_predicate_explicit_annotation_still_wins() {
     // When the user wrote a return type, we must NOT override their
     // intent with an inferred predicate. `: boolean` is an explicit choice.

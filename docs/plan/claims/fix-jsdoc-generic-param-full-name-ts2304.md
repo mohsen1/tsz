@@ -16,6 +16,8 @@ whose base typedef `Funcs` is known and whose type arguments are in scope.
 
 - `crates/tsz-checker/src/jsdoc/diagnostics.rs`
 - `crates/tsz-checker/tests/jsdoc_reference_kernel_tests.rs`
+- `crates/tsz-cli/src/bin/tsz_lsp.rs` (clippy-only cleanup required by the pre-commit parity lint)
+- `crates/tsz-cli/src/bin/tsz_server/handlers_info_alias.rs` (clippy-only cleanup required by the pre-commit parity lint)
 - `crates/tsz-cli/src/bin/tsz_server/handlers_structure.rs` (clippy-only cleanup required by the pre-commit parity lint)
 
 ## Verification
