@@ -727,11 +727,14 @@ impl<'a> CheckerState<'a> {
     /// Collapse multi-line `@import` clauses onto a single line so the
     /// downstream tag parser sees the full clause text. JSDoc allows the
     /// import to wrap across lines:
-    ///   /**
-    ///    * @import
-    ///    * { A, B }
-    ///    * from "./types"
-    ///    */
+    ///
+    /// ```text
+    /// /**
+    ///  * @import
+    ///  * { A, B }
+    ///  * from "./types"
+    ///  */
+    /// ```
     /// Without this preprocessing, the line-based tag parser sees only
     /// `@import` (empty rest) and silently fails to register A and B.
     pub(super) fn merge_jsdoc_import_continuations(jsdoc: &str) -> String {
@@ -758,7 +761,9 @@ impl<'a> CheckerState<'a> {
                     text.push_str(&stripped);
                     continue;
                 }
-                let flushed = pending.take().unwrap();
+                let flushed = pending
+                    .take()
+                    .expect("pending import text is present while flushing continuation");
                 result.push_str(&flushed);
                 result.push('\n');
             }
