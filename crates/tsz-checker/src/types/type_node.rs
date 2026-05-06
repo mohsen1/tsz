@@ -1887,11 +1887,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
                 return false;
             }
-
             let Some(var_decl) = arena.get_variable_declaration(node) else {
                 return false;
             };
-
             (var_decl.type_annotation.is_some()
                 && self.is_unique_symbol_type_annotation_in_arena(arena, var_decl.type_annotation))
                 || self.is_symbol_call_initializer_in_arena(arena, var_decl.initializer)
