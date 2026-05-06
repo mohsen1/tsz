@@ -231,6 +231,7 @@ pub struct DeclarationEmitter<'a> {
 pub(super) struct SourceMapState {
     pub(super) output_name: String,
     pub(super) source_name: String,
+    pub(super) include_sources_content: bool,
 }
 
 #[derive(Clone, Debug)]

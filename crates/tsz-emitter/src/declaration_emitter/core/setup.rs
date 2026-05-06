@@ -210,6 +210,19 @@ impl<'a> DeclarationEmitter<'a> {
         self.source_map_state = Some(SourceMapState {
             output_name: output_name.to_string(),
             source_name: source_name.to_string(),
+            include_sources_content: true,
+        });
+    }
+
+    pub fn enable_source_map_without_sources_content(
+        &mut self,
+        output_name: &str,
+        source_name: &str,
+    ) {
+        self.source_map_state = Some(SourceMapState {
+            output_name: output_name.to_string(),
+            source_name: source_name.to_string(),
+            include_sources_content: false,
         });
     }
 

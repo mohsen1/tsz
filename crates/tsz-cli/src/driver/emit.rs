@@ -445,7 +445,7 @@ pub(crate) fn emit_outputs(
                         None
                     };
 
-                if let Some((_, _, output_name)) = map_info.as_ref() {
+                if let Some((map_path, _, output_name)) = map_info.as_ref() {
                     if let Some(source_text) = file
                         .arena
                         .get(file.source_file)
@@ -454,7 +454,8 @@ pub(crate) fn emit_outputs(
                     {
                         emitter.set_source_map_text(source_text);
                     }
-                    emitter.enable_source_map(output_name, &file.file_name);
+                    let source_name = declaration_map_source_name(map_path, &input_path);
+                    emitter.enable_source_map_without_sources_content(output_name, &source_name);
                 }
 
                 // Run usage analysis and calculate required imports if we have type cache
@@ -1186,6 +1187,51 @@ fn map_output_info(output_path: &Path) -> Option<(PathBuf, String, String)> {
     let map_name = format!("{output_name}.map");
     let map_path = output_path.with_file_name(&map_name);
     Some((map_path, map_name, output_name))
+}
+
+fn declaration_map_source_name(map_path: &Path, source_path: &Path) -> String {
+    let map_dir = map_path.parent().unwrap_or_else(|| Path::new(""));
+    relative_path_from_dir(map_dir, source_path)
+        .unwrap_or_else(|| source_path.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn relative_path_from_dir(from_dir: &Path, to_path: &Path) -> Option<PathBuf> {
+    if from_dir.is_absolute() != to_path.is_absolute() {
+        return None;
+    }
+
+    let from_components = normalized_path_components(from_dir);
+    let to_components = normalized_path_components(to_path);
+    let mut common_len = 0;
+    while common_len < from_components.len()
+        && common_len < to_components.len()
+        && from_components[common_len] == to_components[common_len]
+    {
+        common_len += 1;
+    }
+
+    let mut relative = PathBuf::new();
+    for _ in common_len..from_components.len() {
+        relative.push("..");
+    }
+    for component in &to_components[common_len..] {
+        relative.push(component);
+    }
+
+    Some(relative)
+}
+
+fn normalized_path_components(path: &Path) -> Vec<std::ffi::OsString> {
+    path.components()
+        .filter_map(|component| match component {
+            std::path::Component::CurDir | std::path::Component::RootDir => None,
+            std::path::Component::ParentDir => Some(std::ffi::OsString::from("..")),
+            std::path::Component::Normal(part) => Some(part.to_os_string()),
+            std::path::Component::Prefix(prefix) => Some(prefix.as_os_str().to_os_string()),
+        })
+        .collect()
 }
 
 fn append_source_mapping_url(contents: &mut String, map_name: &str, new_line: &str) {
