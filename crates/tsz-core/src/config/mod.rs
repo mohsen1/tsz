@@ -177,6 +177,8 @@ pub struct CompilerOptions {
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub source_map: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub inline_source_map: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub declaration_map: Option<bool>,
     #[serde(default)]
     pub ts_build_info_file: Option<String>,
@@ -425,6 +427,7 @@ pub struct ResolvedCompilerOptions {
     pub emit_declarations: bool,
     pub emit_declaration_only: bool,
     pub source_map: bool,
+    pub inline_source_map: bool,
     pub declaration_map: bool,
     pub ts_build_info_file: Option<PathBuf>,
     pub incremental: bool,
@@ -892,6 +895,10 @@ pub fn resolve_compiler_options(
 
     if let Some(source_map) = options.source_map {
         resolved.source_map = source_map;
+    }
+
+    if let Some(inline_source_map) = options.inline_source_map {
+        resolved.inline_source_map = inline_source_map;
     }
 
     if let Some(declaration_map) = options.declaration_map {
@@ -3398,6 +3405,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             declaration,
             declaration_dir,
             source_map,
+            inline_source_map,
             declaration_map,
             ts_build_info_file,
             incremental,
