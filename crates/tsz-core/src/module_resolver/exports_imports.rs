@@ -26,11 +26,10 @@ pub(super) fn key_ends_with_ts_extension(key: &str) -> bool {
 fn package_relative_target_path(package_dir: &Path, target: &str) -> Option<PathBuf> {
     let rest = target.strip_prefix("./")?;
     let path = Path::new(target);
-    if path.components().any(|component| {
-        matches!(
-            component,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_)
-        )
+    if path.components().any(|component| match component {
+        Component::ParentDir | Component::RootDir | Component::Prefix(_) => true,
+        Component::Normal(segment) => segment == "node_modules",
+        _ => false,
     }) {
         return None;
     }
@@ -188,18 +187,16 @@ impl ModuleResolver {
             PackageExports::String(s) => vec![s.clone()],
             PackageExports::Conditional(cond_entries) => {
                 // Iterate condition map entries in JSON key order
+                let mut results = Vec::new();
                 for (key, nested) in cond_entries {
                     if conditions.iter().any(|c| c == key) {
                         if matches!(nested, PackageExports::Null) {
                             return Vec::new();
                         }
-                        let results = Self::resolve_export_targets_to_strings(nested, conditions);
-                        if !results.is_empty() {
-                            return results;
-                        }
+                        results.extend(Self::resolve_export_targets_to_strings(nested, conditions));
                     }
                 }
-                Vec::new()
+                results
             }
             PackageExports::Array(elements) => {
                 // Array of fallback targets — preserve order so the caller can

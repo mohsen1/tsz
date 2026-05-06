@@ -3,6 +3,7 @@
 //!
 //! Props extraction lives in `extraction.rs`, overload resolution in `overloads.rs`.
 
+mod attr_value;
 mod generic_spread;
 mod resolution;
 mod special_attribute_callbacks;
