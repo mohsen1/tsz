@@ -107,6 +107,16 @@ impl<'a> CheckerState<'a> {
             self.error_property_not_exist_at(property_name, object_type, error_node);
             return false;
         }
+        if self.intersection_private_property_is_missing(property_name, object_type) {
+            self.error_property_not_exist_at(property_name, tsz_solver::TypeId::NEVER, error_node);
+            return false;
+        }
+
+        if self.receiver_property_visibility(object_type, property_name)
+            == Some(tsz_solver::Visibility::Public)
+        {
+            return true;
+        }
 
         // TypeScript allows `super["x"]` element-access forms without applying
         // the stricter method-only/private-protected checks used for `super.x`.
@@ -326,9 +336,12 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_THROUGH_AN_INSTANCE_OF_CLASS_THIS_IS_A,
                     );
                 } else {
+                    let declaring_class_name = self
+                        .intersection_protected_owner_name(object_type, property_name)
+                        .unwrap_or_else(|| access_info.declaring_class_name.clone());
                     let message = format!(
                         "Property '{}' is protected and only accessible within class '{}' and its subclasses.",
-                        property_name, access_info.declaring_class_name
+                        property_name, declaring_class_name
                     );
                     self.error_at_node(
                         error_node,
@@ -657,9 +670,12 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                     MemberAccessLevel::Protected => {
+                        let declaring_class_name = self
+                            .intersection_protected_owner_name(object_type, property_name)
+                            .unwrap_or_else(|| access_info.declaring_class_name.clone());
                         let message = format!(
                             "Property '{}' is protected and only accessible within class '{}' and its subclasses.",
-                            property_name, access_info.declaring_class_name
+                            property_name, declaring_class_name
                         );
                         self.error_at_node(
                             error_node,
@@ -673,6 +689,85 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    fn receiver_property_visibility(
+        &self,
+        object_type: tsz_solver::TypeId,
+        property_name: &str,
+    ) -> Option<tsz_solver::Visibility> {
+        fn merge(
+            left: tsz_solver::Visibility,
+            right: tsz_solver::Visibility,
+        ) -> tsz_solver::Visibility {
+            match (left, right) {
+                (tsz_solver::Visibility::Private, _) | (_, tsz_solver::Visibility::Private) => {
+                    tsz_solver::Visibility::Private
+                }
+                (tsz_solver::Visibility::Public, _) | (_, tsz_solver::Visibility::Public) => {
+                    tsz_solver::Visibility::Public
+                }
+                (tsz_solver::Visibility::Protected, tsz_solver::Visibility::Protected) => {
+                    tsz_solver::Visibility::Protected
+                }
+            }
+        }
+
+        let find_in_props = |types: &dyn tsz_solver::TypeDatabase,
+                             props: &[tsz_solver::PropertyInfo]| {
+            props
+                .iter()
+                .find(|prop| types.resolve_atom_ref(prop.name).as_ref() == property_name)
+                .map(|prop| prop.visibility)
+        };
+
+        if object_type.is_intrinsic() {
+            return None;
+        }
+
+        match self.ctx.types.lookup(object_type) {
+            Some(tsz_solver::TypeData::Object(shape_id))
+            | Some(tsz_solver::TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                find_in_props(self.ctx.types, &shape.properties)
+            }
+            Some(tsz_solver::TypeData::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                find_in_props(self.ctx.types, &shape.properties)
+            }
+            Some(tsz_solver::TypeData::Intersection(list_id)) => {
+                let members = self.ctx.types.type_list(list_id).to_vec();
+                let mut visibility = None;
+                for member in members {
+                    let Some(member_visibility) =
+                        self.receiver_property_visibility(member, property_name)
+                    else {
+                        continue;
+                    };
+                    visibility = Some(match visibility {
+                        Some(current) => merge(current, member_visibility),
+                        None => member_visibility,
+                    });
+                }
+                visibility
+            }
+            _ => None,
+        }
+    }
+
+    fn intersection_protected_owner_name(
+        &self,
+        object_type: tsz_solver::TypeId,
+        property_name: &str,
+    ) -> Option<String> {
+        if self.receiver_property_visibility(object_type, property_name)
+            != Some(tsz_solver::Visibility::Protected)
+        {
+            return None;
+        }
+
+        let display = self.format_type_diagnostic(object_type);
+        display.contains(" & ").then_some(display)
     }
 
     /// Collect all class declaration candidates from brand properties on a type.
@@ -911,6 +1006,61 @@ impl<'a> CheckerState<'a> {
         // with a different declaration (public, missing, or different class),
         // the property doesn't exist on the union type.
         has_restricted && has_other
+    }
+
+    fn intersection_private_property_is_missing(
+        &mut self,
+        property_name: &str,
+        object_type: tsz_solver::TypeId,
+    ) -> bool {
+        if self.ctx.enclosing_class.is_some() {
+            return false;
+        }
+
+        let source_type = self
+            .ctx
+            .types
+            .get_display_alias(object_type)
+            .unwrap_or(object_type);
+        let Some(tsz_solver::TypeData::Intersection(list_id)) = self.ctx.types.lookup(source_type)
+        else {
+            return false;
+        };
+        let members = self.ctx.types.type_list(list_id).to_vec();
+        if members.len() < 2 {
+            return false;
+        }
+
+        let is_static = self.is_constructor_type(object_type);
+        let mut has_private = false;
+        let mut has_other = false;
+        let mut first_declaring_class: Option<NodeIndex> = None;
+
+        for member in members {
+            let member = self.resolve_type_for_property_access(member);
+            let Some(class_idx) = self.get_class_decl_from_type(member) else {
+                has_other = true;
+                continue;
+            };
+
+            match self.find_member_access_info(class_idx, property_name, is_static) {
+                Some(access_info) if access_info.level == MemberAccessLevel::Private => {
+                    has_private = true;
+                    if let Some(first_decl) = first_declaring_class {
+                        if first_decl != access_info.declaring_class_idx {
+                            has_other = true;
+                        }
+                    } else {
+                        first_declaring_class = Some(access_info.declaring_class_idx);
+                    }
+                }
+                Some(_) | None => {
+                    has_other = true;
+                }
+            }
+        }
+
+        has_private && has_other
     }
     // =========================================================================
     // Computed Property Name Validation
@@ -1379,6 +1529,87 @@ mod tests {
         assert!(!has_code(&diagnostics, 2339));
         assert!(!has_code(&diagnostics, 2445));
         assert!(!has_code(&diagnostics, 2341));
+    }
+
+    #[test]
+    fn intersection_protected_and_public_property_is_public() {
+        let diagnostics = check_diagnostics(
+            r#"
+            class Protected {
+                protected member: string = "";
+            }
+            class Public {
+                public member: string = "";
+            }
+            declare var value: Protected & Public;
+            value.member;
+        "#,
+        );
+
+        assert!(
+            !has_code(&diagnostics, 2339),
+            "property should exist on protected/public intersection, got: {diagnostics:?}"
+        );
+        assert!(
+            !has_code(&diagnostics, 2445),
+            "public constituent should make the intersection property publicly accessible, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn intersection_all_protected_property_stays_protected() {
+        let diagnostics = crate::test_utils::check_source_code_messages(
+            r#"
+            class Protected {
+                protected member: string = "";
+            }
+            class Protected2 {
+                protected member: string = "";
+            }
+            declare var value: Protected & Protected2;
+            value.member;
+        "#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|(code, message)| {
+                *code == 2445
+                    && message.contains("Property 'member' is protected")
+                    && message.contains("Protected & Protected2")
+            }),
+            "expected TS2445 against the protected intersection owner, got: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|(code, _)| *code == 2339),
+            "protected intersection member should not fall back to missing property, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn intersection_private_and_non_private_property_reports_never() {
+        let diagnostics = crate::test_utils::check_source_code_messages(
+            r#"
+            class Private {
+                private member: string = "";
+            }
+            class Public {
+                public member: string = "";
+            }
+            declare var value: Private & Public;
+            value.member;
+        "#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|(code, message)| {
+                *code == 2339 && message.contains("does not exist on type 'never'")
+            }),
+            "private/public intersection should report a missing property on never, got: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|(code, _)| *code == 2341),
+            "private/public intersection should not report direct private access, got: {diagnostics:?}"
+        );
     }
 
     #[test]

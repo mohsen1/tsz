@@ -16,14 +16,12 @@ use tsz_common::interner::Atom;
 // Import TypeDatabase trait
 use crate::caches::db::TypeDatabase;
 
-/// Merge two visibility levels, returning the more restrictive one.
-///
-/// Ordering: Private > Protected > Public
+/// Merge two visibility levels for an intersection property.
 const fn merge_visibility(a: Visibility, b: Visibility) -> Visibility {
     match (a, b) {
         (Visibility::Private, _) | (_, Visibility::Private) => Visibility::Private,
-        (Visibility::Protected, _) | (_, Visibility::Protected) => Visibility::Protected,
-        (Visibility::Public, Visibility::Public) => Visibility::Public,
+        (Visibility::Public, _) | (_, Visibility::Public) => Visibility::Public,
+        (Visibility::Protected, Visibility::Protected) => Visibility::Protected,
     }
 }
 
@@ -240,6 +238,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             let mut type_ids = vec![prop.type_id];
             let mut all_optional = prop.optional;
             let mut any_readonly = prop.readonly;
+            let mut visibility = prop.visibility;
 
             for member_result in member_props.iter().skip(1) {
                 match member_result {
@@ -249,6 +248,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                             type_ids.push(other_prop.type_id);
                             all_optional = all_optional && other_prop.optional;
                             any_readonly = any_readonly || other_prop.readonly;
+                            visibility = merge_visibility(visibility, other_prop.visibility);
                         } else {
                             present_in_all = false;
                             break;
@@ -286,7 +286,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                         write_type: union_type,
                         optional: all_optional,
                         readonly: any_readonly,
-                        visibility: prop.visibility,
+                        visibility,
                         is_method: prop.is_method,
                         is_class_prototype: prop.is_class_prototype,
                         parent_id: prop.parent_id,
