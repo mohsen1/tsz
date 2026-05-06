@@ -2216,10 +2216,9 @@ impl<'a> CheckerState<'a> {
             .borrow()
             .get(&cache_key)
             .copied()
+            && (cached.is_some() || cache_miss)
         {
-            if cached.is_some() || cache_miss {
-                return cached;
-            }
+            return cached;
         }
 
         let resolved = self.resolve_named_export_via_export_equals_tracked_uncached(
