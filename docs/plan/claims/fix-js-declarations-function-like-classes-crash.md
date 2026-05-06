@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/js-declarations-function-like-classes-crash`
-- **PR**: TBD
+- **PR**: #3663
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 - **Claimed**: 2026-05-06 06:52:00 UTC
