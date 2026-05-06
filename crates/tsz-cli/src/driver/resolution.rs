@@ -221,7 +221,7 @@ pub(super) fn implied_resolution_mode_for_file(file: &Path, base_dir: &Path) -> 
     implied_resolution_mode_for_file_with_cache(file, base_dir, &mut cache)
 }
 
-fn implied_resolution_mode_for_file_with_cache(
+pub(super) fn implied_resolution_mode_for_file_with_cache(
     file: &Path,
     base_dir: &Path,
     resolution_cache: &mut ModuleResolutionCache,

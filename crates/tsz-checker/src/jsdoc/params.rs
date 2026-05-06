@@ -2725,6 +2725,11 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn jsdoc_type_expression_is_type_predicate(type_expr: &str) -> bool {
+        let (is_asserts, remainder) = Self::split_jsdoc_asserts_prefix(type_expr);
+        is_asserts || Self::find_jsdoc_type_predicate_is(remainder).is_some()
+    }
+
     /// Extract a type predicate from `@returns {x is Type}` / `@return {this is Entry}`.
     ///
     /// Returns `Some((is_asserts, param_name, type_str))` if the `@returns` tag
