@@ -2022,6 +2022,15 @@ mod jsx_scanning {
     }
 
     #[test]
+    fn jsx_identifier_with_hyphen_digit_part() {
+        let mut scanner = ScannerState::new("data-123".to_string(), true);
+        scanner.scan(); // scans "data" initially
+        scanner.scan_jsx_identifier();
+        assert_eq!(scanner.get_token(), SyntaxKind::Identifier);
+        assert_eq!(scanner.get_token_value(), "data-123");
+    }
+
+    #[test]
     fn jsx_text_scanning() {
         let mut scanner = ScannerState::new(">hello world<".to_string(), true);
         scanner.scan(); // >
