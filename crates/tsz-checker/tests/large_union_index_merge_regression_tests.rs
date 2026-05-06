@@ -66,8 +66,17 @@ interface HTMLElementTagNameMap {
     div: HTMLElement;
 }
 
+interface HTMLElementDeprecatedTagNameMap {
+    acronym: HTMLElement;
+    applet: HTMLUnknownElement;
+}
+
 interface ElementTagNameMap {
     [index: number]: HTMLElement;
+}
+
+interface HTMLUnknownElement extends HTMLElement {
+    unknown: string;
 }
 
 interface HTMLCollectionOf<T extends Element> {
@@ -78,6 +87,9 @@ interface QueryRoot {
     getElementsByTagName<K extends keyof HTMLElementTagNameMap>(
         qualifiedName: K
     ): HTMLCollectionOf<HTMLElementTagNameMap[K]>;
+    getElementsByDeprecatedTagName<K extends keyof HTMLElementDeprecatedTagNameMap>(
+        qualifiedName: K
+    ): HTMLCollectionOf<HTMLElementDeprecatedTagNameMap[K]>;
 }
 
 function assertNodeTagName<

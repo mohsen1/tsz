@@ -776,11 +776,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             for &member in &members {
                 let resolved_member = self.evaluate(member);
                 let member_result =
-                    self.try_evaluate_mapped_over_array_like(mapped, resolved_member);
-                match member_result {
-                    Some(r) => results.push(r),
-                    None => return None,
-                }
+                    self.try_evaluate_mapped_over_array_like(mapped, resolved_member)?;
+                results.push(member_result);
             }
             if !results.is_empty() {
                 let union_id = self.interner().union(results);
@@ -1125,16 +1122,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             ),
                         );
                         keys.string_literals.push(s);
-                    } else if let Some(inner_keys) = self.extract_mapped_keys(member) {
+                    } else {
                         // Recursively extract keys from non-literal union members.
                         // Handles enum types (TypeData::Enum), lazy refs (TypeData::Lazy),
                         // and nested unions (e.g., `A | B` where A, B are enum types).
+                        // If extraction fails, we can't fully evaluate the union.
+                        let inner_keys = self.extract_mapped_keys(member)?;
                         keys.string_literals.extend(inner_keys.string_literals);
                         keys.has_string |= inner_keys.has_string;
                         keys.has_number |= inner_keys.has_number;
-                    } else {
-                        // Non-literal in union - can't fully evaluate
-                        return None;
                     }
                 }
                 if !keys.has_string && !keys.has_number && keys.string_literals.is_empty() {
@@ -1180,10 +1176,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     ) {
                         continue;
                     }
-                    match self.extract_mapped_keys(member) {
-                        Some(mk) => member_keys.push(mk),
-                        None => return None,
-                    }
+                    let mk = self.extract_mapped_keys(member)?;
+                    member_keys.push(mk);
                 }
                 if member_keys.is_empty() {
                     return None;
