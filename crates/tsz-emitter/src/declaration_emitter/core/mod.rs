@@ -4,7 +4,6 @@
 mod emit_declarations;
 mod emit_members;
 mod js_emit;
-mod recursive_class_expression;
 mod setup;
 
 use super::helpers::JsNamespaceExportAlias;
