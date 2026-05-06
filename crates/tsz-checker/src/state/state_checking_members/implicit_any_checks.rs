@@ -18,7 +18,7 @@ impl<'a> CheckerState<'a> {
             .then_some(func_idx)
     }
 
-    fn parameter_has_deferred_explicit_context(&self, param_name: NodeIndex) -> bool {
+    fn parameter_has_deferred_explicit_context(&mut self, param_name: NodeIndex) -> bool {
         let Some(func_idx) = self.enclosing_function_for_parameter_name(param_name) else {
             return false;
         };
@@ -624,6 +624,9 @@ impl<'a> CheckerState<'a> {
             .as_deref()
             != Some("filter")
         {
+            return false;
+        }
+        if self.get_type_of_node(call.expression) != TypeId::ERROR {
             return false;
         }
         self.filter_receiver_is_array_like_for_implicit_any(access.expression)

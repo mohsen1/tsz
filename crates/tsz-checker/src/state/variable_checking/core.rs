@@ -15,24 +15,33 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn explicit_annotation_can_defer_implicit_any_context(
-        &self,
+        &mut self,
         annotation_idx: NodeIndex,
     ) -> bool {
         let Some(node) = self.ctx.arena.get(annotation_idx) else {
             return false;
         };
-        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
-            return true;
-        }
-        if node.kind == syntax_kind_ext::TYPE_REFERENCE
-            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+            || node.kind == syntax_kind_ext::TYPE_REFERENCE
         {
-            return matches!(
-                self.resolve_identifier_symbol_in_type_position_without_tracking(
-                    type_ref.type_name
-                ),
-                crate::symbol_resolver::TypeSymbolResolution::Type(_)
-            );
+            let annotation_type = self.get_type_from_type_node(annotation_idx);
+            let evaluated_type = self.evaluate_application_type(annotation_type);
+            let resolved_type = self.resolve_lazy_type(evaluated_type);
+            return matches!(annotation_type, TypeId::ERROR)
+                || matches!(evaluated_type, TypeId::ERROR)
+                || matches!(resolved_type, TypeId::ERROR)
+                || crate::query_boundaries::common::is_callable_type(
+                    self.ctx.types,
+                    annotation_type,
+                )
+                || crate::query_boundaries::common::is_callable_type(
+                    self.ctx.types,
+                    evaluated_type,
+                )
+                || crate::query_boundaries::common::is_callable_type(
+                    self.ctx.types,
+                    resolved_type,
+                );
         }
         false
     }
