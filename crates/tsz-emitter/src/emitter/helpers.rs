@@ -1075,7 +1075,8 @@ impl<'a> Printer<'a> {
                 if let Some(func) = self.arena.get_function(node) {
                     self.arena
                         .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
-                        || func.body.is_none()
+                        || (func.body.is_none()
+                            && !self.has_recovered_declaration_trailing_comma(node))
                 } else {
                     false
                 }
@@ -1379,6 +1380,28 @@ impl<'a> Printer<'a> {
                 .arena
                 .get(module.body)
                 .is_some_and(|body| body.kind == syntax_kind_ext::MODULE_BLOCK)
+    }
+
+    pub(super) fn has_recovered_declaration_trailing_comma(&self, node: &Node) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (node.end as usize).min(text.len());
+        if start < end && text[start..end].trim_end().ends_with(',') {
+            return true;
+        }
+
+        let bytes = text.as_bytes();
+        let mut pos = end;
+        while pos < bytes.len() {
+            match bytes[pos] {
+                b',' => return true,
+                b' ' | b'\t' => pos += 1,
+                _ => return false,
+            }
+        }
+        false
     }
 
     /// Check if a `declare;` expression statement is an artifact of the parser not

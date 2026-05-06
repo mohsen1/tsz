@@ -35,6 +35,13 @@ pub(crate) fn index_access_components(
     tsz_solver::type_queries::get_index_access_types(db, type_id)
 }
 
+pub(crate) fn contains_index_access_with_type_parameter_object(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::contains_index_access_with_type_parameter_object(db, type_id)
+}
+
 /// Get the operand of a `keyof T` type.
 pub(crate) fn keyof_operand(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::keyof_inner_type(db, type_id)

@@ -650,12 +650,9 @@ impl<'a> CheckerState<'a> {
                 let member_node = self.ctx.arena.get(member_idx)?;
                 let member_data = self.ctx.arena.get_enum_member(member_node)?;
                 if member_data.initializer.is_some() {
-                    if let Some(val) = self.evaluate_constant_expression(member_data.initializer) {
-                        auto_value = val + 1.0;
-                    } else {
-                        // Non-numeric initializer breaks auto-increment
-                        return None;
-                    }
+                    // Non-numeric initializer breaks auto-increment.
+                    let val = self.evaluate_constant_expression(member_data.initializer)?;
+                    auto_value = val + 1.0;
                 } else {
                     auto_value += 1.0;
                 }

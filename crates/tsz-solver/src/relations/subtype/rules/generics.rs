@@ -1691,7 +1691,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 if let Some(LiteralValue::String(name)) = literal_value(self.interner, remapped) {
                     vec![name]
-                } else if let Some(list_id) = union_list_id(self.interner, remapped) {
+                } else {
+                    let list_id = union_list_id(self.interner, remapped)?;
                     let members = self.interner.type_list(list_id);
                     let mut names = Vec::with_capacity(members.len());
                     for &member in members.iter() {
@@ -1705,8 +1706,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         return None;
                     }
                     names
-                } else {
-                    return None;
                 }
             } else {
                 vec![key_name]
