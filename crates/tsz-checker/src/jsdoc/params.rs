@@ -2182,9 +2182,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             // @returns {type} or @return {type}
-            if let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
+            if let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed)
                 && rest.trim().starts_with('{')
             {
                 return true;
@@ -2196,7 +2194,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             // @template T
-            if trimmed.starts_with("@template") {
+            if Self::jsdoc_line_starts_with_tag(trimmed, "template") {
                 return true;
             }
         }
@@ -2489,7 +2487,7 @@ impl<'a> CheckerState<'a> {
         let mut out = Vec::new();
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed.strip_prefix("@template") else {
+            let Some(rest) = Self::strip_jsdoc_tag_prefix(trimmed, "template") else {
                 continue;
             };
             // Track whether `const` modifier was seen on this @template line.
@@ -2596,7 +2594,9 @@ impl<'a> CheckerState<'a> {
         let comment_range = &source_text[comment_pos as usize..comment_end as usize];
 
         let mut scan_start = 0usize;
-        while let Some(template_offset) = comment_range[scan_start..].find("@template") {
+        while let Some(template_offset) =
+            Self::jsdoc_tag_offset(&comment_range[scan_start..], "template")
+        {
             let template_start = scan_start + template_offset;
             let rest = &comment_range[template_start + "@template".len()..];
             let trimmed = rest.trim_start();
@@ -2683,10 +2683,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_returns_type_name(jsdoc: &str) -> Option<String> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
-            else {
+            let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed) else {
                 continue;
             };
             let rest = rest.trim_start();
@@ -2711,10 +2708,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_returns_type_expression(jsdoc: &str) -> Option<String> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
-            else {
+            let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed) else {
                 continue;
             };
             let rest = rest.trim_start();
@@ -2741,10 +2735,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(bool, String, Option<String>)> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
-            else {
+            let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed) else {
                 continue;
             };
             let rest = rest.trim_start();

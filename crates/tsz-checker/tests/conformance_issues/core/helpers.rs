@@ -1187,6 +1187,8 @@ fn test_variance_annotations_require_direct_supported_type_alias_bodies() {
         r#"
 type NumericConstraint<Value extends number> = Value;
 type VarianceConstrainedNumber<in out Value extends number> = NumericConstraint<Value>;
+type T12<out T, out K extends keyof T> = T[K];
+type T21<in out in T> = T;
 
 type VarianceFunction<in out Value> = (value: Value) => Value;
 "#,
@@ -1199,8 +1201,15 @@ type VarianceFunction<in out Value> = (value: Value) => Value;
 
     let ts2637_count = diagnostics.iter().filter(|(code, _)| *code == 2637).count();
     assert_eq!(
-        ts2637_count, 1,
-        "Expected exactly one TS2637 for unsupported variance alias bodies, got: {diagnostics:?}"
+        ts2637_count, 4,
+        "Expected one TS2637 per annotated parameter on unsupported variance alias bodies, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2636
+                && (message.contains("T12<") || message.contains("VarianceConstrainedNumber<"))
+        }),
+        "Unsupported alias bodies should not also run TS2636 variance validation, got: {diagnostics:?}"
     );
 }
 

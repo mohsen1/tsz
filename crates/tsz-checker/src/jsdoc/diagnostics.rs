@@ -1118,13 +1118,9 @@ impl<'a> CheckerState<'a> {
                     .trim_start()
                     .trim_start_matches('*')
                     .trim_start();
-                let is_return_tag = line.starts_with("@return ")
-                    || line.starts_with("@return\t")
-                    || line.starts_with("@return{")
-                    || line.starts_with("@returns ")
-                    || line.starts_with("@returns\t")
-                    || line.starts_with("@returns{");
-                if !is_return_tag {
+                let is_param_tag = Self::strip_jsdoc_tag_prefix(line, "param").is_some();
+                let is_return_tag = Self::strip_jsdoc_return_tag_prefix(line).is_some();
+                if !is_param_tag && !is_return_tag {
                     continue;
                 }
                 let simple_expr = type_expr
@@ -1135,6 +1131,10 @@ impl<'a> CheckerState<'a> {
                 if self
                     .resolve_jsdoc_implicit_any_builtin_type(simple_expr)
                     .is_some()
+                    || crate::types_domain::queries::lib_resolution::keyword_name_to_type_id(
+                        simple_expr,
+                    )
+                    .is_some()
                     || self.source_file_declares_jsdoc_template(simple_expr)
                     || Self::parse_jsdoc_typedefs(&source_text)
                         .iter()
@@ -1144,12 +1144,11 @@ impl<'a> CheckerState<'a> {
                 }
                 let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
                 self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
-                let unresolved_return_type =
-                    self.resolve_jsdoc_type_str(simple_expr).is_none_or(|ty| {
-                        ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
-                    });
+                let unresolved_type = self.resolve_jsdoc_type_str(simple_expr).is_none_or(|ty| {
+                    ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
+                });
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
-                if Self::is_simple_type_name(simple_expr) && unresolved_return_type {
+                if Self::is_simple_type_name(simple_expr) && unresolved_type {
                     self.emit_jsdoc_cannot_find_name(
                         simple_expr,
                         comment.pos,
@@ -2239,15 +2238,8 @@ impl<'a> CheckerState<'a> {
         for raw_line in comment_text.split_inclusive('\n') {
             let line = raw_line.trim_end_matches('\n').trim_end_matches('\r');
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let is_param_or_return = trimmed.starts_with("@param ")
-                || trimmed.starts_with("@param\t")
-                || trimmed.starts_with("@param{")
-                || trimmed.starts_with("@returns ")
-                || trimmed.starts_with("@returns\t")
-                || trimmed.starts_with("@returns{")
-                || trimmed.starts_with("@return ")
-                || trimmed.starts_with("@return\t")
-                || trimmed.starts_with("@return{");
+            let is_param_or_return = Self::strip_jsdoc_tag_prefix(trimmed, "param").is_some()
+                || Self::strip_jsdoc_return_tag_prefix(trimmed).is_some();
             if is_param_or_return && let Some(open_pos_in_line) = line.find('{') {
                 let after_open = &line[open_pos_in_line + 1..];
                 if let Some(close_rel) = after_open.find('}') {

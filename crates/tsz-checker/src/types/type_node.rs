@@ -5,7 +5,6 @@
 //!
 //! It follows the "Check Fast, Explain Slow" pattern where we first
 //! resolve types, then use the solver to explain any failures.
-
 use super::queries::lib_resolution::keyword_syntax_to_type_id;
 use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
@@ -33,7 +32,6 @@ pub struct TypeNodeChecker<'a, 'ctx> {
 }
 
 pub(super) type TypeLiteralSignatureScopeUpdates = Vec<(String, Option<TypeId>)>;
-
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Create a new type node checker with a mutable context reference.
     pub const fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
@@ -180,18 +178,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
-    // =========================================================================
-    // Type Reference Resolution
-    // =========================================================================
-
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
     fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
         self.lower_with_resolvers(idx, false, true)
     }
-
-    // =========================================================================
-    // Composite Type Resolution
-    // =========================================================================
 
     /// Get type from a union type node (A | B).
     ///
@@ -604,10 +594,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         false
     }
-
-    // =========================================================================
-    // Function and Callable Types
-    // =========================================================================
 
     /// Get type from a function type node (e.g., () => number, (x: string) => void).
     fn get_type_from_function_type(&mut self, idx: NodeIndex) -> TypeId {
@@ -1379,16 +1365,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         factory.object(properties)
     }
 
-    // =========================================================================
-    // Symbol Resolution Helpers
-    // =========================================================================
-
     /// Resolve a type symbol from a node index.
-    ///
     /// Looks up the identifier in `file_locals` and `lib_contexts` for symbols with
     /// TYPE, `REGULAR_ENUM`, or `CONST_ENUM` flags. Returns the raw symbol ID (u32).
-    /// Skips compiler-managed types (Array, ReadonlyArray, etc.) that `TypeLowering`
-    /// handles specially.
+    /// Skips unshadowed compiler-managed types handled specially by `TypeLowering`.
     pub(crate) fn resolve_type_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
@@ -1397,7 +1377,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let ident = self.ctx.arena.get_identifier_at(node_idx)?;
         let name = ident.escaped_text.as_str();
 
-        if is_compiler_managed_type(name) {
+        if is_compiler_managed_type(name) && !self.ctx.file_local_type_shadow_for_lib_name(name) {
             return None;
         }
 
@@ -1656,10 +1636,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         None
     }
 
-    // =========================================================================
-    // Helper Methods
-    // =========================================================================
-
     /// Extract parameter information from a signature.
     fn extract_params_from_signature(
         &mut self,
@@ -1912,23 +1888,79 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
                 return false;
             }
-
             let Some(var_decl) = arena.get_variable_declaration(node) else {
                 return false;
             };
-
             (var_decl.type_annotation.is_some()
                 && is_unique_symbol_type_annotation(arena, var_decl.type_annotation))
                 || is_symbol_call_initializer(arena, var_decl.initializer)
         })
     }
 
-    /// Get the context reference (for read-only access).
-    pub const fn context(&self) -> &CheckerContext<'ctx> {
-        self.ctx
+    fn is_unique_symbol_type_annotation_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        let Some(type_node) = arena.get(type_annotation) else {
+            return false;
+        };
+
+        match type_node.kind {
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                arena.get_type_operator(type_node).is_some_and(|op| {
+                    op.operator == SyntaxKind::UniqueKeyword as u16
+                        && self.is_symbol_type_node_in_arena(arena, op.type_node)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn is_symbol_type_node_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        let Some(type_node) = arena.get(type_annotation) else {
+            return false;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+
+        let Some(type_ref) = arena.get_type_ref(type_node) else {
+            return false;
+        };
+
+        let Some(name_node) = arena.get(type_ref.type_name) else {
+            return false;
+        };
+
+        arena
+            .get_identifier(name_node)
+            .is_some_and(|ident| ident.escaped_text == "symbol")
+    }
+
+    fn is_symbol_call_initializer_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        init_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(init_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+
+        arena
+            .get_call_expr(node)
+            .and_then(|call| arena.get(call.expression))
+            .and_then(|expr_node| arena.get_identifier(expr_node))
+            .is_some_and(|ident| ident.escaped_text == "Symbol")
     }
 }
-
 #[cfg(test)]
 #[path = "../../tests/type_node.rs"]
 mod tests;
