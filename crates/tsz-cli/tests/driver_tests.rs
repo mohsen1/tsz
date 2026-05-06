@@ -15854,6 +15854,67 @@ const Frozen = Object.freeze({ A: 1 });
 }
 
 #[test]
+fn compile_jsdoc_arg_aliases_type_checked_js_parameters() {
+    for tag in ["arg", "argument"] {
+        let temp = TempDir::new().expect("temp dir");
+        let base = &temp.path;
+
+        write_file(
+            &base.join("tsconfig.json"),
+            r#"{
+              "compilerOptions": {
+                "target": "es2020",
+                "allowJs": true,
+                "checkJs": true,
+                "strict": true,
+                "noEmit": true,
+                "types": []
+              },
+              "files": ["index.js"]
+            }"#,
+        );
+        write_file(
+            &base.join("index.js"),
+            &format!(
+                r#"// @ts-check
+/**
+ * @{tag} {{number}} x
+ */
+function f(x) {{
+  x.toFixed();
+  x.toUpperCase();
+}}
+
+f("s");
+"#
+            ),
+        );
+
+        let args = default_args();
+        let result = compile(&args, base).expect("compile should succeed");
+        let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+        assert!(
+            !codes.contains(&diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+            "@{tag} should suppress implicit-any for the annotated parameter, got diagnostics: {:?}",
+            result.diagnostics
+        );
+        assert!(
+            codes.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+            "@{tag} should type x as number and reject toUpperCase, got diagnostics: {:?}",
+            result.diagnostics
+        );
+        assert!(
+            codes.contains(
+                &diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            ),
+            "@{tag} should type the function parameter as number at call sites, got diagnostics: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
