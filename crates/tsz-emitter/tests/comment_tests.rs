@@ -114,6 +114,41 @@ fn object_literal_property_comments_stay_around_function_value() {
 }
 
 #[test]
+fn es5_namespace_comments_stay_on_parameters_and_iife_tails() {
+    let source = r#"namespace m1 {
+    export function foo2Export(/**hm*/ a: string) {
+    }
+}
+namespace m2.m3 {
+    export class c {
+    }
+} /* trailing dotted module comment*/
+namespace m4.m5.m6 {
+    export namespace m7 {
+        export class c {
+        }
+    } /* trailing inner module */ /* multiple comments*/
+}"#;
+
+    let output = parse_and_print_with_opts(source, PrintOptions::es5());
+
+    assert!(
+        output.contains("function foo2Export(/**hm*/ a)"),
+        "Namespace function parameter comments should survive ES5 namespace lowering.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("})(m2 || (m2 = {})); /* trailing dotted module comment*/"),
+        "Dotted namespace trailing comments should stay on the outer IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "})(m7 = m6.m7 || (m6.m7 = {})); /* trailing inner module */ /* multiple comments*/"
+        ),
+        "Nested namespace trailing comments should stay on the nested IIFE tail.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn typed_parameter_line_comment_before_close_paren_stays_in_parameter_list() {
     let source = "function blah3(a: string // trailing commen single line\n    ) {}";
 

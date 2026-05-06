@@ -11,7 +11,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 impl<'a> CheckerState<'a> {
-    fn collect_untyped_this_references_in_function_body(
+    pub(crate) fn collect_untyped_this_references_in_function_body(
         &self,
         node_idx: NodeIndex,
         refs: &mut Vec<NodeIndex>,
