@@ -3349,14 +3349,17 @@ fn compile_with_declaration_map_emits_map_outputs() {
         .and_then(|value| value.as_str())
         .unwrap_or("__missing__");
     assert_eq!(source_root, "");
-    let sources_content = map_json
-        .get("sourcesContent")
-        .and_then(|value| value.as_array())
-        .expect("expected sourcesContent");
-    assert_eq!(sources_content.len(), 1);
     assert_eq!(
-        sources_content[0].as_str().unwrap_or(""),
-        "export const value = 1;"
+        map_json
+            .get("sources")
+            .and_then(|value| value.as_array())
+            .and_then(|sources| sources.first())
+            .and_then(|source| source.as_str()),
+        Some("../../src/index.ts")
+    );
+    assert!(
+        map_json.get("sourcesContent").is_none(),
+        "declaration maps should not embed source text: {map_json:?}"
     );
     let mappings = map_json
         .get("mappings")
