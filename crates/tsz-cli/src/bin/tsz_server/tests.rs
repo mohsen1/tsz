@@ -1636,10 +1636,7 @@ fn test_quickinfo_member_call_property_at_member_start() {
         body["displayString"].as_str().unwrap_or(""),
         "(property) I.m: () => void"
     );
-    assert_eq!(
-        body["documentation"],
-        serde_json::json!([{"kind": "text", "text": "Doc"}])
-    );
+    assert_eq!(body["documentation"], serde_json::json!("Doc"));
 
     let req_at_member = make_request(
         "quickinfo",
@@ -1654,10 +1651,36 @@ fn test_quickinfo_member_call_property_at_member_start() {
         body_at_member["displayString"].as_str().unwrap_or(""),
         "(property) I.m: () => void"
     );
-    assert_eq!(
-        body_at_member["documentation"],
-        serde_json::json!([{"kind": "text", "text": "Doc"}])
+    assert_eq!(body_at_member["documentation"], serde_json::json!("Doc"));
+}
+
+#[test]
+fn test_quickinfo_documentation_is_protocol_string() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/test.ts".to_string(),
+        "/** Adds one. */\nfunction f(a: number): string { return String(a + 1); }\nf(1);\nconst n = 1;\nn;\n"
+            .to_string(),
     );
+
+    let documented = server.handle_tsserver_request(make_request(
+        "quickinfo",
+        serde_json::json!({"file": "/test.ts", "line": 3, "offset": 1}),
+    ));
+    assert!(documented.success);
+    let documented_body = documented.body.expect("quickinfo should return a body");
+    assert_eq!(
+        documented_body["documentation"],
+        serde_json::json!("Adds one.")
+    );
+
+    let undocumented = server.handle_tsserver_request(make_request(
+        "quickinfo",
+        serde_json::json!({"file": "/test.ts", "line": 5, "offset": 1}),
+    ));
+    assert!(undocumented.success);
+    let undocumented_body = undocumented.body.expect("quickinfo should return a body");
+    assert_eq!(undocumented_body["documentation"], serde_json::json!(""));
 }
 
 #[test]
