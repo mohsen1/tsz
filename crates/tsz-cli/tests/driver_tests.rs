@@ -14960,6 +14960,65 @@ fn ts2688_resolved_types_no_error() {
 }
 
 #[test]
+fn tsconfig_types_resolves_node_modules_package_subpath_declaration() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": false,
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "target": "es2022",
+            "types": ["vite/client"],
+            "noEmit": true
+          },
+          "files": ["src/main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/vite/package.json"),
+        r#"{ "name": "vite", "version": "1.0.0" }"#,
+    );
+    write_file(
+        &base.join("node_modules/vite/client.d.ts"),
+        r#"declare module "*.css" {}
+declare module "*.svg" {
+  const src: string;
+  export default src;
+}
+declare module "*.png" {
+  const src: string;
+  export default src;
+}
+"#,
+    );
+    write_file(
+        &base.join("src/main.ts"),
+        r#"import "./style.css";
+import viteLogo from "./assets/vite.svg";
+import heroImg from "./assets/hero.png";
+
+viteLogo;
+heroImg;
+"#,
+    );
+    write_file(&base.join("src/style.css"), "");
+    write_file(&base.join("src/assets/vite.svg"), "<svg></svg>");
+    write_file(&base.join("src/assets/hero.png"), "");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected vite/client type subpath and asset modules to resolve, got: {result:?}"
+    );
+}
+
+#[test]
 fn ts2688_types_entry_still_loads_node_modules_package_globals() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
