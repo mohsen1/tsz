@@ -13455,6 +13455,54 @@ export const value = f(...s);
 }
 
 #[test]
+fn compile_es5_array_spread_packs_sparse_spread_segments() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "outDir": "dist",
+            "lib": ["es2015"],
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["src/arrays.ts"]
+        }"#,
+    );
+
+    write_file(
+        &base.join("src/arrays.ts"),
+        r#"
+const xs = Array(2);
+export const leading = [...xs, 4];
+export const middle = [1, ...xs, 4];
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Should compile without errors: {:?}",
+        result.diagnostics
+    );
+
+    let js = std::fs::read_to_string(base.join("dist/src/arrays.js")).expect("read js");
+    assert!(
+        js.contains("__spreadArray(__spreadArray([], xs, true), [4], false)"),
+        "leading sparse spread should pack holes before appending literals:\n{js}"
+    );
+    assert!(
+        js.contains("__spreadArray(__spreadArray([1], xs, true), [4], false)"),
+        "middle sparse spread should pack holes between literal segments:\n{js}"
+    );
+}
+
+#[test]
 fn compile_object_spread() {
     // Test object spread operator compilation
     let temp = TempDir::new().expect("temp dir");
