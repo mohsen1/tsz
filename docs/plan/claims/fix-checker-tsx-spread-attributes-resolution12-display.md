@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/checker-tsx-spread-attributes-resolution12-display`
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/3518
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
