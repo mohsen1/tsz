@@ -641,14 +641,14 @@ export class C {
 "#,
     );
 
-    // tsc emits computed methods as method signatures, not property signatures.
+    // tsc emits late-bound computed methods as property-valued function types.
     assert!(
-        output.contains("[key](): string;"),
-        "Expected computed method to use method syntax (matching tsc): {output}"
+        output.contains("[key]: () => string;"),
+        "Expected computed method to use property syntax (matching tsc): {output}"
     );
     assert!(
-        !output.contains("[key]: () => string;"),
-        "Did not expect property signature for computed method: {output}"
+        !output.contains("[key](): string;"),
+        "Did not expect method signature for late-bound computed method: {output}"
     );
     assert!(
         output.contains("regular(): number;"),

@@ -1052,7 +1052,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
-        for &member_idx in &class.members.nodes {
+        for member_idx in self.class_member_emit_order(&class.members) {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(mn) = self.arena.get(member_idx) {
@@ -1515,7 +1515,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
-        for &member_idx in &class.members.nodes {
+        for member_idx in self.class_member_emit_order(&class.members) {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(member_node) = self.arena.get(member_idx) {

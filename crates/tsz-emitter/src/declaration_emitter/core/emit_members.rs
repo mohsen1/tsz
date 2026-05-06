@@ -104,26 +104,23 @@ impl<'a> DeclarationEmitter<'a> {
             .get(method.name)
             .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
 
+        let resolved_computed_name = self.resolved_computed_property_name_text(method.name);
+        let computed_key_type = self
+            .arena
+            .get(method.name)
+            .and_then(|node| self.arena.get_computed_property(node))
+            .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]));
+        let computed_key_requires_property_syntax = computed_key_type.is_none_or(|t| {
+            t == tsz_solver::types::TypeId::ANY
+                || self.type_interner.is_some_and(|interner| {
+                    !tsz_solver::type_queries::is_type_usable_as_property_name(interner, t)
+                })
+        });
         let use_property_syntax = is_computed_name
-            && (method.question_token
-                || self
-                    .arena
-                    .get(method.name)
-                    .and_then(|node| self.arena.get_computed_property(node))
-                    .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
-                    .is_some_and(|t| {
-                        t == tsz_solver::types::TypeId::ANY
-                            || self.type_interner.is_some_and(|interner| {
-                                !tsz_solver::type_queries::is_type_usable_as_property_name(
-                                    interner, t,
-                                )
-                            })
-                    }))
             // If the computed name resolves to a known literal (e.g. const enum member),
-            // keep method syntax — the name is a valid property name in .d.ts
-            && self
-                .resolved_computed_property_name_text(method.name)
-                .is_none();
+            // keep method syntax — the name is a valid property name in .d.ts.
+            && resolved_computed_name.is_none()
+            && (method.question_token || computed_key_requires_property_syntax);
 
         if use_property_syntax {
             self.write(": ");
@@ -332,9 +329,10 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(type_text) =
                         self.function_body_preferred_return_type_text(method_body)
                 {
-                    self.write(&type_text);
+                    self.write_type_text_with_current_indent(&type_text);
                 } else {
-                    self.write(&self.print_type_id(return_type_id));
+                    let type_text = self.print_type_id(return_type_id);
+                    self.write_type_text_with_current_indent(&type_text);
                 }
             } else if let Some(method_type_id) = method_type_id {
                 if method_type_id == tsz_solver::types::TypeId::ANY
@@ -346,9 +344,10 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(type_text) =
                         self.function_body_preferred_return_type_text(method_body)
                 {
-                    self.write(&type_text);
+                    self.write_type_text_with_current_indent(&type_text);
                 } else {
-                    self.write(&self.print_type_id(method_type_id));
+                    let type_text = self.print_type_id(method_type_id);
+                    self.write_type_text_with_current_indent(&type_text);
                 }
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
@@ -356,7 +355,7 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(type_text) =
                     self.function_body_preferred_return_type_text(method_body)
                 {
-                    self.write(&type_text);
+                    self.write_type_text_with_current_indent(&type_text);
                 } else if !self.source_is_declaration_file {
                     self.write("any");
                 }
@@ -369,12 +368,30 @@ impl<'a> DeclarationEmitter<'a> {
             } else if let Some(type_text) =
                 self.function_body_preferred_return_type_text(method_body)
             {
-                self.write(&type_text);
+                self.write_type_text_with_current_indent(&type_text);
             } else if !self.source_is_declaration_file {
                 self.write("any");
             }
         } else if !self.source_is_declaration_file {
             self.write("any");
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn write_type_text_with_current_indent(
+        &mut self,
+        text: &str,
+    ) {
+        let mut lines = text.lines();
+        let Some(first) = lines.next() else {
+            return;
+        };
+
+        self.write(first);
+        let continuation_indent = "    ".repeat(self.indent_level as usize);
+        for line in lines {
+            self.write_line();
+            self.write(&continuation_indent);
+            self.write(line);
         }
     }
 
