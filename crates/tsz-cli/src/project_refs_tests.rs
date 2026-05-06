@@ -230,6 +230,60 @@ fn test_validate_composite_from_compiler_options() {
 }
 
 #[test]
+fn test_referenced_project_inherits_composite_from_extends() {
+    let temp = TempDir::new().expect("temp dir creation should succeed in test");
+    let root = temp.path();
+
+    std::fs::write(
+        root.join("tsconfig.base.json"),
+        r#"{
+            "compilerOptions": {
+                "composite": true,
+                "declaration": true
+            }
+        }"#,
+    )
+    .expect("base config should be written");
+
+    let pkg = root.join("pkg");
+    std::fs::create_dir_all(&pkg).expect("referenced project dir should be created");
+    std::fs::write(
+        pkg.join("tsconfig.json"),
+        r#"{
+            "extends": "../tsconfig.base.json",
+            "files": ["index.ts"]
+        }"#,
+    )
+    .expect("referenced config should be written");
+    std::fs::write(pkg.join("index.ts"), "export const value = 1;\n")
+        .expect("referenced source should be written");
+
+    let root_config = create_test_project(
+        root,
+        r#"{
+            "files": [],
+            "references": [{ "path": "./pkg" }]
+        }"#,
+    );
+
+    let graph = ProjectReferenceGraph::load(&root_config).unwrap();
+    let referenced = graph
+        .projects()
+        .iter()
+        .find(|project| project.config_path.ends_with("pkg/tsconfig.json"))
+        .expect("referenced project should be loaded");
+    assert!(
+        referenced.is_composite,
+        "referenced project should inherit composite:true from its base config"
+    );
+    let diagnostics = graph.validate();
+    assert!(
+        !diagnostics.iter().any(|diag| diag.code == 6306),
+        "inherited composite:true should satisfy TS6306 validation, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_non_composite_project() {
     let temp = TempDir::new().expect("temp dir creation should succeed in test");
     let config_path = create_test_project(
