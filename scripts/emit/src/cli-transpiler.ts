@@ -434,6 +434,11 @@ export class CliTranspiler {
       // Build args array (no shell parsing needed with execFile)
       const args: string[] = [];
       if (declaration) args.push('--declaration');
+      // The emit harness stages embedded @filename tsconfig.json files next to
+      // explicit command-line inputs. That mirrors tsc baseline fixtures, but
+      // the CLI intentionally rejects "files + discovered tsconfig" unless
+      // --ignoreConfig is set.
+      if (inputFiles.length > 0) args.push('--ignoreConfig');
       // Skip type checking and lib loading for JS-only emit -- the emitter
       // only needs syntax. Type checking accounts for ~77% of per-test time
       // and lib loading accounts for another ~50% of the remainder.
@@ -536,6 +541,7 @@ export class CliTranspiler {
           }
         } else {
           const retryArgs = ['--declaration', '--noCheck', '--noLib'];
+          if (inputFiles.length > 0) retryArgs.push('--ignoreConfig');
           appendCompilerOptionFlags(retryArgs, {
             alwaysStrict,
             sourceMap,
