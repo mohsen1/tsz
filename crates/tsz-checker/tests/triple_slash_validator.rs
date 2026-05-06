@@ -152,6 +152,22 @@ fn test_validate_extensionless_references() {
 }
 
 #[test]
+fn validate_reference_path_rejects_empty_path() {
+    use std::fs;
+
+    let temp_dir = std::env::temp_dir().join("tsz_test_empty_ref_path");
+    let _ = fs::create_dir_all(&temp_dir);
+    let source_file = temp_dir.join("index.ts");
+
+    assert!(
+        !validate_reference_path(&source_file, ""),
+        "empty reference paths should not resolve to the containing directory"
+    );
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
 fn test_extract_amd_module_names() {
     let source = r#"
 ///<amd-module name="FirstModuleName"/>

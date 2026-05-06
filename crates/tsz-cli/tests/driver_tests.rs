@@ -369,6 +369,51 @@ export const amdCase = 1;
 }
 
 #[test]
+fn compile_empty_triple_slash_reference_path_reports_ts6231() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("index.ts"),
+        "/// <reference path=\"\" />\nexport {};\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::COULD_NOT_RESOLVE_THE_PATH_WITH_THE_EXTENSIONS)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected TS6231 for empty reference path, got: {:?}",
+                result.diagnostics
+            )
+        });
+
+    assert_eq!(diagnostic.start, 21);
+    assert_eq!(diagnostic.length, 0);
+    assert!(
+        diagnostic
+            .message_text
+            .contains(&base.to_string_lossy().as_ref()),
+        "TS6231 should report the containing directory for an empty path: {}",
+        diagnostic.message_text
+    );
+}
+
+#[test]
 fn compile_source_reference_lib_unknown_name_reports_ts2726() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
