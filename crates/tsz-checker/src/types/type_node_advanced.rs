@@ -696,36 +696,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         indexed_access_node: &Node,
         index_type_idx: NodeIndex,
     ) -> (u32, u32) {
-        let fallback = self
-            .index_type_node_fallback_span(index_type_idx)
+        // The index type node's own AST span anchors the diagnostic. The
+        // fallback handles the trailing-`]` case (e.g. `any[[]]` where the
+        // index type's own text is `[]` and we want to anchor at the opening
+        // `[`). No textual outer-bracket search — that would mis-resolve
+        // when the object side uses `[]` array notation, e.g.
+        // `string[][boolean]` whose first `[` belongs to the array, or
+        // `any[[]]` whose last `[` belongs to the inner tuple.
+        self.index_type_node_fallback_span(index_type_idx)
             .unwrap_or((
                 indexed_access_node.pos,
                 indexed_access_node.end - indexed_access_node.pos,
-            ));
-
-        let Some(source_file) = self.ctx.arena.source_files.first() else {
-            return fallback;
-        };
-        let source = source_file.text.as_ref();
-        let start = indexed_access_node.pos as usize;
-        let end = indexed_access_node.end as usize;
-        let Some(text) = source.get(start..end) else {
-            return fallback;
-        };
-        let Some(open_bracket) = text.rfind('[') else {
-            return fallback;
-        };
-        let close_bracket = text.rfind(']').unwrap_or(text.len());
-        if close_bracket <= open_bracket + 1 {
-            return fallback;
-        }
-
-        let inner = &text[open_bracket + 1..close_bracket];
-        let leading_ws = inner.len() - inner.trim_start().len();
-        let trailing_ws = inner.len() - inner.trim_end().len();
-        let pos = start + open_bracket + 1 + leading_ws;
-        let len = inner.len().saturating_sub(leading_ws + trailing_ws).max(1);
-        (pos as u32, len as u32)
+            ))
     }
 
     fn index_type_node_fallback_span(&self, index_type_idx: NodeIndex) -> Option<(u32, u32)> {
