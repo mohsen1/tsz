@@ -1362,6 +1362,11 @@ impl<'a> Printer<'a> {
 
                 // Emit leading comments before the parameter (e.g., inline JSDoc
                 // comments like `/** comment */ a`). tsc preserves these in JS output.
+                if self.pending_parameter_leading_comment_starts_line(param_node.pos)
+                    && !self.writer.is_at_line_start()
+                {
+                    self.write_line();
+                }
                 self.emit_comments_before_pos(param_node.pos);
 
                 // ES2018 object rest lowering: replace destructuring param with a temp
@@ -1468,7 +1473,9 @@ impl<'a> Printer<'a> {
                     // like /*2*/ that should be preserved in the output.
                     self.skip_comments_in_range(type_node.pos, delimiter_pos);
                     // Emit trailing comments between erased type and delimiter
-                    if self.has_pending_comment_before(delimiter_pos) {
+                    if self.has_pending_comment_before(delimiter_pos)
+                        && !self.pending_parameter_leading_comment_starts_line(delimiter_pos)
+                    {
                         self.write(" ");
                         self.emit_comments_before_pos(delimiter_pos);
                         self.pending_block_comment_space = false;
@@ -1550,6 +1557,16 @@ impl<'a> Printer<'a> {
         // scanning from name_node.end would place these comments INSIDE the
         // parameter list. The caller (statement-level comment emission) handles
         // trailing comments after the whole function declaration.
+    }
+
+    fn pending_parameter_leading_comment_starts_line(&self, pos: u32) -> bool {
+        if self.ctx.options.remove_comments || self.comment_emit_idx >= self.all_comments.len() {
+            return false;
+        }
+
+        let actual_start = self.skip_trivia_forward(pos, pos + 1024);
+        let comment = &self.all_comments[self.comment_emit_idx];
+        comment.end <= actual_start && comment.has_trailing_new_line
     }
 
     pub(in crate::emitter) fn register_pending_function_body_parameters(&mut self) {
@@ -2176,6 +2193,32 @@ mod tests {
         assert!(
             output.contains("constructor(...public, rest)"),
             "Malformed rest parameter should preserve the recovered parameter.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn parameter_leading_jsdoc_preserves_multiline_parameter_list_shape() {
+        let source = r"class Type {
+  constructor(
+    /** a unique name for this codec */
+    readonly name: string,
+    /** a custom type guard */
+    readonly is: boolean
+  ) {}
+}";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(
+                "constructor(\n    /** a unique name for this codec */\n    name, \n    /** a custom type guard */\n    is)"
+            ),
+            "Parameter JSDoc should keep the multiline parameter-list shape.\nOutput:\n{output}"
         );
     }
 

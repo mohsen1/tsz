@@ -341,3 +341,23 @@ fn jsdoc_legacy_function_type_with_new_marker_is_parsed_as_constructor() {
         "JSDoc `function(new: R, A)` should only emit TS8020, got {unexpected:?}"
     );
 }
+
+#[test]
+fn jsdoc_legacy_constructor_function_suffix_does_not_cascade() {
+    // `function(new: R): T` is still legacy JSDoc syntax. The `new:` marker
+    // already supplies the constructor return type, so the trailing `: T`
+    // should be consumed for recovery but not leak into the outer declaration.
+    let source = "var c: function(new: number): string;";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 8020),
+        "Expected TS8020 for JSDoc legacy constructor function type, got {diagnostics:?}"
+    );
+    let unexpected: Vec<_> = diagnostics.iter().filter(|d| d.code != 8020).collect();
+    assert!(
+        unexpected.is_empty(),
+        "JSDoc `function(new: R): T` should only emit TS8020, got {unexpected:?}"
+    );
+}

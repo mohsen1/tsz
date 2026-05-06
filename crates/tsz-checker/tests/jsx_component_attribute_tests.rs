@@ -5304,14 +5304,12 @@ fn jsx_react_multiple_render_prop_children_ts2322_message_preserves_react_child_
     let source = format!(
         r#"
 {JSX_PREAMBLE}
+interface Array<T> {{ length: number; [n: number]: T; }}
 declare namespace React {{
     type ReactText = string | number;
     interface ReactElement<P> {{ props: P; }}
     type ReactChild = ReactElement<any> | ReactText;
-    interface ReactNodeArray {{
-        [n: number]: ReactChild | ReactNodeArray | boolean;
-    }}
-    type ReactFragment = {{}} | ReactNodeArray;
+    type ReactFragment = {{}} | Array<ReactChild | any[] | boolean>;
     type ReactNode = ReactChild | ReactFragment | boolean;
     class Component<P, S> {{
         props: P & {{ children?: ReactNode }};
@@ -5342,6 +5340,14 @@ let err =
         "Expected TS2322 for function children not assignable to ReactNode child type, got: {diags:?}"
     );
     for (_, msg) in &ts2322 {
+        assert!(
+            msg.contains("boolean | any[] | ReactChild"),
+            "TS2322 target type message should match tsc's ReactNode child union order. Got: {msg:?}"
+        );
+        assert!(
+            !msg.contains("ReactChild | any[] | boolean"),
+            "TS2322 target type message should not use construction-order ReactNode child display. Got: {msg:?}"
+        );
         assert!(
             msg.contains("ReactChild"),
             "TS2322 target type message should preserve the ReactChild alias, \
