@@ -914,7 +914,11 @@ pub(super) fn read_source_files(
                     let direct_reference = base_dir.join(&reference_path);
                     candidates.push(direct_reference);
                     if !reference_path.contains('.') {
-                        for ext in [".ts", ".tsx", ".d.ts"] {
+                        for ext in
+                            tsz::checker::triple_slash_validator::reference_path_probe_extensions(
+                                options.allow_js,
+                            )
+                        {
                             candidates.push(base_dir.join(format!("{reference_path}{ext}")));
                         }
                     }

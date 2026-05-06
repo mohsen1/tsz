@@ -101,55 +101,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn recover_unique_program_interface_member_type(&mut self, prop_name: &str) -> Option<TypeId> {
-        let all_arenas = self.ctx.all_arenas.as_ref()?.clone();
-        let mut recovered = None;
-
-        for arena in all_arenas.iter() {
-            for raw_idx in 0..arena.len() {
-                let member_idx = NodeIndex(raw_idx as u32);
-                if Self::simple_member_name_in_arena(arena.as_ref(), member_idx).as_deref()
-                    != Some(prop_name)
-                {
-                    continue;
-                }
-                let Some(parent_idx) = arena.get_extended(member_idx).map(|ext| ext.parent) else {
-                    continue;
-                };
-                if !arena
-                    .get(parent_idx)
-                    .and_then(|node| arena.get_interface(node))
-                    .is_some()
-                {
-                    continue;
-                }
-
-                let member_type = if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
-                    self.get_type_of_interface_member_simple(member_idx)
-                } else {
-                    self.delegate_cross_arena_interface_member_simple_type(
-                        parent_idx,
-                        member_idx,
-                        arena.as_ref(),
-                        None,
-                    )?
-                };
-
-                if member_type == TypeId::ANY
-                    || member_type == TypeId::UNKNOWN
-                    || member_type == TypeId::ERROR
-                {
-                    continue;
-                }
-                if recovered.replace(member_type).is_some() {
-                    return None;
-                }
-            }
-        }
-
-        recovered
-    }
-
     fn mapped_constraint_accepts_property_name(&self, constraint: TypeId, prop_name: &str) -> bool {
         use crate::query_boundaries::{assignability, common, property_access};
 
@@ -385,9 +336,8 @@ impl<'a> CheckerState<'a> {
                 from_index_signature: false,
                 ..
             }
-        ) && let Some(member_type) = self
-            .recover_lazy_interface_member_type(original_object_type, prop_name)
-            .or_else(|| self.recover_unique_program_interface_member_type(prop_name))
+        ) && let Some(member_type) =
+            self.recover_lazy_interface_member_type(original_object_type, prop_name)
         {
             result = tsz_solver::operations::property::PropertyAccessResult::Success {
                 type_id: member_type,
