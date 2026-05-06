@@ -924,9 +924,11 @@ impl<'a> Printer<'a> {
         let Ok(line) = std::str::from_utf8(&bytes[start..line_end]) else {
             return;
         };
+        let masked_line = Self::source_text_with_quoted_spans_masked(line);
+        let line_for_scan = masked_line.as_str();
 
-        if line.contains("= @") && line.contains("=>") {
-            let Some(arrow_rel) = line.find("=>") else {
+        if line_for_scan.contains("= @") && line_for_scan.contains("=>") {
+            let Some(arrow_rel) = line_for_scan.find("=>") else {
                 return;
             };
             let after_arrow = start + arrow_rel + 2;
@@ -958,7 +960,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let Some(arrow_rel) = line.find("): =>").or_else(|| line.find("):=>")) else {
+        let Some(arrow_rel) = line_for_scan
+            .find("): =>")
+            .or_else(|| line_for_scan.find("):=>"))
+        else {
             return;
         };
 
@@ -1004,11 +1009,11 @@ impl<'a> Printer<'a> {
         if start >= end {
             return;
         }
-        let segment = &text[start..end];
-        let Some(typeof_rel) = segment.find(".typeof(") else {
+        let Some(typeof_pos) = self.find_source_pattern_outside_quoted_text(start, end, ".typeof(")
+        else {
             return;
         };
-        let open = start + typeof_rel + ".typeof".len();
+        let open = typeof_pos + ".typeof".len();
         let Some(close) = self.find_matching_source_paren(open, end) else {
             return;
         };
@@ -1021,6 +1026,30 @@ impl<'a> Printer<'a> {
         self.write("typeof (");
         self.write(argument);
         self.write(");");
+    }
+
+    fn find_source_pattern_outside_quoted_text(
+        &self,
+        start: usize,
+        limit: usize,
+        pattern: &str,
+    ) -> Option<usize> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let pattern = pattern.as_bytes();
+        let mut i = start;
+        let limit = limit.min(bytes.len());
+        while i + pattern.len() <= limit {
+            match bytes[i] {
+                b'\'' | b'"' | b'`' => {
+                    i = self.skip_quoted_source_text(i, limit);
+                    continue;
+                }
+                _ if bytes.get(i..i + pattern.len()) == Some(pattern) => return Some(i),
+                _ => i += 1,
+            }
+        }
+        None
     }
 
     fn find_matching_source_paren(&self, open: usize, limit: usize) -> Option<usize> {
@@ -1072,6 +1101,39 @@ impl<'a> Printer<'a> {
         i
     }
 
+    fn source_text_with_quoted_spans_masked(segment: &str) -> String {
+        let mut bytes = segment.as_bytes().to_vec();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[i];
+                    bytes[i] = b' ';
+                    i += 1;
+                    while i < bytes.len() {
+                        if bytes[i] == b'\\' {
+                            bytes[i] = b' ';
+                            if i + 1 < bytes.len() {
+                                bytes[i + 1] = b' ';
+                            }
+                            i = (i + 2).min(bytes.len());
+                            continue;
+                        }
+
+                        let is_end = bytes[i] == quote;
+                        bytes[i] = b' ';
+                        i += 1;
+                        if is_end {
+                            break;
+                        }
+                    }
+                }
+                _ => i += 1,
+            }
+        }
+        String::from_utf8(bytes).unwrap_or_default()
+    }
+
     fn recovered_async_arrow_return_name(&self, node: &Node) -> Option<String> {
         let text = self.source_text?;
         let bytes = text.as_bytes();
@@ -1086,6 +1148,7 @@ impl<'a> Printer<'a> {
         }
 
         let line = std::str::from_utf8(&bytes[start..line_end]).ok()?;
+        let line = Self::source_text_with_quoted_spans_masked(line);
         if !line.contains("async") || !line.contains("= await =>") {
             return None;
         }
@@ -1114,6 +1177,7 @@ impl<'a> Printer<'a> {
         }
 
         let line = std::str::from_utf8(&bytes[start..line_end]).ok()?;
+        let line = Self::source_text_with_quoted_spans_masked(line);
         let equals = line.find('=')?;
         let arrow = line[equals..].find("=>")? + equals;
         let colon = line[equals..arrow].rfind(':')? + equals;
