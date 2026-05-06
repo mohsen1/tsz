@@ -1268,7 +1268,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .copied()
                 .and_then(|var| infer_ctx.get_constraints(var))
                 .is_some_and(|constraints| !constraints.lower_bounds.is_empty());
-            if !appears_in_other_params || !has_covariant_candidates {
+            let should_defer_to_other_param =
+                appears_in_other_params && (has_covariant_candidates || saw_deferred_arg);
+            if !should_defer_to_other_param {
                 self.constrain_types(
                     &mut infer_ctx,
                     &var_map,
