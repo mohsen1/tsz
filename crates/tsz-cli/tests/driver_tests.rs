@@ -369,6 +369,44 @@ export const amdCase = 1;
 }
 
 #[test]
+fn compile_triple_slash_reference_rejects_prefixed_path_attribute() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("extra.d.ts"),
+        r#"declare const extraGlobal: number;
+"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"/// <reference notpath="./extra.d.ts" />
+extraGlobal.toFixed();
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 1084),
+        "Expected TS1084 for invalid reference directive syntax, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_import_elision_ignores_string_and_block_comment_text() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -5363,6 +5401,35 @@ fn compile_resolves_paths_mappings() {
 }
 
 #[test]
+fn cli_base_url_resolves_bare_imports() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        r#"import { value } from "foo";
+
+value.toFixed();
+"#,
+    );
+    write_file(&base.join("src/foo.ts"), "export const value = 1;\n");
+
+    let mut args = default_args();
+    args.base_url = Some(PathBuf::from("src"));
+    args.ignore_deprecations = Some("6.0".to_string());
+    args.no_emit = true;
+    args.strict = true;
+    args.files = vec![PathBuf::from("main.ts")];
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected CLI --baseUrl to resolve bare import, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_paths_wildcard_priority_uses_prefix_length() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -5615,6 +5682,63 @@ fn compile_resolves_node_modules_exports_subpath() {
             .contains("node_modules/pkg/types/feature/widget.d.ts")
     }));
     assert!(!base.join("dist/src/index.js").is_file());
+}
+
+#[test]
+fn compile_cli_node16_resolution_enables_package_json_exports_without_config() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.mts"),
+        "import { mode } from 'pkg';\n\nconst actual: 'cjs' = mode;\n",
+    );
+    write_file(
+        &base.join("node_modules/pkg/package.json"),
+        r#"{
+          "name": "pkg",
+          "exports": {
+            ".": {
+              "import": "./esm.d.ts",
+              "require": "./cjs.d.ts"
+            }
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg/esm.d.ts"),
+        "export const mode: 'esm';",
+    );
+    write_file(
+        &base.join("node_modules/pkg/cjs.d.ts"),
+        "export const mode: 'cjs';",
+    );
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--moduleResolution",
+        "node16",
+        "--module",
+        "node16",
+        "--noEmit",
+        "--strict",
+        "main.mts",
+    ])
+    .expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|diag| diag.code).collect();
+
+    assert!(
+        !codes
+            .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "CLI node16 options should imply package.json exports resolution, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected imports to resolve through the export map to the ESM declaration, got diagnostics: {:?}",
+        result.diagnostics
+    );
 }
 
 #[test]
@@ -13409,6 +13533,124 @@ value.y;
     assert!(
         !codes.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "Invalid JSDoc import syntax should not resolve Foo and report downstream TS2339, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn checked_js_jsdoc_import_string_literal_export_names_resolve() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "types": []
+  },
+  "files": ["index.js", "dep.d.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("dep.d.ts"),
+        r#"export declare const value: number;
+export { value as "a,b" };
+export { value as "as" };
+export { value as "from" };
+"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"// @ts-check
+/** @import { "a,b" as CommaName, "as" as AsName, "from" as FromName } from "./dep" */
+/** @type {CommaName} */
+const a = "x";
+/** @type {AsName} */
+const b = "x";
+/** @type {FromName} */
+const c = "x";
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|diag| diag.code).collect();
+
+    let assignability_count = codes.iter().filter(|&&code| code == 2322).count();
+    assert_eq!(
+        assignability_count, 3,
+        "Expected three TS2322 diagnostics from resolved JSDoc imports, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
+        "String-literal JSDoc import aliases should resolve, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN)
+            && !codes.contains(&diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER)
+            && !codes.contains(&diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN),
+        "String-literal export names should not produce unresolved-name or bogus member diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn checked_js_direct_file_jsdoc_import_string_literal_export_names_resolve() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("dep.d.ts"),
+        r#"export declare const value: number;
+export { value as "a,b" };
+export { value as "as" };
+export { value as "from" };
+"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"// @ts-check
+/** @import { "a,b" as CommaName, "as" as AsName, "from" as FromName } from "./dep" */
+/** @type {CommaName} */
+const a = "x";
+/** @type {AsName} */
+const b = "x";
+/** @type {FromName} */
+const c = "x";
+"#,
+    );
+
+    let mut args = default_args();
+    args.allow_js = true;
+    args.check_js = true;
+    args.no_emit = true;
+    args.types = Some(Vec::new());
+    args.files = vec![PathBuf::from("index.js")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|diag| diag.code).collect();
+
+    let assignability_count = codes.iter().filter(|&&code| code == 2322).count();
+    assert_eq!(
+        assignability_count, 3,
+        "Expected three TS2322 diagnostics from resolved direct-file JSDoc imports, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME)
+            && !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN),
+        "Direct-file JSDoc import aliases should resolve, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER)
+            && !codes.contains(&diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN),
+        "String-literal export names should validate without bogus member diagnostics: {:?}",
         result.diagnostics
     );
 }

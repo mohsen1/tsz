@@ -1165,7 +1165,25 @@ impl<'a> CheckerState<'a> {
 
                 // Defer TS2322 spread checking until after attribute override tracking.
                 if !skip_prop_checks {
-                    spread_entries.push((spread_type, raw_spread_type, spread_expr_idx, attr_i));
+                    let display_spread_type =
+                        if crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            raw_spread_type,
+                        ) {
+                            raw_spread_type
+                        } else if self.ctx.arena.get(spread_expr_idx).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        }) {
+                            spread_type
+                        } else {
+                            raw_spread_type
+                        };
+                    spread_entries.push((
+                        spread_type,
+                        display_spread_type,
+                        spread_expr_idx,
+                        attr_i,
+                    ));
                 }
             }
         }
@@ -1239,6 +1257,28 @@ impl<'a> CheckerState<'a> {
 
                 // Check if there are later spreads that could provide missing properties.
                 let has_later_spreads = i < spread_count - 1;
+                let has_later_explicit_excess_attr = has_excess_property_error
+                    && explicit_attr_entries
+                        .iter()
+                        .filter(|(attr_pos, _, _)| *attr_pos > spread_pos)
+                        .any(|(_, attr_name, _)| {
+                            if attr_name == "key"
+                                || attr_name == "ref"
+                                || attr_name.starts_with("data-")
+                                || attr_name.starts_with("aria-")
+                            {
+                                return false;
+                            }
+                            !matches!(
+                                self.resolve_property_access_with_env(props_type, attr_name),
+                                crate::query_boundaries::common::PropertyAccessResult::Success {
+                                    ..
+                                } | crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
+                                    property_type: Some(_),
+                                    ..
+                                }
+                            )
+                        });
 
                 // Check if TS2710 will be emitted: spread has children property AND there are body children
                 let spread_has_children = if let Some(spread_shape) =
@@ -1267,6 +1307,7 @@ impl<'a> CheckerState<'a> {
                     &earlier_explicit_attrs,
                     has_later_spreads,
                     suppress_missing_props,
+                    has_later_explicit_excess_attr,
                     &display_target,
                     preferred_target_display,
                 );
@@ -1433,6 +1474,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let class_missing_props_component_type = special_attr_component_type.or(component_type);
+        let empty_attrs_with_children_injected_props = provided_attrs.is_empty()
+            && self.strip_jsx_children_injection_for_display(props_type) != props_type;
 
         let reported_class_missing_props_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
@@ -1440,6 +1483,7 @@ impl<'a> CheckerState<'a> {
             && !spread_covers_all
             && !skip_prop_checks
             && !display_target.is_empty()
+            && !empty_attrs_with_children_injected_props
             && !has_prop_type_error
             && !self.jsx_tag_is_logical_component_alias(tag_name_idx)
             && class_missing_props_component_type.is_some_and(|comp| {
