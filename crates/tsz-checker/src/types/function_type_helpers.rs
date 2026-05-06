@@ -55,10 +55,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_jsdoc_return_type(&mut self, jsdoc: &str) -> Option<TypeId> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
-            else {
+            let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed) else {
                 continue;
             };
             let rest = rest.trim_start();
@@ -72,7 +69,7 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             // Skip type predicates — handled separately
-            if type_expr.contains(" is ") || type_expr.starts_with("asserts ") {
+            if Self::jsdoc_returns_type_predicate_from_type_expr(type_expr).is_some() {
                 return None;
             }
             return self.resolve_jsdoc_reference(type_expr);

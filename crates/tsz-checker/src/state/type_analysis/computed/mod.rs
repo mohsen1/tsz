@@ -2,6 +2,7 @@
 //! and private property access checking.
 
 mod builtin_iterator_return_alias;
+mod jsx_runtime_bridge;
 mod type_alias_variable_alias;
 
 use crate::query_boundaries::common::{contains_infer_types, contains_type_parameters};

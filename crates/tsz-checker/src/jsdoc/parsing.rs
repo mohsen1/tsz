@@ -293,6 +293,11 @@ impl<'a> CheckerState<'a> {
         Self::strip_jsdoc_tag_prefix(line, tag_name).is_some()
     }
 
+    pub(crate) fn strip_jsdoc_return_tag_prefix(text: &str) -> Option<&str> {
+        Self::strip_jsdoc_tag_prefix(text, "returns")
+            .or_else(|| Self::strip_jsdoc_tag_prefix(text, "return"))
+    }
+
     pub(crate) fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
         let typedef_pos = Self::jsdoc_tag_offset(jsdoc, "typedef");
         let tag_pos = Self::jsdoc_tag_offset(jsdoc, "type");
@@ -433,6 +438,9 @@ impl<'a> CheckerState<'a> {
         }
         let after_dot = after_quote.strip_prefix('.')?;
         let after_dot = after_dot.trim_start();
+        if let Some(member_name) = Self::parse_jsdoc_string_literal(after_dot) {
+            return Some((module_specifier, Some(member_name)));
+        }
         let mut end = 0usize;
         for (idx, ch) in after_dot.char_indices() {
             if idx == 0 {
@@ -544,7 +552,7 @@ impl<'a> CheckerState<'a> {
         let mut out = Vec::new();
         for raw_line in jsdoc.lines() {
             let trimmed = raw_line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed.strip_prefix("@template") else {
+            let Some(rest) = Self::strip_jsdoc_tag_prefix(trimmed, "template") else {
                 continue;
             };
             let rest = rest.trim();
@@ -772,8 +780,13 @@ impl<'a> CheckerState<'a> {
                 for (local_name, specifier, import_name) in Self::parse_jsdoc_import_tag(rest) {
                     let import_type = if import_name == "*" || import_name == "default" {
                         format!("import(\"{specifier}\")")
-                    } else {
+                    } else if Self::is_jsdoc_import_identifier_name(&import_name) {
                         format!("import(\"{specifier}\").{import_name}")
+                    } else {
+                        format!(
+                            "import(\"{specifier}\").{}",
+                            Self::quote_jsdoc_import_member_name(&import_name)
+                        )
                     };
                     if let Some(previous_name) = current_name.take() {
                         typedefs.push((previous_name, current_info));
@@ -876,10 +889,7 @@ impl<'a> CheckerState<'a> {
                     }
                     continue;
                 }
-                if let Some(rest) = line
-                    .strip_prefix("@returns")
-                    .or_else(|| line.strip_prefix("@return"))
-                {
+                if let Some(rest) = Self::strip_jsdoc_return_tag_prefix(line) {
                     let rest = rest.trim();
                     if rest.starts_with('{')
                         && let Some(end) = rest[1..].find('}')
@@ -908,7 +918,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Parse a type predicate from a JSDoc type expression (`x is T`, `asserts x is T`).
-    pub(super) fn jsdoc_returns_type_predicate_from_type_expr(
+    pub(crate) fn jsdoc_returns_type_predicate_from_type_expr(
         type_expr: &str,
     ) -> Option<(bool, String, Option<String>)> {
         let (is_asserts, remainder) = Self::split_jsdoc_asserts_prefix(type_expr);
@@ -1001,7 +1011,7 @@ impl<'a> CheckerState<'a> {
                     .to_string();
                 if before_from.starts_with('{') && before_from.ends_with('}') {
                     let inner = &before_from[1..before_from.len() - 1];
-                    for part in inner.split(',') {
+                    for part in Self::split_type_args_respecting_nesting(inner) {
                         let part = part.trim();
                         if part.is_empty() {
                             continue;
@@ -1009,13 +1019,15 @@ impl<'a> CheckerState<'a> {
                         if let Some((imported_name, local_name)) =
                             Self::split_jsdoc_import_as_keyword(part)
                         {
+                            let imported_name = Self::normalize_jsdoc_import_name(imported_name);
                             results.push((
                                 local_name.to_string(),
                                 specifier.clone(),
-                                imported_name.to_string(),
+                                imported_name,
                             ));
                         } else {
-                            results.push((part.to_string(), specifier.clone(), part.to_string()));
+                            let imported_name = Self::normalize_jsdoc_import_name(part);
+                            results.push((imported_name.clone(), specifier.clone(), imported_name));
                         }
                     }
                 } else if let Some(("*", ns_name)) =
@@ -1083,15 +1095,63 @@ impl<'a> CheckerState<'a> {
         ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 
+    fn is_jsdoc_import_identifier_name(name: &str) -> bool {
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first.is_ascii_alphabetic() || first == '_' || first == '$')
+            && chars.all(Self::is_jsdoc_import_keyword_part)
+    }
+
+    fn quote_jsdoc_import_member_name(name: &str) -> String {
+        let mut quoted = String::from("\"");
+        for ch in name.chars() {
+            match ch {
+                '"' => quoted.push_str("\\\""),
+                '\\' => quoted.push_str("\\\\"),
+                '\n' => quoted.push_str("\\n"),
+                '\r' => quoted.push_str("\\r"),
+                '\t' => quoted.push_str("\\t"),
+                _ => quoted.push(ch),
+            }
+        }
+        quoted.push('"');
+        quoted
+    }
+
     /// Split a JSDoc `@import` clause at the `as` keyword.
     ///
     /// Recognizes the keyword when it is bounded on both sides by any JS
     /// whitespace, matching tsc's tokenization. Returns `None` if no
     /// whitespace-bounded `as` appears, or if either side would be empty.
     fn split_jsdoc_import_as_keyword(part: &str) -> Option<(&str, &str)> {
-        let mut search_start = 0;
-        while let Some(rel) = part[search_start..].find("as") {
-            let abs = search_start + rel;
+        let mut quote = None;
+        let mut escaped = false;
+        for (abs, ch) in part.char_indices() {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+
+            if ch == '"' || ch == '\'' || ch == '`' {
+                quote = Some(ch);
+                continue;
+            }
+
+            if !part[abs..].starts_with("as") {
+                continue;
+            }
             let before_ok = part[..abs]
                 .chars()
                 .next_back()
@@ -1108,9 +1168,51 @@ impl<'a> CheckerState<'a> {
                     return Some((imported, local));
                 }
             }
-            search_start = abs + 2;
         }
         None
+    }
+
+    fn normalize_jsdoc_import_name(name: &str) -> String {
+        Self::parse_jsdoc_string_literal(name).unwrap_or_else(|| name.trim().to_string())
+    }
+
+    fn parse_jsdoc_string_literal(text: &str) -> Option<String> {
+        let text = text.trim();
+        let quote = text.chars().next()?;
+        if quote != '"' && quote != '\'' && quote != '`' {
+            return None;
+        }
+
+        let mut value = String::new();
+        let mut escaped = false;
+        let mut close_end = None;
+        for (idx, ch) in text[quote.len_utf8()..].char_indices() {
+            if escaped {
+                value.push(match ch {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    _ => ch,
+                });
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                close_end = Some(quote.len_utf8() + idx + ch.len_utf8());
+                break;
+            }
+            value.push(ch);
+        }
+
+        let close_end = close_end?;
+        if !text[close_end..].trim().is_empty() {
+            return None;
+        }
+        Some(value)
     }
 
     pub(super) fn parse_jsdoc_typedef_definition(line: &str) -> Option<(String, Option<String>)> {
@@ -1593,6 +1695,36 @@ mod parse_jsdoc_import_tag_alias_tests {
         assert_eq!(
             got,
             vec![("Foo".to_string(), "./dep".to_string(), "Foo".to_string())]
+        );
+    }
+
+    #[test]
+    fn named_alias_string_literal_export_names() {
+        let got =
+            parse(r#"{ "a,b" as CommaName, "as" as AsName, "from" as FromName } from "./dep""#);
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "CommaName".to_string(),
+                    "./dep".to_string(),
+                    "a,b".to_string()
+                ),
+                ("AsName".to_string(), "./dep".to_string(), "as".to_string()),
+                (
+                    "FromName".to_string(),
+                    "./dep".to_string(),
+                    "from".to_string()
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn import_type_parses_quoted_member_name() {
+        assert_eq!(
+            CheckerState::parse_jsdoc_import_type(r#"import("./dep")."a,b""#),
+            Some(("./dep".to_string(), Some("a,b".to_string())))
         );
     }
 
