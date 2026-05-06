@@ -584,20 +584,26 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     /// Compute 1-based (line, column) from a raw source position.
+    ///
+    /// Columns are reported in UTF-16 code units to match TypeScript's
+    /// `react-jsxdev` source metadata, which is consumed by the runtime as
+    /// JavaScript string indices.
     pub(in super::super) fn source_line_col_pos(&self, pos: u32) -> (u32, u32) {
         let Some(text) = self.source_text else {
             return (1, 1);
         };
-        let bytes = text.as_bytes();
-        let pos = (pos as usize).min(bytes.len());
+        let pos = (pos as usize).min(text.len());
         let mut line = 1u32;
         let mut col = 1u32;
-        for &b in &bytes[..pos] {
-            if b == b'\n' {
+        for (i, ch) in text.char_indices() {
+            if i >= pos {
+                break;
+            }
+            if ch == '\n' {
                 line += 1;
                 col = 1;
-            } else if b != b'\r' {
-                col += 1;
+            } else if ch != '\r' {
+                col += ch.len_utf16() as u32;
             }
         }
         (line, col)

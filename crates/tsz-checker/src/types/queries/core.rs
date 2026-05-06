@@ -823,7 +823,10 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a node is a `globalThis` identifier expression.
+    /// Check if a node is a `globalThis` identifier expression that resolves
+    /// to the built-in global `globalThis` (a lib symbol or unresolved). A
+    /// same-file local declaration named `globalThis` (e.g. `const globalThis
+    /// = ...`) shadows the global and must not be treated as the global object.
     pub(crate) fn is_global_this_expression(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -831,7 +834,17 @@ impl<'a> CheckerState<'a> {
         let Some(ident) = self.ctx.arena.get_identifier(node) else {
             return false;
         };
-        ident.escaped_text == "globalThis"
+        if ident.escaped_text != "globalThis" {
+            return false;
+        }
+
+        if let Some(sym_id) = self.resolve_identifier_symbol(idx)
+            && !self.ctx.binder.lib_symbol_ids.contains(&sym_id)
+        {
+            return false;
+        }
+
+        true
     }
 
     /// Check if a node is an ambient global object alias that should resolve through

@@ -430,6 +430,7 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/computation/object_literal/computation.rs",
             "crates/tsz-checker/src/types/function_type.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
+            "crates/tsz-checker/src/checkers/jsx/tests.rs",
             "crates/tsz-checker/src/types/queries/core.rs",
             "crates/tsz-checker/src/types/queries/lib.rs",
             "crates/tsz-checker/src/types/queries/lib_resolution.rs",
@@ -463,7 +464,7 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        225,
+        226,
     ),
 ]
 

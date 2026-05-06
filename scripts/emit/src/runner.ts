@@ -92,6 +92,7 @@ interface TestCase {
   stripInternal: boolean;
   outFile?: string;
   outDir?: string;
+  declarationDir?: string;
   rootDir?: string;
   emitDeclarationOnly: boolean;
   declarationMap: boolean;
@@ -190,6 +191,7 @@ function getCacheKey(
   stripInternal: boolean = false,
   outFile: string = '',
   outDir: string = '',
+  declarationDir: string = '',
   rootDir: string = '',
   declarationMap: boolean = false,
 ): string {
@@ -244,6 +246,7 @@ function getCacheKey(
     stripInternal,
     outFile,
     outDir,
+    declarationDir,
     rootDir,
     declarationMap,
     engineSalt,
@@ -644,6 +647,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const outFile = typeof directives.outfile === 'string' ? directives.outfile : undefined;
     const normalizedOutFile = outFile?.replace(/^[/\\]+/, '');
     const outDir = typeof tsconfigOptions.outDir === 'string' ? tsconfigOptions.outDir : undefined;
+    const declarationDir = typeof tsconfigOptions.declarationDir === 'string' ? tsconfigOptions.declarationDir : undefined;
     const rootDir = typeof tsconfigOptions.rootDir === 'string' ? tsconfigOptions.rootDir : undefined;
     if (normalizedOutFile && normalizedOutFile !== 'out.js' && baseline.files.has(normalizedOutFile)) {
       baseline.js = baseline.files.get(normalizedOutFile) ?? baseline.js;
@@ -745,6 +749,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       stripInternal,
       outFile,
       outDir,
+      declarationDir,
       rootDir,
       emitDeclarationOnly,
       declarationMap,
@@ -876,6 +881,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.stripInternal,
       testCase.outFile ?? '',
       testCase.outDir ?? '',
+      testCase.declarationDir ?? '',
       testCase.rootDir ?? '',
       testCase.declarationMap,
     );
@@ -921,6 +927,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         stripInternal: testCase.stripInternal,
         outFile: testCase.outFile,
         outDir: testCase.outDir,
+        declarationDir: testCase.declarationDir,
         rootDir: testCase.rootDir,
         declarationMap: testCase.declarationMap,
         sourceFiles: testCase.sourceFiles,
