@@ -946,6 +946,15 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
+                } else if let Some(type_text) = func_body
+                    .is_some()
+                    .then(|| {
+                        self.async_returned_function_initializer_promise_type_text(func, func_body)
+                    })
+                    .flatten()
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if let Some((type_text, substituted_parameter_type_query)) =
                     scoped_preferred_return.as_ref()
                     && (self.should_prefer_source_return_type_text(
@@ -1025,6 +1034,11 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         let printed_type_text =
                             self.print_type_id_with_outer_type_params(effective_return_type_id, tp);
+                        let printed_type_text = self
+                            .rewrite_returned_auto_accessor_parameter_unknowns(
+                                func,
+                                &printed_type_text,
+                            );
                         self.write(&printed_type_text);
                         if let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)
@@ -1040,6 +1054,11 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     } else {
                         let printed_type_text = self.print_type_id(effective_return_type_id);
+                        let printed_type_text = self
+                            .rewrite_returned_auto_accessor_parameter_unknowns(
+                                func,
+                                &printed_type_text,
+                            );
                         self.write(&printed_type_text);
                         if let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)
@@ -1058,6 +1077,11 @@ impl<'a> DeclarationEmitter<'a> {
             } else if func_body.is_some() {
                 if self.body_returns_void(func_body) {
                     self.write(": void");
+                } else if let Some(type_text) =
+                    self.async_returned_function_initializer_promise_type_text(func, func_body)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if let Some(return_text) =
                     self.function_body_preferred_return_type_text(func_body)
                 {
@@ -1095,6 +1119,11 @@ impl<'a> DeclarationEmitter<'a> {
             // No type cache available, but we can infer from the body
             if self.body_returns_void(func_body) {
                 self.write(": void");
+            } else if let Some(type_text) =
+                self.async_returned_function_initializer_promise_type_text(func, func_body)
+            {
+                self.write(": ");
+                self.write(&type_text);
             } else if let Some(return_text) =
                 self.function_body_preferred_return_type_text(func_body)
             {

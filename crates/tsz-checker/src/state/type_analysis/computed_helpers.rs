@@ -1439,11 +1439,17 @@ impl<'a> CheckerState<'a> {
                             // cycles like `type T = { [K in keyof T]: ... }`.
                             let body_is_deferred = self.alias_ast_is_deferred(sym_id)
                                 && !self.is_non_generic_mapped_type_circular(sym_id, ta.type_node);
+                            let is_jsx_runtime_bridge_alias = self
+                                .is_jsx_import_source_runtime_bridge_alias(
+                                    self.ctx.arena,
+                                    ta.type_node,
+                                );
                             if name_matches
                                 && !has_parse_error_tp
                                 && !has_import_partner
                                 && !generic_self_ref
                                 && !body_is_deferred
+                                && !is_jsx_runtime_bridge_alias
                                 && !self.ctx.import_conflict_names.contains(&name)
                             {
                                 self.error_at_node(

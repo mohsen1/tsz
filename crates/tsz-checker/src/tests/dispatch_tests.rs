@@ -339,6 +339,25 @@ type R = RT<typeof createReducer<string>>;
 }
 
 #[test]
+fn ts2344_parenthesized_typeof_instantiation_does_not_emit_constraint_diagnostic() {
+    let diags = check_source_diagnostics(
+        r#"
+type Inst<T extends abstract new (...args: any) => any> = T extends abstract new (...args: any) => infer R ? R : any;
+let Anon = class <out T> {
+    foo(): Inst<(typeof Anon<T>)> {
+        return this;
+    }
+};
+"#,
+    );
+    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    assert!(
+        ts2344.is_empty(),
+        "Parenthesized typeof-instantiation should not emit TS2344, got: {diags:?}"
+    );
+}
+
+#[test]
 fn ts2635_instantiation_expression_filters_union_members_like_tsc() {
     let diags = check_source_diagnostics(
         r#"
@@ -1794,6 +1813,23 @@ const result: [string, number] = extractPrimitives({ primitive: "" }, { primitiv
         ts2322.len(),
         0,
         "Expected no TS2322 for reverse-mapped tuple inference through conditional template, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn generic_tuple_rest_argument_infers_union_from_all_rest_elements() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function f0<T, U>(x: [T, ...U[]]): [T, U];
+f0([1, "hello", true]);
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 when tuple rest inference merges string | boolean, got: {:?}",
         ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }

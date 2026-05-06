@@ -107,6 +107,63 @@ fn es5_param_destructuring_prologue_keeps_function_body_let_name() {
 }
 
 #[test]
+fn object_spread_recovery_keeps_trailing_empty_object() {
+    let source = "let o9 = { ...matchMedia() { }};\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("let o9 = Object.assign({}, matchMedia()), {};"),
+        "Malformed object spread should preserve the recovered trailing empty object.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn optional_instantiation_recovery_emits_optional_call() {
+    let source = "declare let f: { <T>(): T };\nconst b1 = f?.<number>;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("const b1 = f === null || f === void 0 ? void 0 : f();"),
+        "Malformed optional instantiation should recover as an optional call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn jsx_numeric_tag_recovery_preserves_tail() {
+    let source =
+        "const x = \"oops\";\nconst a = + <number> x;\nconst b = + <> x;\nconst c = + <1234> x;\n";
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            jsx: JsxEmit::Preserve,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        output.contains("const c = + < />1234> x;"),
+        "Malformed numeric JSX tag should preserve the recovered numeric tail.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn decorated_anonymous_class_expression_sets_empty_function_name() {
     let source = "declare let dec: any;\n(@dec class {});";
     let output = parse_lower_print(
@@ -2203,5 +2260,40 @@ fn namespace_es5_iife_preserves_line_comment_between_classes() {
     assert!(
         output.contains("// class d"),
         "Single-line comment between sibling classes in a namespace IIFE must survive ES5 lowering.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_marker_strings_do_not_trigger_missing_arrow_fixture_recovery() {
+    let source = r#"namespace missingCurliesWithArrow {
+  const a = "namespace withStatement";
+  const b = "namespace withoutStatement";
+  const c = "=> var k = 10;";
+  const d = "=> };";
+
+  export const actual = 1;
+}
+
+console.log(missingCurliesWithArrow.actual);
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..PrintOptions::es6()
+        },
+    );
+
+    assert!(
+        output.contains("missingCurliesWithArrow.actual = 1;"),
+        "Valid namespace body should be emitted instead of fixture recovery output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const a = \"namespace withStatement\";"),
+        "String marker declarations should remain in the namespace body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var a = () => { var k = 10; };") && !output.contains("var a = () => ;"),
+        "Hardcoded missingCurliesWithArrow fixture output must not be emitted.\nOutput:\n{output}"
     );
 }

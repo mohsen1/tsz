@@ -12,6 +12,9 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
+        if !self.tuple_constraint_accepts_array_like_source(target) {
+            return false;
+        }
         let target_elem = crate::query_boundaries::checkers::call::array_element_type_for_type(
             self.ctx.types,
             target,
@@ -36,6 +39,16 @@ impl<'a> CheckerState<'a> {
                     && self.satisfies_array_like_constraint(source_elem, target_elem)))
     }
 
+    fn tuple_constraint_accepts_array_like_source(&self, target: TypeId) -> bool {
+        let Some(elements) =
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, target)
+        else {
+            return true;
+        };
+
+        elements.len() == 1 && elements[0].rest
+    }
+
     fn has_structural_array_surface(&self, source: TypeId, target: TypeId) -> bool {
         let db = self.ctx.types.as_type_database();
 
@@ -46,7 +59,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        for name in ["length", "concat", "slice"] {
+        for name in [
+            "length",
+            "concat",
+            "slice",
+            "join",
+            "indexOf",
+            "lastIndexOf",
+            "every",
+        ] {
             if !query::has_property_by_name(db, source, name) {
                 return false;
             }

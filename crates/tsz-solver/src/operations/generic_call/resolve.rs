@@ -823,10 +823,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         && let Some(direct_target) =
                             self.direct_inference_tracking_target(target_type)
                     {
-                        direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                        placeholder_visited.clear();
+                        direct_param_vars.extend(self.collect_direct_placeholder_vars_in_type(
                             direct_target,
                             &var_map,
-                            &mut placeholder_probe_map,
                             &mut placeholder_visited,
                         ));
                     }
@@ -844,10 +844,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         && let Some(direct_target) =
                             self.direct_inference_tracking_target(contextual_target_type)
                     {
-                        direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                        placeholder_visited.clear();
+                        direct_param_vars.extend(self.collect_direct_placeholder_vars_in_type(
                             direct_target,
                             &var_map,
-                            &mut placeholder_probe_map,
                             &mut placeholder_visited,
                         ));
                     }
@@ -901,10 +901,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // This also applies to rest parameters: `foo<T>(...s: T[])` with
                 // heterogeneous args uses first-wins to match tsc behavior.
                 if let Some(direct_target) = self.direct_inference_tracking_target(target_type) {
-                    direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                    placeholder_visited.clear();
+                    direct_param_vars.extend(self.collect_direct_placeholder_vars_in_type(
                         direct_target,
                         &var_map,
-                        &mut placeholder_probe_map,
                         &mut placeholder_visited,
                     ));
                 }
@@ -1305,10 +1305,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if original_has_placeholders
                     && let Some(direct_target) = self.direct_inference_tracking_target(target_type)
                 {
-                    direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                    placeholder_visited.clear();
+                    direct_param_vars.extend(self.collect_direct_placeholder_vars_in_type(
                         direct_target,
                         &var_map,
-                        &mut placeholder_probe_map,
                         &mut placeholder_visited,
                     ));
                 }
@@ -1678,6 +1678,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                             let Some(other_constraint) = other_tp.constraint else {
                                                 continue;
                                             };
+                                            if crate::type_param_info(
+                                                self.interner.as_type_database(),
+                                                other_constraint,
+                                            )
+                                            .is_some_and(|info| info.name == tp.name)
+                                            {
+                                                continue;
+                                            }
                                             if !crate::visitors::visitor_predicates::contains_type_parameter_named(
                                                 self.interner,
                                                 other_constraint,
@@ -2043,8 +2051,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                     // Lazy(DefId) from contextual return inference may fail structural
                     // constraint checks due to evaluation differences in complex
-                    // inheritance chains (e.g., DOM). Keep it; upper bounds were validated.
-                    if matches!(self.interner.lookup(ty), Some(TypeData::Lazy(_))) {
+                    // inheritance chains (e.g., DOM). Keep it for non-direct
+                    // inference; direct argument inference still has to report
+                    // constraint failures on the argument site.
+                    if !direct_param_vars.contains(&var)
+                        && matches!(self.interner.lookup(ty), Some(TypeData::Lazy(_)))
+                    {
                         final_subst.insert(tp.name, ty);
                         continue;
                     }

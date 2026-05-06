@@ -141,7 +141,8 @@ pub mod computation {
     pub use crate::instantiation::instantiate::{
         MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
         instantiate_function_with_type_args, instantiate_generic, instantiate_type,
-        instantiate_type_cached, instantiate_type_preserving, instantiate_type_preserving_cached,
+        instantiate_type_cached, instantiate_type_params_to_constraints,
+        instantiate_type_preserving, instantiate_type_preserving_cached,
         instantiate_type_preserving_meta, instantiate_type_preserving_meta_cached,
         instantiate_type_with_depth_status, instantiate_type_with_infer,
         instantiate_type_with_infer_cached, substitute_this_type,
@@ -227,10 +228,10 @@ pub use instantiation::application::*;
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
     instantiate_function_with_type_args, instantiate_generic, instantiate_type,
-    instantiate_type_cached, instantiate_type_preserving, instantiate_type_preserving_cached,
-    instantiate_type_preserving_meta, instantiate_type_preserving_meta_cached,
-    instantiate_type_with_depth_status, instantiate_type_with_infer,
-    instantiate_type_with_infer_cached, substitute_this_type,
+    instantiate_type_cached, instantiate_type_params_to_constraints, instantiate_type_preserving,
+    instantiate_type_preserving_cached, instantiate_type_preserving_meta,
+    instantiate_type_preserving_meta_cached, instantiate_type_with_depth_status,
+    instantiate_type_with_infer, instantiate_type_with_infer_cached, substitute_this_type,
     substitute_this_type_at_return_position, substitute_this_type_cached,
 };
 pub use intern::type_factory::*;

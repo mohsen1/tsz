@@ -375,6 +375,7 @@ impl<'a> CheckerState<'a> {
         // mapped, and application-based surfaces (for example
         // JSX.LibraryManagedAttributes<...>) are read through the same structural
         // path we already use for missing-required-prop analysis.
+        let raw_props_type = props_type;
         let props_type = self.normalize_jsx_required_props_target(props_type);
 
         // Union props: delegate to whole-object assignability checking.
@@ -1033,9 +1034,11 @@ impl<'a> CheckerState<'a> {
                         {
                             result
                         } else {
-                            self.check_assignable_or_report_at(
+                            self.check_assignable_or_report_at_with_display_types(
                                 actual_type,
                                 expected_type,
+                                actual_type,
+                                original_property_type,
                                 value_node_idx,
                                 attr_data.name,
                             )
@@ -1162,7 +1165,25 @@ impl<'a> CheckerState<'a> {
 
                 // Defer TS2322 spread checking until after attribute override tracking.
                 if !skip_prop_checks {
-                    spread_entries.push((spread_type, raw_spread_type, spread_expr_idx, attr_i));
+                    let display_spread_type =
+                        if crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            raw_spread_type,
+                        ) {
+                            raw_spread_type
+                        } else if self.ctx.arena.get(spread_expr_idx).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        }) {
+                            spread_type
+                        } else {
+                            raw_spread_type
+                        };
+                    spread_entries.push((
+                        spread_type,
+                        display_spread_type,
+                        spread_expr_idx,
+                        attr_i,
+                    ));
                 }
             }
         }
@@ -1236,6 +1257,28 @@ impl<'a> CheckerState<'a> {
 
                 // Check if there are later spreads that could provide missing properties.
                 let has_later_spreads = i < spread_count - 1;
+                let has_later_explicit_excess_attr = has_excess_property_error
+                    && explicit_attr_entries
+                        .iter()
+                        .filter(|(attr_pos, _, _)| *attr_pos > spread_pos)
+                        .any(|(_, attr_name, _)| {
+                            if attr_name == "key"
+                                || attr_name == "ref"
+                                || attr_name.starts_with("data-")
+                                || attr_name.starts_with("aria-")
+                            {
+                                return false;
+                            }
+                            !matches!(
+                                self.resolve_property_access_with_env(props_type, attr_name),
+                                crate::query_boundaries::common::PropertyAccessResult::Success {
+                                    ..
+                                } | crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
+                                    property_type: Some(_),
+                                    ..
+                                }
+                            )
+                        });
 
                 // Check if TS2710 will be emitted: spread has children property AND there are body children
                 let spread_has_children = if let Some(spread_shape) =
@@ -1264,6 +1307,7 @@ impl<'a> CheckerState<'a> {
                     &earlier_explicit_attrs,
                     has_later_spreads,
                     suppress_missing_props,
+                    has_later_explicit_excess_attr,
                     &display_target,
                     preferred_target_display,
                 );
@@ -1430,6 +1474,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let class_missing_props_component_type = special_attr_component_type.or(component_type);
+        let empty_attrs_with_children_injected_props = provided_attrs.is_empty()
+            && self.strip_jsx_children_injection_for_display(props_type) != props_type;
 
         let reported_class_missing_props_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
@@ -1437,6 +1483,7 @@ impl<'a> CheckerState<'a> {
             && !spread_covers_all
             && !skip_prop_checks
             && !display_target.is_empty()
+            && !empty_attrs_with_children_injected_props
             && !has_prop_type_error
             && !self.jsx_tag_is_logical_component_alias(tag_name_idx)
             && class_missing_props_component_type.is_some_and(|comp| {
@@ -1537,12 +1584,51 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        let reported_generic_managed_attrs_assignability =
+            if !reported_custom_children_assignability
+                && !reported_special_attr_assignability
+                && !reported_class_missing_props_assignability
+                && !reported_type_param_assignability
+                && !reported_invalid_generic_spread_assignability
+                && !reported_dynamic_intrinsic_assignability
+                && !has_excess_property_error
+                && !spread_covers_all
+                && !skip_prop_checks
+                && !has_prop_type_error
+                && component_type.is_some()
+                && provided_attrs.is_empty()
+                && raw_props_has_type_params
+                && self.jsx_props_type_is_library_managed_attributes_application(raw_props_type)
+            {
+                let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
+                if !self.is_assignable_to(attrs_type, raw_props_type) {
+                    let mut target = self.format_type(raw_props_type);
+                    if target.starts_with("LibraryManagedAttributes<")
+                        && target.ends_with(", Element>")
+                    {
+                        target.truncate(target.len() - ", Element>".len());
+                        target.push_str(", {}>");
+                    }
+                    self.report_jsx_synthesized_props_assignability_error(
+                        attrs_type,
+                        &target,
+                        tag_name_idx,
+                    );
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
         // TS2741: missing required properties.
         if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_type_param_assignability
             && !reported_invalid_generic_spread_assignability
             && !reported_dynamic_intrinsic_assignability
+            && !reported_generic_managed_attrs_assignability
             && (!reported_class_missing_props_assignability
                 || (provided_attrs.is_empty() && raw_props_has_type_params))
             && !has_excess_property_error
@@ -1889,5 +1975,24 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    fn jsx_props_type_is_library_managed_attributes_application(
+        &mut self,
+        type_id: TypeId,
+    ) -> bool {
+        let Some((base, _args)) =
+            crate::query_boundaries::state::type_environment::application_info(
+                self.ctx.types,
+                type_id,
+            )
+        else {
+            return false;
+        };
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
+            return false;
+        };
+        self.get_symbol_globally(sym_id)
+            .is_some_and(|symbol| symbol.escaped_name == "LibraryManagedAttributes")
     }
 }

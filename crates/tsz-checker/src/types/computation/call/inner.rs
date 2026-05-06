@@ -195,6 +195,7 @@ impl<'a> CheckerState<'a> {
             callee_expr = ?call.expression,
             "Call expression callee type resolved"
         );
+        self.report_checked_js_nullable_this_property_method_call(call.expression);
         let callee_missing_value = callee_type == TypeId::ERROR
             && self.callee_suppresses_contextual_any(call.expression, &callee_diag_snap);
 
@@ -2609,7 +2610,7 @@ impl<'a> CheckerState<'a> {
 
         // Store instantiated type predicate from generic call resolution
         // so flow narrowing can use the correct (inferred) predicate type.
-        if let Some(predicate) = instantiated_predicate {
+        let stored_call_predicate = if let Some(predicate) = instantiated_predicate {
             let stored_predicate =
                 call_checker::extract_predicate_signature(self.ctx.types, callee_type_for_call)
                     .filter(|sig| {
@@ -2619,9 +2620,7 @@ impl<'a> CheckerState<'a> {
                     })
                     .map(|sig| (sig.predicate, sig.params))
                     .unwrap_or(predicate);
-            self.ctx
-                .call_type_predicates
-                .insert(idx.0, stored_predicate);
+            Some(stored_predicate)
         } else {
             // For non-generic calls with type predicates (e.g., `isString(x): x is string`),
             // extract the predicate from the callee's signature and store it in
@@ -2638,9 +2637,23 @@ impl<'a> CheckerState<'a> {
                 && let Some(extracted) =
                     call_checker::extract_predicate_signature(self.ctx.types, callee_type_for_call)
             {
+                Some((extracted.predicate, extracted.params))
+            } else {
+                None
+            }
+        };
+
+        if let Some(stored_predicate) = stored_call_predicate {
+            let assertion_target_is_valid = !stored_predicate.0.asserts
+                || matches!(
+                    stored_predicate.0.target,
+                    tsz_solver::TypePredicateTarget::This
+                )
+                || self.validate_assertion_call_target(idx, call.expression);
+            if assertion_target_is_valid {
                 self.ctx
                     .call_type_predicates
-                    .insert(idx.0, (extracted.predicate, extracted.params));
+                    .insert(idx.0, stored_predicate);
             }
         }
 
@@ -2852,6 +2865,106 @@ impl<'a> CheckerState<'a> {
             query::CallSignaturesKind::Callable(_)
             | query::CallSignaturesKind::MultipleSignatures(_) => Some(candidate),
             query::CallSignaturesKind::NoSignatures => None,
+        }
+    }
+
+    fn report_checked_js_nullable_this_property_method_call(&mut self, callee_expr: NodeIndex) {
+        if !self.is_js_file()
+            || !self.ctx.compiler_options.check_js
+            || !self.ctx.compiler_options.strict_null_checks
+        {
+            return;
+        }
+
+        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
+            return;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return;
+        }
+        let Some(callee_access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return;
+        };
+
+        let receiver_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(callee_access.expression);
+        let Some(receiver_node) = self.ctx.arena.get(receiver_idx) else {
+            return;
+        };
+        if receiver_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return;
+        }
+        let Some(receiver_access) = self.ctx.arena.get_access_expr(receiver_node) else {
+            return;
+        };
+
+        let base_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(receiver_access.expression);
+        if self
+            .ctx
+            .arena
+            .get(base_idx)
+            .is_none_or(|node| node.kind != tsz_scanner::SyntaxKind::ThisKeyword as u16)
+        {
+            return;
+        }
+
+        let receiver_type =
+            if let Some(receiver_type) = self.ctx.node_types.get(&receiver_idx.0).copied() {
+                receiver_type
+            } else {
+                self.get_type_of_node(receiver_idx)
+            };
+        let receiver_type = self.evaluate_type_with_env(receiver_type);
+        let (_, cause) = self.split_nullish_type(receiver_type);
+        let Some(cause) = cause else {
+            return;
+        };
+
+        let Some(receiver_span) = self
+            .ctx
+            .arena
+            .get(receiver_idx)
+            .map(|node| (node.pos, node.end))
+        else {
+            return;
+        };
+
+        let (code, message) = if cause == TypeId::NULL {
+            (
+                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL,
+                crate::diagnostics::diagnostic_messages::OBJECT_IS_POSSIBLY_NULL,
+            )
+        } else if cause == TypeId::UNDEFINED {
+            (
+                diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED,
+                crate::diagnostics::diagnostic_messages::OBJECT_IS_POSSIBLY_UNDEFINED,
+            )
+        } else {
+            (
+                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
+                crate::diagnostics::diagnostic_messages::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
+            )
+        };
+
+        let already_reported = self.ctx.diagnostics.iter().any(|diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL
+                    | diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED
+                    | diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED
+                    | diagnostic_codes::IS_POSSIBLY_NULL
+                    | diagnostic_codes::IS_POSSIBLY_UNDEFINED
+                    | diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED
+            ) && diag.start >= receiver_span.0
+                && diag.start < receiver_span.1
+        });
+        if !already_reported {
+            self.error_at_node(receiver_idx, message, code);
         }
     }
 }
