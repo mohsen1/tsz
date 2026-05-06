@@ -101,6 +101,47 @@ fn emit_output_preserves_type_only_module_marker() {
 }
 
 #[test]
+fn file_rename_updates_extensionless_relative_import() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/index.ts",
+                    "fileContent": "import { x } from \"./foo\";\nx;\n",
+                }),
+            ))
+            .success
+    );
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/foo.ts",
+                    "fileContent": "export const x = 1;\n",
+                }),
+            ))
+            .success
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "getEditsForFileRename",
+        serde_json::json!({
+            "oldFilePath": "/src/foo.ts",
+            "newFilePath": "/src/bar.ts",
+            "formatOptions": {},
+            "preferences": {},
+        }),
+    ));
+    assert!(response.success);
+    let body = response.body.expect("rename should return a body");
+    assert_eq!(body[0]["fileName"], "/src/index.ts");
+    assert_eq!(body[0]["textChanges"][0]["newText"], "\"./bar\"");
+}
+
+#[test]
 fn reset_clears_session_state_but_keeps_server_alive() {
     let mut server = make_server();
     server
