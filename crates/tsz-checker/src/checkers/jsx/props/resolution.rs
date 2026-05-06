@@ -1190,9 +1190,6 @@ impl<'a> CheckerState<'a> {
 
         // TS2322: Check spread props against expected types (deferred to account for overrides).
         if !spread_entries.is_empty() {
-            // Track explicit attrs WITH their attr index AND name node index, so
-            // the spread checker can anchor per-property TS2322 at the earlier
-            // explicit attribute when a spread overrides it (TS2783 case).
             let mut explicit_attr_entries: Vec<(usize, String, NodeIndex)> = Vec::new();
             let mut suppress_missing_props_from_spread = false;
             for (i, &node_idx) in attr_nodes.iter().enumerate() {
@@ -1209,8 +1206,12 @@ impl<'a> CheckerState<'a> {
             }
 
             let spread_count = spread_entries.len();
-            // Collect property names from each spread so later iterations know
-            // what properties earlier spreads already provide.
+            let merged_attrs_display = self
+                .format_jsx_attrs_effective_source_for_spread_assignability(
+                    attributes_idx,
+                    props_type,
+                    request,
+                );
             let mut earlier_spread_props: rustc_hash::FxHashSet<String> =
                 rustc_hash::FxHashSet::default();
             for (i, &(spread_type, raw_spread_type, _spread_expr_idx, spread_pos)) in
@@ -1222,9 +1223,6 @@ impl<'a> CheckerState<'a> {
                     .filter(|(attr_pos, _, _)| *attr_pos > spread_pos)
                     .map(|(_, name, _)| name.as_str())
                     .collect();
-                // Also include properties already provided by earlier spreads.
-                // This prevents false TS2739 on the last spread when earlier spreads
-                // cover some of the required properties.
                 for prop_name in &earlier_spread_props {
                     overridden.insert(prop_name.as_str());
                 }
@@ -1307,9 +1305,10 @@ impl<'a> CheckerState<'a> {
                     &earlier_explicit_attrs,
                     has_later_spreads,
                     suppress_missing_props,
-                    has_later_explicit_excess_attr,
+                    has_prop_type_error || has_later_explicit_excess_attr,
                     &display_target,
                     preferred_target_display,
+                    merged_attrs_display.as_deref(),
                 );
                 suppress_missing_props_from_spread |= had_error || suppress_missing_props;
 
