@@ -1519,17 +1519,13 @@ impl TypeInterner {
     /// Consume evaluation fuel and return whether fuel is exhausted.
     ///
     /// This is a global budget across all `TypeEvaluator` instances. When exhausted,
-    /// the interner is poisoned and subsequent operations return ERROR.
+    /// the current evaluation should bail out with ERROR, but the interner remains
+    /// readable so already-computed project types do not turn into opaque `Type(N)`
+    /// placeholders in later diagnostics.
     #[inline]
     pub fn consume_evaluation_fuel(&self, amount: u32) -> bool {
         let prev = self.evaluation_fuel.fetch_add(amount, Ordering::Relaxed);
-        if prev.wrapping_add(amount) > MAX_EVALUATION_FUEL {
-            self.poisoned
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
+        prev.wrapping_add(amount) > MAX_EVALUATION_FUEL
     }
 
     /// Check whether global evaluation fuel is exhausted without consuming any.
