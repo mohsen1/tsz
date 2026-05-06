@@ -838,6 +838,90 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn report_untyped_this_references_in_find_callback(&mut self, call_idx: NodeIndex) {
+        if !self.ctx.no_implicit_this() {
+            return;
+        }
+        let Some(call_node) = self.ctx.arena.get(call_idx) else {
+            return;
+        };
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(call_node) else {
+            return;
+        };
+        let Some(callee_node) = self.ctx.arena.get(call.expression) else {
+            return;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return;
+        };
+        let is_find_call = self
+            .ctx
+            .arena
+            .get(access.name_or_argument)
+            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+            .is_some_and(|ident| ident.escaped_text == "find");
+        if !is_find_call {
+            return;
+        }
+        let Some(args) = call.arguments.as_ref() else {
+            return;
+        };
+        let Some(&callback_idx) = args.nodes.first() else {
+            return;
+        };
+        let Some(callback_node) = self.ctx.arena.get(callback_idx) else {
+            return;
+        };
+        if callback_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION {
+            return;
+        }
+        if self.enclosing_function_has_explicit_this_parameter(callback_idx) {
+            return;
+        }
+        if self.is_js_file()
+            && self
+                .get_jsdoc_for_function(callback_idx)
+                .is_some_and(|jsdoc| {
+                    Self::jsdoc_contains_tag(&jsdoc, "this")
+                        || Self::jsdoc_contains_tag(&jsdoc, "constructor")
+                })
+        {
+            return;
+        }
+        let Some(func) = self.ctx.arena.get_function(callback_node) else {
+            return;
+        };
+        let body = func.body;
+        if body.is_none() {
+            return;
+        }
+
+        let mut refs = Vec::new();
+        self.collect_untyped_this_references_in_function_body(body, &mut refs, true);
+        for this_idx in refs {
+            let already_reported = self.ctx.diagnostics.iter().any(|diag| {
+                diag.code
+                    == crate::diagnostics::diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION
+                    && self.ctx.arena.get(this_idx).is_some_and(|node| {
+                        diag.start == node.pos && diag.length == node.end - node.pos
+                    })
+            });
+            if !already_reported {
+                self.error_at_node(
+                    this_idx,
+                    crate::diagnostics::diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                    crate::diagnostics::diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                );
+            }
+        }
+    }
+
     /// Check if an `arguments` reference is directly inside an arrow function.
     ///
     /// Check if `this` is inside a top-level arrow function that captures `globalThis`.
