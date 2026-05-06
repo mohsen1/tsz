@@ -2674,6 +2674,32 @@ type HandlerOptions = {
 }
 
 #[test]
+fn test_jsdoc_property_typedef_quotes_non_identifier_names() {
+    let source = r#"
+/**
+ * @typedef {Object} Options
+ * @property {String} data-id
+ * @property {Number} [max-count]
+ */
+exports.value = {};
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("\"data-id\": string;"),
+        "Expected hyphenated JSDoc property name to be quoted: {output}"
+    );
+    assert!(
+        output.contains("\"max-count\"?: number;"),
+        "Expected optional hyphenated JSDoc property name to be quoted before ?: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_static_method_augmentation_emits_namespace_merge() {
     let source = r#"
 export class Clazz {
