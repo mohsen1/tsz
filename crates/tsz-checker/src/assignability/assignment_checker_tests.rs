@@ -674,7 +674,7 @@ const value: { prop: string; anotherP: string } | { prop: number } = {
         "non-discriminated union failure should not elaborate to the property"
     );
     assert!(
-        diag.message_text.contains("Type '{ prop: number | string; }' is not assignable to type '{ prop: string; anotherP: string; } | { prop: number; }'."),
+        diag.message_text.contains("Type '{ prop: string | number; }' is not assignable to type '{ prop: string; anotherP: string; } | { prop: number; }'."),
         "whole-object TS2322 should display the object literal against the union, got: {diag:?}"
     );
 }
