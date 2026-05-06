@@ -296,7 +296,7 @@ fn should_report_ts5112_for_command_line_files(args: &CliArgs, cwd: &std::path::
 }
 
 const fn should_use_large_stack_thread(args: &CliArgs) -> bool {
-    args.project.is_some() || args.build || args.watch || args.batch || args.files.len() != 1
+    args.project.is_some() || args.build || args.watch || args.batch || !args.files.is_empty()
 }
 
 /// Batch compilation mode: read project directory paths from stdin (one per line),
@@ -2322,6 +2322,7 @@ fn show_config_apply_cli_overrides(
     use serde_json::Value;
     if let Some(target) = args.target {
         let s = match target {
+            tsz_cli::args::Target::Es3 => "es3",
             tsz_cli::args::Target::Es5 => "es5",
             tsz_cli::args::Target::Es2015 => "es6",
             tsz_cli::args::Target::Es2016 => "es2016",

@@ -60,6 +60,34 @@ fn test_format_js_number_floats() {
     assert_eq!(DeclarationEmitter::format_js_number(0.5), "0.5");
 }
 
+#[test]
+fn test_large_separated_numeric_literal_declaration_emit() {
+    let output = emit_dts(
+        r#"
+export type X = 0x8000_0000_0000_0000;
+export type Y = 0x7fff_ffff_ffff_ffff;
+export const y: 0x8000_0000_0000_0000 = 0 as any;
+"#,
+    );
+
+    assert!(
+        output.contains("export type X = 9223372036854776000;"),
+        "Expected large separated hex literal type X to use JS number text: {output}"
+    );
+    assert!(
+        output.contains("export type Y = 9223372036854776000;"),
+        "Expected large separated hex literal type Y to use JS number text: {output}"
+    );
+    assert!(
+        output.contains("export declare const y: 9223372036854776000;"),
+        "Expected large separated hex literal annotation to use JS number text: {output}"
+    );
+    assert!(
+        !output.contains("9223372036854775807"),
+        "Declaration output must not saturate through i64::MAX: {output}"
+    );
+}
+
 // =============================================================================
 // 16. Rest Parameters
 // =============================================================================
@@ -387,6 +415,35 @@ fn test_export_equals_import_equals_chain_keeps_namespace_dependency() {
             && first_import_pos < second_import_pos
             && second_import_pos < export_pos,
         "Expected namespace, import chain, and export assignment to preserve source order: {output}"
+    );
+}
+
+#[test]
+fn test_exported_namespace_import_equals_uses_target_for_outer_inferred_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    export namespace x {
+        export class c {
+            foo(a: number) {
+                return a;
+            }
+        }
+    }
+
+    export namespace m2 {
+        export namespace m3 {
+            export import c = x.c;
+            export var cProp = new c();
+        }
+    }
+
+    export var d = new m2.m3.c();
+    "#,
+    );
+
+    assert!(
+        output.contains("export declare var d: x.c;"),
+        "Expected exported variable to use the import-equals target type: {output}"
     );
 }
 
