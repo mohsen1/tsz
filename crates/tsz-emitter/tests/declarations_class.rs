@@ -306,10 +306,91 @@ fn auto_accessor_private_storage_avoids_private_name_collisions_at_es2022() {
     );
 }
 
+/// When an ES5-lowered decorated class lives inside a multi-level
+/// wrapper (System module + execute body, or any other indented
+/// context), the `__decorate([\n    dec\n], C);` block must be anchored
+/// at the writer's current indent — not at column 0. The class
+/// transformer used to hardcode `indent_base = 0`, so the inner `dec`
+/// line landed at 8 spaces and the closing `]` at 4 spaces regardless
+/// of how deeply the class was nested in the output. Propagating
+/// `set_indent_level` through to the transformer's `indent_base` keeps
+/// the Raw IR's hardcoded indentation in sync with the parent context.
+#[test]
+fn es5_decorated_class_decorate_block_aligns_with_writer_indent() {
+    use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
+    use tsz_parser::parser::syntax_kind_ext;
+
+    let source = "@dec\nclass C {\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let class_idx = parser
+        .arena
+        .get_source_file(parser.arena.get(root).expect("root"))
+        .expect("source file")
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .find(|&i| {
+            parser
+                .arena
+                .get(i)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_DECLARATION)
+        })
+        .expect("class decl");
+
+    let mut emitter = ClassES5Emitter::new(&parser.arena);
+    emitter.set_source_text(source);
+    emitter.set_indent_level(4);
+    emitter.set_decorator_info(ClassDecoratorInfo {
+        class_decorators: vec![class_idx], // any non-empty marker
+        has_member_decorators: false,
+        emit_decorator_metadata: false,
+    });
+    let output = emitter.emit_class(class_idx);
+
+    // With `indent_base` now propagated, the inner `dec` line should
+    // anchor at writer-indent + 2 levels = 24 spaces, and the closing
+    // `]` at writer-indent + 1 level = 20 spaces. The previous (broken)
+    // behavior put them at 8 / 4 spaces, regardless of nesting depth.
+    assert!(
+        !output.contains("\n        dec\n"),
+        "Inner `dec` line must not land at the column-0-anchored 8-space indent.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n    ], C);"),
+        "Closing `], C);` must not land at the column-0-anchored 4-space indent.\nOutput:\n{output}"
+    );
+}
+
 /// Regression test: class with lowered static fields followed by another
 /// statement must not produce an extra blank line. The static field
 /// emission ends with `write_line()` after `ClassName.field = value;`,
 /// so the source-file-level loop must not add a second newline.
+/// `this.#staticField` accessed from an instance method is a TS error,
+/// but tsc still emits the JS verbatim — keeping `this` as the receiver
+/// rather than substituting the class alias. The previous lowering was
+/// rewriting `this` to the static-field state var, producing
+/// `__classPrivateFieldGet(_a, _a, ...)` instead of
+/// `__classPrivateFieldGet(this, _a, ...)`. Lock the source-preserving
+/// behavior so we stay in sync with tsc on this error path.
+#[test]
+fn private_static_field_access_via_this_preserves_this_receiver() {
+    let source = "class A {\n    static #myField = \"hello world\";\n    constructor() {\n        console.log(A.#myField);\n        console.log(this.#myField);\n    }\n}\n";
+
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("__classPrivateFieldGet(_a, _a, \"f\", _A_myField)"),
+        "Class-name access (`A.#x`) should still substitute to the class alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldGet(this, _a, \"f\", _A_myField)"),
+        "`this.#x` for a static field must keep `this` as the receiver, matching tsc.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn no_extra_blank_line_after_static_field_lowering() {
     let source = "class Foo {\n    static x = 1;\n}\nconst y = 2;\n";
@@ -921,6 +1002,31 @@ class ElementsArray extends Array {
             "_b = ElementsArray;\n(() => {\n    const superisArray = Reflect.get(_c, \"isArray\", _b);"
         ),
         "static block `super` should use the assigned class-value alias as receiver.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn type_only_class_name_in_static_initializer_does_not_create_alias() {
+    let source = r#"class Bug {
+    private static func: Function[] = [
+        (that: Bug, name: string) => {
+            that.foo(name);
+        }
+    ];
+
+    private foo(name: string) {
+        this.name = name;
+    }
+}"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        !output.contains("var _a;") && !output.contains("_a = Bug;"),
+        "Type-only class-name references inside a static initializer should not create a class-value alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Bug.func = ["),
+        "Static initializer should still be emitted on the class.\nOutput:\n{output}"
     );
 }
 

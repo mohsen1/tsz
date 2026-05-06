@@ -8,6 +8,7 @@ use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -92,6 +93,79 @@ impl<'a> CheckerState<'a> {
             .get(&sym_id)
             .copied()
             .filter(|&ty| ty != TypeId::ERROR && ty != TypeId::UNKNOWN)
+    }
+
+    fn jsdoc_enum_object_literal_initializer(&self, initializer_idx: NodeIndex) -> NodeIndex {
+        let initializer_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(initializer_idx);
+        let Some(init_node) = self.ctx.arena.get(initializer_idx) else {
+            return initializer_idx;
+        };
+        if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return initializer_idx;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(init_node) else {
+            return initializer_idx;
+        };
+        let is_object_freeze = self
+            .ctx
+            .arena
+            .get(call.expression)
+            .and_then(|callee| self.ctx.arena.get_access_expr(callee))
+            .is_some_and(|access| {
+                self.ctx.arena.get_identifier_text(access.expression) == Some("Object")
+                    && self.ctx.arena.get_identifier_text(access.name_or_argument) == Some("freeze")
+            });
+        if !is_object_freeze {
+            return initializer_idx;
+        }
+        call.arguments
+            .as_ref()
+            .and_then(|args| args.nodes.first().copied())
+            .map(|arg| self.ctx.arena.skip_parenthesized_and_assertions(arg))
+            .unwrap_or(initializer_idx)
+    }
+
+    fn check_jsdoc_enum_initializer_values(
+        &mut self,
+        initializer_idx: NodeIndex,
+        enum_element_type: TypeId,
+    ) {
+        let object_idx = self.jsdoc_enum_object_literal_initializer(initializer_idx);
+        let Some(object_node) = self.ctx.arena.get(object_idx) else {
+            return;
+        };
+        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return;
+        }
+        let Some(literal) = self.ctx.arena.get_literal_expr(object_node) else {
+            return;
+        };
+        let property_initializers: Vec<NodeIndex> = literal
+            .elements
+            .nodes
+            .iter()
+            .filter_map(|&element_idx| {
+                self.ctx
+                    .arena
+                    .get(element_idx)
+                    .and_then(|element_node| self.ctx.arena.get_property_assignment(element_node))
+                    .map(|property| property.initializer)
+            })
+            .collect();
+
+        let request = TypingRequest::with_contextual_type(enum_element_type);
+        for property_initializer in property_initializers {
+            let value_type = self.get_type_of_node_with_request(property_initializer, &request);
+            let value_type = self.resolve_lazy_type(value_type);
+            let _ = self.check_assignable_or_report(
+                value_type,
+                enum_element_type,
+                property_initializer,
+            );
+        }
     }
 
     fn cached_inferred_variable_type(
@@ -1274,6 +1348,15 @@ impl<'a> CheckerState<'a> {
             if var_decl.initializer.is_some() {
                 checker.report_malformed_jsdoc_satisfies_tags(decl_idx);
                 checker.report_duplicate_jsdoc_satisfies_tags(decl_idx);
+                if let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx)
+                    && let Some(enum_element_type) =
+                        checker.jsdoc_enum_annotation_type_for_symbol_decl(sym_id, decl_idx)
+                {
+                    checker.check_jsdoc_enum_initializer_values(
+                        var_decl.initializer,
+                        enum_element_type,
+                    );
+                }
                 // JSDoc @satisfies on variable declarations: provide contextual type
                 // for the initializer so that object literal methods and arrow function
                 // parameters get contextually typed from the satisfies type.

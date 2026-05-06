@@ -773,5 +773,17 @@ path = "tests/template_literal_empty_placeholder_tests.rs"
 name = "object_element_access_diagnostics_tests"
 path = "tests/object_element_access_diagnostics_tests.rs"
 
+[[test]]
+name = "intersection_index_signature_fingerprint_tests"
+path = "tests/intersection_index_signature_fingerprint_tests.rs"
+
+[[test]]
+name = "shadowed_symbol_global_tests"
+path = "tests/shadowed_symbol_global_tests.rs"
+
+[[test]]
+name = "jsdoc_tag_boundary_tests"
+path = "tests/jsdoc_tag_boundary_tests.rs"
+
 [lints]
 workspace = true

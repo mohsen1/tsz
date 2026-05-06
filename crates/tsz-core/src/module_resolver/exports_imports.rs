@@ -10,7 +10,7 @@ use super::{
 use crate::config::ModuleResolutionKind;
 use crate::module_resolver_helpers::*;
 use crate::span::Span;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Returns true when an exports/imports pattern key literally ends with a
 /// TypeScript source extension. This mirrors tsc's `resolvedUsingTsExtension`
@@ -21,6 +21,20 @@ use std::path::{Path, PathBuf};
 /// situation TS2877 warns about.
 pub(super) fn key_ends_with_ts_extension(key: &str) -> bool {
     key.ends_with(".ts") || key.ends_with(".tsx") || key.ends_with(".mts") || key.ends_with(".cts")
+}
+
+fn package_relative_target_path(package_dir: &Path, target: &str) -> Option<PathBuf> {
+    let rest = target.strip_prefix("./")?;
+    let path = Path::new(target);
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return None;
+    }
+    Some(package_dir.join(rest))
 }
 
 impl ModuleResolver {
@@ -45,38 +59,39 @@ impl ModuleResolver {
             {
                 let conditions = self.get_export_conditions(importing_module_kind);
 
-                if let Some((target, resolved_using_ts_extension)) =
-                    self.resolve_imports_subpath(imports, specifier, &conditions)
+                for (target, resolved_using_ts_extension) in
+                    self.resolve_imports_subpath_candidates(imports, specifier, &conditions)
                 {
                     // Per Node.js PACKAGE_IMPORTS_RESOLVE spec:
                     // If the target is a bare specifier (not starting with "./" or "/"),
                     // it should be resolved as a package (PACKAGE_RESOLVE), not as a
                     // relative path. This supports self-referencing imports like
                     // "#type": "package" where the imports field maps to a package name.
-                    if !target.starts_with("./") && !target.starts_with('/') {
-                        return self
-                            .resolve_bare_specifier(
-                                &target,
-                                &current,
-                                containing_file,
-                                specifier_span,
-                                importing_module_kind,
-                            )
-                            .map_err(|e| match e {
-                                ResolutionFailure::NotFound { span, .. }
-                                | ResolutionFailure::AmbiguousProjectRoot { span, .. } => {
-                                    ResolutionFailure::NotFound {
-                                        specifier: specifier.to_string(),
-                                        containing_file: containing_file.to_string(),
-                                        span,
-                                    }
-                                }
-                                other => other,
-                            });
+                    if !target.starts_with("./") {
+                        if target.starts_with('/') || target.starts_with('.') {
+                            continue;
+                        }
+                        match self.resolve_bare_specifier(
+                            &target,
+                            &current,
+                            containing_file,
+                            specifier_span,
+                            importing_module_kind,
+                        ) {
+                            Ok(resolved) => return Ok(resolved),
+                            Err(
+                                ResolutionFailure::NotFound { .. }
+                                | ResolutionFailure::AmbiguousProjectRoot { .. },
+                            ) => continue,
+                            Err(other) => return Err(other),
+                        }
                     }
 
                     // Resolve the target as a relative path
-                    let resolved_path = current.join(target.trim_start_matches("./"));
+                    let Some(resolved_path) = package_relative_target_path(&current, &target)
+                    else {
+                        continue;
+                    };
 
                     if let Some(resolved) = self.try_file_or_directory(&resolved_path) {
                         return Ok(ResolvedModule {
@@ -105,30 +120,26 @@ impl ModuleResolver {
         })
     }
 
-    /// Resolve imports field subpath (similar to exports but with # prefix).
+    /// Resolve imports field subpath into ordered target candidates.
     ///
-    /// Returns `(resolved_target, resolved_using_ts_extension)`.
-    ///
-    /// `resolved_using_ts_extension` mirrors tsc's behavior: it is `true` when
-    /// the literal pattern key (the package author's declared mapping) ends in
-    /// a TypeScript source extension. It is **not** sufficient for the wildcard
-    /// substitution to end in `.ts` — that just preserves the user's `.ts`
-    /// through the substitution, which means Node would try to load a `.ts`
-    /// file at runtime (the situation TS2877 warns about).
-    pub(super) fn resolve_imports_subpath(
+    /// Array targets remain as ordered candidates so filesystem/package
+    /// resolution can try later fallbacks when earlier targets are missing.
+    fn resolve_imports_subpath_candidates(
         &self,
         imports: &rustc_hash::FxHashMap<String, PackageExports>,
         specifier: &str,
         conditions: &[String],
-    ) -> Option<(String, bool)> {
+    ) -> Vec<(String, bool)> {
         // Try exact match first.
         // Keys containing '*' are pattern keys and must not be treated as exact matches.
         if let Some((key, value)) = imports.get_key_value(specifier)
             && !key.contains('*')
         {
             let resolved_using_ts_extension = key_ends_with_ts_extension(key);
-            return Self::resolve_export_target_to_string(value, conditions)
-                .map(|target| (target, resolved_using_ts_extension));
+            return Self::resolve_export_targets_to_strings(value, conditions)
+                .into_iter()
+                .map(|target| (target, resolved_using_ts_extension))
+                .collect();
         }
 
         // Try pattern matching (e.g., "#utils/*")
@@ -147,58 +158,59 @@ impl ModuleResolver {
             }
         }
 
-        if let Some((_, pattern, wildcard, value)) = best_match
-            && let Some(target) = Self::resolve_export_target_to_string(value, conditions)
-        {
+        if let Some((_, pattern, wildcard, value)) = best_match {
             let resolved_using_ts_extension = key_ends_with_ts_extension(pattern);
             let is_directory_match = pattern.ends_with('/') && !pattern.contains('*');
-            return Some((
-                apply_wildcard_substitution(&target, &wildcard, is_directory_match),
-                resolved_using_ts_extension,
-            ));
+            return Self::resolve_export_targets_to_strings(value, conditions)
+                .into_iter()
+                .map(|target| {
+                    (
+                        apply_wildcard_substitution(&target, &wildcard, is_directory_match),
+                        resolved_using_ts_extension,
+                    )
+                })
+                .collect();
         }
 
-        None
+        Vec::new()
     }
 
     pub(super) fn is_invalid_package_import_specifier(specifier: &str) -> bool {
         specifier == "#" || specifier.starts_with("#/")
     }
 
-    /// Resolve an export/import value to a string path
-    pub(super) fn resolve_export_target_to_string(
+    /// Resolve an export/import value to ordered string path candidates.
+    fn resolve_export_targets_to_strings(
         value: &PackageExports,
         conditions: &[String],
-    ) -> Option<String> {
+    ) -> Vec<String> {
         match value {
-            PackageExports::String(s) => Some(s.clone()),
+            PackageExports::String(s) => vec![s.clone()],
             PackageExports::Conditional(cond_entries) => {
                 // Iterate condition map entries in JSON key order
                 for (key, nested) in cond_entries {
                     if conditions.iter().any(|c| c == key) {
                         if matches!(nested, PackageExports::Null) {
-                            return None;
+                            return Vec::new();
                         }
-                        if let Some(result) =
-                            Self::resolve_export_target_to_string(nested, conditions)
-                        {
-                            return Some(result);
+                        let results = Self::resolve_export_targets_to_strings(nested, conditions);
+                        if !results.is_empty() {
+                            return results;
                         }
                     }
                 }
-                None
+                Vec::new()
             }
             PackageExports::Array(elements) => {
-                // Array of fallback targets — try each element in order
+                // Array of fallback targets — preserve order so the caller can
+                // probe each syntactically applicable target.
+                let mut results = Vec::new();
                 for element in elements {
-                    if let Some(result) = Self::resolve_export_target_to_string(element, conditions)
-                    {
-                        return Some(result);
-                    }
+                    results.extend(Self::resolve_export_targets_to_strings(element, conditions));
                 }
-                None
+                results
             }
-            PackageExports::Map(_) | PackageExports::Null => None, // Subpath maps not valid here
+            PackageExports::Map(_) | PackageExports::Null => Vec::new(), // Subpath maps not valid here
         }
     }
 
@@ -293,7 +305,7 @@ impl ModuleResolver {
         match exports {
             PackageExports::String(s) => {
                 if subpath == "." {
-                    let resolved = package_dir.join(s.trim_start_matches("./"));
+                    let resolved = package_relative_target_path(package_dir, s)?;
                     if let Some(r) = self.try_export_target(&resolved) {
                         return Some((r, false));
                     }
@@ -399,7 +411,7 @@ impl ModuleResolver {
     ) -> Option<PathBuf> {
         match value {
             PackageExports::String(s) => {
-                let resolved = package_dir.join(s.trim_start_matches("./"));
+                let resolved = package_relative_target_path(package_dir, s)?;
                 self.try_export_target(&resolved)
             }
             PackageExports::Conditional(cond_entries) => {

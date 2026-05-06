@@ -818,10 +818,20 @@ impl TypeInterner {
     }
 
     pub(super) fn normalize_union(&self, mut flat: TypeListBuffer) -> TypeId {
-        // Deduplicate and sort for consistent identity.
-        // Sort order uses semantic comparison to match tsc's union display.
-        self.sort_union_members(&mut flat);
-        flat.dedup();
+        // Callable unions feed signature-combining diagnostics, where tsc preserves
+        // the declaration/indexed-access order for intersected parameter display.
+        // The normal semantic union sort can invert class-backed function members
+        // such as `Node | Mark`, producing `Mark & Node` fingerprints.
+        let preserve_callable_order = self.should_preserve_callable_union_order(&flat);
+        if preserve_callable_order {
+            let mut seen = FxHashSet::default();
+            flat.retain(|id| seen.insert(*id));
+        } else {
+            // Deduplicate and sort for consistent identity.
+            // Sort order uses semantic comparison to match tsc's union display.
+            self.sort_union_members(&mut flat);
+            flat.dedup();
+        }
 
         // Single-pass scan for special sentinel types instead of multiple contains() calls.
         // Each contains() is O(N); scanning once is O(N) total instead of O(4N).
@@ -914,7 +924,7 @@ impl TypeInterner {
                 Some(TypeData::TypeParameter(_) | TypeData::Lazy(_))
             )
         });
-        if !has_complex {
+        if !has_complex && !preserve_callable_order {
             self.reduce_union_subtypes(&mut flat);
         }
 
@@ -927,6 +937,35 @@ impl TypeInterner {
 
         let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
+    }
+
+    fn should_preserve_callable_union_order(&self, flat: &TypeListBuffer) -> bool {
+        let mut callable_count = 0;
+        for &id in flat.iter() {
+            if id == TypeId::NULL || id == TypeId::UNDEFINED || id == TypeId::NEVER {
+                continue;
+            }
+            match self.lookup(id) {
+                Some(TypeData::Function(func_id)) => {
+                    if !self.function_shape(func_id).type_params.is_empty() {
+                        return false;
+                    }
+                    callable_count += 1;
+                }
+                Some(TypeData::Callable(callable_id)) => {
+                    let shape = self.callable_shape(callable_id);
+                    if shape.call_signatures.len() != 1
+                        || !shape.construct_signatures.is_empty()
+                        || !shape.call_signatures[0].type_params.is_empty()
+                    {
+                        return false;
+                    }
+                    callable_count += 1;
+                }
+                _ => return false,
+            }
+        }
+        callable_count > 1
     }
 
     fn absorb_intersections_with_union_constituents(&self, flat: &mut TypeListBuffer) {

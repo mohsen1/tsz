@@ -539,12 +539,29 @@ impl<'a> ES5ClassTransformer<'a> {
             return;
         }
         let segment = &source_text[start..end];
+        let mut block_lines: Option<Vec<String>> = None;
         for line in segment.lines() {
+            if let Some(ref mut acc) = block_lines {
+                acc.push(line.trim_end().to_string());
+                if line.contains("*/") {
+                    let collected = block_lines.take().expect("block was active");
+                    body.push(IRNode::Raw(collected.join("\n").into()));
+                }
+                continue;
+            }
+
             let trimmed = line.trim_start();
-            let is_comment =
-                trimmed.starts_with("//") || (trimmed.starts_with("/*") && trimmed.ends_with("*/"));
-            if is_comment {
+            if trimmed.starts_with("//") {
                 body.push(IRNode::Raw(trimmed.to_string().into()));
+            } else if trimmed.starts_with("/*") {
+                if trimmed.contains("*/") {
+                    body.push(IRNode::Raw(trimmed.to_string().into()));
+                } else {
+                    // Begin a multi-line block comment. Preserve indentation on
+                    // the opening line so subsequent lines retain their relative
+                    // alignment when rejoined.
+                    block_lines = Some(vec![line.trim_end().to_string()]);
+                }
             }
         }
     }

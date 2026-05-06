@@ -4,6 +4,21 @@ use tsz_solver::{
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
 
+/// Return the element type when `type_id` is a mutable `Array<T>` form used for
+/// redeclaration identity.
+pub(crate) fn mutable_array_element_for_redeclaration(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    def_store: Option<&tsz_solver::def::DefinitionStore>,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::mutable_array_element_for_redeclaration(
+        db,
+        type_id,
+        db.get_array_base_type(),
+        def_store,
+    )
+}
+
 pub(crate) fn remapped_mapped_type_has_no_outer_type_params(
     db: &dyn TypeDatabase,
     type_id: TypeId,

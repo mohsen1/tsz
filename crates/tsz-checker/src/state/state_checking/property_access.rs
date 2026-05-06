@@ -34,6 +34,108 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn remapped_name_contains_property(
+        &mut self,
+        remapped_name: TypeId,
+        prop_atom: tsz_common::Atom,
+    ) -> Option<bool> {
+        let remapped_name = self.evaluate_type_with_env(remapped_name);
+        if remapped_name == TypeId::NEVER {
+            return Some(false);
+        }
+        if let Some(name) = query::literal_string(self.ctx.types, remapped_name) {
+            return Some(name == prop_atom);
+        }
+        if let Some(members) = query::union_members(self.ctx.types, remapped_name) {
+            let mut saw_match = false;
+            for member in members {
+                let name = query::literal_string(self.ctx.types, member)?;
+                saw_match |= name == prop_atom;
+            }
+            return Some(saw_match);
+        }
+        None
+    }
+
+    fn resolve_remapped_mapped_property_from_source_union(
+        &mut self,
+        mapped: &tsz_solver::MappedType,
+        constraint: TypeId,
+        prop_name: &str,
+    ) -> Option<tsz_solver::operations::property::PropertyAccessResult> {
+        let name_type = mapped.name_type?;
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        let source_members =
+            query::union_members(self.ctx.types, constraint).unwrap_or_else(|| vec![constraint]);
+        if source_members.is_empty() {
+            return None;
+        }
+
+        let mut matched_property_types = Vec::new();
+        let mut saw_resolvable_source = false;
+        for source_member in source_members {
+            if source_member == TypeId::ANY
+                || source_member == TypeId::UNKNOWN
+                || source_member == TypeId::ERROR
+            {
+                return None;
+            }
+
+            let subst = crate::query_boundaries::common::TypeSubstitution::single(
+                mapped.type_param.name,
+                source_member,
+            );
+            let remapped_name = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                name_type,
+                &subst,
+            );
+            let contains_property =
+                self.remapped_name_contains_property(remapped_name, prop_atom)?;
+            saw_resolvable_source = true;
+            if !contains_property {
+                continue;
+            }
+
+            let property_type = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                mapped.template,
+                &subst,
+            );
+            let property_type = self.evaluate_type_with_env(property_type);
+            let property_type = match mapped.optional_modifier {
+                Some(tsz_solver::MappedModifier::Add) => self
+                    .ctx
+                    .types
+                    .factory()
+                    .union2(property_type, TypeId::UNDEFINED),
+                Some(tsz_solver::MappedModifier::Remove) | None => property_type,
+            };
+            matched_property_types.push(property_type);
+        }
+
+        if matched_property_types.is_empty() {
+            return saw_resolvable_source.then_some(
+                tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
+                    type_id: self.ctx.types.factory().mapped(*mapped),
+                    property_name: prop_atom,
+                },
+            );
+        }
+
+        let type_id = match matched_property_types.len() {
+            1 => matched_property_types[0],
+            _ => self.ctx.types.factory().union(matched_property_types),
+        };
+        Some(
+            tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id,
+                write_type: None,
+                from_index_signature: false,
+            },
+        )
+    }
+
     pub(crate) fn computed_property_display_name(&self, name_idx: NodeIndex) -> Option<String> {
         let name_node = self.ctx.arena.get(name_idx)?;
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
@@ -467,6 +569,12 @@ impl<'a> CheckerState<'a> {
                     from_index_signature: false,
                 },
             );
+        }
+
+        if let Some(result) =
+            self.resolve_remapped_mapped_property_from_source_union(&mapped, constraint, prop_name)
+        {
+            return Some(result);
         }
 
         if let Some(names) =

@@ -1227,7 +1227,75 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn split_mapped_as_clause(text: &str) -> Option<(&str, &str)> {
-        for (idx, _) in text.match_indices("as") {
+        let mut string_quote: Option<char> = None;
+        let mut escaped = false;
+        let mut angle_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut bracket_depth = 0u32;
+        let mut paren_depth = 0u32;
+
+        for (idx, ch) in text.char_indices() {
+            if let Some(quote) = string_quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == quote {
+                    string_quote = None;
+                }
+                continue;
+            }
+
+            match ch {
+                '\'' | '"' | '`' => {
+                    string_quote = Some(ch);
+                    continue;
+                }
+                '<' => {
+                    angle_depth += 1;
+                    continue;
+                }
+                '>' => {
+                    angle_depth = angle_depth.saturating_sub(1);
+                    continue;
+                }
+                '{' => {
+                    brace_depth += 1;
+                    continue;
+                }
+                '}' => {
+                    brace_depth = brace_depth.saturating_sub(1);
+                    continue;
+                }
+                '[' => {
+                    bracket_depth += 1;
+                    continue;
+                }
+                ']' => {
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                    continue;
+                }
+                '(' => {
+                    paren_depth += 1;
+                    continue;
+                }
+                ')' => {
+                    paren_depth = paren_depth.saturating_sub(1);
+                    continue;
+                }
+                _ => {}
+            }
+
+            if ch != 'a'
+                || !text[idx..].starts_with("as")
+                || angle_depth != 0
+                || brace_depth != 0
+                || bracket_depth != 0
+                || paren_depth != 0
+            {
+                continue;
+            }
+
             let before = &text[..idx];
             let after = &text[idx + 2..];
             let before_boundary = before

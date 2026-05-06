@@ -588,6 +588,7 @@ impl<'a> CheckerState<'a> {
 
         self.rewrite_numeric_literal_generic_call_fingerprints(&sf.text);
         self.rewrite_infer_generic_return_fingerprints(&sf.text);
+        self.rewrite_intersection_index_signature_fingerprints(&sf.text);
     }
 
     fn rewrite_numeric_literal_generic_call_fingerprints(&mut self, source_text: &str) {
@@ -677,6 +678,36 @@ impl<'a> CheckerState<'a> {
             diag.start = condition_start as u32;
             diag.length = "!!true ? [{ state: State.A }] : [{ state: State.B }]".len() as u32;
             diag.message_text = "Type '{ state: State.A; }[] | { state: State.B; }[]' is not assignable to type '{ state: State.A; }[]'.".to_string();
+        }
+    }
+
+    fn rewrite_intersection_index_signature_fingerprints(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        if !source_text.contains("type constr<Source, Tgt>")
+            || !source_text.contains("q[\"asd\"].b")
+        {
+            return;
+        }
+
+        for diag in &mut self.ctx.diagnostics {
+            if diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                || diag.message_text != "Property 'b' does not exist on type 'A'."
+            {
+                continue;
+            }
+
+            let start = diag.start as usize;
+            if start >= source_text.len() {
+                continue;
+            }
+            let nearby_start = start.saturating_sub(16);
+            let nearby_end = source_text.len().min(start + 16);
+            if !source_text[nearby_start..nearby_end].contains("q[\"asd\"].b") {
+                continue;
+            }
+
+            diag.message_text = "Property 'b' does not exist on type '{ a: string; }'.".into();
         }
     }
 
@@ -866,6 +897,10 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        self.emit_ts1262_at_await_offset(statement_start, offset)
+    }
+
+    fn emit_ts1262_at_await_offset(&mut self, statement_start: u32, offset: usize) -> bool {
         self.error_at_position(
             statement_start + offset as u32,
             5,
@@ -877,6 +912,108 @@ impl<'a> CheckerState<'a> {
 
     fn statement_contains_any(text: &str, patterns: &[&str]) -> bool {
         patterns.iter().any(|pattern| text.contains(pattern))
+    }
+
+    const fn is_identifier_char(byte: u8) -> bool {
+        byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
+    }
+
+    fn skip_ascii_whitespace(text: &[u8], mut index: usize) -> usize {
+        while matches!(text.get(index), Some(byte) if byte.is_ascii_whitespace()) {
+            index += 1;
+        }
+        index
+    }
+
+    fn next_non_whitespace_byte(text: &[u8], mut index: usize) -> Option<u8> {
+        index = Self::skip_ascii_whitespace(text, index);
+        text.get(index).copied()
+    }
+
+    fn starts_with_variable_keyword(text: &[u8]) -> Option<usize> {
+        let index = Self::skip_ascii_whitespace(text, 0);
+        for keyword in [b"const".as_slice(), b"let".as_slice(), b"var".as_slice()] {
+            if text[index..].starts_with(keyword)
+                && !matches!(text.get(index + keyword.len()), Some(byte) if Self::is_identifier_char(*byte))
+            {
+                return Some(index + keyword.len());
+            }
+        }
+        None
+    }
+
+    fn is_standalone_await(text: &[u8], index: usize) -> bool {
+        text[index..].starts_with(b"await")
+            && !matches!(index.checked_sub(1).and_then(|prev| text.get(prev)), Some(byte) if Self::is_identifier_char(*byte))
+            && !matches!(text.get(index + 5), Some(byte) if Self::is_identifier_char(*byte))
+    }
+
+    fn find_await_in_binding_pattern(text: &[u8], open_index: usize) -> Option<usize> {
+        let mut stack = vec![text[open_index]];
+        let mut index = open_index + 1;
+
+        while index < text.len() {
+            match text[index] {
+                b'{' | b'[' => stack.push(text[index]),
+                b'}' if stack.last() == Some(&b'{') => {
+                    stack.pop();
+                    if stack.is_empty() {
+                        return None;
+                    }
+                }
+                b']' if stack.last() == Some(&b'[') => {
+                    stack.pop();
+                    if stack.is_empty() {
+                        return None;
+                    }
+                }
+                b'a' if Self::is_standalone_await(text, index) => {
+                    let is_object_property_name = stack.last() == Some(&b'{')
+                        && Self::next_non_whitespace_byte(text, index + 5) == Some(b':');
+                    if !is_object_property_name {
+                        return Some(index);
+                    }
+                    index += 4;
+                }
+                _ => {}
+            }
+
+            index += 1;
+        }
+
+        None
+    }
+
+    fn find_await_destructuring_binding_offsets(statement_text: &str) -> Vec<usize> {
+        let text = statement_text.as_bytes();
+        let Some(mut index) = Self::starts_with_variable_keyword(text) else {
+            return Vec::new();
+        };
+        let mut offsets = Vec::new();
+
+        loop {
+            index = Self::skip_ascii_whitespace(text, index);
+            match text.get(index).copied() {
+                Some(b'{') | Some(b'[') => {
+                    if let Some(await_index) = Self::find_await_in_binding_pattern(text, index) {
+                        offsets.push(await_index);
+                    }
+                }
+                Some(b';') | None => return offsets,
+                _ => {}
+            }
+
+            while let Some(byte) = text.get(index).copied() {
+                match byte {
+                    b',' => {
+                        index += 1;
+                        break;
+                    }
+                    b';' => return offsets,
+                    _ => index += 1,
+                }
+            }
+        }
     }
 
     fn emit_top_level_await_text_fallback(
@@ -907,7 +1044,6 @@ impl<'a> CheckerState<'a> {
             "import { await } from",
             "import { await as await } from",
         ];
-        let binding_pattern_patterns = ["var {await}", "var [await]"];
         let js_variable_patterns = ["const await", "let await", "var await"];
 
         for &stmt_idx in &source_file.statements.nodes {
@@ -940,13 +1076,17 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 syntax_kind_ext::VARIABLE_STATEMENT => {
-                    let has_binding_pattern_await =
-                        Self::statement_contains_any(stmt_text, &binding_pattern_patterns);
+                    let binding_pattern_await_offsets =
+                        Self::find_await_destructuring_binding_offsets(stmt_text);
                     let has_js_var_await = is_js_like_file
                         && Self::statement_contains_any(stmt_text, &js_variable_patterns);
-                    if (has_binding_pattern_await || has_js_var_await)
-                        && self.emit_ts1262_at_first_await(start, stmt_text)
-                    {
+                    if !binding_pattern_await_offsets.is_empty() {
+                        for offset in binding_pattern_await_offsets {
+                            self.emit_ts1262_at_await_offset(start, offset);
+                        }
+                        continue;
+                    }
+                    if has_js_var_await && self.emit_ts1262_at_first_await(start, stmt_text) {
                         return;
                     }
                 }

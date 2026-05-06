@@ -3402,7 +3402,8 @@ impl<'a> Printer<'a> {
         if start >= end {
             return false;
         }
-        super::text_contains_identifier(&text[start..end], name)
+        let value_text = crate::import_usage::strip_type_only_content(&text[start..end]);
+        super::text_contains_identifier(&value_text, name)
     }
 
     fn recovered_class_body_statements(&self, node: &Node) -> Vec<String> {

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::checker::context::ScriptTarget as CheckerScriptTarget;
 use crate::checker::diagnostics::Diagnostic;
-use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget};
+use crate::emitter::{ModuleKind, NewLineKind, PrinterOptions, ScriptTarget};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::module_resolver_helpers::{
     PackageExports, PackageJson, match_export_pattern, parse_package_specifier,
@@ -189,6 +189,13 @@ pub struct CompilerOptions {
     pub sound: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit: Option<bool>,
+    /// Emit a UTF-8 Byte Order Mark (BOM) in the beginning of output files.
+    #[serde(
+        default,
+        rename = "emitBOM",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub emit_bom: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_check: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
@@ -222,6 +229,15 @@ pub struct CompilerOptions {
     /// Import emit helpers from tslib instead of inlining them per-file
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub import_helpers: Option<bool>,
+    /// Disable emitting helper declarations.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub no_emit_helpers: Option<bool>,
+    /// Disable emitting comments.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub remove_comments: Option<bool>,
+    /// Set the newline character used in emitted files.
+    #[serde(default)]
+    pub new_line: Option<String>,
     /// Allow JavaScript files to be a part of your program
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub allow_js: Option<bool>,
@@ -413,6 +429,7 @@ pub struct ResolvedCompilerOptions {
     pub ts_build_info_file: Option<PathBuf>,
     pub incremental: bool,
     pub no_emit: bool,
+    pub emit_bom: bool,
     pub no_emit_on_error: bool,
     /// Skip module graph expansion from imports/references when checking.
     pub no_resolve: bool,
@@ -591,7 +608,7 @@ impl PathMapping {
     }
 
     pub const fn specificity(&self) -> usize {
-        self.prefix.len() + self.suffix.len()
+        self.prefix.len()
     }
 }
 
@@ -881,6 +898,18 @@ pub fn resolve_compiler_options(
         resolved.declaration_map = declaration_map;
     }
 
+    if let Some(no_emit_helpers) = options.no_emit_helpers {
+        resolved.printer.no_emit_helpers = no_emit_helpers;
+    }
+
+    if let Some(remove_comments) = options.remove_comments {
+        resolved.printer.remove_comments = remove_comments;
+    }
+
+    if let Some(new_line) = options.new_line.as_deref() {
+        resolved.printer.new_line = parse_new_line_kind(new_line)?;
+    }
+
     if let Some(ts_build_info_file) = options.ts_build_info_file.as_deref()
         && !ts_build_info_file.is_empty()
     {
@@ -971,6 +1000,9 @@ pub fn resolve_compiler_options(
 
     if let Some(no_emit) = options.no_emit {
         resolved.no_emit = no_emit;
+    }
+    if let Some(emit_bom) = options.emit_bom {
+        resolved.emit_bom = emit_bom;
     }
     if let Some(no_check) = options.no_check {
         resolved.no_check = no_check;
@@ -2892,6 +2924,7 @@ fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<
         .with_context(|| format!("failed to read tsconfig: {}", path.display()))?;
     let mut config = parse_tsconfig(&source)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
+    anchor_inherited_path_options(&mut config, path);
 
     let extends = config.extends.take();
     if let Some(extends_value) = extends {
@@ -2933,6 +2966,7 @@ fn load_tsconfig_inner_with_diagnostics(
     let file_display = path.display().to_string();
     let mut parsed = parse_tsconfig_with_diagnostics(&source, &file_display)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
+    anchor_inherited_path_options(&mut parsed.config, path);
 
     let extends = parsed.config.extends.take();
     if let Some(extends_value) = extends {
@@ -3268,6 +3302,35 @@ fn resolve_config_export_target(package_dir: &Path, target: &str) -> Option<Path
     None
 }
 
+/// Anchor relative path-like compiler options at the directory of the
+/// tsconfig that declared them. `tsc` resolves `baseUrl` relative to the
+/// config file where it is written, so when one config inherits from
+/// another via `extends` the inherited path must stay anchored at the
+/// *base* config's directory rather than the consuming child's. We
+/// perform that anchoring at load time so the merged `CompilerOptions`
+/// carries an absolute path that downstream CLI normalizers leave alone.
+fn anchor_inherited_path_options(config: &mut TsConfig, config_path: &Path) {
+    let Some(parent) = config_path.parent() else {
+        return;
+    };
+    let Some(opts) = config.compiler_options.as_mut() else {
+        return;
+    };
+    if let Some(base_url) = opts.base_url.as_deref() {
+        let trimmed = base_url.trim();
+        if !trimmed.is_empty() {
+            let candidate = std::path::Path::new(trimmed);
+            if !candidate.is_absolute() {
+                let parent_abs =
+                    std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+                let joined = parent_abs.join(candidate);
+                let normalized = std::fs::canonicalize(&joined).unwrap_or(joined);
+                opts.base_url = Some(normalized.to_string_lossy().into_owned());
+            }
+        }
+    }
+}
+
 fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {
     let merged_compiler_options = match (base.compiler_options, child.compiler_options.take()) {
         (Some(base_opts), Some(child_opts)) => Some(merge_compiler_options(base_opts, child_opts)),
@@ -3352,6 +3415,9 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             experimental_decorators,
             emit_decorator_metadata,
             import_helpers,
+            no_emit_helpers,
+            remove_comments,
+            new_line,
             allow_js,
             check_js,
             skip_lib_check,
@@ -3390,6 +3456,15 @@ fn parse_script_target(value: &str) -> Result<ScriptTarget> {
     reject_comma_separated_option(value, "target")?;
     ScriptTarget::from_ts_str(value)
         .ok_or_else(|| anyhow!("unsupported compilerOptions.target '{value}'"))
+}
+
+fn parse_new_line_kind(value: &str) -> Result<NewLineKind> {
+    reject_comma_separated_option(value, "newLine")?;
+    match value.to_ascii_lowercase().as_str() {
+        "lf" => Ok(NewLineKind::LineFeed),
+        "crlf" => Ok(NewLineKind::CarriageReturnLineFeed),
+        _ => Err(anyhow!("unsupported compilerOptions.newLine '{value}'")),
+    }
 }
 
 fn parse_module_kind(value: &str) -> Result<ModuleKind> {
@@ -5002,6 +5077,133 @@ mod tests {
                 "Inherited TS5102 must anchor at child's `\"compilerOptions\"` key (start={expected_start}), got: {diag:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_inherited_base_url_anchored_at_base_config_dir() {
+        // tsc resolves a tsconfig's `baseUrl` relative to the config file
+        // that declares it. When a child extends a base that sets
+        // `baseUrl: "."`, the inherited `baseUrl` must point at the *base*
+        // config's directory, not the child's. Issue #3332 reproduced the
+        // child-anchored bug, which broke inherited `paths` mappings.
+        let temp = tempdir().expect("create temp dir");
+        let base_dir = temp.path().join("base");
+        let app_dir = temp.path().join("app");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        std::fs::create_dir_all(&app_dir).expect("create app dir");
+
+        let base_path = base_dir.join("tsconfig.base.json");
+        std::fs::write(
+            &base_path,
+            r#"{
+    "compilerOptions": {
+        "baseUrl": ".",
+        "paths": { "@shared/*": ["shared/*"] }
+    }
+}"#,
+        )
+        .expect("write base");
+
+        let child_path = app_dir.join("tsconfig.json");
+        std::fs::write(
+            &child_path,
+            r#"{
+    "extends": "../base/tsconfig.base.json",
+    "files": ["src/index.ts"]
+}"#,
+        )
+        .expect("write child");
+
+        let merged = load_tsconfig(&child_path).expect("load child");
+        let opts = merged.compiler_options.expect("compiler options merged");
+        let base_url = opts.base_url.expect("inherited baseUrl present");
+
+        let expected = base_dir.to_string_lossy();
+        assert!(
+            base_url.starts_with(expected.as_ref()),
+            "Inherited baseUrl must anchor at the base config's directory \
+             (expected prefix {expected:?}, got {base_url:?})"
+        );
+        assert!(
+            !base_url.starts_with(app_dir.to_string_lossy().as_ref()),
+            "Inherited baseUrl must not anchor at the child's directory: {base_url:?}"
+        );
+    }
+
+    #[test]
+    fn test_child_base_url_overrides_inherited_and_anchors_at_child_dir() {
+        // When the child config also declares `baseUrl`, the child wins
+        // and is resolved relative to the child's directory (matching tsc).
+        let temp = tempdir().expect("create temp dir");
+        let base_dir = temp.path().join("base");
+        let app_dir = temp.path().join("app");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        std::fs::create_dir_all(&app_dir).expect("create app dir");
+
+        let base_path = base_dir.join("tsconfig.base.json");
+        std::fs::write(&base_path, r#"{ "compilerOptions": { "baseUrl": "." } }"#)
+            .expect("write base");
+
+        let child_path = app_dir.join("tsconfig.json");
+        std::fs::write(
+            &child_path,
+            r#"{
+    "extends": "../base/tsconfig.base.json",
+    "compilerOptions": { "baseUrl": "src" }
+}"#,
+        )
+        .expect("write child");
+
+        let merged = load_tsconfig(&child_path).expect("load child");
+        let opts = merged.compiler_options.expect("compiler options merged");
+        let base_url = opts.base_url.expect("baseUrl present");
+
+        let expected_prefix = app_dir.to_string_lossy();
+        assert!(
+            base_url.starts_with(expected_prefix.as_ref()),
+            "Child-declared baseUrl must anchor at the child's directory \
+             (expected prefix {expected_prefix:?}, got {base_url:?})"
+        );
+    }
+
+    #[test]
+    fn test_inherited_absolute_base_url_is_preserved() {
+        // An absolute `baseUrl` declared in the base config must propagate
+        // unchanged through `extends`.
+        let temp = tempdir().expect("create temp dir");
+        let base_dir = temp.path().join("base");
+        let app_dir = temp.path().join("app");
+        let abs_base_url = temp.path().join("shared-root");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        std::fs::create_dir_all(&app_dir).expect("create app dir");
+        std::fs::create_dir_all(&abs_base_url).expect("create shared root");
+
+        let abs_str = abs_base_url.to_string_lossy().replace('\\', "/");
+        let base_path = base_dir.join("tsconfig.base.json");
+        std::fs::write(
+            &base_path,
+            format!(r#"{{ "compilerOptions": {{ "baseUrl": "{abs_str}" }} }}"#),
+        )
+        .expect("write base");
+
+        let child_path = app_dir.join("tsconfig.json");
+        std::fs::write(
+            &child_path,
+            r#"{ "extends": "../base/tsconfig.base.json" }"#,
+        )
+        .expect("write child");
+
+        let merged = load_tsconfig(&child_path).expect("load child");
+        let base_url = merged
+            .compiler_options
+            .expect("compiler options merged")
+            .base_url
+            .expect("baseUrl present");
+        assert_eq!(
+            std::path::Path::new(&base_url),
+            abs_base_url.as_path(),
+            "Absolute inherited baseUrl must be preserved verbatim"
+        );
     }
 
     #[test]

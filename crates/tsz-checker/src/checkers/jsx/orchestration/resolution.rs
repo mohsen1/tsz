@@ -1402,14 +1402,20 @@ impl<'a> CheckerState<'a> {
         &mut self,
         export_name: &str,
     ) -> Option<SymbolId> {
-        if let Some(sym_id) = self.jsx_export_from_binder(self.ctx.binder, None, export_name) {
+        if let Some(sym_id) = self
+            .jsx_exports_from_binder(self.ctx.binder, None, export_name)
+            .into_iter()
+            .next()
+        {
             return Some(sym_id);
         }
 
         if let Some(all_binders) = self.ctx.all_binders.as_ref().map(std::sync::Arc::clone) {
             for (file_idx, binder) in all_binders.iter().enumerate() {
-                if let Some(sym_id) =
-                    self.jsx_export_from_binder(binder, Some(file_idx), export_name)
+                if let Some(sym_id) = self
+                    .jsx_exports_from_binder(binder, Some(file_idx), export_name)
+                    .into_iter()
+                    .next()
                 {
                     return Some(sym_id);
                 }
@@ -1418,7 +1424,11 @@ impl<'a> CheckerState<'a> {
 
         let lib_binders = self.get_lib_binders();
         for binder in lib_binders.iter() {
-            if let Some(sym_id) = self.jsx_export_from_binder(binder, None, export_name) {
+            if let Some(sym_id) = self
+                .jsx_exports_from_binder(binder, None, export_name)
+                .into_iter()
+                .next()
+            {
                 return Some(sym_id);
             }
         }
@@ -1426,12 +1436,47 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn jsx_export_from_binder(
+    pub(crate) fn get_jsx_namespace_export_symbol_ids(
+        &mut self,
+        export_name: &str,
+    ) -> Vec<SymbolId> {
+        let mut symbols = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+
+        for sym_id in self.jsx_exports_from_binder(self.ctx.binder, None, export_name) {
+            if seen.insert(sym_id) {
+                symbols.push(sym_id);
+            }
+        }
+
+        if let Some(all_binders) = self.ctx.all_binders.as_ref().map(std::sync::Arc::clone) {
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                for sym_id in self.jsx_exports_from_binder(binder, Some(file_idx), export_name) {
+                    if seen.insert(sym_id) {
+                        symbols.push(sym_id);
+                    }
+                }
+            }
+        }
+
+        let lib_binders = self.get_lib_binders();
+        for binder in lib_binders.iter() {
+            for sym_id in self.jsx_exports_from_binder(binder, None, export_name) {
+                if seen.insert(sym_id) {
+                    symbols.push(sym_id);
+                }
+            }
+        }
+
+        symbols
+    }
+
+    fn jsx_exports_from_binder(
         &self,
         binder: &tsz_binder::BinderState,
         file_idx: Option<usize>,
         export_name: &str,
-    ) -> Option<SymbolId> {
+    ) -> Vec<SymbolId> {
         let mut candidates: Vec<SymbolId> = Vec::new();
         if let Some(augmentations) = binder.global_augmentations.get("JSX") {
             candidates.extend(
@@ -1440,10 +1485,16 @@ impl<'a> CheckerState<'a> {
                 }),
             );
         }
-        if let Some(sym_id) = binder.file_locals.get("JSX") {
+        if let Some(sym_id) = binder.file_locals.get("JSX")
+            && (binder.global_augmentations.contains_key("JSX")
+                || binder.lib_symbol_ids.contains(&sym_id)
+                || !binder.is_external_module())
+        {
             candidates.push(sym_id);
         }
 
+        let mut exports = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
         for jsx_sym_id in candidates {
             let Some(symbol) = binder.get_symbol(jsx_sym_id) else {
                 continue;
@@ -1460,10 +1511,12 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .register_symbol_file_target(export_sym_id, file_idx);
             }
-            return Some(export_sym_id);
+            if seen.insert(export_sym_id) {
+                exports.push(export_sym_id);
+            }
         }
 
-        None
+        exports
     }
 
     pub(in crate::checkers_domain::jsx) fn resolve_jsx_namespace_target_symbol_id(
@@ -1618,11 +1671,35 @@ impl<'a> CheckerState<'a> {
         if let Some(cached) = self.ctx.jsx_intrinsic_elements_type_cache {
             return cached;
         }
-        let resolved = self
-            .get_intrinsic_elements_symbol_id()
-            .map(|intrinsic_elements_sym_id| {
-                self.type_reference_symbol_type(intrinsic_elements_sym_id)
-            });
+        let mut intrinsic_element_symbols = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+        if let Some(primary) = self.get_intrinsic_elements_symbol_id()
+            && seen.insert(primary)
+        {
+            intrinsic_element_symbols.push(primary);
+        }
+        for sym_id in self.get_jsx_namespace_export_symbol_ids("IntrinsicElements") {
+            if seen.insert(sym_id) {
+                intrinsic_element_symbols.push(sym_id);
+            }
+        }
+        let resolved = if intrinsic_element_symbols.is_empty() {
+            None
+        } else {
+            let mut merged = TypeId::ERROR;
+            for intrinsic_elements_sym_id in intrinsic_element_symbols {
+                let ty = self.type_reference_symbol_type(intrinsic_elements_sym_id);
+                if matches!(ty, TypeId::ERROR | TypeId::UNKNOWN) {
+                    continue;
+                }
+                merged = if merged == TypeId::ERROR {
+                    ty
+                } else {
+                    self.merge_interface_types(merged, ty)
+                };
+            }
+            (merged != TypeId::ERROR).then_some(merged)
+        };
         self.ctx.jsx_intrinsic_elements_type_cache = Some(resolved);
         resolved
     }

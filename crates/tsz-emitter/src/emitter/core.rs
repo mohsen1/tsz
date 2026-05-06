@@ -451,6 +451,11 @@ pub struct Printer<'a> {
     /// object that should qualify them.
     pub(crate) namespace_ancestor_export_qualifiers: FxHashMap<String, String>,
 
+    /// Class/function/enum names declared in the current namespace block.
+    /// These local value bindings shadow parent namespace exports while
+    /// qualifying identifiers inside namespace IIFEs.
+    pub(crate) namespace_current_class_fn_enum_names: FxHashSet<String>,
+
     /// Names of variables exported from the current CJS module.
     /// Used to qualify identifier reads: `x` → `exports.x` in expression positions.
     pub(crate) commonjs_exported_var_names: FxHashSet<String>,
@@ -656,6 +661,11 @@ pub struct Printer<'a> {
     /// Source file name for jsx=react-jsxdev mode (e.g., "file.tsx").
     /// Used to emit `const _jsxFileName = "file.tsx";` and source location args.
     pub(crate) jsx_dev_file_name: Option<String>,
+
+    /// Bare JSX runtime alias for `moduleDetection=legacy` CommonJS scripts.
+    /// In this mode tsc suppresses the synthesized `require`, but still emits
+    /// calls like `(0, _a.jsx)(...)`.
+    pub(crate) jsx_legacy_cjs_runtime_var: Option<String>,
 
     /// When true, the current source file is a JavaScript file (.js/.jsx/.cjs/.mjs).
     /// JS files do not undergo import elision since all imports are value imports.
@@ -895,6 +905,7 @@ impl<'a> Printer<'a> {
             namespace_exported_names: FxHashSet::default(),
             namespace_parent_exported_names: FxHashSet::default(),
             namespace_ancestor_export_qualifiers: FxHashMap::default(),
+            namespace_current_class_fn_enum_names: FxHashSet::default(),
             commonjs_exported_var_names: FxHashSet::default(),
             commonjs_exported_var_shadow_stack: Vec::new(),
             deferred_local_export_bindings: None,
@@ -943,6 +954,7 @@ impl<'a> Printer<'a> {
             defer_class_static_blocks: false,
             deferred_class_static_blocks: Vec::new(),
             jsx_dev_file_name: None,
+            jsx_legacy_cjs_runtime_var: None,
             source_is_js_file: false,
             computed_prop_temp_map: FxHashMap::default(),
             scoped_static_this_alias: None,

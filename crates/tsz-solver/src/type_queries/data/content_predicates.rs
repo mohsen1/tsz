@@ -4,6 +4,7 @@
 //! array/tuple extraction, and compound member mapping.
 
 use crate::TypeDatabase;
+use crate::def::DefinitionStore;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -704,6 +705,72 @@ pub fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
         }
         _ => None,
     }
+}
+
+/// Get the element type for mutable array forms that are identical for TS2403.
+///
+/// This intentionally recognizes `T[]` and canonical `Array<T>` applications
+/// before application evaluation erases the as-written `Array<T>` identity.
+pub fn mutable_array_element_for_redeclaration(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    array_base: Option<TypeId>,
+    definition_store: Option<&DefinitionStore>,
+) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Array(elem)) => Some(elem),
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            (is_array_application_base_for_redeclaration(
+                db,
+                app.base,
+                array_base,
+                definition_store,
+            ) && app.args.len() == 1)
+                .then_some(app.args[0])
+        }
+        _ => None,
+    }
+}
+
+fn is_array_application_base_for_redeclaration(
+    db: &dyn TypeDatabase,
+    base: TypeId,
+    array_base: Option<TypeId>,
+    definition_store: Option<&DefinitionStore>,
+) -> bool {
+    let array_base = array_base.or_else(|| db.get_array_base_type());
+    let array_display_base = db.get_array_display_base_type();
+    if array_base == Some(base)
+        || array_display_base.is_some_and(|display_base| display_base == base)
+    {
+        return true;
+    }
+
+    db.get_display_alias(base).is_some_and(|alias| {
+        array_base == Some(alias)
+            || array_display_base.is_some_and(|display_base| display_base == alias)
+    }) || lazy_base_names_array(db, definition_store, base)
+}
+
+fn lazy_base_names_array(
+    db: &dyn TypeDatabase,
+    definition_store: Option<&DefinitionStore>,
+    base: TypeId,
+) -> bool {
+    let (Some(definition_store), Some(TypeData::Lazy(def_id))) =
+        (definition_store, db.lookup(base))
+    else {
+        return false;
+    };
+
+    definition_store
+        .get(def_id)
+        .is_some_and(|def| db.resolve_atom_ref(def.name).as_ref() == "Array")
 }
 
 /// Get the elements of a tuple type.

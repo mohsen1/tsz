@@ -280,6 +280,31 @@ impl<'a> Printer<'a> {
             .collect()
     }
 
+    fn default_import_has_value_usage_after_node(
+        &self,
+        import_node: &Node,
+        import_data: &tsz_parser::parser::node::ImportDeclData,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let name = self.get_identifier_text_idx(name_idx);
+        if name.is_empty() {
+            return true;
+        }
+        let Some(source_text) = self.source_text else {
+            return true;
+        };
+        let haystack = Self::source_after_import(source_text, import_node, import_data, self.arena);
+        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+            &value_haystack,
+            &self.ctx.options.external_const_enum_bindings,
+        );
+
+        crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
+            || (self.ctx.options.emit_decorator_metadata
+                && crate::import_usage::name_appears_in_decorator_metadata_type(haystack, &name))
+    }
+
     /// Check if an import-equals declaration's identifier is used after the import.
     pub(in crate::emitter) fn import_equals_has_value_usage_after_node(
         &self,
@@ -512,7 +537,15 @@ impl<'a> Printer<'a> {
         let mut trailing_comma = false;
 
         if clause.name.is_some() {
-            has_default = true;
+            has_default = if self.ctx.options.type_only_nodes.is_empty()
+                && !self.source_is_js_file
+                && !self.ctx.options.verbatim_module_syntax
+                && !self.is_jsx_factory_import_clause(clause)
+            {
+                self.default_import_has_value_usage_after_node(node, import, clause.name)
+            } else {
+                true
+            };
         }
 
         if clause.named_bindings.is_some()

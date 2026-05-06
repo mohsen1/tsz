@@ -143,6 +143,28 @@ fn classic_spread_no_flatten_variable() {
     );
 }
 
+#[test]
+fn malformed_attribute_spread_value_preserves_empty_initializer() {
+    let source = r#"
+declare const React: any
+declare namespace JSX {
+    interface IntrinsicElements {
+        [k: string]: any
+    }
+}
+
+const X: any
+const a: any
+<X a={...a} />
+"#;
+    let output = emit_jsx(source, JsxEmit::React, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("React.createElement(X, { a: , a: true });"),
+        "Malformed spread attribute value should keep the empty property initializer.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // Target-appropriate spread prop handling (committed in 8717f7d)
 // =============================================================================
@@ -256,6 +278,54 @@ fn react_jsx_under_module_detection_legacy_skips_runtime_import() {
     assert!(
         output.contains("_jsx(\"div\""),
         "JSX call must still emit (referencing _jsx as undefined globals).\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn react_jsx_under_module_detection_legacy_commonjs_uses_bare_runtime_alias() {
+    let source = "namespace JSX {}\nclass Component {\n    render() { return <div />; }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::CommonJS,
+        jsx: JsxEmit::ReactJsx,
+        module_detection_legacy: true,
+        ..Default::default()
+    };
+    let output = emit_jsx_with_printer_options(source, opts);
+
+    assert!(
+        !output.contains("react/jsx-runtime"),
+        "Legacy detection must not synthesize a JSX runtime require.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(0, _a.jsx)(\"div\""),
+        "CommonJS legacy JSX calls should use the bare runtime alias.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn react_jsxdev_under_module_detection_legacy_emits_file_name_without_import() {
+    let source = "namespace JSX {}\nclass Component {\n    render() { return <div />; }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::System,
+        jsx: JsxEmit::ReactJsxDev,
+        module_detection_legacy: true,
+        ..Default::default()
+    };
+    let output = emit_jsx_with_printer_options(source, opts);
+
+    assert!(
+        !output.contains("react/jsx-dev-runtime"),
+        "Legacy detection must not synthesize a JSX dev runtime import.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const _jsxFileName = \"test.tsx\";"),
+        "JSX dev source locations still need the file-name constant.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_jsxDEV(\"div\", {"),
+        "System legacy JSX dev calls should stay as bare _jsxDEV references.\nOutput:\n{output}"
     );
 }
 

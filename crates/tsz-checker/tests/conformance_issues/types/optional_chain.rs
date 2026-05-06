@@ -224,6 +224,189 @@ if (o.x?.y?.z) {
 }
 
 #[test]
+fn test_optional_chain_undefined_comparisons_keep_short_circuit_branch_undefined() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Thing = { foo: string | number };
+declare function use(value: string | number): void;
+function f(o: Thing | undefined) {
+    if (o?.foo === undefined) {
+        use(o.foo);
+    } else {
+        use(o.foo);
+    }
+    if (o?.foo !== undefined) {
+        use(o.foo);
+    } else {
+        use(o.foo);
+    }
+    if (o?.foo == undefined) {
+        use(o.foo);
+    } else {
+        use(o.foo);
+    }
+    if (o?.foo != undefined) {
+        use(o.foo);
+    } else {
+        use(o.foo);
+    }
+    if (typeof o?.foo === "undefined") {
+        use(o.foo);
+    } else {
+        use(o.foo);
+    }
+    if (typeof o?.foo !== "undefined") {
+        use(o.foo);
+    } else {
+        use(o.foo);
+    }
+    if (typeof o?.foo == "undefined") {
+        use(o.foo);
+    } else {
+        use(o.foo);
+    }
+    if (typeof o?.foo != "undefined") {
+        use(o.foo);
+    } else {
+        use(o.foo);
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    let ts18048_count = semantic_errors
+        .iter()
+        .filter(|(code, _)| *code == 18048)
+        .count();
+    assert_eq!(
+        ts18048_count, 8,
+        "Expected TS18048 only in optional-chain undefined branches. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_chain_switch_keeps_undefined_receiver_in_undefined_paths() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Thing = { foo: string | number };
+declare function use(value: string | number): void;
+function f(o: Thing | undefined) {
+    switch (o?.foo) {
+        case "abc":
+            use(o.foo);
+            break;
+        case 42:
+            use(o.foo);
+            break;
+        case undefined:
+            use(o.foo);
+            break;
+        default:
+            use(o.foo);
+            break;
+    }
+    switch (typeof o?.foo) {
+        case "string":
+            use(o.foo);
+            break;
+        case "number":
+            use(o.foo);
+            break;
+        case "undefined":
+            use(o.foo);
+            break;
+        default:
+            use(o.foo);
+            break;
+    }
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    let ts18048_count = semantic_errors
+        .iter()
+        .filter(|(code, _)| *code == 18048)
+        .count();
+    assert_eq!(
+        ts18048_count, 4,
+        "Expected TS18048 only in optional-chain switch undefined/default branches. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
+fn test_optional_chain_truthiness_false_paths_keep_prefix_optional() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Thing = { x?: { y: { z?: { w: boolean } } } };
+declare function useY(value: { z?: { w: boolean } }): void;
+declare function useW(value: boolean): void;
+function f(o: Thing) {
+    if (o.x?.y.z?.w) {
+        useY(o.x.y);
+        useW(o.x.y.z.w);
+    } else {
+        useY(o.x.y);
+        useW(o.x.y.z.w);
+    }
+    useY(o.x.y);
+    useW(o.x.y.z.w);
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    let maybe_x_count = semantic_errors
+        .iter()
+        .filter(|(code, message)| {
+            *code == 18048 && message.as_str() == "'o.x' is possibly 'undefined'."
+        })
+        .count();
+    let maybe_z_count = semantic_errors
+        .iter()
+        .filter(|(code, message)| {
+            *code == 18048 && message.as_str() == "'o.x.y.z' is possibly 'undefined'."
+        })
+        .count();
+    assert_eq!(
+        maybe_x_count, 4,
+        "Expected TS18048 for o.x in false and post-if plain property reads. Actual: {semantic_errors:#?}"
+    );
+    assert_eq!(
+        maybe_z_count, 2,
+        "Expected TS18048 for o.x.y.z in false and post-if deep property reads. Actual: {semantic_errors:#?}"
+    );
+}
+
+#[test]
 fn test_direct_identifier_truthiness_guard_narrows_in_and_rhs() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

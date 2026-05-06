@@ -277,6 +277,16 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // A contextual callback target can mention an outer type parameter with the
+        // same name as the callee's type parameter, e.g.
+        // `outer<T>(obj: T) { id<U extends Function>(fn: U): U; ... }` where
+        // `id` is contextually expected as `(target: T) => boolean`. At this point
+        // type parameters are name-keyed, so treating every same-name reference as
+        // self-recursive blocks the useful return-context substitution.
+        if call_checker::get_contextual_signature(self.ctx.types, target).is_some() {
+            return false;
+        }
+
         common::references_any_type_param_named(self.ctx.types, target, tracked_type_params)
     }
 
@@ -371,6 +381,9 @@ impl<'a> CheckerState<'a> {
         let Some((source_fn, target_fn)) = function_info else {
             return source_ty;
         };
+        if target_fn.params.iter().any(|param| param.rest) {
+            return source_ty;
+        }
         let normalize = |shape: tsz_solver::FunctionShape| {
             let unpacked: Vec<_> = shape
                 .params
@@ -429,6 +442,9 @@ impl<'a> CheckerState<'a> {
         let Some((source_fn, target_fn)) = function_info else {
             return source_ty;
         };
+        if target_fn.params.iter().any(|param| param.rest) {
+            return source_ty;
+        }
         let normalize = |shape: tsz_solver::FunctionShape| {
             let unpacked: Vec<_> = shape
                 .params

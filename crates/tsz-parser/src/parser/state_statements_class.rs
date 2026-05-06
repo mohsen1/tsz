@@ -124,6 +124,7 @@ impl ParserState {
         let mut emitted_rest_error = false;
         let mut rest_param_start: u32 = 0;
         let mut rest_param_length: u32 = 0;
+        let mut recover_tail_from_stray_colon = false;
 
         while !self.is_token(SyntaxKind::CloseParenToken) {
             // If we see `=>` before any parameters were parsed, this is likely a
@@ -217,6 +218,19 @@ impl ParserState {
             }
 
             if !has_comma {
+                if recover_tail_from_stray_colon && self.is_token(SyntaxKind::EndOfFileToken) {
+                    if let Some(node) = self.arena.get(param) {
+                        self.parse_error_at(
+                            node.end,
+                            0,
+                            "')' expected.",
+                            tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                        );
+                        self.suppress_next_missing_close_paren_error_once = true;
+                    }
+                    break;
+                }
+
                 // Recovery: in malformed parameter initializers like
                 // `function* f(a = yield => yield) {}` or
                 // `async function f(a = await => await) {}`
@@ -239,6 +253,30 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
                     self.error_comma_expected();
+                    if self.is_token(SyntaxKind::ColonToken) {
+                        self.next_token();
+                        if self.can_token_start_type() {
+                            self.parse_type();
+                        } else if !matches!(
+                            self.token(),
+                            SyntaxKind::CommaToken
+                                | SyntaxKind::CloseParenToken
+                                | SyntaxKind::OpenBraceToken
+                                | SyntaxKind::EndOfFileToken
+                        ) {
+                            self.next_token();
+                        }
+                        if self.is_parameter_start() {
+                            if self.is_token(SyntaxKind::OpenBraceToken) {
+                                self.parse_error_at_current_token(
+                                    "',' expected.",
+                                    tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                                );
+                                recover_tail_from_stray_colon = true;
+                            }
+                            continue;
+                        }
+                    }
                     if self.is_token(SyntaxKind::IsKeyword) {
                         // `function f(a: b is A)` is not a legal parameter type
                         // predicate. TSC treats both `is` and the following type

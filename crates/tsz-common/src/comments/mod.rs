@@ -113,11 +113,12 @@ fn collect_comment_at(
             return Some(len);
         };
         let mut pos = start_pos + 2;
-        while pos < len && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+        while pos < len && comment_line_break_len_at(bytes, pos) == 0 {
             pos += 1;
         }
 
-        let has_trailing_new_line = pos < len;
+        let line_break_len = comment_line_break_len_at(bytes, pos);
+        let has_trailing_new_line = line_break_len > 0;
         comments.push(CommentRange::new(
             start,
             u32::try_from(pos).unwrap_or(u32::MAX),
@@ -125,12 +126,7 @@ fn collect_comment_at(
             has_trailing_new_line,
         ));
 
-        if pos < len && bytes[pos] == b'\r' {
-            pos += 1;
-        }
-        if pos < len && bytes[pos] == b'\n' {
-            pos += 1;
-        }
+        pos += line_break_len;
         Some(pos)
     } else if next == b'*' {
         let Ok(start) = u32::try_from(start_pos) else {
@@ -161,6 +157,20 @@ fn collect_comment_at(
         Some(pos)
     } else {
         None
+    }
+}
+
+fn comment_line_break_len_at(bytes: &[u8], pos: usize) -> usize {
+    match bytes.get(pos) {
+        Some(b'\r') if bytes.get(pos + 1) == Some(&b'\n') => 2,
+        Some(b'\n') | Some(b'\r') => 1,
+        Some(0xE2)
+            if bytes.get(pos + 1) == Some(&0x80)
+                && matches!(bytes.get(pos + 2), Some(0xA8 | 0xA9)) =>
+        {
+            3
+        }
+        _ => 0,
     }
 }
 
@@ -552,7 +562,7 @@ pub fn last_ts_directive_offset_in_leading_trivia(source: &str, directive: &str)
     while pos < len {
         match bytes[pos] {
             // Skip whitespace
-            b' ' | b'\t' | b'\r' | b'\n' => {
+            b if is_ts_directive_whitespace_byte(b) => {
                 pos += 1;
             }
             b'/' if pos + 1 < len => match bytes[pos + 1] {
@@ -615,12 +625,14 @@ fn last_directive_offset_in_comment(
         }
 
         let mut candidate = line_start;
-        while candidate < line_end && matches!(bytes[candidate], b' ' | b'\t') {
+        while candidate < line_end && is_ts_directive_horizontal_whitespace_byte(bytes[candidate]) {
             candidate += 1;
         }
         if candidate < line_end && bytes[candidate] == b'*' {
             candidate += 1;
-            while candidate < line_end && matches!(bytes[candidate], b' ' | b'\t') {
+            while candidate < line_end
+                && is_ts_directive_horizontal_whitespace_byte(bytes[candidate])
+            {
                 candidate += 1;
             }
         }
@@ -667,6 +679,14 @@ fn source_byte_at_word_boundary(bytes: &[u8], pos: usize, line_end: usize) -> bo
 
 const fn is_directive_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'
+}
+
+const fn is_ts_directive_whitespace_byte(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | 0x0B | 0x0C)
+}
+
+const fn is_ts_directive_horizontal_whitespace_byte(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | 0x0B | 0x0C)
 }
 
 /// Extract the content of a `JSDoc` comment (without the delimiters).

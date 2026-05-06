@@ -203,6 +203,8 @@ impl<'a> Printer<'a> {
             self.write_line();
             self.decrease_indent();
             self.write("}");
+        } else if !body_is_block && self.arrow_concise_body_needs_temp_prologue(func.body) {
+            self.emit_arrow_concise_body_with_temp_prologue(func.body);
         } else if !body_is_block && self.concise_body_needs_parens(func.body) {
             // Emit comments between => and the body expression (e.g. triple-slash comments)
             if let Some(body_node) = self.arena.get(func.body) {
@@ -382,7 +384,7 @@ impl<'a> Printer<'a> {
         })
     }
 
-    fn param_initializer_generates_hoisted_temp(&self, idx: NodeIndex) -> bool {
+    pub(super) fn param_initializer_generates_hoisted_temp(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
         };
@@ -1092,6 +1094,7 @@ impl<'a> Printer<'a> {
         self.write("{");
         self.write_line();
         self.increase_indent();
+        self.ctx.block_scope_state.enter_function_scope();
         self.skip_block_opening_line_comments(block_node, block);
         self.emit_param_prologue(transforms);
 
@@ -1103,6 +1106,7 @@ impl<'a> Printer<'a> {
             }
         }
 
+        self.ctx.block_scope_state.exit_scope();
         self.decrease_indent();
         self.write("}");
     }

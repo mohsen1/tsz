@@ -4,10 +4,11 @@
 //! including Node16/NodeNext ESM extension validation (TS2834/TS2835).
 
 use super::{
-    ImportKind, ImportingModuleKind, ModuleExtension, ModuleResolver, ResolutionFailure,
-    ResolvedModule,
+    ImportKind, ImportingModuleKind, ModuleExtension, ModuleResolver, PackageType,
+    ResolutionFailure, ResolvedModule,
 };
 use crate::config::ModuleResolutionKind;
+use crate::module_resolver_helpers::KNOWN_EXTENSIONS;
 use crate::span::Span;
 use std::path::Path;
 
@@ -29,6 +30,29 @@ impl ModuleResolver {
         }
     }
 
+    fn resolved_via_directory_index(&self, resolved: &Path, candidate: &Path) -> bool {
+        self.is_index_file_with_module_suffix(resolved)
+            && candidate
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_none_or(|name| name != "index")
+    }
+
+    fn is_index_file_with_module_suffix(&self, resolved: &Path) -> bool {
+        let Some(name) = resolved.file_name().and_then(|name| name.to_str()) else {
+            return false;
+        };
+        let Some(after_index) = name.strip_prefix("index") else {
+            return false;
+        };
+
+        self.module_suffixes.iter().any(|suffix| {
+            after_index
+                .strip_prefix(suffix)
+                .is_some_and(|extension| KNOWN_EXTENSIONS.contains(&extension))
+        })
+    }
+
     /// Resolve a relative import
     pub(super) fn resolve_relative(
         &self,
@@ -45,10 +69,30 @@ impl ModuleResolver {
             || specifier.ends_with('/')
             || specifier.ends_with('\\');
         let try_resolve_candidate = |path: &Path| {
-            if prefer_directory {
-                self.try_directory(path)
+            let uses_require_resolution = import_kind == ImportKind::CjsRequire
+                || (matches!(import_kind, ImportKind::EsmImport | ImportKind::EsmReExport)
+                    && importing_module_kind == ImportingModuleKind::CommonJs);
+            let package_type = if matches!(
+                self.resolution_kind,
+                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+            ) && uses_require_resolution
+            {
+                let package_dir = if prefer_directory || path.is_dir() {
+                    path
+                } else {
+                    path.parent().unwrap_or_else(|| Path::new("."))
+                };
+                Some(
+                    self.get_package_type_for_dir(package_dir)
+                        .unwrap_or(PackageType::CommonJs),
+                )
             } else {
-                self.try_file_or_directory(path)
+                self.current_package_type
+            };
+            if prefer_directory {
+                self.try_directory_with_package_type(path, package_type)
+            } else {
+                self.try_file_or_directory_with_package_type(path, package_type)
             }
         };
 
@@ -103,31 +147,8 @@ impl ModuleResolver {
                 // a directory index (e.g., ./pkg → ./pkg/index.d.ts), don't suggest an
                 // extension (TS2834) because adding .js to the specifier won't work.
                 let resolved_ext = ModuleExtension::from_path(&resolved);
-                let resolved_via_index = {
-                    let resolved_path = Path::new(&resolved);
-                    let is_index_file = resolved_path.file_name().is_some_and(|name| {
-                        let name = name.to_string_lossy();
-                        name == "index.ts"
-                            || name == "index.tsx"
-                            || name == "index.js"
-                            || name == "index.jsx"
-                            || name == "index.d.ts"
-                            || name == "index.d.mts"
-                            || name == "index.d.cts"
-                            || name == "index.mts"
-                            || name == "index.cts"
-                    });
-                    // When the specifier itself is e.g. `./subfolder/index`, the
-                    // resolution finds `subfolder/index.mts` directly — that is
-                    // direct file resolution, NOT directory index resolution.
-                    // Only treat it as "via index" when the candidate's own
-                    // filename is not already `index`.
-                    let candidate_has_index_filename = candidate
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n == "index");
-                    is_index_file && !candidate_has_index_filename
-                };
+                let resolved_via_index =
+                    self.resolved_via_directory_index(Path::new(&resolved), &candidate);
                 // Bare `.`, `./`, `..`, `../` specifiers (no path component to
                 // add an extension to) resolve via directory index but should
                 // emit TS2307 (Cannot find module), not TS2834, because there
@@ -185,26 +206,8 @@ impl ModuleResolver {
         }
 
         if let Some(resolved) = try_resolve_candidate(&candidate) {
-            let resolved_via_index = {
-                let resolved_path = Path::new(&resolved);
-                let is_index_file = resolved_path.file_name().is_some_and(|name| {
-                    let name = name.to_string_lossy();
-                    name == "index.ts"
-                        || name == "index.tsx"
-                        || name == "index.js"
-                        || name == "index.jsx"
-                        || name == "index.d.ts"
-                        || name == "index.d.mts"
-                        || name == "index.d.cts"
-                        || name == "index.mts"
-                        || name == "index.cts"
-                });
-                let candidate_has_index_filename = candidate
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n == "index");
-                is_index_file && !candidate_has_index_filename
-            };
+            let resolved_via_index =
+                self.resolved_via_directory_index(Path::new(&resolved), &candidate);
             let resolved_using_ts_extension = (specifier.ends_with(".ts")
                 || specifier.ends_with(".tsx")
                 || specifier.ends_with(".mts")

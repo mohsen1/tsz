@@ -92,6 +92,61 @@ fn optional_parameter_missing_initializer_skips_question_after_trivia() {
 }
 
 #[test]
+fn es5_param_destructuring_prologue_keeps_function_body_let_name() {
+    let source = "let foo = \"\";\nfunction f({ [foo]: bar }: any[]) {\n    let foo = 2;\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains("var _b = foo, bar = _a[_b];\n    var foo = 2;"),
+        "Function-body let declarations should use the function scope opened by the ES5 parameter prologue.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var foo_1 = 2;"),
+        "Function-body let should not be renamed against the outer foo.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn object_spread_recovery_keeps_trailing_empty_object() {
+    let source = "let o9 = { ...matchMedia() { }};\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("let o9 = Object.assign({}, matchMedia()), {};"),
+        "Malformed object spread should preserve the recovered trailing empty object.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn jsx_numeric_tag_recovery_preserves_tail() {
+    let source =
+        "const x = \"oops\";\nconst a = + <number> x;\nconst b = + <> x;\nconst c = + <1234> x;\n";
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            jsx: JsxEmit::Preserve,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        output.contains("const c = + < />1234> x;"),
+        "Malformed numeric JSX tag should preserve the recovered numeric tail.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn decorated_anonymous_class_expression_sets_empty_function_name() {
     let source = "declare let dec: any;\n(@dec class {});";
     let output = parse_lower_print(
@@ -386,6 +441,21 @@ fn test_nested_namespace_extends_parent_export_when_name_conflicts() {
     assert!(
         output.contains("class ContextMenu extends B.EventManager"),
         "Nested namespace heritage should qualify parent namespace export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_namespace_heritage_prefers_current_block_class_over_parent_export() {
+    let source = "namespace M {\n    export namespace C { export function f() {} }\n}\nnamespace M.P {\n    export class C {}\n    export class E extends C {}\n}\n";
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("class E extends C"),
+        "Heritage references should prefer a class declared in the current namespace block.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("class E extends M.C"),
+        "Parent namespace export should not shadow the current block's local class binding.\nOutput:\n{output}"
     );
 }
 
@@ -2173,5 +2243,40 @@ fn namespace_es5_iife_preserves_line_comment_between_classes() {
     assert!(
         output.contains("// class d"),
         "Single-line comment between sibling classes in a namespace IIFE must survive ES5 lowering.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_marker_strings_do_not_trigger_missing_arrow_fixture_recovery() {
+    let source = r#"namespace missingCurliesWithArrow {
+  const a = "namespace withStatement";
+  const b = "namespace withoutStatement";
+  const c = "=> var k = 10;";
+  const d = "=> };";
+
+  export const actual = 1;
+}
+
+console.log(missingCurliesWithArrow.actual);
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..PrintOptions::es6()
+        },
+    );
+
+    assert!(
+        output.contains("missingCurliesWithArrow.actual = 1;"),
+        "Valid namespace body should be emitted instead of fixture recovery output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const a = \"namespace withStatement\";"),
+        "String marker declarations should remain in the namespace body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var a = () => { var k = 10; };") && !output.contains("var a = () => ;"),
+        "Hardcoded missingCurliesWithArrow fixture output must not be emitted.\nOutput:\n{output}"
     );
 }

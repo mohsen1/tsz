@@ -39,12 +39,12 @@ struct FunctionTypeTextParts {
     return_type: String,
 }
 
-struct CallableDeclParts<'b> {
-    modifiers: Option<&'b NodeList>,
-    type_parameters: Option<&'b NodeList>,
-    parameters: &'b NodeList,
-    type_annotation: NodeIndex,
-    body: NodeIndex,
+pub(in crate::declaration_emitter) struct CallableDeclParts<'b> {
+    pub(in crate::declaration_emitter) modifiers: Option<&'b NodeList>,
+    pub(in crate::declaration_emitter) type_parameters: Option<&'b NodeList>,
+    pub(in crate::declaration_emitter) parameters: &'b NodeList,
+    pub(in crate::declaration_emitter) type_annotation: NodeIndex,
+    pub(in crate::declaration_emitter) body: NodeIndex,
 }
 
 impl<'a> DeclarationEmitter<'a> {
@@ -75,6 +75,126 @@ impl<'a> DeclarationEmitter<'a> {
                 self.function_returned_local_class_constructor_type_text(arg_idx)
             {
                 return Some(type_text);
+            }
+        }
+
+        self.call_expression_returned_local_class_constructor_text(expr_idx, true)
+    }
+
+    pub(in crate::declaration_emitter) fn call_expression_returned_local_class_constructor_text(
+        &self,
+        expr_idx: NodeIndex,
+        arrow_form: bool,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let sym_id = self.value_reference_symbol(call.expression)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        let source_arena = binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arena| arena.as_ref())
+            .unwrap_or(self.arena);
+        if !std::ptr::eq(source_arena, self.arena) {
+            return None;
+        }
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(func) = self.callable_function_from_symbol_decl(self.arena, decl_idx) else {
+                continue;
+            };
+            let (class_idx, base_param_index) =
+                self.function_returned_local_class_extends_parameter(func)?;
+            let args = call.arguments.as_ref()?;
+            let base_arg = args.nodes.get(base_param_index).copied()?;
+            let base_type_text =
+                self.direct_value_reference_typeof_text(base_arg)
+                    .or_else(|| {
+                        self.nameable_constructor_expression_text(base_arg)
+                            .map(|name| format!("typeof {name}"))
+                    })?;
+            return self.local_class_constructor_type_text_from_ast(
+                class_idx,
+                Some(&base_type_text),
+                arrow_form,
+            );
+        }
+
+        None
+    }
+
+    fn function_returned_local_class_extends_parameter(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<(NodeIndex, usize)> {
+        let body_node = self.arena.get(func.body)?;
+        let block = self.arena.get_block(body_node)?;
+
+        let returned = block
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find_map(|stmt_idx| {
+                let stmt_node = self.arena.get(stmt_idx)?;
+                if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                    return None;
+                }
+                let ret = self.arena.get_return_statement(stmt_node)?;
+                if !ret.expression.is_some() {
+                    return None;
+                }
+                self.skip_parenthesized_expression(ret.expression)
+            })?;
+
+        let returned_node = self.arena.get(returned)?;
+        let class_idx = if returned_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            returned
+        } else if returned_node.kind == SyntaxKind::Identifier as u16 {
+            let returned_name = self.get_identifier_text(returned)?;
+            block.statements.nodes.iter().copied().find(|&stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                    return false;
+                }
+                self.arena
+                    .get_class(stmt_node)
+                    .and_then(|class| self.get_identifier_text(class.name))
+                    .as_deref()
+                    == Some(returned_name.as_str())
+            })?
+        } else {
+            return None;
+        };
+
+        let class_node = self.arena.get(class_idx)?;
+        let class = self.arena.get_class(class_node)?;
+        let heritage_clauses = class.heritage_clauses.as_ref()?;
+        for clause_idx in heritage_clauses.nodes.iter().copied() {
+            let heritage = self.arena.get_heritage_clause_at(clause_idx)?;
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            let base_idx = heritage.types.nodes.first().copied()?;
+            let base_node = self.arena.get(base_idx)?;
+            let base_expr = self
+                .arena
+                .get_expr_type_args(base_node)
+                .map(|expr| expr.expression)
+                .unwrap_or(base_idx);
+            let base_name = self.get_identifier_text(base_expr)?;
+            for (idx, param_idx) in func.parameters.nodes.iter().copied().enumerate() {
+                let param_node = self.arena.get(param_idx)?;
+                let param = self.arena.get_parameter(param_node)?;
+                if self.get_identifier_text(param.name).as_deref() == Some(base_name.as_str()) {
+                    return Some((class_idx, idx));
+                }
             }
         }
 
@@ -124,12 +244,21 @@ impl<'a> DeclarationEmitter<'a> {
             }
             let class = self.arena.get_class(stmt_node)?;
             (self.get_identifier_text(class.name).as_deref() == Some(returned_name.as_str()))
-                .then(|| self.class_constructor_object_type_text_from_ast(stmt_idx))
+                .then(|| self.local_class_constructor_type_text_from_ast(stmt_idx, None, false))
                 .flatten()
         })
     }
 
     fn class_constructor_object_type_text_from_ast(&self, class_idx: NodeIndex) -> Option<String> {
+        self.local_class_constructor_type_text_from_ast(class_idx, None, false)
+    }
+
+    fn local_class_constructor_type_text_from_ast(
+        &self,
+        class_idx: NodeIndex,
+        base_type_text: Option<&str>,
+        arrow_form: bool,
+    ) -> Option<String> {
         let class_node = self.arena.get(class_idx)?;
         let class = self.arena.get_class(class_node)?;
 
@@ -149,9 +278,16 @@ impl<'a> DeclarationEmitter<'a> {
             scratch.in_constructor_params = false;
             params_text = scratch.writer.take_output();
         }
+        if params_text.is_empty() && base_type_text.is_some() {
+            params_text = "...args: any[]".to_string();
+        }
 
         let mut member_scratch = self.scratch_declaration_emitter();
-        member_scratch.indent_level = self.indent_level + 2;
+        member_scratch.indent_level = if arrow_form {
+            self.indent_level + 1
+        } else {
+            self.indent_level + 2
+        };
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -162,15 +298,50 @@ impl<'a> DeclarationEmitter<'a> {
             member_scratch.emit_class_member(member_idx);
         }
         let members = member_scratch.writer.take_output();
-        let members = members.trim_end();
+        let members = Self::strip_abstract_member_modifiers(members.trim_end());
+        let members = members.as_str();
 
-        if members.is_empty() {
-            Some(format!("{{\n    new ({params_text}): {{}};\n}}"))
+        let constructor_type = if arrow_form {
+            let is_abstract = self
+                .arena
+                .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
+            let prefix = if is_abstract { "abstract new " } else { "new " };
+            if members.is_empty() {
+                format!("{prefix}({params_text}) => {{}}")
+            } else {
+                format!("{prefix}({params_text}) => {{\n{members}\n}}")
+            }
+        } else if members.is_empty() {
+            format!("{{\n    new ({params_text}): {{}};\n}}")
         } else {
-            Some(format!(
-                "{{\n    new ({params_text}): {{\n{members}\n    }};\n}}"
-            ))
+            format!("{{\n    new ({params_text}): {{\n{members}\n    }};\n}}")
+        };
+
+        if let Some(base_type_text) = base_type_text {
+            if arrow_form {
+                Some(format!("({constructor_type}) & {base_type_text}"))
+            } else {
+                Some(format!("{constructor_type} & {base_type_text}"))
+            }
+        } else {
+            Some(constructor_type)
         }
+    }
+
+    fn strip_abstract_member_modifiers(members: &str) -> String {
+        members
+            .lines()
+            .map(|line| {
+                let trimmed = line.trim_start();
+                if let Some(rest) = trimmed.strip_prefix("abstract ") {
+                    let indent_len = line.len() - trimmed.len();
+                    format!("{}{}", &line[..indent_len], rest)
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn type_annotation_text_from_arena_node(
@@ -1118,7 +1289,7 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn with_symbol_declarations<T>(
+    pub(crate) fn with_symbol_declarations<T>(
         &self,
         sym_id: SymbolId,
         mut f: impl FnMut(&NodeArena, NodeIndex) -> Option<T>,
@@ -1365,7 +1536,11 @@ impl<'a> DeclarationEmitter<'a> {
         b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
     }
 
-    fn identifier_text_from_arena(&self, arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    pub(crate) fn identifier_text_from_arena(
+        &self,
+        arena: &NodeArena,
+        idx: NodeIndex,
+    ) -> Option<String> {
         let node = arena.get(idx)?;
         arena
             .get_identifier(node)
@@ -1873,9 +2048,12 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 let reused_type_text = self
-                    .super_method_call_return_type_text(expr_idx)
-                    .or_else(|| self.call_expression_source_return_type_text(expr_idx))
-                    .or_else(|| self.call_expression_declared_return_type_text(expr_idx));
+                    .call_expression_returned_local_class_constructor_text(expr_idx, false)
+                    .or_else(|| {
+                        self.super_method_call_return_type_text(expr_idx)
+                            .or_else(|| self.call_expression_source_return_type_text(expr_idx))
+                            .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
+                    });
                 if reused_type_text.is_some()
                     && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
                     && type_id != tsz_solver::types::TypeId::ANY
@@ -2398,7 +2576,76 @@ impl<'a> DeclarationEmitter<'a> {
         let alias_type_node =
             self.find_enclosing_block_type_alias_type_node(assertion_expr_idx, &name)?;
         let alias_text = self.emit_type_node_text_normalized(alias_type_node)?;
-        alias_text.contains("typeof ").then_some(alias_text)
+        if alias_text.contains("typeof ") {
+            return Some(alias_text);
+        }
+
+        if Self::type_text_contains_mapped_type_literal(&alias_text) {
+            return Some(
+                self.expand_enclosing_block_type_aliases_in_text(
+                    assertion_expr_idx,
+                    &alias_text,
+                    &name,
+                )
+                .unwrap_or(alias_text),
+            );
+        }
+
+        None
+    }
+
+    fn type_text_contains_mapped_type_literal(text: &str) -> bool {
+        text.contains("[") && text.contains(" in ") && text.contains("]:")
+    }
+
+    fn expand_enclosing_block_type_aliases_in_text(
+        &self,
+        from_idx: NodeIndex,
+        type_text: &str,
+        excluded_name: &str,
+    ) -> Option<String> {
+        let aliases = self.enclosing_block_type_alias_replacements(from_idx, excluded_name)?;
+        Some(Self::replace_whole_words_in_text(type_text, &aliases))
+    }
+
+    fn enclosing_block_type_alias_replacements(
+        &self,
+        from_idx: NodeIndex,
+        excluded_name: &str,
+    ) -> Option<Vec<(String, String)>> {
+        let mut current_idx = from_idx;
+        while let Some(ext) = self.arena.get_extended(current_idx) {
+            let parent_idx = ext.parent;
+            if !parent_idx.is_some() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::BLOCK {
+                let block = self.arena.get_block(parent_node)?;
+                let replacements = block
+                    .statements
+                    .nodes
+                    .iter()
+                    .copied()
+                    .filter_map(|stmt_idx| {
+                        let stmt_node = self.arena.get(stmt_idx)?;
+                        if stmt_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                            return None;
+                        }
+                        let alias = self.arena.get_type_alias(stmt_node)?;
+                        let name = self.get_identifier_text(alias.name)?;
+                        if name == excluded_name {
+                            return None;
+                        }
+                        let alias_text = self.emit_type_node_text_normalized(alias.type_node)?;
+                        Some((name, alias_text))
+                    })
+                    .collect();
+                return Some(replacements);
+            }
+            current_idx = parent_idx;
+        }
+        None
     }
 
     fn simple_type_reference_name_text(&self, type_node_idx: NodeIndex) -> Option<String> {
@@ -3119,6 +3366,17 @@ impl<'a> DeclarationEmitter<'a> {
                     .cloned()
             });
             type_text = self.qualify_foreign_imported_names_in_text(source_arena, &type_text);
+            if let (Some(source_path), Some(module_specifier)) =
+                (source_path.as_deref(), imported_module.as_deref())
+                && let Some(rewritten) = self.rewrite_typeof_import_default_return_type(
+                    source_path,
+                    module_specifier,
+                    &type_text,
+                    binder,
+                )
+            {
+                type_text = rewritten;
+            }
             if let Some(module_specifier) = imported_module.as_deref() {
                 type_text = self.qualify_ambient_module_exported_names_in_text(
                     source_arena,
@@ -3168,6 +3426,76 @@ impl<'a> DeclarationEmitter<'a> {
             }
             Some(type_text)
         })
+    }
+
+    fn rewrite_typeof_import_default_return_type(
+        &self,
+        source_path: &str,
+        imported_module: &str,
+        type_text: &str,
+        binder: &BinderState,
+    ) -> Option<String> {
+        let import_text = type_text.trim().strip_prefix("typeof ")?;
+        let (start, module_specifier, tail) = Self::next_import_type_text(import_text)?;
+        if start != 0 || tail.trim() != ".default" {
+            return None;
+        }
+
+        let target_module_path = self
+            .matching_module_export_paths(binder, source_path, &module_specifier)
+            .into_iter()
+            .next()?;
+        let default_sym = binder
+            .module_exports
+            .get(target_module_path)?
+            .get("default")?;
+        let declared_type = self.declared_type_annotation_text_for_symbol(default_sym)?;
+        let public_module =
+            Self::combine_public_module_specifier(imported_module, &module_specifier)?;
+        let exported_name = Self::leading_type_reference_name(&declared_type)?;
+        if binder
+            .module_exports
+            .get(target_module_path)
+            .is_some_and(|exports| exports.get(exported_name).is_some())
+        {
+            return Some(format!(
+                "import(\"{public_module}\").{}{}",
+                exported_name,
+                &declared_type[exported_name.len()..]
+            ));
+        }
+
+        None
+    }
+
+    fn combine_public_module_specifier(base: &str, relative: &str) -> Option<String> {
+        if base.starts_with('.') || base.starts_with('/') {
+            return None;
+        }
+        let mut parts = base.split('/').collect::<Vec<_>>();
+        if parts.is_empty() {
+            return None;
+        }
+        let package_len = if parts[0].starts_with('@') { 2 } else { 1 };
+        if parts.len() < package_len {
+            return None;
+        }
+        if parts.len() > package_len {
+            parts.pop();
+        }
+
+        for segment in relative.split('/') {
+            match segment {
+                "" | "." => {}
+                ".." if parts.len() > package_len => {
+                    parts.pop();
+                }
+                ".." => return None,
+                text => parts.push(text),
+            }
+        }
+
+        Some(parts.join("/"))
     }
 
     fn imported_value_module_specifier(
@@ -3585,7 +3913,7 @@ impl<'a> DeclarationEmitter<'a> {
         substitutions
     }
 
-    fn function_signature_accepts_call_arguments(
+    pub(in crate::declaration_emitter) fn function_signature_accepts_call_arguments(
         &self,
         source_arena: &NodeArena,
         parameters: &NodeList,
@@ -3614,7 +3942,7 @@ impl<'a> DeclarationEmitter<'a> {
         arg_count >= required_count && (has_rest || arg_count <= parameters.nodes.len())
     }
 
-    fn callable_decl_parts_from_node<'b>(
+    pub(in crate::declaration_emitter) fn callable_decl_parts_from_node<'b>(
         source_arena: &'b NodeArena,
         decl_node: &'b Node,
     ) -> Option<CallableDeclParts<'b>> {
@@ -4895,8 +5223,14 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return true;
         }
+        if Self::type_text_starts_with_import_type(source_type_text)
+            && self.print_type_id(inferred_return_type) != source_type_text
+        {
+            return true;
+        }
         if !source_type_text.contains("typeof ") {
-            return false;
+            return Self::type_text_contains_mapped_type_literal(source_type_text)
+                && self.print_type_id(inferred_return_type) != source_type_text;
         }
         !self.print_type_id(inferred_return_type).contains("typeof ")
     }
@@ -4908,6 +5242,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> (String, bool) {
         let (text, substituted_parameter_type_query) =
             self.substitute_function_parameter_type_queries(func, source_type_text);
+        let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
         let Some(ref type_params) = func.type_parameters else {
             return (text, substituted_parameter_type_query);
         };
@@ -4921,6 +5256,106 @@ impl<'a> DeclarationEmitter<'a> {
             Self::rename_shadowed_infer_type_params_in_text(&text, &outer_names),
             substituted_parameter_type_query,
         )
+    }
+
+    pub(in crate::declaration_emitter) fn inferred_function_return_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        return_type_id: tsz_solver::types::TypeId,
+    ) -> String {
+        let text = if let Some(ref type_params) = func.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.print_type_id_with_outer_type_params(return_type_id, type_params)
+        } else {
+            self.print_type_id(return_type_id)
+        };
+        self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text)
+    }
+
+    pub(in crate::declaration_emitter) fn rewrite_returned_auto_accessor_parameter_unknowns(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> String {
+        if !source_type_text.contains(": unknown;") {
+            return source_type_text.to_string();
+        }
+
+        let Some(class_expr_idx) = self.direct_returned_class_expression(func.body) else {
+            return source_type_text.to_string();
+        };
+        let Some(class_node) = self.arena.get(class_expr_idx) else {
+            return source_type_text.to_string();
+        };
+        let Some(class) = self.arena.get_class(class_node) else {
+            return source_type_text.to_string();
+        };
+
+        let mut rewritten = source_type_text.to_string();
+        for member_idx in class.members.nodes.iter().copied() {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if !self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+            {
+                continue;
+            }
+            if !prop.initializer.is_some() {
+                continue;
+            }
+            let Some(name_text) = self.get_identifier_text(prop.name) else {
+                continue;
+            };
+            let Some(type_text) = self.function_parameter_type_text(func, prop.initializer) else {
+                continue;
+            };
+            if type_text == "unknown" {
+                continue;
+            }
+
+            let get_unknown = format!("get {name_text}(): unknown;");
+            let get_replacement = format!("get {name_text}(): {type_text};");
+            rewritten = rewritten.replace(&get_unknown, &get_replacement);
+
+            let set_unknown = format!("set {name_text}(arg: unknown);");
+            let set_replacement = format!("set {name_text}(arg: {type_text});");
+            rewritten = rewritten.replace(&set_unknown, &set_replacement);
+        }
+
+        rewritten
+    }
+
+    fn direct_returned_class_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        let mut returned_class = None;
+        for stmt_idx in block.statements.nodes.iter().copied() {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                continue;
+            }
+            let ret = self.arena.get_return_statement(stmt_node)?;
+            if !ret.expression.is_some() {
+                return None;
+            }
+            let expr_idx = self.skip_parenthesized_expression(ret.expression)?;
+            let expr_node = self.arena.get(expr_idx)?;
+            if expr_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+                return None;
+            }
+            if returned_class.replace(expr_idx).is_some() {
+                return None;
+            }
+        }
+        returned_class
     }
 
     fn substitute_function_parameter_type_queries(
@@ -5307,6 +5742,61 @@ impl<'a> DeclarationEmitter<'a> {
                 formatted_members.join("\n")
             ))
         }
+    }
+
+    pub(in crate::declaration_emitter) fn object_literal_value_typeof_type_text(
+        &self,
+        object_expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let object_node = self.arena.get(object_expr_idx)?;
+        let object = self.arena.get_literal_expr(object_node)?;
+        let mut saw_typeof = false;
+        let mut members = Vec::new();
+
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let name_idx = self.object_literal_member_name_idx(member_node)?;
+            let name_text = self.object_literal_member_name_text(name_idx)?;
+            if name_text.is_empty() || name_text == ":" {
+                return None;
+            }
+
+            let value_idx = if let Some(data) = self.arena.get_shorthand_property(member_node) {
+                data.name
+            } else if let Some(data) = self.arena.get_property_assignment(member_node) {
+                data.initializer
+            } else {
+                return None;
+            };
+
+            let type_text = self
+                .direct_value_reference_typeof_text(value_idx)
+                .or_else(|| {
+                    self.preferred_object_member_initializer_type_text(value_idx, depth + 1)
+                })?;
+            saw_typeof |= type_text.contains("typeof ");
+            members.push(Self::format_object_member_type_text(
+                &name_text, &type_text, depth,
+            ));
+        }
+
+        if !saw_typeof || members.is_empty() {
+            return None;
+        }
+
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let closing_indent = "    ".repeat(depth as usize);
+        let formatted_members: Vec<String> = members
+            .iter()
+            .map(|member| Self::format_object_member_entry(&member_indent, member))
+            .collect();
+        Some(format!(
+            "{{\n{}\n{closing_indent}}}",
+            formatted_members.join("\n")
+        ))
     }
 
     pub(in crate::declaration_emitter) fn infer_object_member_type_text_named_at(
@@ -6865,5 +7355,21 @@ mod tests {
             "/repo/node_modules/umd/sub/index.d.ts",
             "umd"
         ));
+    }
+
+    #[test]
+    fn public_module_specifier_combines_relative_default_import_target() {
+        assert_eq!(
+            DeclarationEmitter::combine_public_module_specifier("@ts-bug/core/utils", "./SvgIcon"),
+            Some("@ts-bug/core/SvgIcon".to_string())
+        );
+        assert_eq!(
+            DeclarationEmitter::combine_public_module_specifier("pkg/sub/utils", "../Icon"),
+            Some("pkg/Icon".to_string())
+        );
+        assert_eq!(
+            DeclarationEmitter::combine_public_module_specifier("./utils", "./SvgIcon"),
+            None
+        );
     }
 }

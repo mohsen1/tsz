@@ -6,6 +6,15 @@ use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
+    fn prefix_nullable_type_suggestion(suggested: &str) -> String {
+        let suggested = suggested.trim_end_matches('?');
+        match suggested {
+            "any" | "unknown" | "never" | "void" => suggested.to_string(),
+            "null" | "undefined" => "null | undefined".to_string(),
+            _ => format!("{suggested} | null | undefined"),
+        }
+    }
+
     pub(crate) fn finish_type_member_container_close_brace(&mut self) -> u32 {
         if self.deferred_type_member_close_braces > 0 && self.is_token(SyntaxKind::CloseBraceToken)
         {
@@ -458,12 +467,7 @@ impl ParserState {
             } else {
                 (self.token_pos(), String::from("T"))
             };
-            // Simplify the suggestion for types that absorb null/undefined.
-            // TSC suggests just the type name when adding | null | undefined is redundant.
-            let suggestion = match suggested.as_str() {
-                "any" => "any".to_string(),
-                _ => format!("{suggested} | null | undefined"),
-            };
+            let suggestion = Self::prefix_nullable_type_suggestion(&suggested);
             let msg = format!(
                 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{suggestion}'?"
             );
@@ -1148,6 +1152,24 @@ impl ParserState {
             // rest so the type displays as `[...?T]` in declaration emit.
             if self.parse_optional(SyntaxKind::QuestionToken) {
                 let end_pos = self.token_end();
+                let (diag_start, suggestion) = if let Some(node) = self.arena.get(element_type) {
+                    (
+                        node.pos,
+                        self.scanner
+                            .source_slice(node.pos as usize, node.end as usize)
+                            .to_string(),
+                    )
+                } else {
+                    (start_pos, String::from("T"))
+                };
+                self.parse_error_at(
+                    diag_start,
+                    end_pos.saturating_sub(diag_start),
+                    &format!(
+                        "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write '{suggestion} | undefined'?"
+                    ),
+                    tsz_common::diagnostics::diagnostic_codes::AT_THE_END_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE,
+                );
                 return self.arena.add_wrapped_type(
                     syntax_kind_ext::OPTIONAL_TYPE,
                     start_pos,
@@ -2367,11 +2389,7 @@ impl ParserState {
         // For `?T?` (both prefix and postfix `?`) the inner_type span now
         // covers `T?` because postfix-? widens to a `T | null` UNION_TYPE.
         // The suggestion text should still reference just `T`, matching tsc.
-        let suggested_trimmed = suggested.trim_end_matches('?');
-        let suggestion = match suggested_trimmed {
-            "any" => "any".to_string(),
-            _ => format!("{suggested_trimmed} | null | undefined"),
-        };
+        let suggestion = Self::prefix_nullable_type_suggestion(&suggested);
         let msg = format!(
             "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{suggestion}'?"
         );

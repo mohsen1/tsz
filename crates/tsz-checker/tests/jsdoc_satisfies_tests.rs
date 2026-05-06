@@ -6,6 +6,22 @@
 
 use crate::test_utils::check_js_source_diagnostics;
 
+#[test]
+fn invalid_satisfies_prefix_is_not_a_jsdoc_satisfies_tag() {
+    let source = r#"
+/** @satisfiesx {{ a: number }} */
+const value = { a: 1, b: 2 };
+
+value;
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.iter().any(|code| *code == 1005 || *code == 2353),
+        "Expected @satisfiesx to be ignored as an invalid tag, got: {codes:?}",
+    );
+}
+
 /// @satisfies on parenthesized expression with method signature in typedef
 /// provides contextual typing for method parameters.
 #[test]

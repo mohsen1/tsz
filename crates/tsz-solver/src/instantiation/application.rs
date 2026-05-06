@@ -127,36 +127,43 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
             return ApplicationResult::NotApplication(type_id);
         };
 
-        let (body_type, type_params) =
-            if let Some(def_id) = type_queries::get_lazy_def_id(self.interner, base) {
-                let Some(body_type) = self.resolver.resolve_lazy(def_id, self.interner) else {
-                    return ApplicationResult::ResolutionFailed(type_id);
-                };
-                let type_params = self
-                    .resolver
-                    .get_lazy_type_params(def_id)
-                    .unwrap_or_default();
-                (body_type, type_params)
-            } else if let Some(TypeData::TypeQuery(symbol_ref)) = self.interner.lookup(base) {
-                let Some(body_type) = self.resolver.resolve_symbol_ref(symbol_ref, self.interner)
-                else {
-                    return ApplicationResult::ResolutionFailed(type_id);
-                };
-                let symbol_params = self.resolver.get_type_params(symbol_ref);
-                let lazy_params = self
-                    .resolver
-                    .symbol_to_def_id(symbol_ref)
-                    .and_then(|def_id| self.resolver.get_lazy_type_params(def_id));
-                let type_params = match (symbol_params, lazy_params) {
-                    (Some(symbol), Some(lazy)) if lazy.len() > symbol.len() => lazy,
-                    (Some(symbol), _) => symbol,
-                    (_, Some(lazy)) => lazy,
-                    _ => Vec::new(),
-                };
-                (body_type, type_params)
-            } else {
-                return ApplicationResult::NotApplication(type_id);
+        let (body_type, type_params) = if let Some(def_id) =
+            type_queries::get_lazy_def_id(self.interner, base)
+        {
+            let Some(body_type) = self.resolver.resolve_lazy(def_id, self.interner) else {
+                return ApplicationResult::ResolutionFailed(type_id);
             };
+            let type_params = self
+                .resolver
+                .get_lazy_type_params(def_id)
+                .unwrap_or_default();
+            (body_type, type_params)
+        } else if let Some(TypeData::TypeQuery(symbol_ref)) = self.interner.lookup(base) {
+            let Some(mut body_type) = self.resolver.resolve_type_query(symbol_ref, self.interner)
+            else {
+                return ApplicationResult::ResolutionFailed(type_id);
+            };
+            if type_queries::get_callable_shape_for_type(self.interner, body_type).is_none()
+                && let Some(symbol_body) =
+                    self.resolver.resolve_symbol_ref(symbol_ref, self.interner)
+            {
+                body_type = symbol_body;
+            }
+            let symbol_params = self.resolver.get_type_params(symbol_ref);
+            let lazy_params = self
+                .resolver
+                .symbol_to_def_id(symbol_ref)
+                .and_then(|def_id| self.resolver.get_lazy_type_params(def_id));
+            let type_params = match (symbol_params, lazy_params) {
+                (Some(symbol), Some(lazy)) if lazy.len() > symbol.len() => lazy,
+                (Some(symbol), _) => symbol,
+                (_, Some(lazy)) => lazy,
+                _ => Vec::new(),
+            };
+            (body_type, type_params)
+        } else {
+            return ApplicationResult::NotApplication(type_id);
+        };
 
         if body_type == TypeId::ANY || body_type == TypeId::ERROR {
             return ApplicationResult::Resolved(type_id);

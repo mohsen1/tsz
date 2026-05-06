@@ -1539,6 +1539,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 1111 // Private field must be declared in an enclosing class
         | 1139 // Can not use 'JSDoc' type in TS
         | 1141 // String literal expected
+        | 1163 // A 'yield' expression is only allowed in a generator body
         | 1192 // Module has no default export
         | 1196 // Catch clause variable type annotation
         | 1206 // Decorators are not valid here
@@ -1987,27 +1988,44 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
 }
 
 // --- TS directive suppression ---
+/// Length in bytes of a line break starting at `bytes[i]`, or `0` if there is
+/// no line break at that position. Recognizes `\n`, `\r`, `\r\n`, and the
+/// UTF-8 encodings of U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH
+/// SEPARATOR), matching `tsz-scanner::is_line_break` and tsc's own line
+/// break recognition.
+fn line_break_len_at(bytes: &[u8], i: usize) -> usize {
+    match bytes.get(i) {
+        Some(&b'\n') => 1,
+        Some(&b'\r') => {
+            if bytes.get(i + 1) == Some(&b'\n') {
+                2
+            } else {
+                1
+            }
+        }
+        Some(&0xE2)
+            if bytes.get(i + 1) == Some(&0x80)
+                && matches!(bytes.get(i + 2), Some(&0xA8) | Some(&0xA9)) =>
+        {
+            3
+        }
+        _ => 0,
+    }
+}
+
 /// Build a line-start table: `line_starts[i]` is the byte offset of the first char on line `i`.
 fn build_line_starts(text: &str) -> Vec<u32> {
     let mut starts = vec![0u32];
     let bytes = text.as_bytes();
+    let len = bytes.len();
     let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\r' => {
-                if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
-                    starts.push((i + 2) as u32);
-                    i += 2;
-                } else {
-                    starts.push((i + 1) as u32);
-                    i += 1;
-                }
-            }
-            b'\n' => {
-                starts.push((i + 1) as u32);
-                i += 1;
-            }
-            _ => i += 1,
+    while i < len {
+        let lb = line_break_len_at(bytes, i);
+        if lb > 0 {
+            starts.push((i + lb) as u32);
+            i += lb;
+        } else {
+            i += 1;
         }
     }
     starts
@@ -2029,7 +2047,14 @@ enum DirectiveKind {
 
 /// Characters that can follow `@ts-expect-error` / `@ts-ignore` in a valid directive.
 const fn is_directive_separator(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b':' | b'*' | b'/')
+    matches!(
+        b,
+        b' ' | b'\t' | b'\r' | b'\n' | 0x0B | 0x0C | b':' | b'*' | b'/'
+    )
+}
+
+const fn is_directive_leading_trivia_byte(b: u8) -> bool {
+    matches!(b, b'/' | b' ' | b'\t' | b'\r' | b'\n' | 0x0B | 0x0C | b'*')
 }
 
 /// Check if a comment text contains `@ts-expect-error` or `@ts-ignore`.
@@ -2041,7 +2066,7 @@ fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, usize)> {
         0
     };
 
-    while pos < bytes.len() && matches!(bytes[pos], b'/' | b' ' | b'\t' | b'\r' | b'\n' | b'*') {
+    while pos < bytes.len() && is_directive_leading_trivia_byte(bytes[pos]) {
         pos += 1;
     }
 
@@ -2077,80 +2102,29 @@ struct TsDirective {
 /// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in comments.
 fn find_ts_directives(text: &str) -> Vec<TsDirective> {
     let line_starts = build_line_starts(text);
-    let bytes = text.as_bytes();
-    let len = bytes.len();
     let mut directives = Vec::new();
-    let mut i = 0;
 
-    while i < len {
-        if bytes[i] == b'/' && i + 1 < len {
-            if bytes[i + 1] == b'/' {
-                // Single-line comment
-                let comment_start = i as u32;
-                let line_end = bytes[i..]
-                    .iter()
-                    .position(|&b| b == b'\n' || b == b'\r')
-                    .map(|offset| i + offset)
-                    .unwrap_or(len);
-                let comment_text = &text[i..line_end];
-                let comment_length = (line_end - i) as u32;
-
-                if let Some((kind, rel_offset)) = find_directive_in_text(comment_text) {
-                    let comment_line = line_of_offset(&line_starts, comment_start);
-                    directives.push(TsDirective {
-                        is_expect_error: kind == DirectiveKind::ExpectError,
-                        suppressed_line: comment_line + 1,
-                        comment_start,
-                        comment_length,
-                        directive_text_start: comment_start + rel_offset as u32,
-                    });
-                }
-                i = line_end;
-                continue;
-            } else if bytes[i + 1] == b'*' {
-                // Multi-line comment
-                let comment_start = i as u32;
-                let close = text[i + 2..]
-                    .find("*/")
-                    .map(|offset| i + 2 + offset + 2)
-                    .unwrap_or(len);
-                let comment_text = &text[i..close];
-                let comment_length = (close - i) as u32;
-
-                if let Some((kind, rel_offset)) = find_directive_in_text(comment_text) {
-                    let close_line = line_of_offset(&line_starts, (close.saturating_sub(1)) as u32);
-                    directives.push(TsDirective {
-                        is_expect_error: kind == DirectiveKind::ExpectError,
-                        suppressed_line: close_line + 1,
-                        comment_start,
-                        comment_length,
-                        directive_text_start: comment_start + rel_offset as u32,
-                    });
-                }
-                i = close;
-                continue;
-            }
-        }
-
-        // Skip string literals to avoid false positives
-        if bytes[i] == b'"' || bytes[i] == b'\'' || bytes[i] == b'`' {
-            let quote = bytes[i];
-            i += 1;
-            while i < len {
-                if bytes[i] == b'\\' {
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == quote {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
+    for comment in tsz_common::comments::get_comment_ranges(text) {
+        let comment_text = comment.get_text(text);
+        let Some((kind, rel_offset)) = find_directive_in_text(comment_text) else {
             continue;
-        }
+        };
 
-        i += 1;
+        let suppressed_line = if comment.is_multi_line {
+            let close_line = line_of_offset(&line_starts, comment.end.saturating_sub(1));
+            close_line + 1
+        } else {
+            let comment_line = line_of_offset(&line_starts, comment.pos);
+            comment_line + 1
+        };
+
+        directives.push(TsDirective {
+            is_expect_error: kind == DirectiveKind::ExpectError,
+            suppressed_line,
+            comment_start: comment.pos,
+            comment_length: comment.end.saturating_sub(comment.pos),
+            directive_text_start: comment.pos + rel_offset as u32,
+        });
     }
 
     directives
@@ -2411,7 +2385,6 @@ pub(super) const fn is_plain_js_allowed_code(code: u32) -> bool {
         | 2528 // A module cannot have multiple default exports
         | 2752 // The first export default is here
         | 2753 // Another export default is here
-        | 2774 // This condition will always return true since this function is always defined
         | 2801 // This condition will always return true since this '{0}' is always defined
         | 2803 // Cannot assign to private method '{0}'. Private methods are not writable
         | 2839 // This condition will always return '{0}' since JS compares objects by reference
@@ -2630,6 +2603,84 @@ const value = 1;
     }
 
     #[test]
+    fn ts_directive_scan_accepts_form_feed_before_directive() {
+        let directives = find_ts_directives("//\x0C@ts-ignore\nconst x: string = 1;");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_scan_accepts_vertical_tab_before_directive() {
+        let directives = find_ts_directives("//\x0B@ts-ignore\nconst x: string = 1;");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_suppresses_next_line_with_form_feed_spacing() {
+        let source = "//\x0C@ts-ignore\nlet x: string = 1;\n";
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.ts".to_string(),
+            21,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+        assert!(
+            diagnostics.is_empty(),
+            "Expected form-feed @ts-ignore to suppress the next-line diagnostic, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn ts_directive_scan_keeps_template_substitution_directives() {
+        let directives =
+            find_ts_directives("const value = `${/* @ts-ignore */ 0}`;\nconst x: string = 1;");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+
+        let directives = find_ts_directives(
+            "const value = `${/* @ts-expect-error */ 0}`;\nconst x: string = 1;",
+        );
+        assert_eq!(directives.len(), 1);
+        assert!(directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_suppresses_next_line_from_template_substitution() {
+        let source = "const value = `${/* @ts-ignore */ 0}`;\nconst x: string = 1;\n";
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.ts".to_string(),
+            45,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+        assert!(
+            diagnostics.is_empty(),
+            "Expected template-substitution @ts-ignore to suppress the next-line diagnostic, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn ts_directive_scan_ignores_plain_template_text() {
+        assert!(
+            find_ts_directives("const value = `// @ts-ignore`;\nconst x: string = 1;").is_empty(),
+            "directives in template text must not target source lines"
+        );
+    }
+
+    #[test]
     fn ts_directive_line_starts_treat_cr_as_line_break() {
         assert_eq!(
             build_line_starts("// @ts-ignore\rlet x: string = 1;\r"),
@@ -2680,11 +2731,131 @@ const value = 1;
     }
 
     #[test]
+    fn raw_ts_nocheck_text_does_not_suppress_unused_expect_error() {
+        let source = r#"const marker = "@ts-nocheck";
+
+// @ts-expect-error
+const stringValue = 1;
+
+marker;
+stringValue;
+"#;
+        let mut diagnostics = Vec::new();
+
+        apply_ts_directive_suppression("string.ts", source, &mut diagnostics, false);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, 2578);
+    }
+
+    #[test]
+    fn late_ts_nocheck_comment_does_not_suppress_unused_expect_error() {
+        let source = r#"const before = 0;
+
+// @ts-nocheck
+// @ts-expect-error
+const lateValue = 1;
+
+before;
+lateValue;
+"#;
+        let mut diagnostics = Vec::new();
+
+        apply_ts_directive_suppression("late-comment.ts", source, &mut diagnostics, false);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, 2578);
+    }
+
+    #[test]
+    fn leading_ts_nocheck_suppresses_unused_expect_error() {
+        let source = r#"// @ts-nocheck
+
+// @ts-expect-error
+const unchecked = 1;
+
+unchecked;
+"#;
+        let mut diagnostics = Vec::new();
+
+        apply_ts_directive_suppression(
+            "actual-nocheck-control.ts",
+            source,
+            &mut diagnostics,
+            false,
+        );
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
     fn ts_directive_scan_keeps_triple_slash_directives() {
         let directives = find_ts_directives("/// @ts-ignore\nx();");
         assert_eq!(directives.len(), 1);
         assert!(!directives[0].is_expect_error);
         assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn build_line_starts_handles_cr_and_crlf() {
+        // \n only
+        assert_eq!(build_line_starts("a\nb\nc"), vec![0, 2, 4]);
+        // \r only (classic Mac line endings)
+        assert_eq!(build_line_starts("a\rb\rc"), vec![0, 2, 4]);
+        // \r\n (Windows): one line break, not two
+        assert_eq!(build_line_starts("a\r\nb\r\nc"), vec![0, 3, 6]);
+        // Mixed
+        assert_eq!(build_line_starts("a\nb\rc\r\nd"), vec![0, 2, 4, 7]);
+        // U+2028 LINE SEPARATOR
+        assert_eq!(build_line_starts("a\u{2028}b"), vec![0, 4]);
+        // U+2029 PARAGRAPH SEPARATOR
+        assert_eq!(build_line_starts("a\u{2029}b"), vec![0, 4]);
+    }
+
+    #[test]
+    fn ts_directive_scan_handles_cr_only_line_endings() {
+        // CR-only file: directive on line 0 must suppress line 1, and the
+        // single-line comment must not swallow the rest of the file.
+        let directives = find_ts_directives("// @ts-ignore\rlet x: string = 1;\r");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+        // Comment span must stop at the CR, not run to end-of-file.
+        assert_eq!(directives[0].comment_length, "// @ts-ignore".len() as u32);
+    }
+
+    #[test]
+    fn ts_directive_scan_handles_crlf_line_endings() {
+        let directives = find_ts_directives("// @ts-expect-error\r\nconst x: string = 1;\r\n");
+        assert_eq!(directives.len(), 1);
+        assert!(directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+        // The CR must be excluded from the comment span (matches the
+        // existing behaviour of the LF-only path).
+        assert_eq!(
+            directives[0].comment_length,
+            "// @ts-expect-error".len() as u32
+        );
+    }
+
+    #[test]
+    fn ts_directive_suppresses_diagnostic_with_cr_line_endings() {
+        let source = "// @ts-ignore\rlet x: string = 1;\r";
+        // The bad assignment is on line 1 (0-based) at the byte offset of
+        // the literal `1` after the CR.
+        let bad_offset = source.find('1').unwrap() as u32;
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.ts".to_string(),
+            bad_offset,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+        assert!(
+            diagnostics.is_empty(),
+            "@ts-ignore must suppress the next-line diagnostic with CR-only endings: {diagnostics:?}"
+        );
     }
 
     #[test]
@@ -3156,6 +3327,14 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
         assert!(
             is_ts1xxx_allowed_in_js(17014),
             "TS17014 should be preserved for JS JSX fragment recovery diagnostics"
+        );
+    }
+
+    #[test]
+    fn js_parse_allowlist_keeps_ts1163() {
+        assert!(
+            is_ts1xxx_allowed_in_js(1163),
+            "TS1163 should be preserved for JS yield-outside-generator diagnostics"
         );
     }
 

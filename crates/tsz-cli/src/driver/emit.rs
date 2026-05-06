@@ -567,6 +567,11 @@ pub(crate) fn emit_outputs(
         if bundled.ends_with(new_line) {
             bundled.truncate(bundled.len() - new_line.len());
         }
+        if matches!(context.options.printer.module, ModuleKind::AMD)
+            && context.options.printer.always_strict
+        {
+            prepend_use_strict_to_bundle(&mut bundled, new_line);
+        }
         outputs.push(OutputFile {
             path: bundle_path,
             contents: bundled,
@@ -584,6 +589,25 @@ pub(crate) fn emit_outputs(
     }
 
     Ok((outputs, emit_diagnostics))
+}
+
+fn prepend_use_strict_to_bundle(contents: &mut String, new_line: &str) {
+    let directive = format!("\"use strict\";{new_line}");
+    if contents.starts_with(&directive) {
+        return;
+    }
+
+    if contents.starts_with("#!") {
+        if let Some(line_end) = contents.find('\n') {
+            let insert_at = line_end + 1;
+            if !contents[insert_at..].starts_with(&directive) {
+                contents.insert_str(insert_at, &directive);
+            }
+        }
+        return;
+    }
+
+    contents.insert_str(0, &directive);
 }
 
 type ConstEnumValues = FxHashMap<String, EnumValue>;
@@ -1157,13 +1181,18 @@ const fn new_line_str(kind: NewLineKind) -> &'static str {
     }
 }
 
-pub(crate) fn write_outputs(outputs: &[OutputFile]) -> Result<Vec<PathBuf>> {
+pub(crate) fn write_outputs(outputs: &[OutputFile], emit_bom: bool) -> Result<Vec<PathBuf>> {
     outputs.par_iter().try_for_each(|output| -> Result<()> {
         if let Some(parent) = output.path.parent() {
             std::fs::create_dir_all::<&Path>(parent)
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
-        std::fs::write(&output.path, &output.contents)
+        let contents = if emit_bom && !output.contents.starts_with('\u{feff}') {
+            format!("\u{feff}{}", output.contents)
+        } else {
+            output.contents.clone()
+        };
+        std::fs::write(&output.path, contents)
             .with_context(|| format!("failed to write {}", output.path.display()))?;
         Ok(())
     })?;

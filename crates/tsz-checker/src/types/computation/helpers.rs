@@ -988,7 +988,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if an initializer expression is a `Symbol(...)` call.
+    /// Check if an initializer expression is a `Symbol(...)` call where
+    /// `Symbol` resolves to the built-in global, not a same-named local.
+    /// A user-defined `function Symbol() { ... }` (or `const Symbol = ...`)
+    /// shadows the global and must not trigger the unique-symbol shortcut.
     pub(crate) fn is_symbol_call_initializer(&self, init_idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         let Some(node) = self.ctx.arena.get(init_idx) else {
@@ -1000,14 +1003,7 @@ impl<'a> CheckerState<'a> {
         let Some(call) = self.ctx.arena.get_call_expr(node) else {
             return false;
         };
-        let Some(expr_node) = self.ctx.arena.get(call.expression) else {
-            return false;
-        };
-        self.ctx
-            .arena
-            .get_identifier(expr_node)
-            .is_some_and(|ident| ident.escaped_text == "Symbol")
-            && self.is_identifier_reference_to_global_symbol(call.expression)
+        self.identifier_resolves_to_unshadowed_global(call.expression, "Symbol")
     }
 
     /// Get the binder SymbolId for a variable declaration's name node.
@@ -1849,6 +1845,52 @@ function f(x: string, y: number): string {
         assert!(
             semantic_errors.is_empty(),
             "Template expression returning string should produce no semantic errors, got: {semantic_errors:?}"
+        );
+    }
+
+    /// Issue #2871: a local function named `Symbol` must not be treated as
+    /// the lib global `Symbol`. The const initializer should keep the local
+    /// function's return type (`string`) instead of being inferred as
+    /// `unique symbol`. Without the fix, the TS2322 lands on `asString`
+    /// instead of `asSymbol`.
+    #[test]
+    fn shadowed_symbol_call_keeps_local_return_type() {
+        let source = r#"
+function test() {
+    const Symbol = () => "local";
+    const value = Symbol();
+    const asSymbol: symbol = value;
+    const asString: string = value;
+    asSymbol;
+    asString;
+}
+"#;
+        let codes = check_source_codes(source);
+        let ts2322_count = codes.iter().filter(|&&c| c == 2322).count();
+        assert_eq!(
+            ts2322_count, 1,
+            "Expected exactly one TS2322 (string→symbol on asSymbol), got: {codes:?}"
+        );
+    }
+
+    /// Issue #2871: same rule, different declaration kind. A local
+    /// `function Symbol(): \"outer\"` shadows the global, so the const
+    /// initializer's type must come from the local return type, not the
+    /// global `Symbol()` special case.
+    #[test]
+    fn shadowed_symbol_call_function_decl_not_unique_symbol() {
+        let source = r#"
+function outer() {
+    function Symbol(): "outer" { return "outer"; }
+    const value = Symbol();
+    const taken: symbol = value;
+    taken;
+}
+"#;
+        let codes = check_source_codes(source);
+        assert!(
+            codes.contains(&2322),
+            "Expected TS2322 for string→symbol via shadowed Symbol(), got: {codes:?}"
         );
     }
 }

@@ -1148,6 +1148,49 @@ let c = <ruhroh />;
     );
 }
 
+#[test]
+fn jsx_intrinsic_elements_merges_global_augmentation_with_existing_namespace() {
+    let diags = jsx_diagnostics(
+        r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: {};
+    }
+}
+
+export {};
+
+declare global {
+    namespace JSX {
+        interface IntrinsicElements {
+            "my-custom-element": {};
+        }
+    }
+}
+
+<div />;
+<my-custom-element />;
+<missing-element />;
+"#,
+    );
+
+    let ts2339_messages: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert_eq!(
+        ts2339_messages.len(),
+        1,
+        "Expected only the truly missing intrinsic tag to fail, got: {diags:?}"
+    );
+    assert!(
+        ts2339_messages[0].contains("missing-element"),
+        "Expected TS2339 for missing-element only, got: {diags:?}"
+    );
+}
+
 fn cross_file_jsx_diagnostics_with_pos(
     lib_source: &str,
     main_source: &str,
@@ -1276,6 +1319,73 @@ let p = <Poisoned x />;
     assert!(
         !has_code(&diags, 2307),
         "Should not emit TS2307 for resolvable ambient module, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_react_class_empty_attrs_reports_missing_props_not_whole_target_ts2322() {
+    let lib_source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+    interface ElementAttributesProperty { props: {} }
+    interface ElementChildrenAttribute { children: {} }
+    interface IntrinsicAttributes {}
+    interface IntrinsicClassAttributes<T> {}
+}
+declare namespace __React {
+    type ReactNode = string | number | null | undefined;
+    class Component<P, S = {}> {
+        props: P & { children?: ReactNode };
+        state: S;
+        constructor(props?: P, context?: any);
+        render(): JSX.Element | null;
+    }
+}
+declare module "react" {
+    export = __React;
+}
+"#;
+
+    let main_source = r#"
+import React = require('react');
+
+interface PoisonedProp {
+    x: string;
+    y: "2";
+}
+class Poisoned extends React.Component<PoisonedProp, {}> {
+    render() {
+        return <div>Hello</div>;
+    }
+}
+
+let y = <Poisoned />;
+"#;
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        lib_source,
+        main_source,
+        JsxMode::Preserve,
+        true,
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                && message.contains("PoisonedProp")
+                && message.contains("x, y")
+        }),
+        "Expected TS2739 against bare PoisonedProp for empty React class attrs, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("IntrinsicClassAttributes")
+                && message.contains("Type '{}'")
+        }),
+        "Empty React class attrs should not fall through to whole-target TS2322, got: {diags:?}"
     );
 }
 
@@ -1960,7 +2070,10 @@ const Hoc = <Tag extends Tags>(
 fn test_jsx_library_managed_attributes_with_user_named_factory_generic() {
     let user_named_generic_sources = [
         ("Factory", "value: Factory<number>"),
+        ("Maker", "value: Maker<number>"),
+        ("Producer", "value: Producer<number>"),
         ("Builder", "value: Builder<number>"),
+        ("Wrapper", "value: Wrapper<number>"),
     ];
 
     for (type_name, prop_decl) in user_named_generic_sources {
@@ -2058,6 +2171,31 @@ let ok = <Comp other={1} />;
             diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
         ),
         "LibraryManagedAttributes should preserve defaulted Factory<T> props, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_generic_component_type_parameter_checks_empty_attrs_against_lma() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {}
+    type LibraryManagedAttributes<C, P> =
+        C extends (props: any) => any ? P & { managed: C } : P;
+}
+
+function f1<T extends (props: {}) => JSX.Element>(Component: T) {
+    return <Component />;
+}
+"#;
+
+    let diags = jsx_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("LibraryManagedAttributes<T, {}>")
+        }),
+        "Expected empty attrs to be checked against JSX.LibraryManagedAttributes<T, {{}}>, got: {diags:?}"
     );
 }
 

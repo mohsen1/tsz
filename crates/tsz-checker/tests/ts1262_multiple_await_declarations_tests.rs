@@ -58,3 +58,25 @@ const await = 1;
         "expected no TS1262 in a non-module script file; got {ts1262_count}; full diagnostics: {diagnostics:#?}"
     );
 }
+
+/// Destructured top-level `await` bindings in modules must report TS1262 even
+/// when spacing or declaration kind differs from the narrow raw-text fallback.
+#[test]
+fn ts1262_emitted_for_destructured_await_bindings_in_module() {
+    let diagnostics = check_source_code_messages(
+        r#"
+export {};
+
+var { await } = { await: 1 };
+let {await} = { await: 2 };
+const {await} = { await: 3 };
+var [ await ] = [4];
+"#,
+    );
+
+    let ts1262_count = diagnostics.iter().filter(|(code, _)| *code == 1262).count();
+    assert_eq!(
+        ts1262_count, 4,
+        "expected TS1262 for each destructured `await` binding; got {ts1262_count}; full diagnostics: {diagnostics:#?}"
+    );
+}

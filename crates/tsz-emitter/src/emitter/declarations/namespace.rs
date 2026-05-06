@@ -106,11 +106,6 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if !self.ctx.target_es5 && self.emit_recovered_missing_arrow_namespace_closure(node, module)
-        {
-            return;
-        }
-
         // ES5 target: Transform namespace to IIFE pattern
         if self.ctx.target_es5 {
             use crate::transforms::NamespaceES5Emitter;
@@ -318,68 +313,6 @@ impl<'a> Printer<'a> {
             self.skip_comments_for_erased_node(node);
         }
         wrote
-    }
-
-    fn emit_recovered_missing_arrow_namespace_closure(
-        &mut self,
-        node: &Node,
-        module: &tsz_parser::parser::node::ModuleData,
-    ) -> bool {
-        let name = self.get_identifier_text_idx(module.name);
-        if name != "missingCurliesWithArrow" {
-            return false;
-        }
-        let Some(text) = self.source_text else {
-            return false;
-        };
-        let Ok(source) = crate::safe_slice::slice(text, node.pos as usize, node.end as usize)
-        else {
-            return false;
-        };
-        if !source.contains("namespace withStatement")
-            || !source.contains("namespace withoutStatement")
-            || !source.contains("=> var k = 10;")
-            || !source.contains("=> };")
-        {
-            return false;
-        }
-
-        let lines = [
-            format!("var {name};"),
-            format!("(function ({name}) {{"),
-            "    let withStatement;".to_string(),
-            "    (function (withStatement) {".to_string(),
-            "        var a = () => { var k = 10; };".to_string(),
-            "        var b = () => { var k = 10; };".to_string(),
-            "        var c = (x) => { var k = 10; };".to_string(),
-            "        var d = (x, y) => { var k = 10; };".to_string(),
-            "        var e = (x, y) => { var k = 10; };".to_string(),
-            "        var f = () => { var k = 10; };".to_string(),
-            "    })(withStatement || (withStatement = {}));".to_string(),
-            "    let withoutStatement;".to_string(),
-            "    (function (withoutStatement) {".to_string(),
-            "        var a = () => ;".to_string(),
-            "    })(withoutStatement || (withoutStatement = {}));".to_string(),
-            "    ;".to_string(),
-            "    var b = () => ;".to_string(),
-            format!("}})({name} || ({name} = {{}}));"),
-            "var c = (x) => ;".to_string(),
-            ";".to_string(),
-            "var d = (x, y) => ;".to_string(),
-            ";".to_string(),
-            "var e = (x, y) => ;".to_string(),
-            ";".to_string(),
-            "var f = () => ;".to_string(),
-        ];
-
-        for (i, line) in lines.iter().enumerate() {
-            if i > 0 {
-                self.write_line();
-            }
-            self.write(line);
-        }
-        self.skip_comments_for_erased_node(node);
-        true
     }
 
     /// Emit a namespace/module as an IIFE for ES6+ targets.
@@ -972,6 +905,25 @@ impl<'a> Printer<'a> {
         names
     }
 
+    fn namespace_class_fn_enum_name(&self, node: &Node) -> Option<String> {
+        let name = match node.kind {
+            k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                .arena
+                .get_class(node)
+                .map(|c| self.get_identifier_text_idx(c.name)),
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(node)
+                .map(|f| self.get_identifier_text_idx(f.name)),
+            k if k == syntax_kind_ext::ENUM_DECLARATION => self
+                .arena
+                .get_enum(node)
+                .map(|e| self.get_identifier_text_idx(e.name)),
+            _ => None,
+        }?;
+        if name.is_empty() { None } else { Some(name) }
+    }
+
     /// Collect names of exported classes, functions, and enums from a namespace.
     /// These names need qualification in REOPENED blocks of the same namespace
     /// but NOT in their own declaration block (since they're locally in scope).
@@ -993,34 +945,60 @@ impl<'a> Printer<'a> {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
-            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                continue;
-            }
-            let Some(export) = self.arena.get_export_decl(stmt_node) else {
-                continue;
-            };
-            let Some(inner_node) = self.arena.get(export.export_clause) else {
-                continue;
-            };
-            let name = match inner_node.kind {
-                k if k == syntax_kind_ext::CLASS_DECLARATION => self
-                    .arena
-                    .get_class(inner_node)
-                    .map(|c| self.get_identifier_text_idx(c.name)),
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
-                    .arena
-                    .get_function(inner_node)
-                    .map(|f| self.get_identifier_text_idx(f.name)),
-                k if k == syntax_kind_ext::ENUM_DECLARATION => self
-                    .arena
-                    .get_enum(inner_node)
-                    .map(|e| self.get_identifier_text_idx(e.name)),
-                _ => None,
-            };
-            if let Some(n) = name
-                && !n.is_empty()
+
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                    continue;
+                };
+                let Some(inner_node) = self.arena.get(export.export_clause) else {
+                    continue;
+                };
+                if let Some(name) = self.namespace_class_fn_enum_name(inner_node) {
+                    names.push(name);
+                }
+            } else if self.statement_has_export_modifier(stmt_node)
+                && let Some(name) = self.namespace_class_fn_enum_name(stmt_node)
             {
-                names.push(n);
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// Collect class/function/enum names declared in the current namespace block.
+    /// These are lexical value bindings for this IIFE and shadow parent namespace
+    /// properties while printing heritage clauses.
+    fn collect_namespace_current_class_fn_enum_names(
+        &self,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        let Some(body_node) = self.arena.get(module.body) else {
+            return names;
+        };
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return names;
+        };
+        let Some(ref stmts) = block.statements else {
+            return names;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                    continue;
+                };
+                let Some(inner_node) = self.arena.get(export.export_clause) else {
+                    continue;
+                };
+                if let Some(name) = self.namespace_class_fn_enum_name(inner_node) {
+                    names.push(name);
+                }
+            } else if let Some(name) = self.namespace_class_fn_enum_name(stmt_node) {
+                names.push(name);
             }
         }
         names
@@ -1162,6 +1140,8 @@ impl<'a> Printer<'a> {
             let prev_parent_exported = std::mem::take(&mut self.namespace_parent_exported_names);
             let prev_ancestor_qualifiers =
                 std::mem::take(&mut self.namespace_ancestor_export_qualifiers);
+            let prev_current_class_fn_enum =
+                std::mem::take(&mut self.namespace_current_class_fn_enum_names);
             let mut local_exports = self.collect_namespace_exported_names(module);
             let leaf_name = self.get_identifier_text_idx(module.name);
             if !leaf_name.is_empty() {
@@ -1209,6 +1189,10 @@ impl<'a> Printer<'a> {
             ancestor_qualifiers.remove(&leaf_name);
             // Collect class/function/enum names for future reopenings (before mutable borrow)
             let class_fn_enum_names = self.collect_namespace_class_fn_enum_names(module);
+            self.namespace_current_class_fn_enum_names = self
+                .collect_namespace_current_class_fn_enum_names(module)
+                .into_iter()
+                .collect();
             // Merge in exports from prior blocks of the same namespace (cross-block sharing)
             //
             // The scope-qualified key distinguishes same-named namespaces at
@@ -1555,6 +1539,7 @@ impl<'a> Printer<'a> {
             self.namespace_exported_names = prev_exported;
             self.namespace_parent_exported_names = prev_parent_exported;
             self.namespace_ancestor_export_qualifiers = prev_ancestor_qualifiers;
+            self.namespace_current_class_fn_enum_names = prev_current_class_fn_enum;
         }
     }
 

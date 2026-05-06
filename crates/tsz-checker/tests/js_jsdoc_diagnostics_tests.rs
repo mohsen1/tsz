@@ -182,6 +182,47 @@ const value = { value: 123 };
 }
 
 #[test]
+fn checked_js_jsdoc_import_alias_accepts_tab_around_as() {
+    let diagnostics = compile_named_files(
+        &[
+            (
+                "dep.d.ts",
+                r#"
+export interface Foo {
+  value: string;
+}
+                "#,
+            ),
+            (
+                "caller.js",
+                "// @ts-check\n\
+                 /** @import { Foo as\tLocalFoo } from \"./dep\" */\n\
+                 /** @type {LocalFoo} */\n\
+                 const item = { value: 123 };\n",
+            ),
+        ],
+        "caller.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Expected LocalFoo to resolve when `as` is followed by a tab. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 after resolving LocalFoo to Foo. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn checked_js_jsdoc_import_type_rejects_backtick_module_specifier() {
     let diagnostics = compile_named_files(
         &[
@@ -304,6 +345,40 @@ ns.value;
     assert!(
         !has_error(&diagnostics, 2339),
         "Invalid JSDoc typeof import syntax should not resolve the module namespace and emit downstream TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_template_whitespace_does_not_declare_second_name() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"
+// @ts-check
+
+/**
+ * @template T U
+ * @param {U} y
+ * @returns {U}
+ */
+function f(y) { return y; }
+            "#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2304 && message.contains("'U'")),
+        "Expected whitespace-only @template delimiter to leave U unresolved. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

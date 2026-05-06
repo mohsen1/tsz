@@ -1294,17 +1294,16 @@ impl<'a> CheckerState<'a> {
         let Some(expr_node) = self.ctx.arena.get(computed.expression) else {
             return false;
         };
-
         match expr_node.kind {
             ek if ek == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
                     return false;
                 };
-                self.ctx
-                    .arena
-                    .get_identifier_at(access.expression)
-                    .is_some_and(|ident| ident.escaped_text.as_str() == "Symbol")
-                    && self.is_identifier_reference_to_global_symbol(access.expression)
+                // `[Symbol.x]` only denotes a symbol-keyed member when `Symbol`
+                // is the built-in global. A locally-bound `Symbol` (e.g.
+                // `const Symbol = { tag: "name" } as const`) makes the computed
+                // name a regular string property.
+                self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol")
             }
             ek if ek == tsz_scanner::SyntaxKind::Identifier as u16 => {
                 let expr_type = self.get_type_of_node(computed.expression);

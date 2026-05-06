@@ -178,7 +178,14 @@ impl<'a> DeclarationEmitter<'a> {
                     .expand_portable_mapped_object_text_in_current_context(&type_text)
                     .unwrap_or(type_text);
                 self.write(": ");
-                self.write(&type_text);
+                if keyword == "const"
+                    && let Some(formatted) =
+                        self.call_initializer_unexported_alias_literal_text(initializer)
+                {
+                    self.write(&formatted);
+                } else {
+                    self.write(&type_text);
+                }
             } else if has_initializer
                 && (self.emit_ts_late_bound_function_initializer_type_annotation(
                     decl_name,
@@ -363,6 +370,24 @@ impl<'a> DeclarationEmitter<'a> {
                 if keyword == "const"
                     && let Some(interner) = self.type_interner
                 {
+                    if has_initializer
+                        && let Some(formatted) =
+                            self.call_initializer_unexported_alias_literal_text(initializer)
+                    {
+                        self.write(": ");
+                        self.write(&formatted);
+                        return;
+                    }
+
+                    if let Some(lit) =
+                        Self::enum_member_literal_initializer_value(interner, type_id)
+                    {
+                        let formatted = Self::format_literal_initializer(&lit, interner);
+                        self.write(": ");
+                        self.write(&formatted);
+                        return;
+                    }
+
                     if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
                         let formatted = Self::format_literal_initializer(&lit, interner);
                         self.write(": ");
@@ -658,293 +683,6 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
-    pub(in crate::declaration_emitter) fn synthetic_class_extends_alias_type_id(
-        &self,
-        heritage: Option<&NodeList>,
-    ) -> Option<tsz_solver::TypeId> {
-        let heritage = heritage?;
-        let (type_idx, expr_idx) = self.non_nameable_extends_heritage_type(heritage)?;
-        self.get_node_type_or_names(&[expr_idx, type_idx])
-    }
-
-    pub(crate) fn retain_synthetic_class_extends_alias_dependencies_in_statements(
-        &mut self,
-        statements: &NodeList,
-    ) {
-        for &stmt_idx in &statements.nodes {
-            self.retain_synthetic_class_extends_alias_dependencies_for_statement(stmt_idx);
-        }
-    }
-
-    pub(in crate::declaration_emitter) fn retain_export_default_expression_type_dependencies_in_statements(
-        &mut self,
-        statements: &NodeList,
-    ) {
-        for &stmt_idx in &statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            let Some(export) = self.arena.get_export_decl(stmt_node) else {
-                continue;
-            };
-            if !export.is_default_export || !export.export_clause.is_some() {
-                continue;
-            }
-            let Some(clause_node) = self.arena.get(export.export_clause) else {
-                continue;
-            };
-            if matches!(
-                clause_node.kind,
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION
-                    || k == syntax_kind_ext::CLASS_DECLARATION
-                    || k == syntax_kind_ext::INTERFACE_DECLARATION
-                    || k == SyntaxKind::Identifier as u16
-            ) {
-                continue;
-            }
-            if let Some(resolved_type) = self
-                .resolve_declaration_type_text(&[export.export_clause], Some(export.export_clause))
-            {
-                self.retain_direct_type_symbols_for_public_api(resolved_type.type_id);
-                self.retain_local_type_names_for_public_api(&resolved_type.canonical_type_text);
-                self.retain_local_type_names_for_public_api(&resolved_type.emitted_type_text);
-            } else if let Some(type_id) = self.get_node_type(export.export_clause) {
-                self.retain_direct_type_symbols_for_public_api(type_id);
-                let type_text = self.print_type_id(type_id);
-                self.retain_local_type_names_for_public_api(&type_text);
-            }
-        }
-    }
-
-    pub(in crate::declaration_emitter) fn retain_local_type_names_for_public_api(
-        &mut self,
-        type_text: &str,
-    ) {
-        let Some(binder) = self.binder else {
-            return;
-        };
-        let Some(used_symbols) = self.used_symbols.as_mut() else {
-            return;
-        };
-
-        for name in Self::type_reference_identifier_names(type_text) {
-            let Some(sym_id) = binder.file_locals.get(name.as_str()) else {
-                continue;
-            };
-            let Some(symbol) = binder.symbols.get(sym_id) else {
-                continue;
-            };
-            if symbol.flags
-                & (symbol_flags::CLASS
-                    | symbol_flags::INTERFACE
-                    | symbol_flags::TYPE_ALIAS
-                    | symbol_flags::ENUM
-                    | symbol_flags::VALUE_MODULE
-                    | symbol_flags::NAMESPACE_MODULE)
-                == 0
-            {
-                continue;
-            }
-            used_symbols
-                .entry(sym_id)
-                .and_modify(|kind| *kind |= super::super::usage_analyzer::UsageKind::TYPE)
-                .or_insert(super::super::usage_analyzer::UsageKind::TYPE);
-        }
-    }
-
-    fn type_reference_identifier_names(type_text: &str) -> Vec<String> {
-        let bytes = type_text.as_bytes();
-        let mut names = Vec::new();
-        let mut i = 0;
-        while i < bytes.len() {
-            let ch = bytes[i] as char;
-            if ch == '"' || ch == '\'' {
-                i += 1;
-                while i < bytes.len() {
-                    let current = bytes[i] as char;
-                    if current == '\\' {
-                        i = (i + 2).min(bytes.len());
-                        continue;
-                    }
-                    i += 1;
-                    if current == ch {
-                        break;
-                    }
-                }
-                continue;
-            }
-            if !Self::is_type_reference_identifier_start(ch) {
-                i += 1;
-                continue;
-            }
-            let start = i;
-            i += 1;
-            while i < bytes.len() && Self::is_type_reference_identifier_continue(bytes[i] as char) {
-                i += 1;
-            }
-            if start > 0 && bytes[start - 1] == b'.' {
-                continue;
-            }
-            let name = &type_text[start..i];
-            if !Self::is_type_reference_keyword(name) {
-                names.push(name.to_string());
-            }
-        }
-        names
-    }
-
-    fn is_type_reference_keyword(name: &str) -> bool {
-        matches!(
-            name,
-            "any"
-                | "as"
-                | "bigint"
-                | "boolean"
-                | "const"
-                | "declare"
-                | "default"
-                | "export"
-                | "extends"
-                | "false"
-                | "function"
-                | "get"
-                | "import"
-                | "infer"
-                | "keyof"
-                | "new"
-                | "never"
-                | "null"
-                | "number"
-                | "object"
-                | "readonly"
-                | "set"
-                | "string"
-                | "symbol"
-                | "this"
-                | "true"
-                | "typeof"
-                | "undefined"
-                | "unknown"
-                | "void"
-        )
-    }
-
-    pub(in crate::declaration_emitter) fn retain_synthetic_class_extends_alias_dependencies_for_statement(
-        &mut self,
-        stmt_idx: NodeIndex,
-    ) {
-        let Some(stmt_node) = self.arena.get(stmt_idx) else {
-            return;
-        };
-
-        match stmt_node.kind {
-            k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class) = self.arena.get_class(stmt_node)
-                    && self.statement_has_effective_export(stmt_idx)
-                    && let Some(type_id) =
-                        self.synthetic_class_extends_alias_type_id(class.heritage_clauses.as_ref())
-                {
-                    self.retain_direct_type_symbols_for_public_api(type_id);
-                }
-            }
-            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                if let Some(export) = self.arena.get_export_decl(stmt_node)
-                    && let Some(clause_node) = self.arena.get(export.export_clause)
-                {
-                    if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class) = self.arena.get_class(clause_node)
-                        && let Some(type_id) = self
-                            .synthetic_class_extends_alias_type_id(class.heritage_clauses.as_ref())
-                    {
-                        self.retain_direct_type_symbols_for_public_api(type_id);
-                    } else if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                        self.retain_synthetic_module_extends_alias_dependencies(
-                            export.export_clause,
-                        );
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                self.retain_synthetic_module_extends_alias_dependencies(stmt_idx);
-            }
-            _ => {}
-        }
-    }
-
-    pub(in crate::declaration_emitter) fn retain_synthetic_module_extends_alias_dependencies(
-        &mut self,
-        module_idx: NodeIndex,
-    ) {
-        let Some(module_node) = self.arena.get(module_idx) else {
-            return;
-        };
-        let Some(module) = self.arena.get_module(module_node) else {
-            return;
-        };
-
-        let mut current_body = module.body;
-        loop {
-            let Some(body_node) = self.arena.get(current_body) else {
-                return;
-            };
-            if let Some(nested_mod) = self.arena.get_module(body_node) {
-                current_body = nested_mod.body;
-                continue;
-            }
-            if let Some(block) = self.arena.get_module_block(body_node)
-                && let Some(ref statements) = block.statements
-            {
-                self.retain_synthetic_class_extends_alias_dependencies_in_statements(statements);
-            }
-            return;
-        }
-    }
-
-    pub(in crate::declaration_emitter) fn retain_direct_type_symbols_for_public_api(
-        &mut self,
-        type_id: tsz_solver::TypeId,
-    ) {
-        let (Some(used_symbols), Some(type_cache), Some(interner)) = (
-            self.used_symbols.as_mut(),
-            self.type_cache.as_ref(),
-            self.type_interner,
-        ) else {
-            return;
-        };
-
-        let mut mark = |sym_id: SymbolId| {
-            used_symbols
-                .entry(sym_id)
-                .and_modify(|kind| *kind |= super::super::usage_analyzer::UsageKind::TYPE)
-                .or_insert(super::super::usage_analyzer::UsageKind::TYPE);
-        };
-
-        if let Some(def_id) = tsz_solver::visitor::lazy_def_id(interner, type_id)
-            && let Some(&sym_id) = type_cache.def_to_symbol.get(&def_id)
-        {
-            mark(sym_id);
-        }
-
-        if let Some((def_id, _)) = tsz_solver::visitor::enum_components(interner, type_id)
-            && let Some(&sym_id) = type_cache.def_to_symbol.get(&def_id)
-        {
-            mark(sym_id);
-        }
-
-        if let Some(shape_id) = tsz_solver::visitor::object_shape_id(interner, type_id)
-            .or_else(|| tsz_solver::visitor::object_with_index_shape_id(interner, type_id))
-            && let Some(sym_id) = interner.object_shape(shape_id).symbol
-        {
-            mark(sym_id);
-        }
-
-        if let Some(shape_id) = tsz_solver::visitor::callable_shape_id(interner, type_id)
-            && let Some(sym_id) = interner.callable_shape(shape_id).symbol
-        {
-            mark(sym_id);
-        }
-    }
-
     pub(in crate::declaration_emitter) fn emit_direct_symbol_dependency_for_type(
         &mut self,
         type_id: tsz_solver::TypeId,
@@ -1057,9 +795,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(&alias_name);
         self.write(": ");
         let type_text = self.print_synthetic_class_extends_alias_type(type_id);
-        let type_text = if type_text == "never" {
-            self.synthetic_class_extends_alias_source_type_text(heritage)
-                .unwrap_or(type_text)
+        let source_type_text = self.synthetic_class_extends_alias_source_type_text(heritage);
+        let prefer_source_text = type_text == "never"
+            || source_type_text
+                .as_ref()
+                .is_some_and(|source_text| source_text.contains(" & "));
+        let type_text = if prefer_source_text {
+            source_type_text.unwrap_or(type_text)
         } else {
             type_text
         };
@@ -1144,7 +886,9 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(type_text) = preferred_return_type_text.as_ref()
                     && self.should_prefer_source_return_type_text(type_text, return_type_id)
                 {
-                    self.write(type_text);
+                    let (type_text, _) =
+                        self.function_return_type_text_for_declaration_scope(func, type_text);
+                    self.write(&type_text);
                 } else {
                     let return_type_text = if let Some(ref type_params) = func.type_parameters
                         && !type_params.nodes.is_empty()
@@ -1153,6 +897,8 @@ impl<'a> DeclarationEmitter<'a> {
                     } else {
                         self.print_type_id(return_type_id)
                     };
+                    let return_type_text = self
+                        .rewrite_returned_auto_accessor_parameter_unknowns(func, &return_type_text);
                     let return_type_text = self.add_returned_object_member_comments_to_type_text(
                         initializer,
                         &return_type_text,
@@ -1945,5 +1691,13 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => true,
         }
+    }
+
+    fn enum_member_literal_initializer_value(
+        interner: &tsz_solver::TypeInterner,
+        type_id: tsz_solver::types::TypeId,
+    ) -> Option<tsz_solver::types::LiteralValue> {
+        let (_def_id, member_type) = tsz_solver::visitor::enum_components(interner, type_id)?;
+        tsz_solver::visitor::literal_value(interner, member_type)
     }
 }

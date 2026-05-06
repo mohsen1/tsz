@@ -27,6 +27,7 @@ pub(crate) mod condition_narrowing;
 mod core;
 pub(crate) mod narrowing;
 mod narrowing_helpers;
+mod optional_chain;
 pub(crate) mod references;
 pub(crate) mod type_guards;
 pub(crate) mod var_utils;

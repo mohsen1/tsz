@@ -287,6 +287,39 @@ type Cache<QR> = {
 }
 
 #[test]
+fn ts2635_instantiation_expression_displays_evaluated_indexed_parameter_type() {
+    let diags = check_source_diagnostics(
+        r#"
+type RT<T extends (...args: any) => any> = any;
+const createCacheReducer = <N extends string, QR>(
+    queries: Cache<N, QR>["queries"],
+) => {
+    const queriesMap = {} as QR;
+    const initialState = { queries: queriesMap };
+    return (state = initialState) => state;
+};
+type Cache<N extends string, QR> = {
+    queries: {
+        [QK in keyof QR]: RT<typeof createCacheReducer<QR>>;
+    };
+};
+"#,
+    );
+
+    let ts2635: Vec<_> = diags.iter().filter(|d| d.code == 2635).collect();
+    assert_eq!(ts2635.len(), 1, "Expected one TS2635, got: {diags:?}");
+    let message = &ts2635[0].message_text;
+    assert!(
+        message.contains("queries: { [QK in keyof QR]: any; }"),
+        "Expected TS2635 to display the evaluated indexed-access parameter type, got: {message:?}"
+    );
+    assert!(
+        !message.contains("Lazy("),
+        "TS2635 display must not leak Lazy(...) internals, got: {message:?}"
+    );
+}
+
+#[test]
 fn ts2344_valid_typeof_instantiation_does_not_emit_constraint_diagnostic() {
     // Sanity check: a *successful* typeof-instantiation expression must not
     // trigger TS2344 against a callable constraint. Use a concrete type arg
@@ -302,6 +335,25 @@ type R = RT<typeof createReducer<string>>;
     assert_eq!(
         ts2344, 0,
         "Successful typeof-instantiation must not emit TS2344, got diags: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2344_parenthesized_typeof_instantiation_does_not_emit_constraint_diagnostic() {
+    let diags = check_source_diagnostics(
+        r#"
+type Inst<T extends abstract new (...args: any) => any> = T extends abstract new (...args: any) => infer R ? R : any;
+let Anon = class <out T> {
+    foo(): Inst<(typeof Anon<T>)> {
+        return this;
+    }
+};
+"#,
+    );
+    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    assert!(
+        ts2344.is_empty(),
+        "Parenthesized typeof-instantiation should not emit TS2344, got: {diags:?}"
     );
 }
 
@@ -1761,6 +1813,23 @@ const result: [string, number] = extractPrimitives({ primitive: "" }, { primitiv
         ts2322.len(),
         0,
         "Expected no TS2322 for reverse-mapped tuple inference through conditional template, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn generic_tuple_rest_argument_infers_union_from_all_rest_elements() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function f0<T, U>(x: [T, ...U[]]): [T, U];
+f0([1, "hello", true]);
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 when tuple rest inference merges string | boolean, got: {:?}",
         ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }

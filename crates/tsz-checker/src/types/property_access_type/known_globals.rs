@@ -5,6 +5,43 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn known_global_identifier_resolves_to_lib_value(
+        &self,
+        idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) {
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                return false;
+            };
+            return symbol.escaped_name == name
+                && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                    || self.ctx.symbol_is_from_lib(sym_id));
+        }
+
+        !self.known_global_value_has_local_shadow(idx, name)
+    }
+
+    /// Returns `true` if the node at `idx` is an identifier spelled `name` and
+    /// that identifier resolves to the built-in global value, not a same-named
+    /// local declaration.
+    pub(crate) fn identifier_resolves_to_unshadowed_global(
+        &self,
+        idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(node) else {
+            return false;
+        };
+        if ident.escaped_text.as_str() != name {
+            return false;
+        }
+        self.known_global_identifier_resolves_to_lib_value(idx, name)
+    }
+
     pub(crate) fn known_global_value_has_local_shadow(&self, idx: NodeIndex, name: &str) -> bool {
         if let Some(mut scope_id) = self.ctx.binder.find_enclosing_scope(self.ctx.arena, idx) {
             let mut iterations = 0;

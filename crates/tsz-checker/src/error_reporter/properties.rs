@@ -727,18 +727,21 @@ impl<'a> CheckerState<'a> {
 
     fn annotation_uses_module_local_array_type(&self, annotation: &str) -> bool {
         let trimmed = annotation.trim_start();
-        if !trimmed.starts_with("Array<") || !self.ctx.binder.is_external_module() {
+        let Some(name) = trimmed.strip_prefix("Array<").map(|_| "Array").or_else(|| {
+            trimmed
+                .strip_prefix("ReadonlyArray<")
+                .map(|_| "ReadonlyArray")
+        }) else {
+            return false;
+        };
+        if !self.ctx.binder.is_external_module() {
             return false;
         }
 
-        self.ctx
-            .binder
-            .file_locals
-            .get("Array")
-            .is_some_and(|sym_id| {
-                !self.ctx.symbol_is_from_actual_lib(sym_id)
-                    && self.symbol_has_declared_type_meaning(sym_id)
-            })
+        self.ctx.binder.file_locals.get(name).is_some_and(|sym_id| {
+            !self.ctx.symbol_is_from_actual_lib(sym_id)
+                && self.symbol_has_declared_type_meaning(sym_id)
+        })
     }
 
     fn property_receiver_display_for_node(&mut self, type_id: TypeId, idx: NodeIndex) -> String {

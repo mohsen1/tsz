@@ -16,7 +16,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeId;
 
-use super::{CheckerContext, LibContext, ResolutionError, ResolutionModeOverride, TypeCache};
+use super::{CheckerContext, LibContext, ResolutionError, TypeCache};
 
 impl TypeCache {
     /// Invalidate cached symbol types that depend on the provided roots.
@@ -820,26 +820,6 @@ impl<'a> CheckerContext<'a> {
         None
     }
 
-    /// Get the resolution error for a specifier under an explicit resolution-mode override.
-    pub fn get_resolution_error_with_mode(
-        &self,
-        specifier: &str,
-        resolution_mode_override: Option<ResolutionModeOverride>,
-    ) -> Option<&ResolutionError> {
-        if let Some(errors) = self.resolved_module_request_errors.as_ref() {
-            for candidate in crate::module_resolution::module_specifier_error_candidates(specifier)
-            {
-                if let Some(error) =
-                    errors.get(&(self.current_file_idx, candidate, resolution_mode_override))
-                {
-                    return Some(error);
-                }
-            }
-        }
-
-        self.get_resolution_error(specifier)
-    }
-
     /// Set the current file index.
     pub const fn set_current_file_idx(&mut self, idx: usize) {
         self.current_file_idx = idx;
@@ -1310,27 +1290,6 @@ impl<'a> CheckerContext<'a> {
         )
     }
 
-    /// Resolve an import specifier from a specific file using an explicit
-    /// `resolution-mode` override when one was present in the original request.
-    pub fn resolve_import_target_from_file_with_mode(
-        &self,
-        source_file_idx: usize,
-        specifier: &str,
-        resolution_mode_override: Option<ResolutionModeOverride>,
-    ) -> Option<usize> {
-        if let Some(paths) = self.resolved_module_request_paths.as_ref() {
-            for candidate in module_specifier_candidates(specifier) {
-                if let Some(target_idx) =
-                    paths.get(&(source_file_idx, candidate.clone(), resolution_mode_override))
-                {
-                    return Some(*target_idx);
-                }
-            }
-        }
-
-        self.resolve_import_target_from_file(source_file_idx, specifier)
-    }
-
     /// Resolve a member exported by the target module of an ALIAS symbol.
     ///
     /// When an ALIAS symbol's `import_module` holds a relative specifier
@@ -1538,7 +1497,10 @@ impl<'a> CheckerContext<'a> {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             message.hash(&mut hasher);
             (hasher.finish() as u32, code)
-        } else if code == 2322
+        } else if code == 18047
+            || code == 18048
+            || code == 18049
+            || code == 2322
             || code == 2411
             || code == 2416
             || code == 2430

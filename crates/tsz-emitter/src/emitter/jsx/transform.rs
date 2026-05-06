@@ -600,12 +600,22 @@ impl<'a> Printer<'a> {
     /// Get the CJS variable name for the JSX runtime module import.
     /// e.g., "react/jsx-runtime" -> "`jsx_runtime_1`", "react/jsx-dev-runtime" -> "`jsx_dev_runtime_1`"
     pub(in super::super) fn jsx_cjs_runtime_var(&self) -> String {
+        if let Some(var_name) = self.jsx_legacy_cjs_runtime_var.as_ref() {
+            return var_name.clone();
+        }
+
         let suffix = match self.ctx.options.jsx {
             JsxEmit::ReactJsxDev => "jsx-dev-runtime",
             _ => "jsx-runtime",
         };
         let sanitized = crate::transforms::emit_utils::sanitize_module_name(suffix);
         format!("{sanitized}_1")
+    }
+
+    pub(in super::super) fn jsx_dev_file_name_text(&self) -> Option<String> {
+        self.jsx_dev_file_name
+            .as_deref()
+            .map(|f| format!("const _jsxFileName = \"{f}\";\n"))
     }
 
     /// Get the CJS variable name for the base JSX module import.
@@ -702,11 +712,7 @@ impl<'a> Printer<'a> {
                 {
                     return None;
                 }
-                let file_name_line = self
-                    .jsx_dev_file_name
-                    .as_deref()
-                    .map(|f| format!("const _jsxFileName = \"{f}\";\n"))
-                    .unwrap_or_default();
+                let file_name_line = self.jsx_dev_file_name_text().unwrap_or_default();
                 if is_cjs {
                     let mut text = String::new();
                     // Base module import for createElement fallback (key-after-spread)

@@ -579,6 +579,59 @@ impl<'a> CheckerState<'a> {
     /// intersection reduction silently drop the application via
     /// `unknown & T = T`).
     fn expand_application_member_for_spread(&mut self, type_id: TypeId) -> TypeId {
+        // When the member is a Mapped type (typical residue of a partially
+        // expanded `Pick<T, K>`/`Omit<T, K>` body whose deeper helper bodies
+        // weren't reachable cross-file), pre-evaluate it into a concrete
+        // object so the solver-level spread collector — which falls through
+        // `Mapped` in its intersection match arm — can see the property
+        // contributions instead of returning `Vec::new()`.
+        if let Some(mapped_id) =
+            crate::query_boundaries::common::mapped_type_id(self.ctx.types, type_id)
+        {
+            let mapped = self.ctx.types.mapped_type(mapped_id);
+            let eval_constraint =
+                self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
+            let resolved_mapped_id = if eval_constraint != mapped.constraint {
+                let mapped_type = tsz_solver::MappedType {
+                    type_param: mapped.type_param,
+                    constraint: eval_constraint,
+                    name_type: mapped.name_type,
+                    template: mapped.template,
+                    readonly_modifier: mapped.readonly_modifier,
+                    optional_modifier: mapped.optional_modifier,
+                };
+                crate::query_boundaries::common::mapped_type_id(
+                    self.ctx.types,
+                    self.ctx.types.factory().mapped(mapped_type),
+                )
+                .unwrap_or(mapped_id)
+            } else {
+                mapped_id
+            };
+            if let Some(names) =
+                crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
+                    self.ctx.types,
+                    resolved_mapped_id,
+                )
+            {
+                let mut properties = Vec::with_capacity(names.len());
+                for name in names {
+                    let prop_name = self.ctx.types.resolve_atom_ref(name);
+                    if let Some(prop_type_id) =
+                        crate::query_boundaries::state::checking::get_finite_mapped_property_type(
+                            self.ctx.types,
+                            resolved_mapped_id,
+                            prop_name.as_ref(),
+                        )
+                    {
+                        properties.push(tsz_solver::PropertyInfo::new(name, prop_type_id));
+                    }
+                }
+                if !properties.is_empty() {
+                    return self.ctx.types.factory().object(properties);
+                }
+            }
+        }
         let Some(app_id) = crate::query_boundaries::common::application_id(self.ctx.types, type_id)
         else {
             return type_id;
@@ -597,6 +650,28 @@ impl<'a> CheckerState<'a> {
         if type_params.len() != app.args.len() {
             return type_id;
         }
+        // When the alias body itself is `unknown` (the declaring file's
+        // checker hasn't populated the body yet, typical for parallel
+        // cross-file checking), instantiation collapses to `unknown` and
+        // the spread loses all properties. As a structural fallback, treat
+        // an opaque-body homomorphic-ish alias as projecting from its
+        // first type argument: spread the first arg in place of the
+        // unresolved alias body. This recovers spread shape for patterns
+        // like `OmitKeys<T, K> = Pick<T, Exclude<keyof T, K>>` where
+        // expanding `T`'s properties is approximately correct (the spread
+        // immediately re-assigns the omitted key anyway).
+        if body == TypeId::UNKNOWN
+            && let Some(first_arg) = app.args.first()
+            && !app.args.is_empty()
+        {
+            let arg_evaluated = self.evaluate_type_with_env(*first_arg);
+            if arg_evaluated != TypeId::UNKNOWN
+                && arg_evaluated != TypeId::ERROR
+                && arg_evaluated != TypeId::ANY
+            {
+                return arg_evaluated;
+            }
+        }
         let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
             self.ctx.types,
             &type_params,
@@ -610,6 +685,29 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_with_env(instantiated);
         if evaluated == TypeId::UNKNOWN || evaluated == TypeId::ERROR || evaluated == TypeId::ANY {
             return type_id;
+        }
+        // When the evaluated form is still an opaque `Application(Lazy(_), _)`
+        // — typically a nested helper (`Pick`/`Exclude`) whose body is
+        // `unknown` because the declaring file's checker hasn't populated
+        // it yet — fall back to the FIRST type argument of the original
+        // outer application. For homomorphic-mapped patterns like
+        // `OmitKeys<T, K> = Pick<T, Exclude<keyof T, K>>` this is
+        // approximately correct: the spread carries `T`'s properties and
+        // any explicit subsequent assignments overwrite the omitted key.
+        // Without this fallback, the entire alias's structural shape is
+        // lost when the inner helper's body is missing.
+        if crate::query_boundaries::common::application_id(self.ctx.types, evaluated).is_some()
+            && let Some(first_arg) = app.args.first()
+        {
+            let arg_evaluated = self.evaluate_type_with_env(*first_arg);
+            if arg_evaluated != TypeId::UNKNOWN
+                && arg_evaluated != TypeId::ERROR
+                && arg_evaluated != TypeId::ANY
+                && crate::query_boundaries::common::application_id(self.ctx.types, arg_evaluated)
+                    .is_none()
+            {
+                return arg_evaluated;
+            }
         }
         evaluated
     }

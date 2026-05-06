@@ -125,8 +125,141 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    fn evaluate_call_signature_for_instantiation_display(
+        &mut self,
+        sig: &tsz_solver::CallSignature,
+    ) -> tsz_solver::CallSignature {
+        let mut sig = sig.clone();
+        for param in &mut sig.params {
+            param.type_id = self.evaluate_type_for_instantiation_display(param.type_id);
+        }
+        sig.return_type = self.evaluate_type_for_instantiation_display(sig.return_type);
+        sig
+    }
+
+    fn evaluate_function_shape_for_instantiation_display(
+        &mut self,
+        shape: &tsz_solver::FunctionShape,
+    ) -> tsz_solver::FunctionShape {
+        let mut shape = shape.clone();
+        for param in &mut shape.params {
+            param.type_id = self.evaluate_type_for_instantiation_display(param.type_id);
+        }
+        shape.return_type = self.evaluate_type_for_instantiation_display(shape.return_type);
+        shape
+    }
+
+    fn evaluate_type_for_instantiation_display(&mut self, type_id: TypeId) -> TypeId {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let evaluated = self.evaluate_type_with_env(type_id);
+        let indexed =
+            crate::query_boundaries::common::get_indexed_access_type(self.ctx.types, evaluated)
+                .or_else(|| {
+                    crate::query_boundaries::common::get_indexed_access_type(
+                        self.ctx.types,
+                        type_id,
+                    )
+                });
+        let Some(indexed) = indexed else {
+            return evaluated;
+        };
+        let Some(prop_atom) = crate::query_boundaries::common::string_literal_value(
+            self.ctx.types,
+            indexed.index_type,
+        ) else {
+            return evaluated;
+        };
+        let prop_name = self.ctx.types.resolve_atom_ref(prop_atom).to_string();
+        let object_type = self
+            .instantiate_application_alias_body_for_instantiation_display(indexed.object_type)
+            .unwrap_or_else(|| self.evaluate_type_with_env(indexed.object_type));
+        match self.resolve_property_access_with_env(object_type, &prop_name) {
+            PropertyAccessResult::Success { type_id, .. }
+            | PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(type_id),
+                ..
+            } => {
+                let evaluated = self.evaluate_type_with_env(type_id);
+                self.reduce_alias_applications_for_instantiation_display(evaluated, 0)
+            }
+            _ => evaluated,
+        }
+    }
+
+    fn reduce_alias_applications_for_instantiation_display(
+        &mut self,
+        type_id: TypeId,
+        depth: u8,
+    ) -> TypeId {
+        if depth >= 8 {
+            return type_id;
+        }
+        if let Some(reduced) =
+            self.instantiate_application_alias_body_for_instantiation_display(type_id)
+            && reduced != type_id
+        {
+            return self.reduce_alias_applications_for_instantiation_display(reduced, depth + 1);
+        }
+        if let Some(mapped_id) =
+            crate::query_boundaries::common::mapped_type_id(self.ctx.types, type_id)
+        {
+            let mapped = self.ctx.types.mapped_type(mapped_id);
+            let template = self
+                .reduce_alias_applications_for_instantiation_display(mapped.template, depth + 1);
+            if template != mapped.template {
+                let mut mapped = *mapped;
+                mapped.template = template;
+                return self.ctx.types.factory().mapped(mapped);
+            }
+        }
+        type_id
+    }
+
+    fn instantiate_application_alias_body_for_instantiation_display(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let (base, args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)?;
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return None;
+        }
+        let body = def.body?;
+        let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &def.type_params,
+            &args,
+        );
+        let instantiated =
+            crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
+        Some(self.evaluate_type_with_env(instantiated))
+    }
+
+    fn evaluate_callable_shape_for_instantiation_display(
+        &mut self,
+        shape: &tsz_solver::CallableShape,
+    ) -> tsz_solver::CallableShape {
+        let mut anonymous = shape.clone();
+        anonymous.symbol = None;
+        anonymous.properties = Vec::new();
+        anonymous.call_signatures = anonymous
+            .call_signatures
+            .iter()
+            .map(|sig| self.evaluate_call_signature_for_instantiation_display(sig))
+            .collect();
+        anonymous.construct_signatures = anonymous
+            .construct_signatures
+            .iter()
+            .map(|sig| self.evaluate_call_signature_for_instantiation_display(sig))
+            .collect();
+        anonymous
+    }
+
     pub(crate) fn format_type_diagnostic_for_instantiation_expression(
-        &self,
+        &mut self,
         type_id: TypeId,
     ) -> String {
         let mut formatter =
@@ -157,6 +290,23 @@ impl<'a> CheckerState<'a> {
                     self.format_function_overloads_for_instantiation_expression(name)
             {
                 return overloads;
+            }
+            if let Some(shape) =
+                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+            {
+                let anonymous = self.evaluate_function_shape_for_instantiation_display(&shape);
+                let anonymous_type = self.ctx.types.factory().function(anonymous);
+                let mut structural_formatter = tsz_solver::TypeFormatter::with_symbols(
+                    self.ctx.types,
+                    &self.ctx.binder.symbols,
+                )
+                .with_diagnostic_mode()
+                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+                .with_exact_optional_property_types(
+                    self.ctx.compiler_options.exact_optional_property_types,
+                )
+                .with_display_properties();
+                return structural_formatter.format(anonymous_type).into_owned();
             }
             let shape_base = application_base
                 .map(|base| {
@@ -198,9 +348,7 @@ impl<'a> CheckerState<'a> {
             }) && !shape.call_signatures.is_empty()
                 && shape.construct_signatures.is_empty()
             {
-                let mut anonymous = (*shape).clone();
-                anonymous.symbol = None;
-                anonymous.properties = Vec::new();
+                let anonymous = self.evaluate_callable_shape_for_instantiation_display(&shape);
                 let anonymous_type = self.ctx.types.factory().callable(anonymous);
                 let mut structural_formatter = tsz_solver::TypeFormatter::with_symbols(
                     self.ctx.types,
@@ -218,12 +366,16 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, type_id)
                 && !sigs.is_empty()
             {
+                let call_signatures: Vec<_> = sigs
+                    .iter()
+                    .map(|sig| self.evaluate_call_signature_for_instantiation_display(sig))
+                    .collect();
                 let anonymous_type = self
                     .ctx
                     .types
                     .factory()
                     .callable(tsz_solver::CallableShape {
-                        call_signatures: sigs.to_vec(),
+                        call_signatures,
                         construct_signatures: Vec::new(),
                         properties: Vec::new(),
                         string_index: None,

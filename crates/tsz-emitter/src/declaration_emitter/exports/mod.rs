@@ -733,8 +733,12 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&var_name);
                 self.write(": ");
 
-                // Get the type of the expression
-                if let Some(type_id) = self.get_node_type(assign.expression) {
+                let source_object_type = self
+                    .object_literal_value_typeof_type_text(assign.expression, self.indent_level);
+
+                if let Some(type_text) = source_object_type {
+                    self.write(&type_text);
+                } else if let Some(type_id) = self.get_node_type(assign.expression) {
                     self.write(&self.print_type_id(type_id));
                 } else {
                     self.write("any");
@@ -843,10 +847,13 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(type_text) = preferred_return.as_ref()
                     && self.should_prefer_source_return_type_text(type_text, return_type_id)
                 {
+                    let (type_text, _) =
+                        self.function_return_type_text_for_declaration_scope(func, type_text);
                     self.write(": ");
-                    self.write(type_text);
+                    self.write(&type_text);
                 } else {
-                    let printed_type_text = self.print_type_id(return_type_id);
+                    let printed_type_text =
+                        self.inferred_function_return_type_text(func, return_type_id);
                     self.write(": ");
                     self.write(&printed_type_text);
                     if let Some(name_text) = self.get_identifier_text(func_name)
@@ -1237,6 +1244,11 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(literal_text) = self.const_literal_initializer_text_deep(expr_idx) {
             self.write(": ");
             self.write(&literal_text);
+        } else if let Some(type_text) =
+            self.object_literal_value_typeof_type_text(expr_idx, self.indent_level)
+        {
+            self.write(": ");
+            self.write(&type_text);
         } else if let Some(type_text) = self.preferred_expression_type_text(expr_idx) {
             if let Some((file_path, pos, len, diagnostics_before)) = portability_context.as_ref()
                 && self.diagnostics.len() == *diagnostics_before
@@ -1644,8 +1656,10 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(type_text) = preferred_return.as_ref()
                     && self.should_prefer_source_return_type_text(type_text, return_type_id)
                 {
+                    let (type_text, _) =
+                        self.function_return_type_text_for_declaration_scope(func, type_text);
                     self.write(": ");
-                    self.write(type_text);
+                    self.write(&type_text);
                 } else {
                     if let Some(name_text) = self.get_identifier_text(func_name)
                         && let Some(name_node) = self.arena.get(func_name)
@@ -1660,7 +1674,8 @@ impl<'a> DeclarationEmitter<'a> {
                         );
                     }
                     self.write(": ");
-                    let printed_type_text = self.print_type_id(return_type_id);
+                    let printed_type_text =
+                        self.inferred_function_return_type_text(func, return_type_id);
                     self.write(&printed_type_text);
                     if let Some(name_text) = self.get_identifier_text(func_name)
                         && let Some(name_node) = self.arena.get(func_name)

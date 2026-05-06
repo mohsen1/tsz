@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-weak-symbol-fingerprints`
-- **PR**: #3343
+- **PR**: #3456
 - **Status**: ready
 - **Workstream**: 1 (conformance)
 

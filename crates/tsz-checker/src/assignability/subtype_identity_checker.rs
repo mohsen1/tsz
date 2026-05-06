@@ -7,7 +7,7 @@
 
 use crate::query_boundaries::assignability::{
     is_redeclaration_identical_with_resolver, is_relation_cacheable, is_subtype_with_resolver,
-    subtype_cache_key,
+    mutable_array_element_for_redeclaration, subtype_cache_key,
 };
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
@@ -456,18 +456,16 @@ impl<'a> CheckerState<'a> {
     }
 
     fn array_application_to_array_for_redeclaration(&self, type_id: TypeId) -> TypeId {
-        let Some((base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
-        else {
+        if crate::query_boundaries::common::application_info(self.ctx.types, type_id).is_none() {
             return type_id;
-        };
-        if args.len() == 1
-            && tsz_solver::TypeDatabase::get_array_base_type(self.ctx.types)
-                .is_some_and(|array_base| base == array_base)
-        {
-            return self.ctx.types.array(args[0]);
         }
-        type_id
+
+        mutable_array_element_for_redeclaration(
+            self.ctx.types,
+            type_id,
+            Some(self.ctx.definition_store.as_ref()),
+        )
+        .map_or(type_id, |elem| self.ctx.types.array(elem))
     }
 
     /// Widen literal return types within function signatures for TS2403 comparison.

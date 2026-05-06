@@ -343,8 +343,11 @@ export class Derived extends mixin(Base) {}
 #[test]
 fn test_default_export_class_extends_expression_uses_synthetic_base_alias() {
     let source = r#"
+interface Greeter {
+    getGreeting(): string;
+}
 interface GreeterConstructor {
-    new (): {};
+    new (): Greeter;
 }
 declare function getGreeterBase(): GreeterConstructor;
 export default class extends getGreeterBase() {}
@@ -380,6 +383,10 @@ export default class extends getGreeterBase() {}
         DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
     let output = emitter.emit(root);
 
+    assert!(
+        output.contains("interface Greeter {"),
+        "Expected synthetic base alias dependencies to retain constructor return interface: {output}"
+    );
     assert!(
         output.contains("declare const default_base: GreeterConstructor;"),
         "Expected default export class extends expression to synthesize a default_base alias: {output}"
@@ -561,6 +568,37 @@ export class XmlElement2 extends Mixin(
     assert!(
         !output.contains("declare const XmlElement2_base: never;"),
         "Did not expect synthetic class base alias to stay `never`: {output}"
+    );
+}
+
+#[test]
+fn test_local_class_mixin_preserves_base_static_intersection() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Constructor<C> { new (...args: any[]): C; }
+
+function mixin<B extends Constructor<{}>>(Base: B) {
+    class PrivateMixed extends Base {
+        bar = 2;
+    }
+    return PrivateMixed;
+}
+
+export class Unmixed {
+    foo = 1;
+}
+
+export const Mixed = mixin(Unmixed);
+"#,
+    );
+
+    assert!(
+        output.contains("} & typeof Unmixed;"),
+        "Expected mixin constructor type to preserve base static side: {output}"
+    );
+    assert!(
+        !output.contains("foo: number;\n        bar: number;"),
+        "Inherited base instance fields should stay behind typeof base intersection: {output}"
     );
 }
 
@@ -1239,6 +1277,58 @@ namespace A.B.D {
     );
 }
 
+#[test]
+fn test_returned_auto_accessor_parameter_unknown_uses_parameter_type() {
+    let source = r#"
+function mixin<T extends { new (...args: any[]): {} }>(superclass: T) {
+    return class extends superclass {};
+}
+
+export function wrapper<T>(value: T) {
+    class BaseClass {
+        accessor name = value;
+    }
+    return class MyClass extends mixin(BaseClass) {
+        accessor name = value;
+    };
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let wrapper = parser
+        .arena
+        .nodes
+        .iter()
+        .find_map(|node| {
+            parser
+                .arena
+                .get_function(node)
+                .filter(|func| parser.arena.get_identifier_text(func.name) == Some("wrapper"))
+        })
+        .expect("missing wrapper function");
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let rewritten = emitter.rewrite_returned_auto_accessor_parameter_unknowns(
+        wrapper,
+        "{\n    new (): {\n        get name(): unknown;\n        set name(arg: unknown);\n    };\n}",
+    );
+
+    assert!(
+        rewritten.contains("get name(): T;"),
+        "Expected getter type to come from the accessor initializer parameter: {rewritten}"
+    );
+    assert!(
+        rewritten.contains("set name(arg: T);"),
+        "Expected setter type to come from the accessor initializer parameter: {rewritten}"
+    );
+}
+
 /// Regression test for `declarationEmitShadowingInferNotRenamed`: a single
 /// non-abstract construct signature must render as `new (...) => T` (matching
 /// tsc), and an `Infer(T)` placeholder appearing inside the extends clause of
@@ -1311,5 +1401,46 @@ fn test_constructor_with_infer_in_extends_renders_as_arrow_with_infer() {
         printed.contains("? C : "),
         "Expected the true branch to reference the inferred placeholder by bare \
          name `C`, not `infer C`: {printed}"
+    );
+}
+
+#[test]
+fn test_inexact_optional_mapped_intersection_simplifies_for_inferred_emit() {
+    let actual = r#"(x: {} & {
+    [K in "foo" | "bar" | "baz" as undefined extends {
+    foo?: string;
+    bar: number;
+    baz: undefined;
+}[keyof unknown] ? keyof unknown : never]+?: undefined extends {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown] ? {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown] | undefined : {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown];
+} & {
+    [K in "foo" | "bar" | "baz" as undefined extends {
+    foo?: string;
+    bar: number;
+    baz: undefined;
+}[keyof unknown] ? never : keyof unknown]: {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown];
+}) => null"#;
+
+    let simplified = DeclarationEmitter::simplify_inexact_optional_mapped_intersection_text(actual)
+        .expect("expected inexact optional mapped intersection to simplify");
+
+    assert_eq!(
+        simplified,
+        "(x: {\n    foo?: string | undefined;\n    baz?: undefined;\n} & {\n    bar: number;\n}) => null"
     );
 }
