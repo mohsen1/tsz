@@ -228,7 +228,11 @@ impl ParserState {
 
             let operator_token = op as u16;
             self.next_token();
-            let right = self.parse_assignment_expression();
+            let mut right = self.parse_assignment_expression();
+            if right.is_none() {
+                self.error_expression_expected();
+                right = self.create_missing_expression();
+            }
             let end_pos = self.token_end();
             if deferred_failed_async_arrow_colon_recovery && !self.is_token(SyntaxKind::ColonToken)
             {
