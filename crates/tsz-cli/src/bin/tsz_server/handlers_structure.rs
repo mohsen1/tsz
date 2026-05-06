@@ -1826,7 +1826,7 @@ impl Server {
             .unwrap_or(false);
         let mut projects: Vec<(&String, &Vec<String>)> =
             self.external_project_files.iter().collect();
-        projects.sort_by(|(left, _), (right, _)| left.cmp(right));
+        projects.sort_by_key(|(left, _)| *left);
 
         let body: Vec<serde_json::Value> = projects
             .into_iter()
