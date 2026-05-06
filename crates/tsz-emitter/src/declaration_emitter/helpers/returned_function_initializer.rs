@@ -539,8 +539,11 @@ impl<'a> DeclarationEmitter<'a> {
                     };
                     if self.get_identifier_text(alias.name).as_deref() == Some(name) {
                         return self
-                            .preferred_annotation_name_text(alias.type_node)
-                            .or_else(|| self.emit_type_node_text(alias.type_node));
+                            .local_type_annotation_text(alias.type_node)
+                            .or_else(|| {
+                                self.preferred_annotation_name_text(alias.type_node)
+                                    .or_else(|| self.emit_type_node_text(alias.type_node))
+                            });
                     }
                 }
             }
