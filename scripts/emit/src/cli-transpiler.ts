@@ -440,6 +440,14 @@ export class CliTranspiler {
       if (!declaration) {
         args.push('--noCheck', '--noLib');
       }
+      // The emit runner synthesizes explicit CLI invocations from baseline
+      // files. Embedded tsconfig options are parsed and forwarded as flags
+      // below; leaving tsconfig.json discoverable would make tsz stop with
+      // TS5112 before it emits.
+      const hasEmbeddedTsconfig = files.some(f => f.name.replace(/^\/+/, '').replace(/\\/g, '/').endsWith('tsconfig.json'));
+      if (hasEmbeddedTsconfig) {
+        args.push('--ignoreConfig');
+      }
       // Add --allowJs when any input file is a .js/.jsx/.mjs/.cjs file
       const hasJsInput = files.some(f => /\.(js|jsx|mjs|cjs)$/i.test(f.name));
       if (hasJsInput) args.push('--allowJs');
@@ -536,6 +544,9 @@ export class CliTranspiler {
           }
         } else {
           const retryArgs = ['--declaration', '--noCheck', '--noLib'];
+          if (hasEmbeddedTsconfig) {
+            retryArgs.push('--ignoreConfig');
+          }
           appendCompilerOptionFlags(retryArgs, {
             alwaysStrict,
             sourceMap,
