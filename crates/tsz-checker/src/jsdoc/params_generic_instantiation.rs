@@ -72,6 +72,25 @@ fn is_jsdoc_simple_type_name(expr: &str) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn jsdoc_resolved_type_is_unresolved(
+        &self,
+        expr: &str,
+        ty: tsz_solver::TypeId,
+    ) -> bool {
+        ty == tsz_solver::TypeId::ERROR
+            || (ty == tsz_solver::TypeId::UNKNOWN && !Self::jsdoc_expr_is_unknown_intrinsic(expr))
+    }
+
+    fn jsdoc_expr_is_unknown_intrinsic(expr: &str) -> bool {
+        let trimmed = expr
+            .trim()
+            .trim_start_matches('!')
+            .trim_start_matches('?')
+            .trim_end_matches('=')
+            .trim();
+        trimmed == "unknown"
+    }
+
     pub(crate) fn report_jsdoc_param_generic_instantiation_errors(
         &mut self,
         type_expr: &str,
@@ -674,9 +693,8 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             let resolved = self.resolve_jsdoc_type_str(trimmed);
-            let unresolved = resolved.is_none_or(|ty| {
-                ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
-            });
+            let unresolved =
+                resolved.is_none_or(|ty| self.jsdoc_resolved_type_is_unresolved(trimmed, ty));
             if unresolved {
                 self.emit_jsdoc_cannot_find_name(trimmed, comment_pos, comment_end, source_text);
                 return true;
