@@ -1673,6 +1673,46 @@ fn list_files_only_with_discovered_tsconfig_reports_ts5112() {
 }
 
 #[test]
+fn list_files_only_reports_ts6504_for_explicit_js_root_without_allow_js() {
+    let temp = TempDir::new("list_files_only_ts6504_js_root").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true},"files":["a.js"]}"#,
+    );
+    write_file(&temp.path.join("a.js"), "const x = 1;\n");
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--pretty", "false", "--listFilesOnly"])
+            .expect("tsz binary not found");
+
+    assert_eq!(code, 1, "Expected exit code 1 for TS6504, got {code}");
+    assert!(
+        output.contains("error TS6504")
+            && output.contains("a.js")
+            && output.contains("allowJs")
+            && output.contains("Part of 'files' list in tsconfig.json"),
+        "--listFilesOnly should report the explicit JS root diagnostic before listing files, got:\n{output}"
+    );
+}
+
+#[test]
+fn list_files_only_without_inputs_and_without_config_prints_help() {
+    let temp = TempDir::new("list_files_only_no_inputs_no_config").expect("temp dir");
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--listFilesOnly"]).expect("tsz binary not found");
+
+    assert_eq!(
+        code, 1,
+        "Expected exit code 1 for no-input help, got {code}"
+    );
+    assert!(
+        output.contains("Version ") && output.contains("The TypeScript Compiler"),
+        "--listFilesOnly without inputs or tsconfig should print help, got:\n{output}"
+    );
+}
+
+#[test]
 fn ignore_config_skips_ts5112_for_command_line_files() {
     let temp = TempDir::new("ignore_config_skips_ts5112").expect("temp dir");
     write_file(

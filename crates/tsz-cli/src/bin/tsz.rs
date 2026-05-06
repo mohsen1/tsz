@@ -90,6 +90,18 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
     }
 
+    // `--listFilesOnly` still uses the normal no-input command-line behavior before
+    // the file-list-only path can print default libs.
+    if args.list_files_only
+        && args.files.is_empty()
+        && args.project.is_none()
+        && !cwd.join("tsconfig.json").exists()
+    {
+        println!("Version {TSC_VERSION}");
+        println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
+        std::process::exit(1);
+    }
+
     // Handle --listFilesOnly: print file list and exit
     if args.list_files_only {
         return handle_list_files_only(&args, &cwd);
@@ -3170,6 +3182,29 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         resolve_json_module: resolved.resolve_json_module,
     };
 
+    let files = discover_ts_files(&discovery)?;
+    let files_from_config = args.files.is_empty()
+        && config
+            .as_ref()
+            .and_then(|config| config.files.as_ref())
+            .is_some();
+    let unsupported_js_root_diagnostics =
+        list_files_only_unsupported_js_root_diagnostics(&discovery, &files, files_from_config);
+    if !unsupported_js_root_diagnostics.is_empty() {
+        let pretty = args
+            .pretty
+            .unwrap_or_else(|| std::io::stdout().is_terminal());
+        if args.pretty == Some(true) {
+            Reporter::force_colors(true);
+        }
+        let mut reporter = Reporter::new(pretty);
+        let output = reporter.render(&unsupported_js_root_diagnostics);
+        if !output.is_empty() {
+            print!("{output}");
+        }
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+    }
+
     // Print lib files first (matching tsc --listFilesOnly order)
     if !resolved.checker.no_lib {
         for lib_file in &resolved.lib_files {
@@ -3177,12 +3212,70 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         }
     }
 
-    let files = discover_ts_files(&discovery)?;
     for file in files {
         println!("{}", file.display());
     }
 
     Ok(())
+}
+
+fn list_files_only_unsupported_js_root_diagnostics(
+    discovery: &tsz_cli::fs::FileDiscoveryOptions,
+    files: &[std::path::PathBuf],
+    files_from_config: bool,
+) -> Vec<tsz::checker::diagnostics::Diagnostic> {
+    use tsz::checker::diagnostics::{
+        Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
+    };
+    use tsz_common::file_extensions::is_js_file;
+
+    if discovery.allow_js || !discovery.files_explicitly_set {
+        return Vec::new();
+    }
+
+    files
+        .iter()
+        .filter(|file| is_js_file(file))
+        .map(|file| {
+            let file_name = file.display().to_string();
+            let mut diagnostic = Diagnostic::from_code(
+                diagnostic_codes::FILE_IS_A_JAVASCRIPT_FILE_DID_YOU_MEAN_TO_ENABLE_THE_ALLOWJS_OPTION,
+                "",
+                0,
+                0,
+                &[&file_name],
+            );
+            diagnostic
+                .related_information
+                .push(DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Message,
+                    code: diagnostic_codes::THE_FILE_IS_IN_THE_PROGRAM_BECAUSE,
+                    file: String::new(),
+                    start: 0,
+                    length: 0,
+                    message_text: "The file is in the program because:".to_string(),
+                });
+            diagnostic
+                .related_information
+                .push(DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Message,
+                    code: if files_from_config {
+                        diagnostic_codes::PART_OF_FILES_LIST_IN_TSCONFIG_JSON
+                    } else {
+                        diagnostic_codes::ROOT_FILE_SPECIFIED_FOR_COMPILATION
+                    },
+                    file: String::new(),
+                    start: 0,
+                    length: 0,
+                    message_text: if files_from_config {
+                        "Part of 'files' list in tsconfig.json".to_string()
+                    } else {
+                        "Root file specified for compilation".to_string()
+                    },
+                });
+            diagnostic
+        })
+        .collect()
 }
 
 fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
