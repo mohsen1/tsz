@@ -489,21 +489,13 @@ impl<'a> Printer<'a> {
         if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             return None;
         }
-        let Some(access) = self.arena.get_access_expr(callee_node) else {
-            return None;
-        };
-        let Some(base_node) = self.arena.get(access.expression) else {
-            return None;
-        };
+        let access = self.arena.get_access_expr(callee_node)?;
+        let base_node = self.arena.get(access.expression)?;
         if base_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
             return None;
         }
-        let Some(paren) = self.arena.get_parenthesized(base_node) else {
-            return None;
-        };
-        let Some(inner) = self.arena.get(paren.expression) else {
-            return None;
-        };
+        let paren = self.arena.get_parenthesized(base_node)?;
+        let inner = self.arena.get(paren.expression)?;
         let inner_is_erasable = inner.kind == syntax_kind_ext::TYPE_ASSERTION
             || inner.kind == syntax_kind_ext::AS_EXPRESSION
             || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION

@@ -554,7 +554,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(in crate::types_domain) fn flow_analyzer(&self) -> FlowAnalyzer<'_> {
+    pub(crate) fn flow_analyzer(&self) -> FlowAnalyzer<'_> {
         let analyzer = FlowAnalyzer::with_node_types(
             self.ctx.arena,
             self.ctx.binder,

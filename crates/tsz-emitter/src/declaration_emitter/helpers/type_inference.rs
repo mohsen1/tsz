@@ -349,19 +349,30 @@ impl<'a> DeclarationEmitter<'a> {
         }?;
         let type_text = if std::ptr::eq(source_arena, self.arena) {
             match printed {
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any"))
+                Some(printed) if printed != "any" => {
+                    if let Some(raw_type_text) = self.local_type_annotation_text(type_annotation) {
+                        if Self::type_text_starts_with_string_intrinsic(&raw_type_text) {
+                            raw_type_text
+                        } else if (!printed.contains("any") || type_text.contains("any"))
+                            && printed.contains("typeof ")
+                            && !type_text.contains("typeof ")
+                        {
+                            printed.replace("typeof ", "")
+                        } else if !printed.contains("any") || type_text.contains("any") {
+                            printed
+                        } else {
+                            type_text
+                        }
+                    } else if (!printed.contains("any") || type_text.contains("any"))
                         && printed.contains("typeof ")
-                        && !type_text.contains("typeof ") =>
-                {
-                    printed.replace("typeof ", "")
-                }
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any")) =>
-                {
-                    printed
+                        && !type_text.contains("typeof ")
+                    {
+                        printed.replace("typeof ", "")
+                    } else if !printed.contains("any") || type_text.contains("any") {
+                        printed
+                    } else {
+                        type_text
+                    }
                 }
                 _ => type_text,
             }
@@ -3497,6 +3508,17 @@ impl<'a> DeclarationEmitter<'a> {
                     .is_some_and(|params| !params.nodes.is_empty());
             let is_source_with_return_annotation =
                 callable.body.is_some() && callable.type_annotation.is_some();
+            if imported_module.is_some()
+                && !is_ambient_function
+                && self
+                    .current_file_path
+                    .as_deref()
+                    .is_some_and(|current_path| {
+                        self.paths_refer_to_same_source_file(current_path, &source_file.file_name)
+                    })
+            {
+                return None;
+            }
             if (!is_ambient_function
                 && !is_source_overload_signature
                 && !is_source_with_return_annotation)
@@ -3511,8 +3533,10 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let mut type_text = self
-                .emit_type_node_text_from_arena(source_arena, callable.type_annotation)
-                .or_else(|| self.source_slice_from_arena(source_arena, callable.type_annotation))?
+                .source_slice_from_arena(source_arena, callable.type_annotation)
+                .or_else(|| {
+                    self.emit_type_node_text_from_arena(source_arena, callable.type_annotation)
+                })?
                 .trim_end()
                 .trim_end_matches(';')
                 .trim_end()
@@ -3585,12 +3609,36 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 return None;
             }
-            type_text = Self::replace_whole_words_in_text(&type_text, &type_param_substitutions);
+            let mut protected_type_param_names = Vec::new();
+            let protected_substitutions = type_param_substitutions
+                .iter()
+                .enumerate()
+                .map(|(substitution_idx, (name_text, arg_text))| {
+                    let mut protected_arg_text = arg_text.clone();
+                    for (param_idx, param_name) in type_param_names.iter().enumerate() {
+                        if !Self::contains_whole_word_in_text(&protected_arg_text, param_name) {
+                            continue;
+                        }
+                        let protected_name =
+                            format!("__tszDeclEmitTypeParam{substitution_idx}_{param_idx}__");
+                        protected_arg_text = Self::replace_whole_words_in_text(
+                            &protected_arg_text,
+                            &[(param_name.clone(), protected_name.clone())],
+                        );
+                        protected_type_param_names.push((protected_name, param_name.clone()));
+                    }
+                    (name_text.clone(), protected_arg_text)
+                })
+                .collect::<Vec<_>>();
+            type_text = Self::replace_whole_words_in_text(&type_text, &protected_substitutions);
             if type_param_names
                 .iter()
                 .any(|name| Self::contains_whole_word_in_text(&type_text, name))
             {
                 return None;
+            }
+            for (protected_name, param_name) in protected_type_param_names {
+                type_text = type_text.replace(&protected_name, &param_name);
             }
             if Self::leading_type_reference_name(&type_text)
                 .is_some_and(Self::is_builtin_conditional_utility_type_name)
@@ -4079,6 +4127,13 @@ impl<'a> DeclarationEmitter<'a> {
             .next()
             .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
             .then_some(name)
+    }
+
+    fn type_text_starts_with_string_intrinsic(type_text: &str) -> bool {
+        matches!(
+            Self::leading_type_reference_name(type_text),
+            Some("Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize")
+        )
     }
 
     pub(in crate::declaration_emitter) fn function_signature_accepts_call_arguments(
@@ -5173,6 +5228,22 @@ impl<'a> DeclarationEmitter<'a> {
         !self.print_type_id(inferred_return_type).contains("typeof ")
     }
 
+    pub(in crate::declaration_emitter) fn source_return_type_is_function_type_param(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> bool {
+        let Some(ref type_params) = func.type_parameters else {
+            return false;
+        };
+        let Some(name) = Self::simple_type_reference_name(source_type_text) else {
+            return false;
+        };
+        self.collect_type_param_names(type_params)
+            .iter()
+            .any(|type_param| type_param == &name)
+    }
+
     pub(in crate::declaration_emitter) fn function_return_type_text_for_declaration_scope(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
@@ -5896,7 +5967,7 @@ impl<'a> DeclarationEmitter<'a> {
         let computed_key_requires_property_syntax = self
             .arena
             .get_computed_property(name_node)
-            .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
+            .and_then(|computed| self.get_node_type_or_names(&[computed.expression, method.name]))
             .is_none_or(|type_id| {
                 type_id == tsz_solver::types::TypeId::ANY
                     || self.type_interner.is_some_and(|interner| {
@@ -6036,13 +6107,15 @@ impl<'a> DeclarationEmitter<'a> {
                         trimmed.starts_with(&prefix)
                             || trimmed.starts_with(&format!("readonly {prefix}"))
                     })
-                    || trimmed.starts_with(&format!("{name_text}("))
+                    || Self::object_literal_method_line_matches_name(trimmed, &name_text)
             }) else {
                 continue;
             };
             if line_idx > 0 && lines[line_idx - 1].trim_start().starts_with("/**") {
                 continue;
             }
+            lines[line_idx] =
+                Self::returned_object_method_signature_to_property_text(&lines[line_idx]);
             let indent_len = lines[line_idx].len() - lines[line_idx].trim_start().len();
             let indent = " ".repeat(indent_len);
             let mut comment_lines = Vec::new();
@@ -6059,6 +6132,82 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             lines.join("\n")
         }
+    }
+
+    fn returned_object_method_signature_to_property_text(line: &str) -> String {
+        let trimmed = line.trim_start();
+        let indent_len = line.len() - trimmed.len();
+        let Some(open_paren) = trimmed.find('(') else {
+            return line.to_string();
+        };
+        let before_paren = trimmed[..open_paren].trim();
+        let optional = before_paren.ends_with('?');
+        let method_head = before_paren.trim_end_matches('?').trim();
+        let (name, type_params) = method_head
+            .find('<')
+            .map(|type_param_start| {
+                (
+                    method_head[..type_param_start].trim(),
+                    method_head[type_param_start..].trim(),
+                )
+            })
+            .unwrap_or((method_head, ""));
+        if name.is_empty()
+            || name == "new"
+            || name.contains(' ')
+            || name.starts_with('[')
+            || before_paren.contains(':')
+        {
+            return line.to_string();
+        }
+        let Some(close_paren) = Self::matching_top_level_paren(trimmed, open_paren) else {
+            return line.to_string();
+        };
+        let rest = trimmed[close_paren + 1..].trim_start();
+        let Some(return_text) = rest.strip_prefix(':') else {
+            return line.to_string();
+        };
+        let return_text = return_text.trim_start().trim_end_matches(';');
+        let optional_text = if optional { "?" } else { "" };
+        format!(
+            "{}{}{}: {}({}) => {};",
+            &line[..indent_len],
+            name,
+            optional_text,
+            type_params,
+            &trimmed[open_paren + 1..close_paren],
+            return_text
+        )
+    }
+
+    fn matching_top_level_paren(text: &str, open_paren: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        let mut quote: Option<u8> = None;
+        let mut escaped = false;
+        for (idx, byte) in text.bytes().enumerate().skip(open_paren) {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+            match byte {
+                b'\'' | b'"' => quote = Some(byte),
+                b'(' => depth += 1,
+                b')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(idx);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     fn function_initializer_unique_returned_object_literal(
