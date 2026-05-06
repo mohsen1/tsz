@@ -402,13 +402,27 @@ impl<'a> Printer<'a> {
             return false;
         }
         let start = p - "import".len();
-        if start == 0 {
-            return true;
+        let before_keyword_ok = start == 0
+            || haystack[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()));
+        if !before_keyword_ok {
+            return false;
         }
-        haystack[..start]
-            .chars()
-            .next_back()
-            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+
+        let mut after = pos;
+        while after < bytes.len()
+            && (bytes[after] == b'_'
+                || bytes[after] == b'$'
+                || bytes[after].is_ascii_alphanumeric())
+        {
+            after += 1;
+        }
+        while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+            after += 1;
+        }
+        bytes.get(after) == Some(&b'=')
     }
 
     fn is_standalone_identifier_at(haystack: &str, ident: &str, pos: usize) -> bool {
@@ -1371,5 +1385,22 @@ impl<'a> Printer<'a> {
             }
         }
         self.write(" }");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Printer;
+
+    #[test]
+    fn import_alias_redeclaration_requires_import_equals() {
+        assert!(Printer::contains_alias_value_reference_before_shadow(
+            "import M = Z.I;\nM.bar();",
+            "M",
+        ));
+        assert!(!Printer::contains_alias_value_reference_before_shadow(
+            "import M from \"pkg\";\nM.bar();",
+            "M",
+        ));
     }
 }
