@@ -71,6 +71,7 @@ impl<'a> CheckerState<'a> {
         suppress_unanchored_type_mismatch: bool,
         display_target: &str,
         preferred_target_display: Option<&str>,
+        merged_attrs_display: Option<&str>,
     ) -> bool {
         use crate::query_boundaries::common::PropertyAccessResult;
 
@@ -402,7 +403,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if has_type_mismatch {
-            let spread_name = self.format_type(spread_source_type);
+            let spread_name = merged_attrs_display
+                .map(str::to_string)
+                .unwrap_or_else(|| self.format_type(spread_source_type));
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&spread_name, &props_display],

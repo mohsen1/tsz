@@ -1209,6 +1209,12 @@ impl<'a> CheckerState<'a> {
             }
 
             let spread_count = spread_entries.len();
+            let merged_attrs_display = self
+                .format_jsx_attrs_effective_source_for_spread_assignability(
+                    attributes_idx,
+                    props_type,
+                    request,
+                );
             // Collect property names from each spread so later iterations know
             // what properties earlier spreads already provide.
             let mut earlier_spread_props: rustc_hash::FxHashSet<String> =
@@ -1307,9 +1313,10 @@ impl<'a> CheckerState<'a> {
                     &earlier_explicit_attrs,
                     has_later_spreads,
                     suppress_missing_props,
-                    has_later_explicit_excess_attr,
+                    has_prop_type_error || has_later_explicit_excess_attr,
                     &display_target,
                     preferred_target_display,
+                    merged_attrs_display.as_deref(),
                 );
                 suppress_missing_props_from_spread |= had_error || suppress_missing_props;
 
