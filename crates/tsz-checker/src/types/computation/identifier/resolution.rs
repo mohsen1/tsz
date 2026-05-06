@@ -66,6 +66,9 @@ impl<'a> CheckerState<'a> {
             {
                 return self.current_file_commonjs_namespace_type();
             }
+            if self.is_require_call_callee_without_node_global(name, idx) {
+                return TypeId::ANY;
+            }
             if self.is_js_file() {
                 match name {
                     "exports" => {

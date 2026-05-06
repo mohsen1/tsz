@@ -810,11 +810,14 @@ function patchSessionClient(SessionClient, ts) {
         }
     };
 
+    const isUnexpectedEmptyResponseBody = (err) =>
+        err && typeof err.message === "string" && err.message.includes("Unexpected empty response body");
+
     const processOptionalResponse = (client, request) => {
         try {
             return client.processResponse(request);
         } catch (err) {
-            if (err && typeof err.message === "string" && err.message.includes("Unexpected empty response body")) {
+            if (isUnexpectedEmptyResponseBody(err)) {
                 return { body: undefined };
             }
             throw err;
@@ -4155,13 +4158,21 @@ function patchSessionClient(SessionClient, ts) {
                 triggerReason: options.triggerReason,
             };
             const request = this.processRequest("signatureHelp", args);
-            const response = this.processResponse(request);
+            const response = processOptionalResponse(this, request);
             if (!response.body) return nativeResult;
             const { items, applicableSpan, selectedItemIndex, argumentIndex, argumentCount } = response.body;
             if (!items || items.length === 0) return nativeResult;
             return { items, applicableSpan, selectedItemIndex, argumentIndex, argumentCount };
         }
-        const result = _origGetSignatureHelpItems.call(this, fileName, position, options);
+        let result;
+        try {
+            result = _origGetSignatureHelpItems.call(this, fileName, position, options);
+        } catch (err) {
+            if (isUnexpectedEmptyResponseBody(err)) {
+                return nativeResult || undefined;
+            }
+            throw err;
+        }
         if (result && result.items && result.items.length === 0) {
             return nativeResult || undefined;
         }
