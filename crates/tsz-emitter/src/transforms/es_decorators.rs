@@ -370,17 +370,19 @@ impl<'a> TC39DecoratorEmitter<'a> {
             // ES2022: with class decorators, emit _classThis capture block first
             if has_class_decorators {
                 out.push_str(&format!("{i2}static {{ _classThis = this; }}\n"));
-                if self.expression_mode {
-                    // Named evaluation only applies to anonymous class expressions.
-                    // An explicit class name is already the runtime function name.
-                    let function_name = class_name_was_empty
-                        .then(|| self.function_name.clone().unwrap_or_else(String::new));
-                    if let Some(fn_name) = function_name {
-                        let set_fn = self.helper("__setFunctionName");
-                        out.push_str(&format!(
-                            "{i2}static {{ {set_fn}(_classThis, \"{fn_name}\"); }}\n"
-                        ));
-                    }
+                // For class expressions, emit `__setFunctionName(_classThis, ...)`
+                // only when the source class was *anonymous*. A named class
+                // expression (`class C { ... }`) carries its own name through
+                // to the engine — tsc does not emit the helper in that case
+                // (e.g. `export const C = @dec class C {}` round-trips to a
+                // bare `var C = class { static { _classThis = this; } ... }`
+                // with no `__setFunctionName` static block).
+                if self.expression_mode && class_name_was_empty {
+                    let fn_name = self.function_name.clone().unwrap_or_default();
+                    let set_fn = self.helper("__setFunctionName");
+                    out.push_str(&format!(
+                        "{i2}static {{ {set_fn}(_classThis, \"{fn_name}\"); }}\n"
+                    ));
                 }
             } else if self.expression_mode && self.function_name.is_some() {
                 // Member-only decorators on class expression with a context name:

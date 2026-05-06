@@ -11,6 +11,7 @@ use super::type_node_helpers::{
     get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
     is_typeof_global_this_type_node,
 };
+use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -93,17 +94,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let index_type = self.check(indexed_access.index_type);
 
             // TS2538: Check if the index type is valid (string, number, symbol, or literal thereof)
-            if let Some(invalid_member) = self.get_invalid_index_type_member(index_type)
-                && let Some(inode) = self.ctx.arena.get(indexed_access.index_type)
-            {
-                let mut formatter = self.ctx.create_type_formatter();
-                let index_type_str = formatter.format(invalid_member);
-                let message = crate::diagnostics::format_message(
-                    crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                    &[&index_type_str],
-                );
-                self.ctx
-                    .error(inode.pos, inode.end - inode.pos, message, 2538);
+            if let Some(invalid_member) = self.get_invalid_index_type_member(index_type) {
+                let (diag_pos, diag_len) =
+                    self.indexed_access_index_diagnostic_span(node, indexed_access.index_type);
+                for member in self.invalid_index_type_diagnostic_members(index_type, invalid_member)
+                {
+                    let mut formatter = self.ctx.create_type_formatter();
+                    let index_type_str = formatter.format(member);
+                    let message = crate::diagnostics::format_message(
+                        crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                        &[&index_type_str],
+                    );
+                    self.ctx.error(diag_pos, diag_len, message, 2538);
+                }
             }
 
             if let Some(inode) = self.ctx.arena.get(indexed_access.index_type)
@@ -672,6 +675,74 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Get the specific type that makes this type invalid as an index type (TS2538).
     fn get_invalid_index_type_member(&self, type_id: TypeId) -> Option<TypeId> {
         crate::query_boundaries::common::get_invalid_index_type_member(self.ctx.types, type_id)
+    }
+
+    fn invalid_index_type_diagnostic_members(
+        &self,
+        index_type: TypeId,
+        invalid_member: TypeId,
+    ) -> Vec<TypeId> {
+        if invalid_member == TypeId::BOOLEAN
+            && crate::query_boundaries::common::union_members(self.ctx.types, index_type).is_some()
+        {
+            vec![TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN_TRUE]
+        } else {
+            vec![invalid_member]
+        }
+    }
+
+    fn indexed_access_index_diagnostic_span(
+        &self,
+        indexed_access_node: &Node,
+        index_type_idx: NodeIndex,
+    ) -> (u32, u32) {
+        let fallback = self
+            .index_type_node_fallback_span(index_type_idx)
+            .unwrap_or((
+                indexed_access_node.pos,
+                indexed_access_node.end - indexed_access_node.pos,
+            ));
+
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return fallback;
+        };
+        let source = source_file.text.as_ref();
+        let start = indexed_access_node.pos as usize;
+        let end = indexed_access_node.end as usize;
+        let Some(text) = source.get(start..end) else {
+            return fallback;
+        };
+        let Some(open_bracket) = text.rfind('[') else {
+            return fallback;
+        };
+        let close_bracket = text.rfind(']').unwrap_or(text.len());
+        if close_bracket <= open_bracket + 1 {
+            return fallback;
+        }
+
+        let inner = &text[open_bracket + 1..close_bracket];
+        let leading_ws = inner.len() - inner.trim_start().len();
+        let trailing_ws = inner.len() - inner.trim_end().len();
+        let pos = start + open_bracket + 1 + leading_ws;
+        let len = inner.len().saturating_sub(leading_ws + trailing_ws).max(1);
+        (pos as u32, len as u32)
+    }
+
+    fn index_type_node_fallback_span(&self, index_type_idx: NodeIndex) -> Option<(u32, u32)> {
+        let node = self.ctx.arena.get(index_type_idx)?;
+        let source_file = self.ctx.arena.source_files.first()?;
+        let source = source_file.text.as_ref();
+        let start = node.pos as usize;
+        let end = node.end as usize;
+        let text = source.get(start..end)?;
+        if let Some(index_text) = text.trim().strip_suffix(']').map(str::trim_end)
+            && !index_text.is_empty()
+        {
+            let leading_ws = text.len() - text.trim_start().len();
+            return Some(((start + leading_ws) as u32, index_text.len() as u32));
+        }
+
+        Some((node.pos, node.end.saturating_sub(node.pos)))
     }
 
     // =========================================================================

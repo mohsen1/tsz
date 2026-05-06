@@ -1146,6 +1146,52 @@ takes(lift(function* (a) {
 }
 
 #[test]
+fn nested_return_context_rest_tuple_callback_args_are_not_wrapped() {
+    let diags = check_source(
+        r#"
+interface Generator<Y, R, N> {}
+type Covariant<A> = (_: never) => A;
+interface Effect<out A, out E = never, out R = never> {
+    readonly _A: Covariant<A>;
+    readonly _E: Covariant<E>;
+    readonly _R: Covariant<R>;
+}
+
+declare function effectGen<A, E = never, R = never>(
+    body: () => Generator<Effect<A, E, R>, A, never>,
+): Effect<A, E, R>;
+
+declare function effectFn<A, E, R, AEff, Args extends Array<any>>(
+    body: (...args: Args) => Generator<Effect<A, E, R>, AEff, never>,
+): (...args: Args) => Effect<AEff, E, R>;
+
+const foo: Effect<{ fn: (...args: [a: string]) => Effect<void> }> = effectGen(function* () {
+    return {
+        fn: effectFn(function* (a) {
+            a.toUpperCase();
+        }),
+    };
+});
+"#,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2322 | 2339 | 7006))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected nested contextual return rest tuple args to stay flat, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn contextual_this_for_class_expression_flows_through_request_path() {
     let diags = check_source_diagnostics(
         r#"
