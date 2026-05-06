@@ -687,7 +687,6 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.types.factory().object_with_index(ObjectShape {
-            flags: tsz_solver::ObjectFlags::empty(),
             properties,
             ..ObjectShape::default()
         })
