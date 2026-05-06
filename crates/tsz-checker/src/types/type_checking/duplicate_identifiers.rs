@@ -16,6 +16,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 pub(super) type OuterDeclResult = Option<(tsz_binder::SymbolId, Vec<(NodeIndex, u32)>)>;
+type DuplicateDeclList = Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DuplicateDeclarationOrigin {
@@ -165,6 +166,8 @@ impl<'a> CheckerState<'a> {
         // duplicate-name checks for the current file.
         self.extend_duplicate_symbol_ids_with_local_augmentation_decls(&mut symbol_ids);
         let mut cross_file_conflicts = Vec::new();
+        let mut global_scope_conflict_cache: FxHashMap<String, DuplicateDeclList> =
+            FxHashMap::default();
         for &sym_id in &symbol_ids {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
@@ -178,8 +181,17 @@ impl<'a> CheckerState<'a> {
             } else {
                 Vec::new()
             };
-            let global_scope_declarations =
-                self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let global_scope_declarations = if let Some(cached) =
+                global_scope_conflict_cache.get(symbol.escaped_name.as_str())
+            {
+                cached.clone()
+            } else {
+                let declarations =
+                    self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
+                global_scope_conflict_cache
+                    .insert(symbol.escaped_name.clone(), declarations.clone());
+                declarations
+            };
             let jsx_runtime_conflict_declarations =
                 self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
             let default_import_alias_conflicts = self
@@ -332,8 +344,17 @@ impl<'a> CheckerState<'a> {
             } else {
                 Vec::new()
             };
-            let global_scope_declarations =
-                self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let global_scope_declarations = if let Some(cached) =
+                global_scope_conflict_cache.get(symbol.escaped_name.as_str())
+            {
+                cached.clone()
+            } else {
+                let declarations =
+                    self.global_scope_conflict_declarations_for_current_file(&symbol.escaped_name);
+                global_scope_conflict_cache
+                    .insert(symbol.escaped_name.clone(), declarations.clone());
+                declarations
+            };
             let jsx_runtime_conflict_declarations =
                 self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
             let default_import_alias_conflicts = self

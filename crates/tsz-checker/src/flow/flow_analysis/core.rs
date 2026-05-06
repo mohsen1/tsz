@@ -297,6 +297,20 @@ impl<'a> CheckerState<'a> {
                             tracked,
                         );
                     }
+                    if node.kind == syntax_kind_ext::WHILE_STATEMENT
+                        && self.is_true_literal_expression(loop_data.condition)
+                        && let Some(assigned_at_break) = self
+                            .analyze_definitely_entered_loop_until_direct_break(
+                                loop_data.statement,
+                                &assigned,
+                                tracked,
+                            )
+                    {
+                        return FlowResult {
+                            normal: Some(assigned_at_break),
+                            exits: None,
+                        };
+                    }
                     // Loop bodies may not execute
                     return FlowResult {
                         normal: Some(assigned),
@@ -375,6 +389,45 @@ impl<'a> CheckerState<'a> {
         }
 
         FlowResult { normal, exits }
+    }
+
+    fn is_true_literal_expression(&self, expr_idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get(expr_idx)
+            .is_some_and(|node| node.kind == SyntaxKind::TrueKeyword as u16)
+    }
+
+    fn analyze_definitely_entered_loop_until_direct_break(
+        &self,
+        body_idx: NodeIndex,
+        assigned_in: &FxHashSet<PropertyKey>,
+        tracked: &FxHashSet<PropertyKey>,
+    ) -> Option<FxHashSet<PropertyKey>> {
+        let body_node = self.ctx.arena.get(body_idx)?;
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return None;
+        }
+        let block = self.ctx.arena.get_block(body_node)?;
+        let mut assigned = assigned_in.clone();
+
+        for &stmt_idx in &block.statements.nodes {
+            let stmt_node = self.ctx.arena.get(stmt_idx)?;
+            if stmt_node.kind == syntax_kind_ext::BREAK_STATEMENT {
+                return Some(assigned);
+            }
+
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT
+                && stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT
+            {
+                return None;
+            }
+
+            let result = self.analyze_statement(stmt_idx, &assigned, tracked);
+            assigned = result.normal?;
+        }
+
+        None
     }
 
     /// Analyze a try/catch/finally statement.

@@ -600,14 +600,12 @@ impl Project {
             rest
         } else if let Some(rest) = specifier.strip_prefix("link:") {
             rest
-        } else if let Some(rest) = specifier.strip_prefix("workspace:") {
-            if rest.starts_with('.') || rest.starts_with('/') {
-                rest
-            } else {
+        } else {
+            let rest = specifier.strip_prefix("workspace:")?;
+            if !(rest.starts_with('.') || rest.starts_with('/')) {
                 return None;
             }
-        } else {
-            return None;
+            rest
         };
 
         let path = path.trim();
