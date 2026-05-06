@@ -349,27 +349,24 @@ impl<'a> DeclarationEmitter<'a> {
         }?;
         let type_text = if std::ptr::eq(source_arena, self.arena) {
             match printed {
-                Some(printed)
-                    if printed != "any"
-                        && let Some(raw_type_text) =
-                            self.local_type_annotation_text(type_annotation)
-                        && Self::type_text_starts_with_string_intrinsic(&raw_type_text) =>
-                {
-                    raw_type_text
-                }
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any"))
+                Some(printed) if printed != "any" => {
+                    if let Some(raw_type_text) = self
+                        .local_type_annotation_text(type_annotation)
+                        .filter(|raw_type_text| {
+                            Self::type_text_starts_with_string_intrinsic(raw_type_text)
+                        })
+                    {
+                        raw_type_text
+                    } else if (!printed.contains("any") || type_text.contains("any"))
                         && printed.contains("typeof ")
-                        && !type_text.contains("typeof ") =>
-                {
-                    printed.replace("typeof ", "")
-                }
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any")) =>
-                {
-                    printed
+                        && !type_text.contains("typeof ")
+                    {
+                        printed.replace("typeof ", "")
+                    } else if !printed.contains("any") || type_text.contains("any") {
+                        printed
+                    } else {
+                        type_text
+                    }
                 }
                 _ => type_text,
             }
@@ -6691,6 +6688,14 @@ impl<'a> DeclarationEmitter<'a> {
                 Self::object_literal_property_line_matches(line, &name_text, &replacement)
             }) {
                 lines[existing_idx] = replacement;
+            } else if lines.iter().any(|existing| {
+                Self::object_literal_method_line_matches_property_function(
+                    existing,
+                    &name_text,
+                    &replacement,
+                )
+            }) {
+                continue;
             } else {
                 let insert_at = lines.len().saturating_sub(1);
                 lines.insert(insert_at, replacement);
@@ -6719,6 +6724,12 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     lines[existing_idx] = line;
                 }
+            } else if lines.iter().any(|existing| {
+                Self::object_literal_method_line_matches_property_function(
+                    existing, &name_text, &line,
+                )
+            }) {
+                continue;
             } else {
                 if !exact_exists {
                     lines.insert(insert_at + actual_insertions, line);
@@ -6753,6 +6764,111 @@ impl<'a> DeclarationEmitter<'a> {
             || without_readonly.starts_with(&format!("{name_text}<"))
             || without_readonly.starts_with(&format!("{name_text}?("))
             || without_readonly.starts_with(&format!("{name_text}?<"))
+    }
+
+    fn object_literal_method_line_matches_property_function(
+        existing: &str,
+        name_text: &str,
+        property_function_line: &str,
+    ) -> bool {
+        let Some(property_value_type) =
+            Self::object_literal_property_value_type(property_function_line)
+        else {
+            return false;
+        };
+        if !property_value_type.contains("=>") {
+            return false;
+        }
+
+        let existing = existing.trim().trim_end_matches(';').trim();
+        for prefix in Self::object_literal_method_name_prefixes(name_text) {
+            let Some(after_prefix) = existing.strip_prefix(&prefix) else {
+                continue;
+            };
+            let Some((params, return_type)) = Self::method_signature_parts(after_prefix) else {
+                continue;
+            };
+            let method_value_type = format!("({params}) => {return_type}");
+            if method_value_type == property_value_type {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn object_literal_method_name_prefixes(name_text: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut push_name = |name: String| {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        };
+        push_name(name_text.to_string());
+        if let Some(unquoted) = name_text
+            .strip_prefix('"')
+            .and_then(|name| name.strip_suffix('"'))
+            .or_else(|| {
+                name_text
+                    .strip_prefix('\'')
+                    .and_then(|name| name.strip_suffix('\''))
+            })
+        {
+            push_name(unquoted.to_string());
+            push_name(format!("\"{unquoted}\""));
+            push_name(format!("'{unquoted}'"));
+        } else if Self::is_unquoted_property_name(name_text) {
+            push_name(format!("\"{name_text}\""));
+            push_name(format!("'{name_text}'"));
+        }
+        names.into_iter().map(|name| format!("{name}(")).collect()
+    }
+
+    fn method_signature_parts(after_open_paren: &str) -> Option<(&str, &str)> {
+        let bytes = after_open_paren.as_bytes();
+        let mut angle_depth = 0usize;
+        let mut paren_depth = 1usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut quote = None;
+
+        for (idx, byte) in bytes.iter().copied().enumerate() {
+            if let Some(q) = quote {
+                if byte == b'\\' {
+                    continue;
+                }
+                if byte == q {
+                    quote = None;
+                }
+                continue;
+            }
+            match byte {
+                b'\'' | b'"' | b'`' => quote = Some(byte),
+                b'<' => angle_depth += 1,
+                b'>' => angle_depth = angle_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                b'(' => paren_depth += 1,
+                b')' => {
+                    paren_depth = paren_depth.saturating_sub(1);
+                    if paren_depth == 0
+                        && angle_depth == 0
+                        && bracket_depth == 0
+                        && brace_depth == 0
+                    {
+                        let params = after_open_paren[..idx].trim();
+                        let return_type = after_open_paren[idx + 1..]
+                            .trim_start()
+                            .strip_prefix(':')?
+                            .trim();
+                        return Some((params, return_type));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn object_literal_property_line_matches(
