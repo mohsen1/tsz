@@ -9,6 +9,47 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn class_decl_from_callable_symbol(&self, type_id: TypeId) -> Option<NodeIndex> {
+        callable_shape_for_type(self.ctx.types, type_id)
+            .and_then(|shape| shape.symbol)
+            .and_then(|sym_id| self.get_class_declaration_from_symbol(sym_id))
+    }
+
+    fn class_decl_for_private_object_type(&self, type_id: TypeId) -> Option<(NodeIndex, bool)> {
+        if let Some(class_idx) = self.class_decl_from_callable_symbol(type_id) {
+            return Some((class_idx, true));
+        }
+
+        self.get_class_decl_for_display_type(type_id)
+    }
+
+    fn error_private_property_not_exist_at(
+        &mut self,
+        property_name: &str,
+        object_type: TypeId,
+        name_idx: NodeIndex,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+
+        let type_str = if let Some((class_idx, is_static)) =
+            self.class_decl_for_private_object_type(object_type)
+        {
+            let class_name = self.get_class_name_from_decl(class_idx);
+            if is_static {
+                format!("typeof {class_name}")
+            } else {
+                class_name
+            }
+        } else {
+            self.format_type_diagnostic(object_type)
+        };
+        self.error_at_node(
+            name_idx,
+            &format!("Property '{property_name}' does not exist on type '{type_str}'."),
+            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+        );
+    }
+
     fn static_private_member_access_compatible(
         &mut self,
         object_type: TypeId,
@@ -23,8 +64,8 @@ impl<'a> CheckerState<'a> {
         }
 
         match (
-            self.get_class_decl_for_display_type(object_type),
-            self.get_class_decl_for_display_type(declaring_type),
+            self.class_decl_for_private_object_type(object_type),
+            self.class_decl_for_private_object_type(declaring_type),
         ) {
             (Some((object_class, object_is_static)), Some((declaring_class, _))) => {
                 // Instance types (is_static=false) must NOT access static privates,
@@ -37,10 +78,7 @@ impl<'a> CheckerState<'a> {
             // check cached constructor identity, then assignability, then whether
             // the object type structurally has the same private member.
             (None, Some((declaring_class, _))) => {
-                if let Some(object_class) = callable_shape_for_type(self.ctx.types, object_type)
-                    .and_then(|shape| shape.symbol)
-                    .and_then(|sym_id| self.get_class_declaration_from_symbol(sym_id))
-                {
+                if let Some(object_class) = self.class_decl_from_callable_symbol(object_type) {
                     return object_class == declaring_class;
                 }
                 let cached_ctor = self
@@ -74,7 +112,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         member_name: &str,
     ) -> Option<(NodeIndex, bool)> {
-        let (class_idx, want_static) = self.get_class_decl_for_display_type(object_type)?;
+        let (class_idx, want_static) = self.class_decl_for_private_object_type(object_type)?;
         let mut current = class_idx;
         let mut visited = rustc_hash::FxHashSet::default();
 
@@ -419,11 +457,11 @@ impl<'a> CheckerState<'a> {
                 }
             } else if let Some((declaring_class_idx, is_static_member)) = private_member_on_object {
                 let object_class_idx = self
-                    .get_class_decl_for_display_type(object_type_for_check)
+                    .class_decl_for_private_object_type(object_type_for_check)
                     .map(|(class_idx, _)| class_idx)
                     .or_else(|| self.class_decl_hint_from_expression(access.expression));
                 if is_static_member && object_class_idx != Some(declaring_class_idx) {
-                    self.error_property_not_exist_at(
+                    self.error_private_property_not_exist_at(
                         &property_name,
                         original_object_type,
                         name_idx,
@@ -696,8 +734,8 @@ impl<'a> CheckerState<'a> {
                 .and_then(|dt| self.get_class_decl_for_display_type(dt))
                 .map(|(ci, _)| ci);
             let object_class_info = self
-                .get_class_decl_for_display_type(original_object_type)
-                .or_else(|| self.get_class_decl_for_display_type(object_type_for_check));
+                .class_decl_for_private_object_type(original_object_type)
+                .or_else(|| self.class_decl_for_private_object_type(object_type_for_check));
             let same_class = declaring_class_idx.is_some()
                 && object_class_info.is_some()
                 && declaring_class_idx == object_class_info.map(|(ci, _)| ci);
@@ -725,7 +763,19 @@ impl<'a> CheckerState<'a> {
                 );
             } else {
                 // Use original_object_type to preserve nominal identity (e.g., D<string>)
-                self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
+                if member_is_static {
+                    self.error_private_property_not_exist_at(
+                        &property_name,
+                        original_object_type,
+                        name_idx,
+                    );
+                } else {
+                    self.error_property_not_exist_at(
+                        &property_name,
+                        original_object_type,
+                        name_idx,
+                    );
+                }
             }
             return TypeId::ERROR;
         }
