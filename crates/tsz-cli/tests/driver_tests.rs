@@ -2564,9 +2564,18 @@ fn compile_single_source_amd_outfile_emits_bundle() {
         "single-source outFile should not emit per-file main.js"
     );
     let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
+    // tsc does NOT prepend a top-level `"use strict";` to AMD outFile bundles
+    // when every chunk is a module wrapped in `define(...)` — each chunk
+    // emits its own strict directive inside the wrapper callback. The
+    // top-level prologue is reserved for bundles that include at least one
+    // script chunk (a non-module file) which has no enclosing wrapper.
     assert!(
-        bundle.starts_with("\"use strict\";\n"),
-        "expected AMD outFile bundle to start with a strict-mode prologue, got:\n{bundle}"
+        bundle.starts_with("define(\"main\","),
+        "AMD all-modules outFile bundle should start with the `define(...)` wrapper, got:\n{bundle}"
+    );
+    assert!(
+        bundle.contains("    \"use strict\";"),
+        "expected the inner strict prologue inside the AMD wrapper, got:\n{bundle}"
     );
     assert!(
         bundle.contains("define(\"main\", [\"require\", \"exports\"], function"),
