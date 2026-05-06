@@ -1140,10 +1140,14 @@ impl<'a> CheckerState<'a> {
         if trimmed.is_empty() || trimmed.starts_with("function") || trimmed.contains("=>") {
             return None;
         }
-        if let Some(rest) = trimmed.strip_prefix("asserts ") {
-            let rest = rest.trim_start();
-            let offset =
-                leading_ws + "asserts ".len() + (trimmed["asserts ".len()..].len() - rest.len());
+        if let Some(after_asserts) = trimmed.strip_prefix("asserts")
+            && after_asserts
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace)
+        {
+            let rest = after_asserts.trim_start();
+            let offset = leading_ws + "asserts".len() + (after_asserts.len() - rest.len());
             return (!rest.is_empty()).then_some((offset, rest.len()));
         }
 

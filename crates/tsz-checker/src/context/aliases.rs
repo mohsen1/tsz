@@ -23,6 +23,15 @@ pub enum ResolutionModeOverride {
     Require,
 }
 
+/// Syntactic request kind used by the driver when resolving a module specifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ResolutionRequestKind {
+    EsmImport,
+    DynamicImport,
+    CjsRequire,
+    EsmReExport,
+}
+
 /// Global cross-binder index: identifier name → list of `(file_idx, SymbolId)`
 /// where the name appears in a binder's `file_locals`.
 pub type GlobalFileLocalsIndex = Arc<FxHashMap<String, Vec<(usize, SymbolId)>>>;
@@ -49,10 +58,24 @@ pub type GlobalAugmentationTargetsIndex = Arc<FxHashMap<String, Vec<(SymbolId, u
 
 pub type ResolvedModulePathMap = FxHashMap<(usize, String), usize>;
 pub type ResolvedModuleErrorMap = FxHashMap<(usize, String), ResolutionError>;
-pub type ResolvedModuleRequestPathMap =
-    FxHashMap<(usize, String, Option<ResolutionModeOverride>), usize>;
-pub type ResolvedModuleRequestErrorMap =
-    FxHashMap<(usize, String, Option<ResolutionModeOverride>), ResolutionError>;
+pub type ResolvedModuleRequestPathMap = FxHashMap<
+    (
+        usize,
+        String,
+        Option<ResolutionModeOverride>,
+        ResolutionRequestKind,
+    ),
+    usize,
+>;
+pub type ResolvedModuleRequestErrorMap = FxHashMap<
+    (
+        usize,
+        String,
+        Option<ResolutionModeOverride>,
+        ResolutionRequestKind,
+    ),
+    ResolutionError,
+>;
 
 /// Per-`(source_file_idx, specifier)` flag mirroring tsc's
 /// `resolvedUsingTsExtension`: `true` when the resolver consumed a TS source

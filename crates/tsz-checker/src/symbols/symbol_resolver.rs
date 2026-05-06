@@ -1579,12 +1579,17 @@ impl<'a> CheckerState<'a> {
             && let Some(ident) = self.ctx.arena.get_identifier(node)
         {
             if is_compiler_managed_type(ident.escaped_text.as_str()) {
-                let shadows_compiler_managed_type = matches!(ident.escaped_text.as_str(), "Array")
-                    && matches!(
-                        self.resolve_identifier_symbol_in_type_position(idx),
-                        TypeSymbolResolution::Type(sym_id)
-                            if !self.ctx.symbol_is_from_actual_lib(sym_id)
-                    );
+                let shadows_compiler_managed_type =
+                    matches!(ident.escaped_text.as_str(), "Array" | "ReadonlyArray")
+                        && self
+                            .ctx
+                            .binder
+                            .file_locals
+                            .get(ident.escaped_text.as_str())
+                            .is_some_and(|sym_id| {
+                                !self.ctx.symbol_is_from_actual_lib(sym_id)
+                                    && self.symbol_has_declared_type_meaning(sym_id)
+                            });
                 if !shadows_compiler_managed_type {
                     return None;
                 }

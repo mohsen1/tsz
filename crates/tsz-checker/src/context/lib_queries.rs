@@ -10,6 +10,18 @@ use tsz_binder::SymbolId;
 use super::CheckerContext;
 
 impl<'a> CheckerContext<'a> {
+    pub fn file_local_type_shadow_for_lib_name(&self, name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        self.binder.file_locals.get(name).is_some_and(|sym_id| {
+            !self.symbol_is_from_actual_lib(sym_id)
+                && self
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
+        })
+    }
+
     /// Check if the Promise constructor VALUE is available.
     /// The ES5 lib declares `interface Promise<T>` (type only) but NOT
     /// `declare var Promise: PromiseConstructor` (value). ES2015+ libs declare both.

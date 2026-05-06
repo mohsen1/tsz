@@ -18,6 +18,25 @@ const fn checker_resolution_mode_override(
     }
 }
 
+const fn checker_resolution_request_kind(
+    kind: tsz::module_resolver::ImportKind,
+) -> tsz::checker::context::ResolutionRequestKind {
+    match kind {
+        tsz::module_resolver::ImportKind::EsmImport => {
+            tsz::checker::context::ResolutionRequestKind::EsmImport
+        }
+        tsz::module_resolver::ImportKind::DynamicImport => {
+            tsz::checker::context::ResolutionRequestKind::DynamicImport
+        }
+        tsz::module_resolver::ImportKind::CjsRequire => {
+            tsz::checker::context::ResolutionRequestKind::CjsRequire
+        }
+        tsz::module_resolver::ImportKind::EsmReExport => {
+            tsz::checker::context::ResolutionRequestKind::EsmReExport
+        }
+    }
+}
+
 fn checker_lookup_resolution_mode(
     module_resolver: &mut ModuleResolver,
     options: &ResolvedCompilerOptions,
@@ -27,25 +46,26 @@ fn checker_lookup_resolution_mode(
 ) -> Option<tsz::checker::context::ResolutionModeOverride> {
     use tsz::module_resolver::{ImportKind, ImportingModuleKind, ModuleExtension};
 
-    let mode = resolution_mode_override.unwrap_or_else(|| match options.checker.module {
-        // Mirror ModuleResolver::resolve_with_kind_and_module_kind() so request-keyed
-        // checker maps line up with the actual lookup mode used by the resolver.
-        ModuleKind::Preserve => {
-            let extension = ModuleExtension::from_path(file_path);
-            if extension.forces_esm() {
-                ImportingModuleKind::Esm
-            } else if extension.forces_cjs() {
-                ImportingModuleKind::CommonJs
-            } else {
-                match import_kind {
-                    ImportKind::EsmImport | ImportKind::DynamicImport | ImportKind::EsmReExport => {
+    let mode = resolution_mode_override.unwrap_or_else(|| {
+        match import_kind {
+            // Mirror ModuleResolver::resolve_with_kind_and_module_kind() so request-keyed
+            // checker maps line up with the actual lookup mode used by the resolver.
+            ImportKind::DynamicImport => ImportingModuleKind::Esm,
+            ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+            ImportKind::EsmImport | ImportKind::EsmReExport => match options.checker.module {
+                ModuleKind::Preserve => {
+                    let extension = ModuleExtension::from_path(file_path);
+                    if extension.forces_esm() {
+                        ImportingModuleKind::Esm
+                    } else if extension.forces_cjs() {
+                        ImportingModuleKind::CommonJs
+                    } else {
                         ImportingModuleKind::Esm
                     }
-                    ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
                 }
-            }
+                _ => module_resolver.get_importing_module_kind(file_path),
+            },
         }
-        _ => module_resolver.get_importing_module_kind(file_path),
     });
 
     checker_resolution_mode_override(Some(mode))
@@ -463,6 +483,7 @@ pub(super) fn collect_diagnostics(
             usize,
             String,
             Option<tsz::checker::context::ResolutionModeOverride>,
+            tsz::checker::context::ResolutionRequestKind,
         ),
         usize,
     > = FxHashMap::with_capacity_and_hasher(module_specifier_count, Default::default());
@@ -477,6 +498,7 @@ pub(super) fn collect_diagnostics(
             usize,
             String,
             Option<tsz::checker::context::ResolutionModeOverride>,
+            tsz::checker::context::ResolutionRequestKind,
         ),
         tsz::checker::context::ResolutionError,
     > = FxHashMap::default();
@@ -521,6 +543,7 @@ pub(super) fn collect_diagnostics(
                     *import_kind,
                     *resolution_mode_override,
                 );
+                let request_kind_key = checker_resolution_request_kind(*import_kind);
 
                 let result = module_resolver.lookup(
                     &request,
@@ -580,7 +603,12 @@ pub(super) fn collect_diagnostics(
                         if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                             resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                             resolved_module_request_paths.insert(
-                                (file_idx, specifier.clone(), request_mode_key),
+                                (
+                                    file_idx,
+                                    specifier.clone(),
+                                    request_mode_key,
+                                    request_kind_key,
+                                ),
                                 target_idx,
                             );
                             if outcome.resolved_using_ts_extension {
@@ -603,7 +631,12 @@ pub(super) fn collect_diagnostics(
                         },
                     );
                     resolved_module_request_errors.insert(
-                        (file_idx, specifier.clone(), request_mode_key),
+                        (
+                            file_idx,
+                            specifier.clone(),
+                            request_mode_key,
+                            request_kind_key,
+                        ),
                         tsz::checker::context::ResolutionError {
                             code: error.code,
                             message: error.message.clone(),
@@ -720,16 +753,62 @@ pub(super) fn collect_diagnostics(
                 | crate::config::ModuleResolutionKind::NodeNext
         );
         if uses_package_type_module_kind {
+            let program_package_types: FxHashMap<PathBuf, bool> = program
+                .files
+                .iter()
+                .filter_map(|file| {
+                    let file_path = Path::new(&file.file_name);
+                    if file_path.file_name().and_then(|name| name.to_str()) != Some("package.json")
+                    {
+                        return None;
+                    }
+                    let package_dir = file_path.parent()?.to_path_buf();
+                    let text = file
+                        .arena
+                        .source_files
+                        .first()
+                        .map(|source_file| source_file.text.as_ref())?;
+                    let package_type = serde_json::from_str::<serde_json::Value>(text)
+                        .ok()
+                        .and_then(|value| {
+                            value
+                                .get("type")
+                                .and_then(serde_json::Value::as_str)
+                                .map(|value| value == "module")
+                        })
+                        .unwrap_or(false);
+                    Some((package_dir, package_type))
+                })
+                .collect();
+            let mut package_type_cache = ModuleResolutionCache::default();
             program
                 .files
                 .iter()
                 .map(|file| {
                     let file_path = Path::new(&file.file_name);
-                    let kind = module_resolver.get_importing_module_kind(file_path);
-                    (
-                        file.file_name.clone(),
-                        kind == tsz::module_resolver::ImportingModuleKind::Esm,
-                    )
+                    let file_is_esm = match file_path.extension().and_then(|ext| ext.to_str()) {
+                        Some("mts" | "mjs") => true,
+                        Some("cts" | "cjs") => false,
+                        _ => {
+                            let mut current = file_path.parent();
+                            let mut from_program_package_json = None;
+                            while let Some(dir) = current {
+                                if let Some(&is_esm) = program_package_types.get(dir) {
+                                    from_program_package_json = Some(is_esm);
+                                    break;
+                                }
+                                current = dir.parent();
+                            }
+                            from_program_package_json.unwrap_or_else(|| {
+                                implied_resolution_mode_for_file_with_cache(
+                                    file_path,
+                                    base_dir,
+                                    &mut package_type_cache,
+                                ) == "import"
+                            })
+                        }
+                    };
+                    (file.file_name.clone(), file_is_esm)
                 })
                 .collect()
         } else {

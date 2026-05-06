@@ -15,6 +15,25 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn type_contains_noinfer_marker(&mut self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
+
+        let mut roots = vec![ty];
+        if let Some(expanded) = self.checker.expand_type_alias_application(ty)
+            && expanded != ty
+        {
+            roots.push(expanded);
+        }
+
+        roots.into_iter().any(|root| {
+            crate::visitor::collect_all_types(self.interner.as_type_database(), root)
+                .into_iter()
+                .any(|nested| matches!(self.interner.lookup(nested), Some(TypeData::NoInfer(_))))
+        })
+    }
+
     pub(super) fn constrain_properties(
         &mut self,
         ctx: &mut InferenceContext,
@@ -74,9 +93,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // constrain_types(target.write_type, source.write_type)
                             // goes in the contravariant direction and creates spurious
                             // candidates that widen literals incorrectly.
+                            // It must also stay silent for `NoInfer<T>` properties:
+                            // the read-side constraint intentionally stops at the
+                            // marker, and using an unwrapped write type would leak the
+                            // same position back into inference.
                             let write_type_differs = source.write_type != source.type_id
                                 || target.write_type != target.type_id;
-                            if write_type_differs {
+                            if write_type_differs
+                                && !self.type_contains_noinfer_marker(target.type_id)
+                            {
                                 self.constrain_types(
                                     ctx,
                                     var_map,
