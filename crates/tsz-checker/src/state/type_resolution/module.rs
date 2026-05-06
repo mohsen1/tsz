@@ -2218,11 +2218,13 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
 
-        let resolved = self.resolve_named_export_via_export_equals_tracked_uncached(
-            module_specifier,
-            export_name,
-            visited_aliases,
-        );
+        let resolved = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.resolve_named_export_via_export_equals_tracked_uncached(
+                module_specifier,
+                export_name,
+                visited_aliases,
+            )
+        });
         if let Some(sym_id) = resolved {
             self.ctx
                 .export_equals_named_cache
