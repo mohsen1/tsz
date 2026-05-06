@@ -6654,6 +6654,46 @@ fn compile_resolves_node_modules_exports_subpath() {
 }
 
 #[test]
+fn compile_bundler_exports_target_applies_module_suffixes_to_dts_sidecar() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "module": "preserve",
+            "moduleResolution": "bundler",
+            "moduleSuffixes": [".native"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        "import { value } from \"pkg/foo\";\nvalue satisfies number;\n",
+    );
+    write_file(
+        &base.join("node_modules/pkg/package.json"),
+        r#"{ "name": "pkg", "exports": { "./foo": "./foo.js" } }"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg/foo.native.d.ts"),
+        "export declare const value: number;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected package exports declaration sidecar to resolve with moduleSuffixes, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_rejects_package_exports_target_with_node_modules_segment() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
