@@ -314,6 +314,42 @@ fn test_transpile_module_accepts_file_name_option() {
 }
 
 #[test]
+fn test_ts_program_emit_json_uses_module_file_extensions() {
+    let mut program = TsProgram::new();
+    program
+        .set_compiler_options(r#"{"target":2,"module":5}"#)
+        .unwrap();
+    program.add_source_file(
+        "entry.mts".to_string(),
+        "export const value: number = 1;\n".to_string(),
+    );
+    program.add_source_file(
+        "worker.cts".to_string(),
+        "export const value: number = 1;\n".to_string(),
+    );
+
+    let json = program.emit_json();
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    let emitted_names: Vec<&str> = parsed["emittedFiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|file| file["name"].as_str())
+        .collect();
+
+    assert!(emitted_names.contains(&"entry.mjs"), "{emitted_names:?}");
+    assert!(emitted_names.contains(&"worker.cjs"), "{emitted_names:?}");
+    assert!(
+        !emitted_names.contains(&"entry.mts.js"),
+        "{emitted_names:?}"
+    );
+    assert!(
+        !emitted_names.contains(&"worker.cts.js"),
+        "{emitted_names:?}"
+    );
+}
+
+#[test]
 fn test_json_and_syntax_kind_utilities_contracts() {
     let parsed = parse_json_text("{ // comment\n  \"ok\": true\n}");
     let parsed_value: Value = serde_json::from_str(&parsed).unwrap();

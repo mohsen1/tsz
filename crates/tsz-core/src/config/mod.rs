@@ -2932,16 +2932,20 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
 
 pub fn load_tsconfig(path: &Path) -> Result<TsConfig> {
     let mut visited = FxHashSet::default();
-    load_tsconfig_inner(path, &mut visited)
+    load_tsconfig_inner(path, &mut visited, false)
 }
 
 /// Load tsconfig.json and collect config-level diagnostics.
 pub fn load_tsconfig_with_diagnostics(path: &Path) -> Result<ParsedTsConfig> {
     let mut visited = FxHashSet::default();
-    load_tsconfig_inner_with_diagnostics(path, &mut visited)
+    load_tsconfig_inner_with_diagnostics(path, &mut visited, false)
 }
 
-fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<TsConfig> {
+fn load_tsconfig_inner(
+    path: &Path,
+    visited: &mut FxHashSet<PathBuf>,
+    inherited: bool,
+) -> Result<TsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
         bail!("tsconfig extends cycle detected at {}", canonical.display());
@@ -2952,6 +2956,9 @@ fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<
     let mut config = parse_tsconfig(&source)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
     anchor_inherited_path_options(&mut config, path);
+    if inherited {
+        anchor_inherited_root_selectors(&mut config, path);
+    }
 
     let extends = config.extends.take();
     if let Some(extends_value) = extends {
@@ -2964,7 +2971,7 @@ fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<
         let mut accumulated: Option<TsConfig> = None;
         for extends_path_str in &extends_paths {
             let base_path = resolve_extends_path(path, extends_path_str)?;
-            let base_config = load_tsconfig_inner(&base_path, visited)?;
+            let base_config = load_tsconfig_inner(&base_path, visited, true)?;
             accumulated = Some(match accumulated {
                 Some(acc) => merge_configs(acc, base_config),
                 None => base_config,
@@ -2982,6 +2989,7 @@ fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<
 fn load_tsconfig_inner_with_diagnostics(
     path: &Path,
     visited: &mut FxHashSet<PathBuf>,
+    inherited: bool,
 ) -> Result<ParsedTsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
@@ -2994,6 +3002,9 @@ fn load_tsconfig_inner_with_diagnostics(
     let mut parsed = parse_tsconfig_with_diagnostics(&source, &file_display)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
     anchor_inherited_path_options(&mut parsed.config, path);
+    if inherited {
+        anchor_inherited_root_selectors(&mut parsed.config, path);
+    }
 
     let extends = parsed.config.extends.take();
     if let Some(extends_value) = extends {
@@ -3009,7 +3020,7 @@ fn load_tsconfig_inner_with_diagnostics(
             // TSC checks the merged result and emits TS5102 at the child's key position
             // when removed options come from base configs via extends.
             collect_removed_options_from_config(&base_path, &mut base_removed_options);
-            let base_config = load_tsconfig_inner(&base_path, visited)?;
+            let base_config = load_tsconfig_inner(&base_path, visited, true)?;
             accumulated = Some(match accumulated {
                 Some(acc) => merge_configs(acc, base_config),
                 None => base_config,
@@ -3373,6 +3384,41 @@ fn anchor_inherited_path_options(config: &mut TsConfig, config_path: &Path) {
             *root_dir = normalized.to_string_lossy().into_owned();
         }
     }
+}
+
+fn anchor_inherited_root_selectors(config: &mut TsConfig, config_path: &Path) {
+    let Some(parent) = config_path.parent() else {
+        return;
+    };
+    let parent_abs = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+
+    if let Some(files) = config.files.as_mut() {
+        for file in files {
+            anchor_relative_selector(file, &parent_abs);
+        }
+    }
+    if let Some(include) = config.include.as_mut() {
+        for pattern in include {
+            anchor_relative_selector(pattern, &parent_abs);
+        }
+    }
+    if let Some(exclude) = config.exclude.as_mut() {
+        for pattern in exclude {
+            anchor_relative_selector(pattern, &parent_abs);
+        }
+    }
+}
+
+fn anchor_relative_selector(selector: &mut String, base_dir: &Path) {
+    let trimmed = selector.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let candidate = std::path::Path::new(trimmed);
+    if candidate.is_absolute() {
+        return;
+    }
+    *selector = base_dir.join(candidate).to_string_lossy().into_owned();
 }
 
 fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {
