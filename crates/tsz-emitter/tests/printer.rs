@@ -1200,6 +1200,18 @@ fn test_tagged_template_closing_brace_with_whitespace() {
     );
 }
 
+#[test]
+fn super_tagged_template_with_type_arguments_preserves_recovery_dot() {
+    let source =
+        "class Base {}\nclass Derived extends Base { constructor() { super<string> `value`; } }\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("super. `value`;"),
+        "Recovered super tagged template should preserve tsc's property-access dot.\nOutput:\n{output}"
+    );
+}
+
 // `import { css } from "lib"; css `...`;` lowered to CommonJS becomes
 // `(0, lib_1.css) `...`;` so the tagged-template invocation does not bind
 // `this` to the imported module namespace object. Without the `(0, ...)`

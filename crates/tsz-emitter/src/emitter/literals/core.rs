@@ -602,6 +602,9 @@ impl<'a> Printer<'a> {
         };
         let inner = &raw[1..inner_end];
         let converted = self.downlevel_codepoint_escapes_in_literal_text(inner, quote_char, false);
+        if !terminated && has_unterminated_codepoint_escape(inner) {
+            return Some(format!("{quote_char}{converted}"));
+        }
         Some(format!("{quote_char}{converted}{quote_char}"))
     }
 
@@ -798,6 +801,18 @@ fn trim_unterminated_regex_recovery_suffix(text: &str) -> &str {
     text.trim_end_matches(';').trim_end_matches(')')
 }
 
+fn has_unterminated_codepoint_escape(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i + 2 < bytes.len() {
+        if bytes[i] == b'\\' && bytes[i + 1] == b'u' && bytes[i + 2] == b'{' {
+            return !bytes[i + 3..].contains(&b'}');
+        }
+        i += 1;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use crate::output::printer::{PrintOptions, Printer};
@@ -927,6 +942,26 @@ mod tests {
         assert!(
             output.contains("var x = \"g\";"),
             "ES5 should downlevel unterminated codepoint escape strings through cooked text.\nGot: {output}"
+        );
+    }
+
+    #[test]
+    fn incomplete_codepoint_escape_string_keeps_missing_close_quote() {
+        let source = "var x = \"\\u{00000000000067";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var x = \"\\u{00000000000067;"),
+            "ES5 should preserve tsc's unterminated invalid codepoint escape shape.\nGot: {output}"
+        );
+        assert!(
+            !output.contains("var x = \"\\u{00000000000067\";"),
+            "ES5 should not synthesize a closing quote for incomplete codepoint escapes.\nGot: {output}"
         );
     }
 
