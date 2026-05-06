@@ -1514,34 +1514,6 @@ impl Server {
             }))
         })();
 
-        // When quickinfo fails to resolve, return a response with valid start/end
-        // spans. The harness accesses body.start.line and body.end.line, so an
-        // empty object {} would cause "Cannot read properties of undefined".
-        let fallback = (|| -> Option<serde_json::Value> {
-            let (_, line, offset) = Self::extract_file_position(&request.arguments)?;
-            let position = Self::tsserver_to_lsp_position(line, offset);
-            Some(serde_json::json!({
-                "displayString": "",
-                "documentation": "",
-                "kind": "",
-                "kindModifiers": "",
-                "tags": [],
-                "start": Self::lsp_to_tsserver_position(position),
-                "end": Self::lsp_to_tsserver_position(position),
-            }))
-        })();
-        self.stub_response(
-            seq,
-            request,
-            result.or(fallback).or(Some(serde_json::json!({
-                "displayString": "",
-                "documentation": "",
-                "kind": "",
-                "kindModifiers": "",
-                "tags": [],
-                "start": {"line": 1, "offset": 1},
-                "end": {"line": 1, "offset": 1},
-            }))),
-        )
+        self.stub_response(seq, request, result)
     }
 }
