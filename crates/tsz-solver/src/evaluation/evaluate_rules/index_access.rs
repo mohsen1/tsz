@@ -1182,11 +1182,8 @@ impl<'a> TupleKeyVisitor<'a> {
     /// Check for known array members (length, methods)
     fn get_array_member_kind(&self, name: &str) -> Option<ApparentMemberKind> {
         if name == "length" {
-            // For fixed-length tuples, return literal length types instead of
-            // generic `number`. Optional elements contribute a range, so
-            // `[T?]["length"]` is `0 | 1`.
-            // Required for patterns like `Acc["length"] extends N` in tail-recursive
-            // conditional types.
+            // Return literal tuple lengths, including optional-element ranges
+            // like `[T?]["length"]` -> `0 | 1`.
             if let Some(length_type) = self.length_type() {
                 return Some(ApparentMemberKind::Value(length_type));
             }
@@ -1967,8 +1964,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         elements: &[TupleElement],
         index_type: TypeId,
     ) -> TypeId {
-        // Use TupleKeyVisitor to handle the index type
-        // The visitor handles Union distribution internally via visit_union
         let mut visitor = TupleKeyVisitor::new(self.interner(), elements);
         let result = visitor.evaluate(index_type);
 
@@ -1996,11 +1991,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     pub(crate) fn evaluate_array_index(&self, elem: TypeId, index_type: TypeId) -> TypeId {
         // Use ArrayKeyVisitor to handle the index type
-        // The visitor handles Union distribution internally via visit_union
         let mut visitor = ArrayKeyVisitor::new(self.interner(), elem);
         let result = visitor.evaluate(index_type);
 
-        // Add undefined if unchecked indexed access is allowed
         self.add_undefined_if_unchecked(result)
     }
 }
