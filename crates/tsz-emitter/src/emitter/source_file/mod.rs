@@ -180,6 +180,46 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn es2015_auto_accessor_storage_vars_follow_private_helpers() {
+        let source = "// Header comment\n\
+// Regular class should still error when targeting ES5\n\
+class RegularClass {\n    accessor shouldError: string;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        let helper_pos = output
+            .find("var __classPrivateFieldGet =")
+            .expect("private field helper should be emitted");
+        let storage_pos = output
+            .find("var _RegularClass_shouldError_accessor_storage;")
+            .expect("accessor storage declaration should be emitted");
+        let class_comment_pos = output
+            .find("// Regular class should still error when targeting ES5")
+            .expect("class leading comment should be emitted");
+
+        assert!(
+            helper_pos < storage_pos,
+            "Auto-accessor storage vars should be emitted after private-field helpers.\nOutput:\n{output}"
+        );
+        assert!(
+            storage_pos < class_comment_pos,
+            "Auto-accessor storage vars should stay before the class leading comment.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn legacy_decorated_private_auto_accessors_use_unique_storage_names() {
         let source = "declare var dec: any;\n\
 class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n";
@@ -975,6 +1015,53 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         assert!(
             !output.contains("\n    exports.E = E;"),
             "AMD ES5 enum re-export should not emit a separate export assignment.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn namespace_block_preserves_recovered_module_syntax() {
+        let source = "namespace P {\n    {\n        namespace M { }\n        export = M;\n        function foo() { }\n        export { foo };\n        import I = M;\n        import I2 = require(\"foo\");\n        import * as Foo from \"ambient\";\n        import bar from \"ambient\";\n        import { baz } from \"ambient\";\n    }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("export = M;"),
+            "Recovered export assignment should be preserved inside namespace block.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("export { foo };"),
+            "Recovered local export should be preserved inside namespace block.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var I = M;"),
+            "Recovered namespace alias import should still be erased.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("import I2 = require(\"foo\");"),
+            "Recovered import-equals should be preserved inside namespace block.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("import * as Foo from \"ambient\";"),
+            "Recovered namespace import should be preserved inside namespace block.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("import bar from \"ambient\";"),
+            "Recovered default import should be preserved inside namespace block.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("import { baz } from \"ambient\";"),
+            "Recovered named import should be preserved inside namespace block.\nOutput:\n{output}"
         );
     }
 }

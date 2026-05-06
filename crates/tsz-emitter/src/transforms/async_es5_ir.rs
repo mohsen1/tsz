@@ -1122,6 +1122,15 @@ impl<'a> AsyncES5Transformer<'a> {
                 self.process_try_statement_in_async(idx, cases, current_statements, current_label);
             }
 
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                self.process_labeled_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+            }
+
             _ => {
                 // Pass through other statements as-is
                 let ir = self.statement_to_ir(idx);
@@ -2488,6 +2497,79 @@ impl<'a> AsyncES5Transformer<'a> {
             });
         }
         *current_label = end_label;
+    }
+
+    fn process_labeled_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(labeled) = self.arena.get_labeled_statement(node) else {
+            return;
+        };
+
+        if !self.contains_await_recursive(labeled.statement) {
+            current_statements.push(self.statement_to_ir(idx));
+            return;
+        }
+
+        let label =
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, labeled.label);
+
+        let Some(statement_node) = self.arena.get(labeled.statement) else {
+            return;
+        };
+        if statement_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.arena.get_block(statement_node)
+        {
+            for &stmt_idx in &block.statements.nodes {
+                if self.is_break_to_label(stmt_idx, &label) {
+                    let end_label = self.state.next_label();
+                    current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+                        IRNode::GeneratorOp {
+                            opcode: opcodes::BREAK,
+                            value: Some(Box::new(IRNode::NumericLiteral(
+                                end_label.to_string().into(),
+                            ))),
+                            comment: Some("break".to_string().into()),
+                        },
+                    ))));
+                    cases.push(IRGeneratorCase {
+                        label: *current_label,
+                        statements: std::mem::take(current_statements),
+                    });
+                    *current_label = end_label;
+                    return;
+                }
+
+                self.process_async_statement(stmt_idx, cases, current_statements, current_label);
+            }
+        } else {
+            self.process_async_statement(
+                labeled.statement,
+                cases,
+                current_statements,
+                current_label,
+            );
+        }
+    }
+
+    fn is_break_to_label(&self, stmt_idx: NodeIndex, label: &str) -> bool {
+        let Some(node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::BREAK_STATEMENT {
+            return false;
+        }
+        let Some(jump) = self.arena.get_jump_data(node) else {
+            return false;
+        };
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, jump.label) == label
     }
 
     /// Get the catch variable name from a variable declaration index
