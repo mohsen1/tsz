@@ -1133,6 +1133,7 @@ impl<'a> CheckerState<'a> {
             args,
             arg_types: &arg_types,
             callee_type: callee_type_for_call,
+            callee_has_declared_generic_signature: is_generic_call,
             is_super_call,
             is_optional_chain,
             allow_contextual_mismatch_deferral,
