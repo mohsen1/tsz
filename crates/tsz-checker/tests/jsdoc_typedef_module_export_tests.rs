@@ -278,3 +278,81 @@ export {};
         "Expected no TS2304 when typedef references its own @template parameter, got: {ts2304:?}"
     );
 }
+
+#[test]
+fn jsdoc_mapped_type_tag_scopes_parameter_for_nested_template() {
+    let diagnostics = check_js_diagnostics_only(
+        r#"
+/** @typedef {'parseHTML'|'styleLayout'} TaskGroupIds */
+
+/**
+ * @type {{[P in TaskGroupIds]: {id: P, label: string}}}
+ */
+const taskGroups = {
+    parseHTML: { id: 'parseHTML', label: 'Parse HTML & CSS' },
+    styleLayout: { id: 'styleLayout', label: 'Style & Layout' },
+};
+
+module.exports = { taskGroups };
+"#,
+    );
+    let p_errors: Vec<&Diagnostic> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && d.message_text.contains("'P'"))
+        .collect();
+    assert!(
+        p_errors.is_empty(),
+        "Expected no TS2304 for mapped type parameter P inside JSDoc @type template, got: {p_errors:?}"
+    );
+}
+
+#[test]
+fn jsdoc_import_type_typedef_alias_is_visible_to_later_typedefs() {
+    let diagnostics = check_consumer_with_js_typedef_source(
+        r#"
+/** @typedef {'parseHTML'|'styleLayout'} TaskGroupIds */
+
+/**
+ * @typedef TaskGroup
+ * @property {TaskGroupIds} id
+ * @property {string} label
+ */
+
+const taskGroups = {
+    parseHTML: { id: 'parseHTML', label: 'Parse HTML & CSS' },
+    styleLayout: { id: 'styleLayout', label: 'Style & Layout' },
+};
+
+module.exports = { taskGroups };
+"#,
+        "index.js",
+        r#"
+const { taskGroups } = require('./types.js');
+
+/** @typedef {import('./types.js').TaskGroup} TaskGroup */
+
+/**
+ * @typedef TaskNode
+ * @prop {TaskGroup} group
+ */
+
+class MainThreadTasks {
+    /**
+     * @param {TaskGroup} x
+     * @param {TaskNode} y
+     */
+    constructor(x, y) {}
+}
+
+module.exports = MainThreadTasks;
+"#,
+    );
+    let task_group_errors: Vec<&Diagnostic> = diagnostics
+        .iter()
+        .filter(|d| matches!(d.code, 2304 | 2552) && d.message_text.contains("'TaskGroup'"))
+        .collect();
+    assert!(
+        task_group_errors.is_empty(),
+        "Expected imported JSDoc typedef alias TaskGroup to resolve in later typedefs, got: {task_group_errors:?}"
+    );
+}
