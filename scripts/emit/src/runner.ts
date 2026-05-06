@@ -27,6 +27,7 @@ const TS_DIR = path.join(ROOT_DIR, 'TypeScript');
 const BASELINES_DIR = path.join(TS_DIR, 'tests/baselines/reference');
 const CACHE_DIR = path.join(__dirname, '../.cache');
 const DTS_DISCOVERY_CACHE = path.join(CACHE_DIR, 'dts-baseline-index.json');
+const DTS_DISCOVERY_CACHE_VERSION = 2;
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -126,6 +127,7 @@ interface CacheEntry {
 }
 
 interface DtsDiscoveryEntry {
+  version: number;
   mtimeMs: number;
   size: number;
   hasDts: boolean;
@@ -447,13 +449,13 @@ async function filterToDtsBaselines(jsFiles: string[]): Promise<string[]> {
     const fullPath = path.join(BASELINES_DIR, file);
     const stat = await fs.promises.stat(fullPath);
     const entry = cached[file];
-    if (entry && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) {
+    if (entry && entry.version === DTS_DISCOVERY_CACHE_VERSION && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) {
       return { file, hasDts: entry.hasDts };
     }
 
     const content = await readLimit(() => fs.promises.readFile(fullPath, 'utf-8'));
-    const hasDts = /\[\s*[^\]]+\.d\.ts\s*]/i.test(content);
-    updated[file] = { mtimeMs: stat.mtimeMs, size: stat.size, hasDts };
+    const hasDts = parseBaseline(content).dts !== null;
+    updated[file] = { version: DTS_DISCOVERY_CACHE_VERSION, mtimeMs: stat.mtimeMs, size: stat.size, hasDts };
     return { file, hasDts };
   })));
 

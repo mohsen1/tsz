@@ -5,6 +5,7 @@ mod emit_declaration_class_helpers;
 mod emit_declarations;
 mod emit_members;
 mod js_emit;
+mod preamble;
 mod setup;
 
 use super::helpers::JsNamespaceExportAlias;
