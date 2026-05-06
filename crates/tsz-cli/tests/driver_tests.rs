@@ -118,6 +118,58 @@ const unused = 1;
 }
 
 #[test]
+fn compile_default_always_strict_emits_prologue_and_false_suppresses() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+    let source = r#"function f(this: void) {
+  return this;
+}
+
+console.log(f() === undefined);
+"#;
+
+    let default_dir = base.join("default");
+    write_file(
+        &default_dir.join("tsconfig.json"),
+        r#"{"compilerOptions":{"target":"esnext","outDir":"out"},"files":["index.ts"]}"#,
+    );
+    write_file(&default_dir.join("index.ts"), source);
+
+    let args = default_args();
+    let result = compile(&args, &default_dir).expect("default compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "default compile should not diagnose: {:?}",
+        result.diagnostics
+    );
+    let js = fs::read_to_string(default_dir.join("out/index.js")).expect("read default output");
+    assert!(
+        js.starts_with("\"use strict\";\n"),
+        "default emit should start with a strict prologue.\nOutput:\n{js}"
+    );
+
+    let false_dir = base.join("false");
+    write_file(
+        &false_dir.join("tsconfig.json"),
+        r#"{"compilerOptions":{"target":"esnext","alwaysStrict":false,"ignoreDeprecations":"6.0","outDir":"out"},"files":["index.ts"]}"#,
+    );
+    write_file(&false_dir.join("index.ts"), source);
+
+    let args = default_args();
+    let result = compile(&args, &false_dir).expect("alwaysStrict false compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "alwaysStrict false compile should not diagnose: {:?}",
+        result.diagnostics
+    );
+    let js = fs::read_to_string(false_dir.join("out/index.js")).expect("read false output");
+    assert!(
+        !js.starts_with("\"use strict\";\n"),
+        "explicit alwaysStrict=false should suppress the strict prologue.\nOutput:\n{js}"
+    );
+}
+
+#[test]
 fn plain_js_suppresses_ts2774_without_check_js() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
