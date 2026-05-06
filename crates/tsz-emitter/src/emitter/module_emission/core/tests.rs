@@ -322,6 +322,44 @@ fn nested_classes_preserve_outer_private_name_scope() {
 }
 
 #[test]
+fn reserved_private_constructor_method_is_not_extracted() {
+    let source = r#"class A {
+    #constructor() {}
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::None,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _A_instances, _A_constructor;"),
+        "Reserved private constructor should still reserve tsc's helper name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("#constructor() { }"),
+        "Reserved private constructor should remain in the class body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_A_instances = new WeakSet();"),
+        "Instance brand WeakSet should still be initialized.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_A_constructor = function"),
+        "Reserved private constructor should not be extracted into a helper function.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_class_super_parameter_skips_user_binding() {
     let source = r#"class Base {}
 
