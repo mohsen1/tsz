@@ -72,6 +72,25 @@ fn is_jsdoc_simple_type_name(expr: &str) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn jsdoc_resolved_type_is_unresolved(
+        &self,
+        expr: &str,
+        ty: tsz_solver::TypeId,
+    ) -> bool {
+        ty == tsz_solver::TypeId::ERROR
+            || (ty == tsz_solver::TypeId::UNKNOWN && !Self::jsdoc_expr_is_unknown_intrinsic(expr))
+    }
+
+    fn jsdoc_expr_is_unknown_intrinsic(expr: &str) -> bool {
+        let trimmed = expr
+            .trim()
+            .trim_start_matches('!')
+            .trim_start_matches('?')
+            .trim_end_matches('=')
+            .trim();
+        trimmed == "unknown"
+    }
+
     pub(crate) fn report_jsdoc_param_generic_instantiation_errors(
         &mut self,
         type_expr: &str,
@@ -438,6 +457,26 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        let (is_asserts, predicate_remainder) = Self::split_jsdoc_asserts_prefix(trimmed);
+        let predicate_text = if is_asserts {
+            predicate_remainder
+        } else {
+            trimmed
+        };
+        if let Some((_is_pos, is_end)) = Self::find_jsdoc_type_predicate_is(predicate_text) {
+            let type_part = predicate_text[is_end..].trim();
+            return self.walk_jsdoc_type_for_unresolved_leaves(
+                type_part,
+                comment_pos,
+                comment_end,
+                source_text,
+                template_params,
+            );
+        }
+        if is_asserts {
+            return false;
+        }
+
         // Array suffix `T[]`.
         if let Some(stripped) = trimmed.strip_suffix("[]") {
             return self.walk_jsdoc_type_for_unresolved_leaves(
@@ -457,54 +496,20 @@ impl<'a> CheckerState<'a> {
         // `<T>(p: T) => T` would emit a spurious TS2304 for `T`.
         if let Some(arrow_idx) = find_top_level_jsdoc_arrow(trimmed) {
             let mut reported = false;
-            let mut prefix = trimmed[..arrow_idx].trim();
+            let params_str = trimmed[..arrow_idx].trim();
             let ret_str = trimmed[arrow_idx + 2..].trim();
-
-            let mut local_template_params: Vec<String> = template_params.to_vec();
-            if let Some(stripped_prefix) = prefix.strip_prefix('<') {
-                let mut depth = 1u32;
-                let mut close_idx = None;
-                for (i, ch) in stripped_prefix.char_indices() {
-                    match ch {
-                        '<' => depth += 1,
-                        '>' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                close_idx = Some(i);
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                if let Some(close) = close_idx {
-                    let tp_block = &stripped_prefix[..close];
-                    for tp in tp_block.split(',') {
-                        let tp = tp.trim();
-                        if tp.is_empty() {
-                            continue;
-                        }
-                        // `T` or `T extends Constraint` — only the bound name
-                        // goes in scope; the constraint expression can still
-                        // contain unresolved leaves and is not walked here.
-                        let name = tp
-                            .split_whitespace()
-                            .next()
-                            .map(str::trim)
-                            .unwrap_or("")
-                            .to_string();
-                        if !name.is_empty() {
-                            local_template_params.push(name);
-                        }
-                    }
-                    prefix = stripped_prefix[close + 1..].trim();
-                }
-            }
-
-            let scope: &[String] = &local_template_params;
-
-            if prefix.starts_with('(') && prefix.ends_with(')') {
-                let inner = &prefix[1..prefix.len() - 1];
+            let (signature_template_params, params_str) =
+                Self::split_jsdoc_signature_template_params(params_str);
+            let active_template_params = if signature_template_params.is_empty() {
+                None
+            } else {
+                let mut merged = template_params.to_vec();
+                merged.extend(signature_template_params);
+                Some(merged)
+            };
+            let template_params = active_template_params.as_deref().unwrap_or(template_params);
+            if params_str.starts_with('(') && params_str.ends_with(')') {
+                let inner = &params_str[1..params_str.len() - 1];
                 for param in Self::split_top_level_params(inner) {
                     let param_text = param.trim();
                     if param_text.is_empty() {
@@ -526,7 +531,7 @@ impl<'a> CheckerState<'a> {
                         comment_pos,
                         comment_end,
                         source_text,
-                        scope,
+                        template_params,
                     );
                 }
             }
@@ -535,7 +540,7 @@ impl<'a> CheckerState<'a> {
                 comment_pos,
                 comment_end,
                 source_text,
-                scope,
+                template_params,
             );
             return reported;
         }
@@ -647,19 +652,49 @@ impl<'a> CheckerState<'a> {
 
         // Leaf: simple identifier name.
         if is_jsdoc_simple_type_name(trimmed) {
+            if trimmed.contains('.') {
+                return false;
+            }
+            if is_jsdoc_intrinsic_type_name(trimmed) {
+                return false;
+            }
             // Skip in-scope `@template` parameters.
             if template_params.iter().any(|t| t == trimmed) {
                 return false;
             }
-            // `Object` and `object` are accepted bases in JSDoc; resolution
-            // succeeds, but defensively skip them anyway.
-            if matches!(trimmed, "Object" | "object") {
+            // Built-in primitive type names. The resolver returns
+            // `TypeId::UNKNOWN` for the literal `unknown` keyword by design,
+            // and the unresolved heuristic below treats `UNKNOWN` as a "could
+            // not resolve" sentinel, so this leaf would otherwise emit a
+            // spurious TS2304 for valid JSDoc like `@type {(v: unknown) => …}`.
+            if matches!(
+                trimmed,
+                "string"
+                    | "String"
+                    | "number"
+                    | "Number"
+                    | "boolean"
+                    | "Boolean"
+                    | "bigint"
+                    | "BigInt"
+                    | "any"
+                    | "unknown"
+                    | "undefined"
+                    | "Undefined"
+                    | "null"
+                    | "Null"
+                    | "void"
+                    | "Void"
+                    | "never"
+                    | "symbol"
+                    | "Symbol"
+                    | "this"
+            ) {
                 return false;
             }
             let resolved = self.resolve_jsdoc_type_str(trimmed);
-            let unresolved = resolved.is_none_or(|ty| {
-                ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
-            });
+            let unresolved =
+                resolved.is_none_or(|ty| self.jsdoc_resolved_type_is_unresolved(trimmed, ty));
             if unresolved {
                 self.emit_jsdoc_cannot_find_name(trimmed, comment_pos, comment_end, source_text);
                 return true;
@@ -719,4 +754,69 @@ impl<'a> CheckerState<'a> {
         }
         None
     }
+
+    fn split_jsdoc_signature_template_params(params_str: &str) -> (Vec<String>, &str) {
+        let trimmed = params_str.trim();
+        let Some(rest) = trimmed.strip_prefix('<') else {
+            return (Vec::new(), params_str);
+        };
+
+        let mut depth = 1u32;
+        for (rel_idx, ch) in rest.char_indices() {
+            match ch {
+                '<' => depth += 1,
+                '>' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let end_idx = 1 + rel_idx;
+                        let template_slice = &trimmed[1..end_idx];
+                        let names = Self::split_type_args_respecting_nesting(template_slice)
+                            .into_iter()
+                            .filter_map(Self::jsdoc_signature_template_param_name)
+                            .collect();
+                        return (names, trimmed[end_idx + 1..].trim());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        (Vec::new(), params_str)
+    }
+
+    fn jsdoc_signature_template_param_name(raw: &str) -> Option<String> {
+        let (name, _constraint) = Self::split_jsdoc_type_param_constraint(raw.trim());
+        let name = name.split('=').next().unwrap_or(name).trim();
+        if !name.is_empty()
+            && name
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        {
+            Some(name.to_string())
+        } else {
+            None
+        }
+    }
+}
+
+fn is_jsdoc_intrinsic_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "any"
+            | "bigint"
+            | "boolean"
+            | "false"
+            | "never"
+            | "null"
+            | "number"
+            | "object"
+            | "Object"
+            | "string"
+            | "symbol"
+            | "this"
+            | "true"
+            | "undefined"
+            | "unknown"
+            | "void"
+    )
 }
