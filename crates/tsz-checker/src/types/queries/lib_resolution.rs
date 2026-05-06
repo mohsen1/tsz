@@ -712,21 +712,6 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        if name == "Array"
-            && self.ctx.share_owner_symbol_type_results
-            && !self.lib_name_has_local_augmentation(name)
-            && let Some(ty) = self
-                .ctx
-                .types
-                .get_array_display_base_type()
-                .or_else(|| tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types))
-        {
-            self.ctx
-                .lib_type_resolution_cache
-                .insert(name.to_string(), Some(ty));
-            return Some(ty);
-        }
-
         if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name)
             && self.cached_lib_type_is_usable(name, *cached)
         {
@@ -1328,7 +1313,7 @@ mod tests {
     use crate::query_boundaries::type_construction::TypeInterner;
     use crate::state::CheckerState;
     use tsz_binder::BinderState;
-    use tsz_solver::{QueryDatabase, TypeParamInfo};
+    use tsz_solver::QueryDatabase;
 
     // ---- keyword_syntax_to_type_id ----
 
@@ -1555,34 +1540,6 @@ mod tests {
         assert_eq!(super::no_value_resolver(NodeIndex(0)), None);
         assert_eq!(super::no_value_resolver(NodeIndex(42)), None);
         assert_eq!(super::no_value_resolver(NodeIndex(u32::MAX)), None);
-    }
-
-    #[test]
-    fn shared_array_name_resolution_reuses_registered_base_type() {
-        let arena = NodeArena::default();
-        let binder = BinderState::new();
-        let types = TypeInterner::new();
-        let array_base = types.factory().object(Vec::new());
-        types.set_array_base_type(
-            array_base,
-            vec![TypeParamInfo {
-                name: types.intern_string("T"),
-                constraint: None,
-                default: None,
-                is_const: false,
-            }],
-        );
-
-        let mut checker = CheckerState::new(
-            &arena,
-            &binder,
-            &types,
-            "test.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        checker.ctx.share_owner_symbol_type_results = true;
-
-        assert_eq!(checker.resolve_lib_type_by_name("Array"), Some(array_base));
     }
 
     #[test]

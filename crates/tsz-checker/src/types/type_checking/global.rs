@@ -119,19 +119,10 @@ impl<'a> CheckerState<'a> {
         let object_type = self.resolve_lib_type_by_name("Object");
         let function_type = self.resolve_lib_type_by_name("Function");
 
-        // For Array<T>, resolve the merged lib type once, then reuse the type
-        // parameters registered for its canonical symbol. Re-running the
-        // per-lib parameter resolver in every project checker repeatedly lowers
-        // the merged Array declarations and can exhaust the shared interner
-        // before ordinary global constructors are resolved.
-        let array_type_for_params = self.resolve_lib_type_by_name("Array");
-        let array_type_params = self
-            .ctx
-            .binder
-            .file_locals
-            .get("Array")
-            .map(|sym_id| self.get_type_params_for_symbol(sym_id))
-            .unwrap_or_default();
+        // For Array<T>, extract the actual type parameters from the interface definition
+        // rather than synthesizing fresh ones. This ensures the T used in Array's method
+        // signatures has the same TypeId as the T registered in TypeEnvironment.
+        let (array_type_for_params, array_type_params) = self.resolve_lib_type_with_params("Array");
         let array_type_params_for_flow = array_type_params.clone();
 
         // Eagerly resolve ConcatArray and FlatArray, which are referenced by Array's
@@ -220,13 +211,7 @@ impl<'a> CheckerState<'a> {
         // are already on the Callable itself
         let array_instance_type =
             array_type_for_params.or_else(|| self.resolve_lib_type_by_name("Array"));
-        let array_display_type = if self.ctx.share_owner_symbol_type_results
-            && !self.lib_name_has_local_augmentation("Array")
-        {
-            array_instance_type
-        } else {
-            self.resolve_lib_type_by_name("Array")
-        };
+        let array_display_type = self.resolve_lib_type_by_name("Array");
 
         // PropertyAccessEvaluator runs through multiple database backends
         // (query cache, interner, binder-backed resolver). Register Array<T>
