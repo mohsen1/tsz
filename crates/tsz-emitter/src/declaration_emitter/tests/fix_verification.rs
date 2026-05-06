@@ -1575,6 +1575,28 @@ export const viaInlineArrow = (<T>(value: T) => value)("ok" as const);
 }
 
 #[test]
+fn fix_generic_call_constructor_return_object_formats_multiline() {
+    let output = emit_dts(
+        r#"
+declare const a: symbol;
+type Constructor = new (...args: any[]) => {};
+declare function Mix<T extends Constructor>(
+    classish: T
+): T & (new (...args: any[]) => {mixed: true});
+
+export const Mixer = Mix(class {
+    [a]() { return 1 };
+});
+"#,
+    );
+
+    assert!(
+        output.contains("): T & (new (...args: any[]) => {\n    mixed: true;\n});"),
+        "constructor-arrow return object should be normalized to multiline: {output}"
+    );
+}
+
+#[test]
 fn fix_const_literal_preservation_uses_lexical_const_symbol() {
     let output = emit_dts_with_binding(
         r#"
