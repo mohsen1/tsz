@@ -1052,15 +1052,6 @@ fn compile_inner(
             .as_ref()
             .and_then(|cfg| cfg.compiler_options.as_ref()),
     )?;
-    let positional_no_config_no_emit =
-        tsconfig_path.is_none() && !args.files.is_empty() && resolved.no_emit;
-    if positional_no_config_no_emit && !resolved.emit_declarations {
-        // Single-file CLI probes should not enter the full semantic checker when
-        // emit is disabled. The project path already returns quickly for this
-        // shape; keep positional files on the same parse-only path.
-        resolved.no_check = true;
-    }
-
     // Wire removed-but-honored suppress flags from config
     if loaded.suppress_excess_property_errors {
         resolved.checker.suppress_excess_property_errors = true;
@@ -1445,7 +1436,11 @@ fn compile_inner(
         perf_log_phase("parse_no_check", parse_start);
 
         let mut diagnostics = collect_parse_only_no_check_diagnostics(&parse_results, &resolved);
-        if positional_no_config_no_emit && resolved.checker.no_lib {
+        if tsconfig_path.is_none()
+            && !args.files.is_empty()
+            && resolved.no_emit
+            && resolved.checker.no_lib
+        {
             diagnostics.extend(no_lib_core_global_type_diagnostics());
         }
 

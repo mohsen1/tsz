@@ -1960,11 +1960,13 @@ export const works1 = fn((x: number) => x);
 
     let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
     assert!(
-        dts.contains("export declare const fail1: <T>(x: T) => T;"),
+        dts.contains("export declare const fail1: import(\"module\").Modifier<(<T>(x: T) => T)>;"),
         "expected inferred generic function type argument: {dts}"
     );
     assert!(
-        dts.contains("export declare const works1: (x: number) => number;"),
+        dts.contains(
+            "export declare const works1: import(\"module\").Modifier<(x: number) => number>;"
+        ),
         "expected inferred arrow return type argument: {dts}"
     );
 }
@@ -2015,7 +2017,7 @@ export const Mixer = Mix(class {
 
     let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
     assert!(
-        dts.contains("export declare const Mixer: {\n    new (): {\n        [a]: () => number;\n    };\n} & (new (...args: any[]) => {\n    mixed: true;\n});"),
+        dts.contains("export declare const Mixer: {\n    new (): {\n        [a]: () => number;\n    };\n} & (new (...args: any[]) => {mixed: true});"),
         "expected inferred class-expression constructor type to survive generic substitution: {dts}"
     );
 }
@@ -16224,17 +16226,17 @@ fn ts2592_emitted_for_unresolved_jquery_global_without_ts2304() {
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    let ts2581_diags: Vec<_> = result
+    let ts2592_diags: Vec<_> = result
         .diagnostics
         .iter()
         .filter(|d| {
             d.code
-                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA
+                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2
         })
         .collect();
     assert!(
-        !ts2581_diags.is_empty(),
-        "Expected TS2581 for unresolved jQuery global `$`, got diagnostics: {:?}",
+        !ts2592_diags.is_empty(),
+        "Expected TS2592 for unresolved jQuery global `$`, got diagnostics: {:?}",
         result.diagnostics
     );
 
