@@ -104,3 +104,37 @@ x.f();
         ts2349.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn union_rest_tuple_callback_reports_nested_array_argument_mismatch() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function test2<
+  A extends readonly unknown[],
+  B extends readonly unknown[],
+>(
+  c: (...args: A) => void,
+  d: (...args: B) => void,
+  e: (arg: typeof c | typeof d) => void,
+): void;
+
+test2(
+  (a: number | boolean, b: string | number) => {},
+  (c: string | boolean, d: number | boolean) => {},
+  (cb) => {
+    cb(true, [42]);
+  },
+);
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains(
+                    "Argument of type 'number[]' is not assignable to parameter of type 'number'.",
+                )
+        }),
+        "Expected TS2345 for nested union callback rest tuple argument, got: {diags:?}"
+    );
+}
