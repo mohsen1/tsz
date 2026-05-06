@@ -1443,35 +1443,51 @@ impl<'a> Printer<'a> {
         }
 
         self.write("(");
-        let open_paren_pos = {
-            self.map_token_after(
+        let needs_es5_param_transform = self.ctx.target_es5
+            && accessor.parameters.nodes.iter().any(|&param_idx| {
                 self.arena
-                    .get(accessor.name)
-                    .map_or(node.pos, |name| name.end),
-                node.end,
-                b'(',
-            );
-            self.pending_source_pos
-                .map(|source_pos| source_pos.pos)
-                .unwrap_or(node.pos)
-        };
-        let search_start = accessor
-            .parameters
-            .nodes
-            .first()
-            .and_then(|&idx| self.arena.get(idx))
-            .map_or(node.pos, |n| n.pos);
-        if let Some(body_node) = self.arena.get(accessor.body) {
-            let search_end = body_node.pos;
-            self.emit_function_parameters_with_trailing_comments(
-                &accessor.parameters.nodes,
-                open_paren_pos,
-                search_start,
-                search_end,
-            );
+                    .get(param_idx)
+                    .and_then(|param_node| self.arena.get_parameter(param_node))
+                    .is_some_and(|param| {
+                        param.dot_dot_dot_token
+                            || param.initializer.is_some()
+                            || self.is_binding_pattern(param.name)
+                    })
+            });
+        let es5_param_transforms = if needs_es5_param_transform {
+            Some(self.emit_function_parameters_es5(&accessor.parameters.nodes))
         } else {
-            self.emit_function_parameters_js(&accessor.parameters.nodes);
-        }
+            let open_paren_pos = {
+                self.map_token_after(
+                    self.arena
+                        .get(accessor.name)
+                        .map_or(node.pos, |name| name.end),
+                    node.end,
+                    b'(',
+                );
+                self.pending_source_pos
+                    .map(|source_pos| source_pos.pos)
+                    .unwrap_or(node.pos)
+            };
+            let search_start = accessor
+                .parameters
+                .nodes
+                .first()
+                .and_then(|&idx| self.arena.get(idx))
+                .map_or(node.pos, |n| n.pos);
+            if let Some(body_node) = self.arena.get(accessor.body) {
+                let search_end = body_node.pos;
+                self.emit_function_parameters_with_trailing_comments(
+                    &accessor.parameters.nodes,
+                    open_paren_pos,
+                    search_start,
+                    search_end,
+                );
+            } else {
+                self.emit_function_parameters_js(&accessor.parameters.nodes);
+            }
+            None
+        };
         self.write(")");
 
         // Emit return type annotation for error recovery (e.g., `set foo(v): number {}`)
@@ -1481,8 +1497,19 @@ impl<'a> Printer<'a> {
             self.emit(accessor.type_annotation);
         }
 
-        let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
-        self.emit_accessor_body(accessor.body, compact_body);
+        if let Some(transforms) = es5_param_transforms {
+            if transforms.has_transforms() {
+                self.write(" ");
+                self.emit_block_with_param_prologue(accessor.body, &transforms);
+            } else {
+                let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
+                self.emit_accessor_body(accessor.body, compact_body);
+            }
+            self.pop_temp_scope();
+        } else {
+            let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
+            self.emit_accessor_body(accessor.body, compact_body);
+        }
     }
 
     /// Emit the body of a get/set accessor, handling scope management and fallback to empty body.
