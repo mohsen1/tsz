@@ -1120,7 +1120,6 @@ impl ParserState {
                         self.count_following_close_braces().saturating_sub(1);
                     self.deferred_module_close_braces =
                         self.deferred_module_close_braces.max(deferred_close_braces);
-                    self.next_token();
                 }
             }
             expr
