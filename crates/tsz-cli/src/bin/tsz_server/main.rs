@@ -1000,11 +1000,9 @@ impl Server {
                 Some(serde_json::json!({"version": env!("CARGO_PKG_VERSION")})),
             ),
             "compileOnSaveAffectedFileList" => {
-                self.stub_response(seq, &request, Some(serde_json::json!([])))
+                self.handle_compile_on_save_affected_file_list(seq, &request)
             }
-            "compileOnSaveEmitFile" => {
-                self.stub_response(seq, &request, Some(serde_json::json!(false)))
-            }
+            "compileOnSaveEmitFile" => self.handle_compile_on_save_emit_file(seq, &request),
             "saveto" => self.handle_save_to(seq, &request),
             "watchChange" => self.stub_response(seq, &request, None),
             "exit" => TsServerResponse {
@@ -1030,9 +1028,8 @@ impl Server {
 
     // Stub handlers for protocol commands — return `success: true` with
     // empty/minimal responses for commands whose semantics ARE "no result yet"
-    // (`compileOnSaveAffectedFileList` → `[]`, `compileOnSaveEmitFile` →
-    // `false`, async-acknowledged ones like `geterr`). This is the right
-    // shape when the empty body is a valid answer to the protocol question.
+    // (async-acknowledged ones like `geterr`). This is the right shape when the
+    // empty body is a valid answer to the protocol question.
     pub(crate) fn stub_response(
         &self,
         seq: u64,

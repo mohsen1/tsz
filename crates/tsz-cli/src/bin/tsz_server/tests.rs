@@ -201,6 +201,55 @@ fn save_to_writes_open_file_snapshot_to_tmpfile() {
 }
 
 #[test]
+fn compile_on_save_reports_affected_files_and_emits_file() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let root = temp.path();
+    let config = root.join("tsconfig.json");
+    let a = root.join("a.ts");
+    let b = root.join("b.ts");
+    std::fs::write(
+        &config,
+        r#"{"compileOnSave":true,"compilerOptions":{"target":"es2015","module":"commonjs","outDir":"dist"},"files":["a.ts","b.ts"]}"#,
+    )
+    .expect("write config");
+    std::fs::write(&a, "export const a = 1;\n").expect("write a");
+    std::fs::write(&b, "import { a } from \"./a\";\nexport const b = a + 1;\n").expect("write b");
+
+    let mut server = make_server();
+    let a_str = a.to_string_lossy().to_string();
+    let b_str = b.to_string_lossy().to_string();
+    let config_str = config.to_string_lossy().to_string();
+
+    let affected = server.handle_tsserver_request(make_request(
+        "compileOnSaveAffectedFileList",
+        serde_json::json!({ "file": a_str.clone() }),
+    ));
+    assert!(affected.success);
+    let body = affected.body.expect("affected files body");
+    assert_eq!(body[0]["projectFileName"], config_str);
+    assert_eq!(body[0]["fileNames"], serde_json::json!([a_str, b_str]));
+    assert_eq!(body[0]["projectUsesOutFile"], false);
+
+    let emit = server.handle_tsserver_request(make_request(
+        "compileOnSaveEmitFile",
+        serde_json::json!({ "file": a_str, "richResponse": true, "includeLinePosition": true }),
+    ));
+    assert!(emit.success);
+    assert_eq!(emit.body.as_ref().unwrap()["emitSkipped"], false);
+    assert!(
+        emit.body.as_ref().unwrap()["diagnostics"]
+            .as_array()
+            .is_some()
+    );
+    let emitted = root.join("dist").join("a.js");
+    assert!(
+        emitted.exists(),
+        "compile-on-save should write {}",
+        emitted.display()
+    );
+}
+
+#[test]
 fn file_rename_updates_extensionless_relative_import() {
     let mut server = make_server();
     assert!(
@@ -605,6 +654,61 @@ fn test_handle_change_updates_file() {
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
     assert_eq!(server.open_files["/test.ts"], "const x = 2;");
+}
+
+#[test]
+fn test_reload_uses_tmpfile_for_requested_open_file() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let file_path = dir.path().join("a.ts");
+    let tmpfile_path = dir.path().join("tmp.ts");
+    std::fs::write(&file_path, "const value = \"disk\";\n").expect("write disk file");
+    std::fs::write(&tmpfile_path, "const value = 42;\n").expect("write tmpfile");
+
+    let file = file_path.to_string_lossy().to_string();
+    let tmpfile = tmpfile_path.to_string_lossy().to_string();
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": file,
+                    "fileContent": "const value = \"open\";\n",
+                }),
+            ))
+            .success
+    );
+
+    let reload_response = server.handle_tsserver_request(make_request(
+        "reload",
+        serde_json::json!({
+            "file": file,
+            "tmpfile": tmpfile,
+        }),
+    ));
+
+    assert!(reload_response.success);
+    assert_eq!(
+        reload_response.body,
+        Some(serde_json::json!({ "reloadFinished": true }))
+    );
+    assert_eq!(server.open_files[&file], "const value = 42;\n");
+
+    let quickinfo_response = server.handle_tsserver_request(make_request(
+        "quickinfo",
+        serde_json::json!({
+            "file": file,
+            "line": 1,
+            "offset": 7,
+        }),
+    ));
+    assert!(quickinfo_response.success);
+    assert_eq!(
+        quickinfo_response
+            .body
+            .and_then(|body| body.get("displayString").cloned()),
+        Some(serde_json::json!("const value: 42"))
+    );
 }
 
 #[test]
