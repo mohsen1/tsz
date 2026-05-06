@@ -236,6 +236,9 @@ pub struct CompilerOptions {
     /// Disable emitting helper declarations.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit_helpers: Option<bool>,
+    /// Emit more compliant iteration lowering for ES5/ES3 targets.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub downlevel_iteration: Option<bool>,
     /// Disable emitting comments.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub remove_comments: Option<bool>,
@@ -727,6 +730,7 @@ pub fn resolve_compiler_options(
     }
     if let Some(import_helpers) = options.import_helpers {
         resolved.import_helpers = import_helpers;
+        resolved.printer.import_helpers = import_helpers;
     }
     if let Some(allow_arbitrary_extensions) = options.allow_arbitrary_extensions {
         resolved.allow_arbitrary_extensions = allow_arbitrary_extensions;
@@ -928,6 +932,14 @@ pub fn resolve_compiler_options(
     if let Some(no_emit_helpers) = options.no_emit_helpers {
         resolved.printer.no_emit_helpers = no_emit_helpers;
     }
+    if options.import_helpers == Some(true) {
+        // importHelpers means "import from tslib" - suppress inline helper emission.
+        resolved.printer.no_emit_helpers = true;
+    }
+
+    if let Some(downlevel_iteration) = options.downlevel_iteration {
+        resolved.printer.downlevel_iteration = downlevel_iteration;
+    }
 
     if let Some(remove_comments) = options.remove_comments {
         resolved.printer.remove_comments = remove_comments;
@@ -1094,6 +1106,7 @@ pub fn resolve_compiler_options(
 
     if let Some(preserve) = options.preserve_const_enums {
         resolved.checker.preserve_const_enums = preserve;
+        resolved.printer.preserve_const_enums = preserve;
     }
 
     if let Some(erasable) = options.erasable_syntax_only {
@@ -1176,6 +1189,10 @@ pub fn resolve_compiler_options(
     if let Some(check_js) = options.check_js {
         resolved.check_js = check_js;
         resolved.checker.check_js = check_js;
+        if check_js && options.allow_js.is_none() {
+            resolved.allow_js = true;
+            resolved.checker.allow_js = true;
+        }
         if !check_js {
             // Record that `checkJs: false` was explicit, not just the default.
             // This suppresses even the `plainJSErrors` allowlist (TS2451, etc.).
@@ -2039,9 +2056,10 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         }
 
         // TS5052: Option '{0}' cannot be specified without specifying option '{1}'.
-        // `checkJs` requires `allowJs` to be explicitly enabled.
+        // `checkJs` implies `allowJs` unless `allowJs` is explicitly disabled.
         if option_is_truthy(compiler_opts.get("checkJs"))
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "allowJs")
+            && option_key_present_or_invalidated(compiler_opts, &ts5024_keys, "allowJs")
         {
             let msg = format_message(
                 diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
@@ -3511,6 +3529,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             emit_decorator_metadata,
             import_helpers,
             no_emit_helpers,
+            downlevel_iteration,
             remove_comments,
             new_line,
             allow_js,
@@ -4911,6 +4930,20 @@ mod tests {
     }
 
     #[test]
+    fn test_tsconfig_emit_flags_reach_printer_options() {
+        let json = r#"{"compilerOptions":{"importHelpers":true,"preserveConstEnums":true,"downlevelIteration":true}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.import_helpers);
+        assert!(resolved.printer.import_helpers);
+        assert!(resolved.printer.no_emit_helpers);
+        assert!(resolved.checker.preserve_const_enums);
+        assert!(resolved.printer.preserve_const_enums);
+        assert!(resolved.printer.downlevel_iteration);
+    }
+
+    #[test]
     fn test_parse_module_resolution_rejects_comma_separated_value() {
         let json =
             r#"{"compilerOptions":{"moduleResolution":"node16,nodenext","module":"commonjs"}} "#;
@@ -5286,8 +5319,9 @@ mod tests {
         let base_url = opts.base_url.expect("inherited baseUrl present");
 
         // Canonicalize to handle macOS `/var` → `/private/var` symlinks.
-        let canonical_base_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir.clone());
-        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir.clone());
+        let canonical_base_dir =
+            std::fs::canonicalize(&base_dir).unwrap_or_else(|_| base_dir.clone());
+        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or_else(|_| app_dir.clone());
         let canonical_base_url = std::path::Path::new(&base_url)
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(&base_url));
@@ -5390,7 +5424,7 @@ mod tests {
 
         // Canonicalize both sides so symlink-bearing temp paths on macOS
         // (`/var/folders/...` → `/private/var/folders/...`) compare equal.
-        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir.clone());
+        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or_else(|_| app_dir.clone());
         let canonical_base_url = std::path::Path::new(&base_url)
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(&base_url));
@@ -5864,13 +5898,13 @@ mod tests {
     }
 
     #[test]
-    fn test_ts5052_check_js_requires_allow_js() {
+    fn test_ts5052_not_emitted_when_check_js_implies_allow_js() {
         let source = r#"{"compilerOptions":{"checkJs":true}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-        let count = parsed.diagnostics.iter().filter(|d| d.code == 5052).count();
-        assert_eq!(
-            count, 1,
-            "Expected one TS5052 diagnostic when allowJs is missing, got: {:?}",
+        let has_5052 = parsed.diagnostics.iter().any(|d| d.code == 5052);
+        assert!(
+            !has_5052,
+            "Should not emit TS5052 when checkJs implies allowJs, got: {:?}",
             parsed.diagnostics
         );
     }
@@ -5907,6 +5941,18 @@ mod tests {
 
         assert!(resolved.check_js);
         assert!(resolved.checker.check_js);
+    }
+
+    #[test]
+    fn test_resolve_compiler_options_check_js_implies_allow_js() {
+        let source = r#"{"compilerOptions":{"checkJs":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.check_js);
+        assert!(resolved.checker.check_js);
+        assert!(resolved.allow_js);
+        assert!(resolved.checker.allow_js);
     }
 
     #[test]

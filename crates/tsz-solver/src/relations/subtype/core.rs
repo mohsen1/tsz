@@ -1004,6 +1004,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // value against the matching target members with a narrowed source.
             // See TypeScript's typeRelatedToDiscriminatedType.
             if self
+                .type_related_to_discriminated_tuple_type(source, &member_list)
+                .is_true()
+            {
+                return SubtypeResult::True;
+            }
+
+            if self
                 .type_related_to_discriminated_type(source, &member_list)
                 .is_true()
             {
