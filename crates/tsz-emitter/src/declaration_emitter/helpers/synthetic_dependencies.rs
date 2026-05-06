@@ -65,6 +65,45 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn retain_synthetic_function_return_dependencies_in_statements(
+        &mut self,
+        statements: &NodeList,
+    ) {
+        for &stmt_idx in &statements.nodes {
+            self.retain_synthetic_function_return_dependencies_for_statement(stmt_idx);
+        }
+    }
+
+    fn retain_synthetic_function_return_dependencies_for_statement(&mut self, stmt_idx: NodeIndex) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if self.statement_has_effective_export(stmt_idx)
+                    && let Some(func) = self.arena.get_function(stmt_node)
+                    && let Some(type_text) =
+                        self.function_body_single_nameable_new_return_type_text(func.body)
+                {
+                    self.retain_local_type_names_for_public_api(&type_text);
+                }
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export) = self.arena.get_export_decl(stmt_node)
+                    && let Some(clause_node) = self.arena.get(export.export_clause)
+                    && clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    && let Some(func) = self.arena.get_function(clause_node)
+                    && let Some(type_text) =
+                        self.function_body_single_nameable_new_return_type_text(func.body)
+                {
+                    self.retain_local_type_names_for_public_api(&type_text);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(in crate::declaration_emitter) fn retain_local_type_names_for_public_api(
         &mut self,
         type_text: &str,
@@ -89,7 +128,8 @@ impl<'a> DeclarationEmitter<'a> {
                     | symbol_flags::TYPE_ALIAS
                     | symbol_flags::ENUM
                     | symbol_flags::VALUE_MODULE
-                    | symbol_flags::NAMESPACE_MODULE)
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::ALIAS)
                 == 0
             {
                 continue;
