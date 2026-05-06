@@ -4,6 +4,7 @@ use super::super::DeclarationEmitter;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
+use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn event_like_correlated_alias_return_text(
@@ -213,6 +214,7 @@ impl<'a> DeclarationEmitter<'a> {
         parameters: &NodeList,
         call: &tsz_parser::parser::node::CallExprData,
         type_param_names: &[String],
+        type_param_constraints: &[(String, String)],
     ) -> Vec<(String, String)> {
         let Some(args) = call.arguments.as_ref() else {
             return Vec::new();
@@ -245,7 +247,10 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 continue;
             }
-            let Some(arg_type_text) = self.call_argument_type_text_for_substitution(arg_idx) else {
+            let Some(arg_type_text) = self.call_argument_type_text_for_substitution(
+                arg_idx,
+                Self::type_param_constraint_text(type_param_constraints, param_type_text),
+            ) else {
                 continue;
             };
             substitutions.push((
@@ -281,7 +286,10 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 continue;
             }
-            let Some(arg_type_text) = self.call_argument_type_text_for_substitution(arg_idx) else {
+            let Some(arg_type_text) = self.call_argument_type_text_for_substitution(
+                arg_idx,
+                Self::type_param_constraint_text(type_param_constraints, param_inner),
+            ) else {
                 continue;
             };
             let Some((arg_wrapper, arg_inner)) =
@@ -392,6 +400,15 @@ impl<'a> DeclarationEmitter<'a> {
         (depth == 0).then_some((wrapper, inner.trim()))
     }
 
+    fn type_param_constraint_text<'b>(
+        type_param_constraints: &'b [(String, String)],
+        type_param_name: &str,
+    ) -> Option<&'b str> {
+        type_param_constraints
+            .iter()
+            .find_map(|(name, constraint)| (name == type_param_name).then_some(constraint.as_str()))
+    }
+
     pub(in crate::declaration_emitter) fn infer_single_alias_discriminant_substitution(
         &self,
         param_type_text: &str,
@@ -453,21 +470,81 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn call_argument_type_text_for_substitution(
         &self,
         arg_idx: NodeIndex,
+        type_param_constraint: Option<&str>,
     ) -> Option<String> {
+        if let Some(type_text) = self.referenced_parameter_declared_type_annotation_text(arg_idx) {
+            return Some(type_text);
+        }
         if let Some(type_text) = self.reference_declared_type_annotation_text(arg_idx) {
             return Some(type_text);
         }
 
         // Bare type-parameter inference widens literal arguments (`box(0)` ->
         // `Box<number>`, not `Box<0>`). Keep literal-preserving paths only for
-        // explicit `as const` or local variable initializers that already carry
-        // literal types.
+        // explicit `as const`, local variable initializers that already carry
+        // literal types, or string literals inferred into string-constrained
+        // type parameters.
         self.as_const_assertion_type_text(arg_idx)
             .or_else(|| self.local_variable_initializer_type_text(arg_idx))
+            .or_else(|| {
+                type_param_constraint
+                    .is_some_and(Self::constraint_accepts_string_literal)
+                    .then(|| self.string_literal_argument_type_text(arg_idx))
+                    .flatten()
+            })
             .or_else(|| {
                 self.preferred_expression_type_text(arg_idx)
                     .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
             })
             .or_else(|| self.infer_fallback_type_text_at(arg_idx, 0))
+    }
+
+    fn constraint_accepts_string_literal(constraint: &str) -> bool {
+        Self::contains_whole_word_in_text(constraint, "string")
+    }
+
+    fn string_literal_argument_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
+        let arg_idx = self.skip_parenthesized_expression(arg_idx)?;
+        let arg_node = self.arena.get(arg_idx)?;
+        (arg_node.kind == SyntaxKind::StringLiteral as u16)
+            .then(|| self.js_literal_type_text(arg_idx))
+            .flatten()
+    }
+
+    fn referenced_parameter_declared_type_annotation_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let mut current = decl_idx;
+            for _ in 0..12 {
+                let node = source_arena.get(current)?;
+                if let Some(param) = source_arena.get_parameter(node) {
+                    let type_annotation = param.type_annotation;
+                    if !type_annotation.is_some() {
+                        return None;
+                    }
+                    let type_text = self
+                        .emit_type_node_text_from_arena(source_arena, type_annotation)
+                        .or_else(|| self.source_slice_from_arena(source_arena, type_annotation))?;
+                    let trimmed = type_text.trim_end();
+                    let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+                    return Some(trimmed.to_string());
+                }
+                let parent = source_arena.parent_of(current)?;
+                if parent.is_none() {
+                    break;
+                }
+                current = parent;
+            }
+            None
+        })
     }
 }
