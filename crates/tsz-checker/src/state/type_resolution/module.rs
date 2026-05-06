@@ -2203,6 +2203,41 @@ impl<'a> CheckerState<'a> {
         export_name: &str,
         visited_aliases: &mut AliasCycleTracker,
     ) -> Option<tsz_binder::SymbolId> {
+        let cache_key = (
+            self.ctx.current_file_idx,
+            module_specifier.to_string(),
+            export_name.to_string(),
+        );
+        if let Some(sym_id) = self
+            .ctx
+            .export_equals_named_cache
+            .borrow()
+            .get(&cache_key)
+            .copied()
+        {
+            return Some(sym_id);
+        }
+
+        let resolved = self.resolve_named_export_via_export_equals_tracked_uncached(
+            module_specifier,
+            export_name,
+            visited_aliases,
+        );
+        if let Some(sym_id) = resolved {
+            self.ctx
+                .export_equals_named_cache
+                .borrow_mut()
+                .insert(cache_key, sym_id);
+        }
+        resolved
+    }
+
+    fn resolve_named_export_via_export_equals_tracked_uncached(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        visited_aliases: &mut AliasCycleTracker,
+    ) -> Option<tsz_binder::SymbolId> {
         let symbol_export_named_member =
             |symbol: &tsz_binder::Symbol, member_name: &str| -> Option<tsz_binder::SymbolId> {
                 if let Some(exports) = symbol.exports.as_ref()
