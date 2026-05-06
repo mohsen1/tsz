@@ -1929,6 +1929,43 @@ fn tsc_parity_no_input() {
 }
 
 #[test]
+fn no_input_from_project_subdirectory_uses_parent_tsconfig() {
+    let temp = TempDir::new("parent_config_no_input").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true
+  },
+  "files": ["src/a.ts"]
+}
+"#,
+    );
+    write_file(
+        &temp.path.join("src/a.ts"),
+        "function f(value) {\n  return value;\n}\nf(1);\n",
+    );
+
+    let src_dir = temp.path.join("src");
+    let (code, output) = run_tsz_with_exit_code(&src_dir, &["--pretty", "false"])
+        .expect("tsz should run from project subdirectory");
+
+    assert_ne!(
+        code, 0,
+        "strict config should report diagnostics:\n{output}"
+    );
+    assert!(
+        output.contains("TS7006"),
+        "parent tsconfig should be discovered and applied:\n{output}"
+    );
+    assert!(
+        !output.contains("tsc: The TypeScript Compiler"),
+        "subdirectory project discovery should not fall through to help:\n{output}"
+    );
+}
+
+#[test]
 fn tsc_parity_show_config_strict_stays_compact() {
     if !tsc_available() {
         return;
