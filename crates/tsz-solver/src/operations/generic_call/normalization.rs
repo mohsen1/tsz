@@ -73,7 +73,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 constraint,
             )
         });
-        let inferred_ty = if tp.is_const {
+        let constraint_allows_mutable_array = constraint.is_some_and(|c| {
+            crate::type_queries::constraint_allows_mutable_array_like(
+                self.interner.as_type_database(),
+                c,
+            )
+        });
+        let inferred_ty = if tp.is_const && !constraint_allows_mutable_array {
             crate::operations::widening::apply_const_assertion(
                 self.interner.as_type_database(),
                 arg_ty,

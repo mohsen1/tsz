@@ -78,6 +78,8 @@ pub struct IRPrinter<'a> {
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     pub(crate) base_printer_options: Option<PrinterOptions>,
     generator_state_name: &'static str,
+    namespace_ast_name: Option<String>,
+    namespace_ast_exported_names: rustc_hash::FxHashSet<String>,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -259,6 +261,8 @@ impl<'a> IRPrinter<'a> {
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             base_printer_options: None,
             generator_state_name: "_a",
+            namespace_ast_name: None,
+            namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -283,6 +287,8 @@ impl<'a> IRPrinter<'a> {
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             base_printer_options: None,
             generator_state_name: "_a",
+            namespace_ast_name: None,
+            namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -307,6 +313,8 @@ impl<'a> IRPrinter<'a> {
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             base_printer_options: None,
             generator_state_name: "_a",
+            namespace_ast_name: None,
+            namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -329,6 +337,23 @@ impl<'a> IRPrinter<'a> {
         subs: rustc_hash::FxHashMap<String, String>,
     ) {
         self.commonjs_import_substitutions = subs;
+    }
+
+    pub fn set_namespace_ast_qualification(
+        &mut self,
+        namespace: String,
+        names: std::collections::HashSet<String>,
+    ) {
+        self.namespace_ast_name = Some(namespace);
+        self.namespace_ast_exported_names = names.into_iter().collect();
+    }
+
+    fn configure_ast_printer_namespace(&self, printer: &mut AstPrinter<'a>) {
+        if let Some(namespace) = self.namespace_ast_name.clone() {
+            printer.in_namespace_iife = true;
+            printer.current_namespace_name = Some(namespace);
+            printer.namespace_exported_names = self.namespace_ast_exported_names.clone();
+        }
     }
 
     /// Write a runtime helper name, prefixing with `tslib_1.` when `tslib_prefix` is active.
@@ -1958,6 +1983,7 @@ impl<'a> IRPrinter<'a> {
                         transforms,
                         self.make_ast_printer_options(),
                     );
+                    self.configure_ast_printer_namespace(&mut printer);
                     if let Some(source_text) = self.source_text {
                         printer.set_source_text(source_text);
                     }
