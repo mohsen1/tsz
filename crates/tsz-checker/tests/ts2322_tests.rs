@@ -135,6 +135,44 @@ fn get_all_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn iterator_result_with_undefined_return_rejects_required_value_target() {
+    let diagnostics = with_lib_contexts(
+        r#"
+interface IteratorYieldResult<TYield> {
+    done?: false;
+    value: TYield;
+}
+interface IteratorReturnResult<TReturn> {
+    done: true;
+    value: TReturn;
+}
+type IteratorResult<T, TReturn = any> =
+    | IteratorYieldResult<T>
+    | IteratorReturnResult<TReturn>;
+
+interface Next<A> {
+    readonly done?: boolean;
+    readonly value: A;
+}
+
+declare const result: IteratorResult<number, undefined>;
+const r: Next<number> = result;
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected IteratorResult<number, undefined> to reject Next<number>, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn promise_suffixed_generic_wrapper_does_not_suppress_nested_argument_mismatch() {
     let diagnostics = get_all_diagnostics(
         r#"
