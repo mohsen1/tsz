@@ -4213,8 +4213,15 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn type_param_argument_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
-        self.const_literal_initializer_text(arg_idx)
-            .or_else(|| self.as_const_assertion_type_text(arg_idx))
+        // Inferring substitutions for a bare type parameter `T` means TS widens
+        // literal arguments to their primitive types (`box(0)` -> `Box<number>`,
+        // not `Box<0>`). We must therefore avoid `const_literal_initializer_text`
+        // here, since it returns the unwidened literal type. The remaining
+        // helpers cover the cases where literal preservation is correct:
+        // `as const` assertions, local-variable references whose initializer
+        // already carries a literal type, and the fallback inference path which
+        // widens primitive literals.
+        self.as_const_assertion_type_text(arg_idx)
             .or_else(|| self.local_variable_initializer_type_text(arg_idx))
             .or_else(|| {
                 self.preferred_expression_type_text(arg_idx)
