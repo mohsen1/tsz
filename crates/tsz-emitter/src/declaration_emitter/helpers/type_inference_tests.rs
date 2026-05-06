@@ -267,22 +267,6 @@ fn tuple_item_lookup_mapped_type_expands_inline_compact_string_key() {
     );
 }
 
-#[test]
-fn tuple_item_lookup_mapped_type_expands_compact_string_key() {
-    let input = r#"{ [Item in readonly [{
-    readonly name: "a";
-}, {
-    readonly name: "b";
-}][number]as Item[string]]: Item }"#;
-
-    assert_eq!(
-        DeclarationEmitter::expand_tuple_item_lookup_mapped_type_text(input),
-        Some(
-            "{\n    a: {\n        readonly name: \"a\";\n    };\n    b: {\n        readonly name: \"b\";\n    };\n}"
-                .to_string()
-        )
-    );
-}
 
 #[test]
 fn tuple_item_lookup_mapped_type_expands_compact_string_key() {
