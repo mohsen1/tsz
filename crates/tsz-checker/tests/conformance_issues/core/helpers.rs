@@ -1253,8 +1253,10 @@ vs1 = vs12;
         "Expected direct alias assignment to preserve the alias surface, got: {diagnostics:?}"
     );
     assert!(
-        ts2322.iter().any(|message| message
-            .contains("Type 'Shape<1 | 2>' is not assignable to type 'Shape<1>'.")),
+        ts2322
+            .iter()
+            .any(|message| message
+                .contains("Type 'Shape<1 | 2>' is not assignable to type 'Shape<1>'.")),
         "Expected object alias assignment to preserve the object alias surface, got: {diagnostics:?}"
     );
 }
