@@ -5,6 +5,14 @@ use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
+fn starts_with_keyword_token(text: &str, keyword: &str) -> bool {
+    text.strip_prefix(keyword).is_some_and(|tail| {
+        tail.chars()
+            .next()
+            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+    })
+}
+
 impl<'a> Printer<'a> {
     pub(super) const fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
         self.pending_source_pos.take()
@@ -1387,26 +1395,32 @@ impl<'a> Printer<'a> {
         if pos >= bytes.len() || bytes[pos] == b'\n' || bytes[pos] == b'\r' || bytes[pos] == b';' {
             return false;
         }
-        // Check if the next token is a keyword that `declare` should modify
+        // Check if the next token is a keyword that `declare` should modify.
+        // Prefix matches such as `interfaceX` are ordinary identifiers and must
+        // keep the preceding `declare;` expression in recovery emit.
         let remaining = &text[pos..];
-        remaining.starts_with("import")
-            || remaining.starts_with("export")
-            || remaining.starts_with("declare")
-            || remaining.starts_with("function")
-            || remaining.starts_with("class")
-            || remaining.starts_with("abstract")
-            || remaining.starts_with("interface")
-            || remaining.starts_with("type")
-            || remaining.starts_with("enum")
-            || remaining.starts_with("namespace")
-            || remaining.starts_with("module")
-            || remaining.starts_with("var")
-            || remaining.starts_with("let")
-            || remaining.starts_with("const")
-            || remaining.starts_with("async")
-            || remaining.starts_with("await")
-            || remaining.starts_with("using")
-            || remaining.starts_with("global")
+        [
+            "import",
+            "export",
+            "declare",
+            "function",
+            "class",
+            "abstract",
+            "interface",
+            "type",
+            "enum",
+            "namespace",
+            "module",
+            "var",
+            "let",
+            "const",
+            "async",
+            "await",
+            "using",
+            "global",
+        ]
+        .iter()
+        .any(|keyword| starts_with_keyword_token(remaining, keyword))
     }
 
     /// Check if a module/namespace has any value-producing (instantiated) members.
