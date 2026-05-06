@@ -236,6 +236,9 @@ pub struct CompilerOptions {
     /// Disable emitting helper declarations.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit_helpers: Option<bool>,
+    /// Emit more compliant iteration lowering for ES5/ES3 targets.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub downlevel_iteration: Option<bool>,
     /// Disable emitting comments.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub remove_comments: Option<bool>,
@@ -724,6 +727,7 @@ pub fn resolve_compiler_options(
     }
     if let Some(import_helpers) = options.import_helpers {
         resolved.import_helpers = import_helpers;
+        resolved.printer.import_helpers = import_helpers;
     }
     if let Some(allow_arbitrary_extensions) = options.allow_arbitrary_extensions {
         resolved.allow_arbitrary_extensions = allow_arbitrary_extensions;
@@ -925,6 +929,14 @@ pub fn resolve_compiler_options(
     if let Some(no_emit_helpers) = options.no_emit_helpers {
         resolved.printer.no_emit_helpers = no_emit_helpers;
     }
+    if options.import_helpers == Some(true) {
+        // importHelpers means "import from tslib" - suppress inline helper emission.
+        resolved.printer.no_emit_helpers = true;
+    }
+
+    if let Some(downlevel_iteration) = options.downlevel_iteration {
+        resolved.printer.downlevel_iteration = downlevel_iteration;
+    }
 
     if let Some(remove_comments) = options.remove_comments {
         resolved.printer.remove_comments = remove_comments;
@@ -1091,6 +1103,7 @@ pub fn resolve_compiler_options(
 
     if let Some(preserve) = options.preserve_const_enums {
         resolved.checker.preserve_const_enums = preserve;
+        resolved.printer.preserve_const_enums = preserve;
     }
 
     if let Some(erasable) = options.erasable_syntax_only {
@@ -3508,6 +3521,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             emit_decorator_metadata,
             import_helpers,
             no_emit_helpers,
+            downlevel_iteration,
             remove_comments,
             new_line,
             allow_js,
@@ -4905,6 +4919,20 @@ mod tests {
         let config: TsConfig = serde_json::from_str(json).unwrap();
         let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
         assert!(resolved.lib_replacement);
+    }
+
+    #[test]
+    fn test_tsconfig_emit_flags_reach_printer_options() {
+        let json = r#"{"compilerOptions":{"importHelpers":true,"preserveConstEnums":true,"downlevelIteration":true}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.import_helpers);
+        assert!(resolved.printer.import_helpers);
+        assert!(resolved.printer.no_emit_helpers);
+        assert!(resolved.checker.preserve_const_enums);
+        assert!(resolved.printer.preserve_const_enums);
+        assert!(resolved.printer.downlevel_iteration);
     }
 
     #[test]
