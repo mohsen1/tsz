@@ -60,7 +60,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.in_callback_param_check = false;
         self.in_bivariant_callback_return_check = false;
 
-        if source_instantiated.type_params.is_empty()
+        if self.erase_generics
+            && source_instantiated.type_params.is_empty()
             && !target_instantiated.type_params.is_empty()
             && let Some((hoisted, replacements)) =
                 self.hoist_matching_nonlocal_type_params(&source_instantiated, &target_instantiated)
