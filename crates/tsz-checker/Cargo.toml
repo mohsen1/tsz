@@ -742,6 +742,10 @@ name = "jsx_pragma_factory_marks_imports_referenced_tests"
 path = "tests/jsx_pragma_factory_marks_imports_referenced_tests.rs"
 
 [[test]]
+name = "jsx_pragma_boundary_tests"
+path = "tests/jsx_pragma_boundary_tests.rs"
+
+[[test]]
 name = "discriminant_narrow_function_lazy_preserved_tests"
 path = "tests/discriminant_narrow_function_lazy_preserved_tests.rs"
 
