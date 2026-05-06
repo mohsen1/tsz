@@ -1151,7 +1151,11 @@ impl<'a> CheckerState<'a> {
             && annotation_text.contains('&')
             && !annotation_text.trim_start().starts_with("keyof ")
         {
-            source_str = self.format_declared_annotation_for_diagnostic(&annotation_text);
+            source_str = self
+                .declared_intersection_annotation_display_for_expression(expr_idx)
+                .unwrap_or_else(|| {
+                    self.format_declared_annotation_for_diagnostic(&annotation_text)
+                });
             source_from_annotation = true;
         }
         if self
@@ -1388,7 +1392,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let rest = &display[i + 2..];
-            if rest.starts_with('"') || rest.starts_with("true") || rest.starts_with("false") {
+            if rest.starts_with('"')
+                || rest.starts_with('\'')
+                || rest.starts_with("true")
+                || rest.starts_with("false")
+            {
                 return true;
             }
             if rest
