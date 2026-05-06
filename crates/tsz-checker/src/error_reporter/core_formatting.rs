@@ -1,9 +1,4 @@
 //! Type formatting and diagnostic anchor helpers for error reporter.
-//!
-//! Contains assignability message formatting, enum name display,
-//! missing property detection, and AST anchor resolution.
-//!
-//! Extracted from `core.rs` to keep module size manageable.
 
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_parser::parser::node::NodeAccess;
@@ -27,6 +22,16 @@ impl<'a> CheckerState<'a> {
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()
+            .with_expand_scalar_mapped_alias_applications()
+            .with_preserve_optional_parameter_surface_syntax(true);
+        formatter.format(type_id).into_owned()
+    }
+
+    pub(crate) fn format_type_for_property_receiver_message(&mut self, type_id: TypeId) -> String {
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties()
             .with_expand_scalar_mapped_alias_applications()
             .with_preserve_optional_parameter_surface_syntax(true);
         formatter.format(type_id).into_owned()

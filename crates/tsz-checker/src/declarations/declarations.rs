@@ -1186,6 +1186,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             );
                         }
                     }
+                    if matches!(name_text, "NaN" | "Infinity") {
+                        return true;
+                    }
                 }
                 false
             }

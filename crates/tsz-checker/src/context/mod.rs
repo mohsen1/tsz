@@ -60,6 +60,9 @@ use tsz_binder::{BinderState, ModuleAugmentation};
 pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
+
+type NestedNamespaceCandidatesCache = FxHashMap<String, Vec<(usize, SymbolId)>>;
+
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
@@ -386,6 +389,16 @@ pub struct CheckerContext<'a> {
     /// This avoids repeatedly rescanning all binders for hot qualified React lookups
     /// like `React.Component`, `React.ComponentClass`, `React.ReactNode`, etc.
     pub namespace_member_resolution_cache: RefCell<FxHashMap<(String, String), Option<SymbolId>>>,
+
+    /// Per-checker positive cache for named exports resolved through `export=`.
+    /// Misses are not cached because alias-cycle state can affect failed walks.
+    pub export_equals_named_cache: RefCell<ExportEqualsNamedCache>,
+
+    /// Per-checker cache for nested namespace candidates found through namespace exports.
+    /// Keyed by `namespace_name` and stores the candidate nested namespace symbols with
+    /// their owning file index. This avoids rescanning every binder when resolving many
+    /// different members from the same nested namespace.
+    pub nested_namespace_candidates_cache: RefCell<NestedNamespaceCandidatesCache>,
 
     /// Per-checker cache for text-based entity-name resolution used by lowering.
     /// Keyed by names like `React.ReactNode` / `JSX.Element` and stores both

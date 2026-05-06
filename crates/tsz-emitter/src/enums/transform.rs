@@ -270,7 +270,7 @@ impl<'a> EnumTransformer<'a> {
                     output.push_str("[\"");
                     output.push_str(&member_name);
                     output.push_str("\"] = ");
-                    output.push_str(&f.to_string());
+                    output.push_str(&EnumValue::Float(*f).to_js_literal());
                     output.push_str("] = \"");
                     output.push_str(&member_name);
                     output.push_str("\";\n");

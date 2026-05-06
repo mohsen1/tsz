@@ -73,8 +73,13 @@ fn collect_private_auto_accessors_with_reserved(
         let base = format!("_{class_name}_{clean_name}");
         let get_var_name = make_unique_private_name(&format!("{base}_get"), used_names);
         let set_var_name = make_unique_private_name(&format!("{base}_set"), used_names);
-        let storage_name =
-            make_unique_private_name(&format!("{base}_accessor_storage"), used_names);
+        let storage_name = if printer.ctx.options.legacy_decorators {
+            used_names.insert(base.clone());
+            let storage_stem = make_unique_private_name(&base, used_names);
+            make_unique_private_name(&format!("{storage_stem}_accessor_storage"), used_names)
+        } else {
+            make_unique_private_name(&format!("{base}_accessor_storage"), used_names)
+        };
         accessors.push(PrivateAutoAccessorInfo {
             member_idx,
             name: clean_name.to_string(),
@@ -86,7 +91,7 @@ fn collect_private_auto_accessors_with_reserved(
             } else {
                 Some(prop.initializer)
             },
-            is_static: printer.arena.is_static(&prop.modifiers),
+            is_static: printer.has_effective_static_modifier_js(&prop.modifiers),
         });
     }
     accessors
@@ -1495,7 +1500,7 @@ impl<'a> Printer<'a> {
                         Vec::new()
                     };
 
-                    if self.arena.is_static(&prop.modifiers) {
+                    if self.has_effective_static_modifier_js(&prop.modifiers) {
                         // At ES2022+, static fields are emitted as `static { this.f = v; }`
                         // blocks inside the class body, not as external assignments.
                         if !needs_static_block_lowering {
@@ -1897,13 +1902,13 @@ impl<'a> Printer<'a> {
                 }) && (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32))
                 // Static fields at ES2022+ are emitted inline as `static { this.f = v; }`
                 // blocks, not deferred to external assignments.
-                && (!self.arena.is_static(&prop.modifiers)
+                && (!self.has_effective_static_modifier_js(&prop.modifiers)
                     || needs_static_block_lowering)
             {
                 // For static properties, save leading and trailing comments before
                 // skipping so they can be emitted when the initialization is moved
                 // after the class body.
-                let is_static = self.arena.is_static(&prop.modifiers);
+                let is_static = self.has_effective_static_modifier_js(&prop.modifiers);
                 if is_static {
                     let leading = self.collect_leading_comments(member_node.pos);
                     if let Some(entry) = static_field_inits
@@ -2035,10 +2040,12 @@ impl<'a> Printer<'a> {
                     // Bodyless methods are erased (abstract methods without body,
                     // overload signatures). Abstract methods WITH a body (an error
                     // in TS) are still emitted by tsc, so we must not erase them.
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_method_decl(member_node)
-                        .is_some_and(|m| m.body.is_none()),
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        self.arena.get_method_decl(member_node).is_some_and(|m| {
+                            m.body.is_none()
+                                && !self.has_recovered_declaration_trailing_comma(member_node)
+                        })
+                    }
                     // Abstract accessors without body are erased. Bodyless non-abstract
                     // accessors (error case) are kept — tsc emits them as `{}`.
                     // Abstract accessors WITH a body (error case) are also kept.
