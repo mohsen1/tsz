@@ -73,8 +73,13 @@ fn collect_private_auto_accessors_with_reserved(
         let base = format!("_{class_name}_{clean_name}");
         let get_var_name = make_unique_private_name(&format!("{base}_get"), used_names);
         let set_var_name = make_unique_private_name(&format!("{base}_set"), used_names);
-        let storage_name =
-            make_unique_private_name(&format!("{base}_accessor_storage"), used_names);
+        let storage_name = if printer.ctx.options.legacy_decorators {
+            used_names.insert(base.clone());
+            let storage_stem = make_unique_private_name(&base, used_names);
+            make_unique_private_name(&format!("{storage_stem}_accessor_storage"), used_names)
+        } else {
+            make_unique_private_name(&format!("{base}_accessor_storage"), used_names)
+        };
         accessors.push(PrivateAutoAccessorInfo {
             member_idx,
             name: clean_name.to_string(),
