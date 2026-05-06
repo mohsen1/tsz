@@ -550,7 +550,7 @@ export class Next {}
 
     assert!(
         output.contains(
-            "export declare const make: (value: string) => {\n    /** field docs */\n    field: (next: number) => void;\n    /** method docs */\n    method: any;\n};"
+            "export declare const make: (value: string) => {\n    /** field docs */\n    field: (next: number) => void;\n    /** method docs */\n    method: (next: number) => void;\n};"
         ),
         "Expected returned object literal member JSDoc to stay with members: {output}"
     );
@@ -677,6 +677,35 @@ class C {
 }
 
 #[test]
+fn test_ts_class_getter_before_setter_preserves_source_order() {
+    let output = emit_dts(
+        r#"
+const enum G {
+    B = 2,
+}
+class C {
+    get [G.B]() {
+        return true;
+    }
+    set [G.B](value: number) {}
+}
+"#,
+    );
+
+    let getter_pos = output
+        .find("get [G.B](): number;")
+        .expect("missing getter in output");
+    let setter_pos = output
+        .find("set [G.B](value: number);")
+        .expect("missing setter in output");
+
+    assert!(
+        getter_pos < setter_pos,
+        "Expected TypeScript accessor declarations to preserve source order: {output}"
+    );
+}
+
+#[test]
 fn test_computed_methods_emit_as_property_signatures() {
     let output = emit_dts(
         r#"
@@ -693,14 +722,14 @@ export class C {
 "#,
     );
 
-    // tsc emits computed methods as method signatures, not property signatures.
+    // tsc emits late-bound computed methods as property-valued function types.
     assert!(
-        output.contains("[key](): string;"),
-        "Expected computed method to use method syntax (matching tsc): {output}"
+        output.contains("[key]: () => string;"),
+        "Expected computed method to use property syntax (matching tsc): {output}"
     );
     assert!(
-        !output.contains("[key]: () => string;"),
-        "Did not expect property signature for computed method: {output}"
+        !output.contains("[key](): string;"),
+        "Did not expect method signature for late-bound computed method: {output}"
     );
     assert!(
         output.contains("regular(): number;"),

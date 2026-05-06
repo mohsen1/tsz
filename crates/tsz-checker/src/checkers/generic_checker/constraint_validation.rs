@@ -1556,8 +1556,14 @@ impl<'a> CheckerState<'a> {
             if !keys_assignable {
                 return None;
             }
-            let property_types: Vec<TypeId> =
+            let mut property_types: Vec<TypeId> =
                 shape.properties.iter().map(|prop| prop.type_id).collect();
+            if let Some(index) = &shape.string_index {
+                property_types.push(index.value_type);
+            }
+            if let Some(index) = &shape.number_index {
+                property_types.push(index.value_type);
+            }
             return match property_types.len() {
                 0 => None,
                 1 => property_types.first().copied(),

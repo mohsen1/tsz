@@ -33,7 +33,8 @@ use tsz_common::file_extensions::{
 };
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
 use super::emit::{
-    EmitOutputsContext, emit_outputs, normalize_root_dirs, normalize_type_roots, write_outputs,
+    EmitOutputsContext, OutputFile, emit_outputs, normalize_root_dirs, normalize_type_roots,
+    write_outputs,
 };
 pub(crate) use super::emit::{normalize_base_url, normalize_output_dir, normalize_root_dir};
 use super::resolution::{
@@ -1684,7 +1685,21 @@ fn compile_inner(
         })?;
         diagnostics.extend(emit_diags);
         if should_emit {
-            write_outputs(&outputs, resolved.emit_bom)?
+            let blocked_declaration_sources = declaration_emit_blocking_source_files(&diagnostics);
+            if blocked_declaration_sources.is_empty() {
+                write_outputs(&outputs, resolved.emit_bom)?
+            } else {
+                let filtered_outputs: Vec<_> = outputs
+                    .into_iter()
+                    .filter(|output| {
+                        should_write_output_after_declaration_diagnostics(
+                            output,
+                            &blocked_declaration_sources,
+                        )
+                    })
+                    .collect();
+                write_outputs(&filtered_outputs, resolved.emit_bom)?
+            }
         } else {
             // Declaration emit ran for diagnostics only (--noEmit with --declaration)
             Vec::new()
@@ -1804,6 +1819,44 @@ fn compile_inner(
         module_dep_stats: collected.module_dep_stats,
         invalidation_summaries: Vec::new(),
     })
+}
+
+fn declaration_emit_blocking_source_files(diagnostics: &[Diagnostic]) -> FxHashSet<PathBuf> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.category == DiagnosticCategory::Error
+                && is_declaration_emit_blocking_diagnostic_code(diagnostic.code)
+                && !diagnostic.file.is_empty()
+        })
+        .map(|diagnostic| normalize_path(Path::new(&diagnostic.file)))
+        .collect()
+}
+
+const fn is_declaration_emit_blocking_diagnostic_code(code: u32) -> bool {
+    matches!(
+        code,
+        diagnostic_codes::EXPORTED_VARIABLE_HAS_OR_IS_USING_NAME_FROM_EXTERNAL_MODULE_BUT_CANNOT_BE_NAMED
+    )
+}
+
+fn should_write_output_after_declaration_diagnostics(
+    output: &OutputFile,
+    blocked_sources: &FxHashSet<PathBuf>,
+) -> bool {
+    if !is_declaration_output_path(&output.path) {
+        return true;
+    }
+
+    let Some(source_path) = output.source_path.as_ref() else {
+        return blocked_sources.is_empty();
+    };
+    !blocked_sources.contains(&normalize_path(source_path))
+}
+
+fn is_declaration_output_path(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    path.ends_with(".d.ts") || path.ends_with(".d.ts.map")
 }
 
 fn normalize_ts2883_diagnostics_in_place(
@@ -3099,6 +3152,26 @@ fn validate_cli_compiler_option_diagnostics(
             cli_module_resolution_value(module_resolution).into(),
         );
     }
+    let config_options = config.and_then(|cfg| cfg.compiler_options.as_ref());
+    let cli_package_resolution_option = args.custom_conditions.is_some()
+        || args.resolve_package_json_exports == Some(true)
+        || args.resolve_package_json_imports == Some(true);
+    if cli_package_resolution_option {
+        if args.module_resolution.is_none()
+            && let Some(module_resolution) =
+                config_options.and_then(|options| options.module_resolution.as_ref())
+        {
+            compiler_options.insert(
+                "moduleResolution".to_string(),
+                module_resolution.clone().into(),
+            );
+        }
+        if args.module.is_none()
+            && let Some(module) = config_options.and_then(|options| options.module.as_ref())
+        {
+            compiler_options.insert("module".to_string(), module.clone().into());
+        }
+    }
     if let Some(always_strict) = args.always_strict {
         compiler_options.insert("alwaysStrict".to_string(), always_strict.into());
     }
@@ -3123,6 +3196,59 @@ fn validate_cli_compiler_option_diagnostics(
         compiler_options.insert(
             "outFile".to_string(),
             out_file.to_string_lossy().into_owned().into(),
+        );
+    }
+    if args.declaration {
+        compiler_options.insert("declaration".to_string(), true.into());
+    }
+    if args.emit_declaration_only {
+        compiler_options.insert("emitDeclarationOnly".to_string(), true.into());
+    }
+    if args.declaration_map {
+        compiler_options.insert("declarationMap".to_string(), true.into());
+    }
+    if args.composite {
+        compiler_options.insert("composite".to_string(), true.into());
+    }
+    if args.no_emit {
+        compiler_options.insert("noEmit".to_string(), true.into());
+    }
+    if args.allow_js {
+        compiler_options.insert("allowJs".to_string(), true.into());
+    }
+    if args.experimental_decorators {
+        compiler_options.insert("experimentalDecorators".to_string(), true.into());
+    }
+    if args.emit_decorator_metadata {
+        compiler_options.insert("emitDecoratorMetadata".to_string(), true.into());
+    }
+    if args.isolated_declarations {
+        compiler_options.insert("isolatedDeclarations".to_string(), true.into());
+    }
+    if args.verbatim_module_syntax {
+        compiler_options.insert("verbatimModuleSyntax".to_string(), true.into());
+    }
+    if let Some(resolve_package_json_exports) = args.resolve_package_json_exports {
+        compiler_options.insert(
+            "resolvePackageJsonExports".to_string(),
+            resolve_package_json_exports.into(),
+        );
+    }
+    if let Some(resolve_package_json_imports) = args.resolve_package_json_imports {
+        compiler_options.insert(
+            "resolvePackageJsonImports".to_string(),
+            resolve_package_json_imports.into(),
+        );
+    }
+    if let Some(custom_conditions) = args.custom_conditions.as_ref() {
+        compiler_options.insert(
+            "customConditions".to_string(),
+            serde_json::Value::Array(
+                custom_conditions
+                    .iter()
+                    .map(|condition| serde_json::Value::String(condition.clone()))
+                    .collect(),
+            ),
         );
     }
     if args.downlevel_iteration {

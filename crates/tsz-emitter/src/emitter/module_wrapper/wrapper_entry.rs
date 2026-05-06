@@ -1015,9 +1015,25 @@ impl<'a> Printer<'a> {
                         &mut seen,
                     );
                 }
+                let names_before_nested = names.len();
                 self.collect_system_nested_top_level_var_hoisted_names(
                     stmt_idx, &mut names, &mut seen,
                 );
+                // tsc places `env_1` IMMEDIATELY before the first
+                // nested-hoisted var (a `var` declared inside an `if` /
+                // `for` / `try` / etc. that gets hoisted to the System
+                // closure scope). Without this insertion the helper
+                // sits at the end of the var list, which produces
+                // `var z, y, env_1;` instead of tsc's
+                // `var z, env_1, y;` for sources like
+                // `using z = ...; if (false) { var y = 1; }`.
+                if has_top_level_using
+                    && seen_top_level_using
+                    && names.len() > names_before_nested
+                    && seen.insert("env_1".to_string())
+                {
+                    names.insert(names_before_nested, "env_1".to_string());
+                }
                 if has_top_level_using {
                     let needs_default_temp = (stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                         && self
