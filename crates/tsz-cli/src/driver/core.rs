@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::args::{CliArgs, Module, ModuleDetection, ModuleResolution, Target};
+use crate::args::{CliArgs, Module, ModuleDetection, ModuleResolution, NewLine, Target};
 use crate::config::{
     CompilerOptions, ModuleResolutionKind, ResolvedCompilerOptions, TsConfig,
     checker_target_from_emitter, load_tsconfig, load_tsconfig_with_diagnostics,
@@ -27,7 +27,7 @@ use tsz::lib_loader::LibFile;
 use tsz::module_resolver::ModuleResolver;
 use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
-use tsz_common::common::ModuleKind;
+use tsz_common::common::{ModuleKind, NewLineKind};
 use tsz_common::file_extensions::{
     JS_FAMILY_EXTENSIONS, JSON_EXTENSION, TS_FAMILY_EXTENSIONS, is_json_file,
 };
@@ -2607,6 +2607,12 @@ fn apply_cli_overrides_with_config_options(
     if let Some(target) = args.target {
         options.printer.target = target.to_script_target();
         options.checker.target = checker_target_from_emitter(options.printer.target);
+    }
+    if let Some(new_line) = args.new_line {
+        options.printer.new_line = match new_line {
+            NewLine::Lf => NewLineKind::LineFeed,
+            NewLine::Crlf => NewLineKind::CarriageReturnLineFeed,
+        };
     }
     if let Some(module) = args.module {
         options.printer.module = module.to_module_kind();
