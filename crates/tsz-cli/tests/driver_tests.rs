@@ -9961,6 +9961,48 @@ fn compile_missing_file_in_include_pattern_returns_error() {
 }
 
 #[test]
+fn compile_terminal_include_star_matches_direct_js_file() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true,
+            "strict": true
+          },
+          "include": ["src/*"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/a.js"),
+        r#"// @ts-check
+function takesString(value) {
+  return value.toUpperCase();
+}
+
+takesString(123);
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&18003),
+        "terminal include star should discover src/a.js instead of reporting TS18003, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&7006),
+        "discovered checked JS file should be type checked, got: {codes:?}"
+    );
+}
+
+#[test]
 fn compile_inherited_include_resolves_from_base_config_dir() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
