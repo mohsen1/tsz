@@ -4,7 +4,6 @@ use super::super::DeclarationEmitter;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
-use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn event_like_correlated_alias_return_text(
@@ -347,20 +346,16 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(type_text);
         }
 
-        let expr_idx = self.skip_parenthesized_expression(arg_idx)?;
-        let expr_node = self.arena.get(expr_idx)?;
-        if expr_node.kind == SyntaxKind::StringLiteral as u16 {
-            let literal = self.arena.get_literal(expr_node)?;
-            return Some(format!(
-                "\"{}\"",
-                super::escape_string_for_double_quote(literal.text.as_ref())
-            ));
-        }
-
-        self.preferred_expression_type_text(arg_idx)
-            .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
-            .or_else(|| self.as_const_assertion_type_text(arg_idx))
+        // Bare type-parameter inference widens literal arguments (`box(0)` ->
+        // `Box<number>`, not `Box<0>`). Keep literal-preserving paths only for
+        // explicit `as const` or local variable initializers that already carry
+        // literal types.
+        self.as_const_assertion_type_text(arg_idx)
             .or_else(|| self.local_variable_initializer_type_text(arg_idx))
+            .or_else(|| {
+                self.preferred_expression_type_text(arg_idx)
+                    .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
+            })
             .or_else(|| self.infer_fallback_type_text_at(arg_idx, 0))
     }
 }
