@@ -88,6 +88,13 @@ impl<'a> CheckerState<'a> {
                 source_str = widened;
             }
         }
+        if let Some(display) = self.object_literal_property_literal_union_alias_target_display(
+            target,
+            &target_str,
+            idx,
+        ) {
+            target_str = display;
+        }
         source_str = self.normalize_template_placeholder_spacing_for_display(&source_str);
         target_str = self.normalize_template_placeholder_spacing_for_display(&target_str);
         // When source and target have the same unqualified display name (e.g.,
