@@ -105,6 +105,63 @@ y = x;
     );
 }
 
+/// `@type {<T>(param?: T) => T | undefined}` declares its own type
+/// parameter `T` for the duration of the signature. The unresolved-leaf
+/// walker must thread `<T>` into the template-param scope before
+/// recursing into params and return — otherwise it spuriously emits
+/// TS2304 ("Cannot find name 'T'") for every reference to `T` inside
+/// the body of the signature.
+#[test]
+fn jsdoc_type_generic_signature_introduces_local_type_params() {
+    let diags = check_js(
+        r#"/** @type {<T>(param?: T) => T | undefined} */
+function typed(param) {
+    return param;
+}
+var n = typed(1);
+"#,
+    );
+    let unresolved_t: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2304 && d.message.contains("'T'"))
+        .collect();
+    assert!(
+        unresolved_t.is_empty(),
+        "Expected no TS2304 for generic-signature-local `T`, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Variant: nested generic parameters and an `extends` constraint must
+/// also count toward the local scope. Only the parameter *name* gets
+/// added (we deliberately don't parse the constraint expression — that
+/// path stays intentionally unhandled in the diagnostic walker).
+#[test]
+fn jsdoc_type_generic_signature_with_constraint_no_ts2304() {
+    let diags = check_js(
+        r#"/** @type {<K extends string>(key: K) => K} */
+function get(key) {
+    return key;
+}
+"#,
+    );
+    let unresolved_k: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2304 && d.message.contains("'K'"))
+        .collect();
+    assert!(
+        unresolved_k.is_empty(),
+        "Expected no TS2304 for `<K extends string>(key: K) => K`, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// `@type {string[]}` with compatible assignment should produce no errors.
 #[test]
 fn jsdoc_type_array_suffix_compatible_no_error() {
@@ -417,15 +474,22 @@ fn jsdoc_nongeneric_instantiation_reports_ts2315_and_ts2304() {
 /**
  * @param {Void<Missing>} c
  * @param {<T>(m: Boolean<T>) => string} fn
+ * @param {fn<T>} callback
  */
-function sample(c, fn) {
-  return fn(c);
+function sample(c, fn, callback) {
+  return fn(c) || callback;
 }
+
+function fn() {}
 "#,
     );
 
     let ts2315 = diags.iter().filter(|d| d.code == 2315).count();
-    let ts2304 = diags.iter().filter(|d| d.code == 2304).count();
+    let ts2304_messages = diags
+        .iter()
+        .filter(|d| d.code == 2304)
+        .map(|d| d.message.as_str())
+        .collect::<Vec<_>>();
 
     assert!(
         ts2315 >= 2,
@@ -436,8 +500,16 @@ function sample(c, fn) {
             .collect::<Vec<_>>()
     );
     assert!(
-        ts2304 >= 1,
+        ts2304_messages.contains(&"Cannot find name 'T'."),
         "Expected at least one TS2304 diagnostic for unresolved JSDoc type arguments, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !ts2304_messages.contains(&"Cannot find name 'fn<T>'."),
+        "Known function values should suppress the full-name TS2304 while preserving argument diagnostics, got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, &d.message))

@@ -279,8 +279,10 @@ impl<'a> Printer<'a> {
             self.emit_pending_object_rest_param_preamble(false);
         }
 
+        let block_scoped_private_byte_offset =
+            Some((self.writer.len(), self.writer.current_line()));
         let hoisted_var_byte_offset = if is_function_body_block {
-            Some((self.writer.len(), self.writer.current_line()))
+            block_scoped_private_byte_offset
         } else {
             None
         };
@@ -511,6 +513,19 @@ impl<'a> Printer<'a> {
                 );
                 self.writer.insert_line_at(byte_offset, line_no, &var_decl);
             }
+        }
+
+        if let Some((byte_offset, line_no)) = block_scoped_private_byte_offset
+            && !self.block_scoped_private_temps.is_empty()
+        {
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let let_decl = format!(
+                "{}let {};",
+                indent,
+                self.block_scoped_private_temps.join(", ")
+            );
+            self.writer.insert_line_at(byte_offset, line_no, &let_decl);
+            self.block_scoped_private_temps.clear();
         }
 
         // Close the block-level using try/catch/finally if active

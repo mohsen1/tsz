@@ -648,6 +648,40 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
+    /// Conservative AST-side check for concrete array/tuple rest element forms
+    /// whose lowered type may still be an application, e.g. `...Array<T>`.
+    pub(super) fn ast_kind_is_obviously_array_or_tuple(
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::ARRAY_TYPE || k == syntax_kind_ext::TUPLE_TYPE => true,
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let Some(type_ref) = arena.get_type_ref(node) else {
+                    return false;
+                };
+                let has_type_args = type_ref
+                    .type_arguments
+                    .as_ref()
+                    .is_some_and(|args| !args.nodes.is_empty());
+                if !has_type_args {
+                    return false;
+                }
+                let Some(name_node) = arena.get(type_ref.type_name) else {
+                    return false;
+                };
+                let Some(ident) = arena.get_identifier(name_node) else {
+                    return false;
+                };
+                matches!(ident.escaped_text.as_str(), "Array" | "ReadonlyArray")
+            }
+            _ => false,
+        }
+    }
+
     /// Check if a resolved type is an array or tuple type (concrete, not a type parameter).
     /// Used by TS1265/TS1266 checks to distinguish concrete rest elements from variadic
     /// type parameter spreads. Only concrete array/tuple rest elements are subject to

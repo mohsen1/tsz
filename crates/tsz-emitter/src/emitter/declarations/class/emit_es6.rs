@@ -93,6 +93,45 @@ fn collect_private_auto_accessors_with_reserved(
 }
 
 impl<'a> Printer<'a> {
+    fn class_expression_is_in_loop_body(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        while let Some(ext) = self.arena.get_extended(current) {
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+
+            let Some(current_node) = self.arena.get(current) else {
+                return false;
+            };
+            let Some(parent_node) = self.arena.get(parent) else {
+                return false;
+            };
+
+            if current_node.kind == syntax_kind_ext::BLOCK
+                && (parent_node.kind == syntax_kind_ext::FOR_STATEMENT
+                    || parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                    || parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                    || parent_node.kind == syntax_kind_ext::WHILE_STATEMENT
+                    || parent_node.kind == syntax_kind_ext::DO_STATEMENT)
+            {
+                return true;
+            }
+
+            if parent_node.kind == syntax_kind_ext::SOURCE_FILE
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            {
+                return false;
+            }
+
+            current = parent;
+        }
+
+        false
+    }
+
     fn is_reserved_private_constructor_name(name: &str) -> bool {
         name == "constructor"
     }
@@ -707,11 +746,13 @@ impl<'a> Printer<'a> {
                 // Hoist private field vars to the top of the scope (after "use strict"
                 // and CJS preamble), matching tsc behavior. tsc emits all private field
                 // WeakMap/method vars before the first class in the scope.
-                // NOTE: For class expressions in loop bodies, tsc uses block-scoped `let`
-                // instead of `var` hoisting. This is a known limitation - we always use
-                // `var` for now, which is semantically equivalent since the comma expression
-                // reassigns new WeakMaps each iteration.
-                self.hoisted_assignment_temps.extend(var_names);
+                if node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    && self.class_expression_is_in_loop_body(_idx)
+                {
+                    self.block_scoped_private_temps.extend(var_names);
+                } else {
+                    self.hoisted_assignment_temps.extend(var_names);
+                }
             }
 
             // Set up the private field map for expression lowering

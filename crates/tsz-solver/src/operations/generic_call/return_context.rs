@@ -422,6 +422,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             } else {
                 for (i, source_param) in source_fn.params.iter().enumerate() {
                     if source_param.rest {
+                        if let Some(target_param) = target_fn.params.get(i)
+                            && target_param.rest
+                            && i + 1 == target_fn.params.len()
+                        {
+                            self.collect_return_context_substitution(
+                                source_param.type_id,
+                                target_param.type_id,
+                                tracked_type_params,
+                                substitution,
+                                visited,
+                            );
+                            break;
+                        }
                         // Source has a rest parameter — collect remaining target
                         // params into a tuple so `Args` infers as e.g. `[string]`
                         // instead of `string`.
@@ -431,7 +444,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 type_id: p.type_id,
                                 name: p.name,
                                 optional: p.optional,
-                                rest: false,
+                                rest: p.rest,
                             })
                             .collect();
                         if !remaining.is_empty() {

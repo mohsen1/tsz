@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 struct TempDir {
     path: PathBuf,
@@ -82,6 +82,42 @@ fn list_files_only_accepts_bare_relative_project_config_path() {
 }
 
 #[test]
+fn list_files_only_resolve_json_module_does_not_list_unimported_json_roots() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("listfiles_resolve_json_no_json_roots").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true,"noLib":true,"resolveJsonModule":true,"module":"node16","moduleResolution":"node16","types":[]},"include":["**/*"]}"#,
+    );
+    write_file(&temp.path.join("app.ts"), "export const x = 1;\n");
+    write_file(&temp.path.join("data.json"), "{ not valid json }\n");
+
+    let output = Command::new(tsz_bin)
+        .args(["--pretty", "false", "--listFilesOnly"])
+        .current_dir(&temp.path)
+        .output()
+        .expect("run tsz --listFilesOnly");
+
+    let stdout = normalize_output(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize_output(&String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "tsz --listFilesOnly should succeed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("app.ts"),
+        "expected discovered TS file in stdout, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("data.json"),
+        "unimported JSON matched by include should not be listed, got:\n{stdout}"
+    );
+}
+
+#[test]
 fn trace_resolution_prints_relative_import_resolution() {
     let Some(tsz_bin) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");
@@ -133,6 +169,60 @@ fn trace_resolution_prints_relative_import_resolution() {
             && stdout.contains("dep.ts'. ========"),
         "expected trace to include successful module resolution, got:\n{stdout}"
     );
+}
+
+#[test]
+fn positional_file_no_lib_no_emit_returns_from_binary() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("positional_no_lib_no_emit").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "const x = 1;\n");
+
+    let mut child = Command::new(tsz_bin)
+        .args(["a.ts", "--noLib", "--noEmit", "--pretty", "false"])
+        .current_dir(&temp.path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tsz positional compile");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if child
+            .try_wait()
+            .expect("poll tsz positional compile")
+            .is_some()
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let output = child.wait_with_output().expect("collect killed tsz output");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            panic!("tsz positional compile timed out\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    let output = child
+        .wait_with_output()
+        .expect("collect tsz positional compile output");
+    let stdout = normalize_output(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize_output(&String::from_utf8_lossy(&output.stderr));
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "expected diagnostics-with-no-emit exit\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("error TS2318: Cannot find global type 'Array'."),
+        "expected noLib missing global diagnostics, got:\n{stdout}"
+    );
+    assert!(stderr.is_empty(), "expected no stderr, got:\n{stderr}");
 }
 
 #[test]
@@ -2459,6 +2549,31 @@ fn deprecated_target_es5_accepted() {
     assert!(
         !output.contains("TS6046"),
         "Deprecated --target es5 should not produce TS6046: {output}"
+    );
+}
+
+#[test]
+fn removed_target_es3_reports_ts5108() {
+    let temp = TempDir::new("removed_es3").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "let x: string = 1;\n");
+    let (_code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit", "--pretty", "false", "--target", "ES3", "test.ts",
+        ],
+    )
+    .expect("tsz binary not found");
+    assert!(
+        output.contains("TS5108"),
+        "Removed --target ES3 should produce TS5108: {output}"
+    );
+    assert!(
+        output.contains("Option 'target=ES3' has been removed"),
+        "Removed --target ES3 should use the removed-value diagnostic: {output}"
+    );
+    assert!(
+        !output.contains("TS6046"),
+        "Removed --target ES3 should not be rejected as an invalid enum value: {output}"
     );
 }
 

@@ -246,6 +246,7 @@ pub(crate) struct TempScopeState {
     pub(crate) preallocated_logical_assignment_value_temps: VecDeque<String>,
     pub(crate) hoisted_assignment_value_temps: Vec<String>,
     pub(crate) hoisted_assignment_temps: Vec<String>,
+    pub(crate) block_scoped_private_temps: Vec<String>,
     pub(crate) hoisted_for_of_temps: Vec<String>,
 }
 
@@ -528,6 +529,10 @@ pub struct Printer<'a> {
     /// Temp variable names that need to be hoisted to the top of the current scope
     /// as `var _a, _b, ...;`. Used for assignment targets in helper expressions.
     pub(crate) hoisted_assignment_temps: Vec<String>,
+
+    /// Private-name backing temps that must be recreated for each block iteration.
+    /// Class expressions in loop bodies use `let` declarations in the loop block.
+    pub(crate) block_scoped_private_temps: Vec<String>,
 
     /// Temp variable names for CJS/AMD exported destructuring patterns.
     /// These are emitted as `var _a, _b;` BEFORE the `__esModule` marker,
@@ -947,6 +952,7 @@ impl<'a> Printer<'a> {
             preallocated_logical_assignment_value_temps: VecDeque::new(),
             preallocated_assignment_temps: VecDeque::new(),
             hoisted_assignment_temps: Vec::new(),
+            block_scoped_private_temps: Vec::new(),
             cjs_destructuring_export_temps: Vec::new(),
             system_empty_binding_temps: FxHashMap::default(),
             cjs_destr_hoist_byte_offset: 0,

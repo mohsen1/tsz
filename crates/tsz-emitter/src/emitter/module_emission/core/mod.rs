@@ -1781,6 +1781,61 @@ impl<'a> Printer<'a> {
         )
     }
 
+    /// Returns true when `target_idx` is a simple identifier that resolves
+    /// at the source-file top level to an `interface` or `type` alias
+    /// declaration. Used by the script-mode `import x = T` preservation
+    /// rule: tsc emits `var x = T;` (broken at runtime) for these cases
+    /// while still eliding alias targets that resolve to non-instantiated
+    /// namespaces or qualified-name chains.
+    pub(in crate::emitter) fn identifier_target_is_interface_or_type_alias(
+        &self,
+        target_idx: NodeIndex,
+    ) -> bool {
+        let Some(target_node) = self.arena.get(target_idx) else {
+            return false;
+        };
+        if !target_node.is_identifier() {
+            return false;
+        }
+        let name = self.get_identifier_text_idx(target_idx);
+        if name.is_empty() {
+            return false;
+        }
+        for stmt_idx in self.scope_statements_for_runtime_lookup(None) {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let inner = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.arena
+                    .get_export_decl(stmt_node)
+                    .and_then(|export| self.arena.get(export.export_clause))
+            } else {
+                Some(stmt_node)
+            };
+            let Some(inner) = inner else {
+                continue;
+            };
+            match inner.kind {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    if let Some(decl) = self.arena.get_interface(inner)
+                        && self.get_identifier_text_idx(decl.name) == name
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    if let Some(decl) = self.arena.get_type_alias(inner)
+                        && self.get_identifier_text_idx(decl.name) == name
+                    {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Check if we should emit the __esModule marker.
     /// Returns true if the file contains any ES6 module syntax (import/export),
     /// excluding `export =` which is legacy `CommonJS`.

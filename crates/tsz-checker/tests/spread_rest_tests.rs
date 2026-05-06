@@ -1444,6 +1444,22 @@ type T2 = [...Array<string>, ...number[]];
     );
 }
 
+#[test]
+fn test_ts1265_rest_after_rest_array_type_references() {
+    let source = r#"
+type T1 = [...string[], ...number[]];
+type T2 = [...string[], ...Array<number>];
+type T3 = [...Array<string>, ...number[]];
+type T4 = [...Array<string>, ...Array<number>];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
+    assert_eq!(
+        ts1265_count, 4,
+        "Expected TS1265 for every concrete rest after rest, got {ts1265_count}: {diagnostics:?}"
+    );
+}
+
 /// TS1265 should NOT fire for variadic type parameter spreads like [...T, ...U, ...V].
 #[test]
 fn test_ts1265_not_emitted_for_variadic_type_param_spreads() {
