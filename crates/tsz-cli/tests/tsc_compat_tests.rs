@@ -82,6 +82,42 @@ fn list_files_only_accepts_bare_relative_project_config_path() {
 }
 
 #[test]
+fn list_files_only_resolve_json_module_does_not_list_unimported_json_roots() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("listfiles_resolve_json_no_json_roots").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true,"noLib":true,"resolveJsonModule":true,"module":"node16","moduleResolution":"node16","types":[]},"include":["**/*"]}"#,
+    );
+    write_file(&temp.path.join("app.ts"), "export const x = 1;\n");
+    write_file(&temp.path.join("data.json"), "{ not valid json }\n");
+
+    let output = Command::new(tsz_bin)
+        .args(["--pretty", "false", "--listFilesOnly"])
+        .current_dir(&temp.path)
+        .output()
+        .expect("run tsz --listFilesOnly");
+
+    let stdout = normalize_output(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize_output(&String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "tsz --listFilesOnly should succeed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("app.ts"),
+        "expected discovered TS file in stdout, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("data.json"),
+        "unimported JSON matched by include should not be listed, got:\n{stdout}"
+    );
+}
+
+#[test]
 fn trace_resolution_prints_relative_import_resolution() {
     let Some(tsz_bin) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");
