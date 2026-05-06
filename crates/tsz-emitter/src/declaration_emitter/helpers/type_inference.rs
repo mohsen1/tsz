@@ -348,29 +348,33 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.emit_type_node_text_from_arena(source_arena, type_annotation))
         }?;
         let type_text = if std::ptr::eq(source_arena, self.arena) {
-            if printed.as_deref().is_some_and(|printed| printed != "any")
-                && let Some(raw_type_text) = self.local_type_annotation_text(type_annotation)
-                && Self::type_text_starts_with_string_intrinsic(&raw_type_text)
-            {
-                raw_type_text
-            } else {
-                match printed {
-                    Some(printed)
-                        if printed != "any"
-                            && (!printed.contains("any") || type_text.contains("any"))
+            match printed {
+                Some(printed) if printed != "any" => {
+                    if let Some(raw_type_text) = self.local_type_annotation_text(type_annotation) {
+                        if Self::type_text_starts_with_string_intrinsic(&raw_type_text) {
+                            raw_type_text
+                        } else if (!printed.contains("any") || type_text.contains("any"))
                             && printed.contains("typeof ")
-                            && !type_text.contains("typeof ") =>
+                            && !type_text.contains("typeof ")
+                        {
+                            printed.replace("typeof ", "")
+                        } else if !printed.contains("any") || type_text.contains("any") {
+                            printed
+                        } else {
+                            type_text
+                        }
+                    } else if (!printed.contains("any") || type_text.contains("any"))
+                        && printed.contains("typeof ")
+                        && !type_text.contains("typeof ")
                     {
                         printed.replace("typeof ", "")
-                    }
-                    Some(printed)
-                        if printed != "any"
-                            && (!printed.contains("any") || type_text.contains("any")) =>
-                    {
+                    } else if !printed.contains("any") || type_text.contains("any") {
                         printed
+                    } else {
+                        type_text
                     }
-                    _ => type_text,
                 }
+                _ => type_text,
             }
         } else {
             let rewritten = self.qualify_foreign_imported_names_in_text(source_arena, &type_text);
