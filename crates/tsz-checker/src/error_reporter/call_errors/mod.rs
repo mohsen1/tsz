@@ -17,3 +17,7 @@ mod call_errors_binding_patterns;
 #[cfg(test)]
 #[path = "../call_errors_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../call_errors_overload_tests.rs"]
+mod overload_tests;
