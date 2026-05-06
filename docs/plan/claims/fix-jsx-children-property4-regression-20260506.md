@@ -3,7 +3,7 @@
 - **Date**: 2026-05-06
 - **Branch**: `fix/jsx-children-property4-regression-20260506-170500`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: implemented
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
@@ -16,9 +16,15 @@ align the JSX children diagnostics without changing the diagnostic code set.
 
 ## Files Touched
 
-- TBD after investigation.
+- `crates/tsz-checker/src/checkers/jsx/children.rs`
+- `crates/tsz-checker/tests/jsx_component_attribute_tests.rs`
+- `crates/tsz-solver/src/caches/db.rs`
+- `crates/tsz-solver/src/caches/query_cache.rs`
+- `crates/tsz-solver/src/intern/core/interner.rs`
 
 ## Verification
 
-- Focused Rust regression in the owning JSX checker path.
+- `cargo fmt --check`
+- `CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=.target/nextest-local cargo nextest run -p tsz-checker --test jsx_component_attribute_tests -E 'test(jsx_react_multiple_render_prop_children_ts2322_message_preserves_react_child_alias)'`
 - `./scripts/conformance/conformance.sh run --filter "checkJsxChildrenProperty4" --verbose`
+- Pre-commit hook: clippy, wasm rustc warning gate, architecture guardrails, and 21,723 nextest tests passed.
