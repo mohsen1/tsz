@@ -7,10 +7,10 @@
 use crate::span::Span;
 use std::path::{Component, Path, PathBuf};
 
-use super::{COULD_NOT_FIND_DECLARATION_FILE, FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS};
+use super::COULD_NOT_FIND_DECLARATION_FILE;
 
 /// Collapse `.` and `..` segments without touching the filesystem so the
-/// path embedded in TS7016/TS6504 messages doesn't carry the join leftovers
+/// path embedded in TS7016 messages doesn't carry the join leftovers
 /// (e.g. `<containing_dir>/./node_modules/foo/index.js`). tsc canonicalizes
 /// the path before formatting; matching that is required for fingerprint
 /// parity in the conformance harness.
@@ -138,33 +138,29 @@ impl ModuleLookupResult {
         }
     }
 
-    /// Untyped JS module found. Marks as resolved; error only if `noImplicitAny`.
+    /// Untyped JS module found via probing after the primary resolver failed.
     ///
-    /// Local JS files use TS6504, while JS from `node_modules` keeps TS7016.
+    /// Always reports TS7016 ("Could not find a declaration file for module
+    /// '<spec>'. '<resolved>' implicitly has an 'any' type.") when
+    /// `noImplicitAny` is enabled — matching tsc, which only uses TS6504 for
+    /// JavaScript *root files*, never for imported JS modules. We mark the
+    /// specifier as resolved (so TS2307 is suppressed and the import binds as
+    /// `any`) but do not add the JS file to the program when `allowJs` is
+    /// disabled — the CLI's program-level TS6504 path applies to roots only.
     pub fn untyped_js(js_path: PathBuf, no_implicit_any: bool, specifier: &str) -> Self {
         Self {
             resolved_path: None,
             resolved_using_ts_extension: false,
             treat_as_resolved: true,
             error: if no_implicit_any {
-                if js_path.to_string_lossy().contains("node_modules") {
-                    Some(ModuleLookupError {
-                        code: COULD_NOT_FIND_DECLARATION_FILE,
-                        message: format!(
-                            "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
-                            specifier,
-                            normalize_display_path(&js_path).display()
-                        ),
-                    })
-                } else {
-                    Some(ModuleLookupError {
-                        code: FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS,
-                        message: format!(
-                            "File '{}' is a JavaScript file. Did you mean to enable the 'allowJs' option?",
-                            normalize_display_path(&js_path).display()
-                        ),
-                    })
-                }
+                Some(ModuleLookupError {
+                    code: COULD_NOT_FIND_DECLARATION_FILE,
+                    message: format!(
+                        "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
+                        specifier,
+                        normalize_display_path(&js_path).display()
+                    ),
+                })
             } else {
                 None
             },

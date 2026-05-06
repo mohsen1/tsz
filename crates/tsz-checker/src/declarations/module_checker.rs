@@ -169,20 +169,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Suppress TS2792/TS2307 for System/AMD modules and classic resolution.
-        // tsc does not report module-not-found errors for non-relative specifiers
-        // under these module kinds — the runtime handles module loading.
-        {
-            let module_kind = self.ctx.compiler_options.module;
-            let is_system_or_amd = matches!(
-                module_kind,
-                tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
-            );
-            if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
-                self.ctx.import_resolution_stack.pop();
-                return;
-            }
-        }
+        // tsc still reports TS2792/TS2307 for unresolved re-export specifiers
+        // under AMD/System/classic-resolution (issue #3077). The deprecation
+        // noise (TS5107) those modes emit is additive, not a substitute.
 
         // Emit module-not-found diagnostic for unresolved export specifiers.
         // Unlike imports, tsc reports these per re-export site, so we must not

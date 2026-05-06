@@ -1213,18 +1213,12 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
-                // Suppress TS2792/TS2307/TS2882 for System/AMD modules and classic resolution.
-                // tsc conformance tests expect no module-not-found errors for these cases -
-                // the module resolution behavior differs from Node16/NodeNext resolution.
-                let module_kind = self.ctx.compiler_options.module;
-                let is_system_or_amd = matches!(
-                    module_kind,
-                    tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
-                );
-                if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
-                    self.ctx.import_resolution_stack.pop();
-                    return;
-                }
+                // tsc still reports TS2792/TS2307 for unresolved value imports
+                // under `module: amd|system` and classic `moduleResolution`
+                // (issue #3077). The deprecation noise (TS5107) those modes
+                // emit is a separate, additive diagnostic — not a substitute
+                // for missing-module reporting — so we don't short-circuit the
+                // resolution-failure path on module/resolution kind alone.
 
                 // Side-effect imports use TS2882 instead of TS2307/TS2792,
                 // but only when noUncheckedSideEffectImports is enabled.
@@ -1612,18 +1606,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Suppress TS2792/TS2307/TS2882 for System/AMD modules and classic resolution.
-        // tsc conformance tests expect no module-not-found errors for these cases -
-        // the module resolution behavior differs from Node16/NodeNext resolution.
-        let module_kind = self.ctx.compiler_options.module;
-        let is_system_or_amd = matches!(
-            module_kind,
-            tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
-        );
-        if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
-            self.ctx.import_resolution_stack.pop();
-            return;
-        }
+        // AMD/System/classic-resolution still emit TS2792 here too
+        // (issue #3077). See the matching note at the resolution-error branch
+        // above; the fallback path falls through to TS2792 via
+        // `module_not_found_diagnostic_for_site`.
 
         tracing::trace!(%module_name, "check_import_declaration: fallback - emitting module-not-found error");
 

@@ -1026,11 +1026,10 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let module_kind = self.ctx.compiler_options.module;
-            let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
-            if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
-                return;
-            }
+            // AMD/System/classic-resolution still emit TS2792/TS2307 for
+            // unresolved `import = require(...)` calls (issue #3077). The
+            // deprecation diagnostic for those modes is additive, not a
+            // substitute.
             let mut error_code = error.code;
             let mut error_message = error.message.clone();
             if error_code
@@ -1062,11 +1061,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let module_kind = self.ctx.compiler_options.module;
-        let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
-        if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
-            return;
-        }
+        // tsc still reports the missing-module diagnostic under AMD/System/
+        // classic-resolution (issue #3077); the helper picks TS2792 vs TS2307
+        // based on whether nodenext would actually have helped.
         if self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
             return;
         }
