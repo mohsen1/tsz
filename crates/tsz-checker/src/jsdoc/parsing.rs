@@ -16,6 +16,12 @@ impl<'a> CheckerState<'a> {
     // Low-level nesting-aware string splitting
     // -----------------------------------------------------------------
 
+    pub(crate) fn jsdoc_balanced_braced_type_expr(rest: &str) -> Option<&str> {
+        let rest = rest.trim_start();
+        let (type_expr, _) = Self::parse_jsdoc_curly_type_expr(rest)?;
+        Some(type_expr.trim())
+    }
+
     /// Find the first occurrence of a character at the top level.
     pub(crate) fn find_top_level_char(s: &str, target: char) -> Option<usize> {
         let mut angle_depth = 0u32;
@@ -895,10 +901,7 @@ impl<'a> CheckerState<'a> {
                 }
                 if let Some(rest) = Self::strip_jsdoc_return_tag_prefix(line) {
                     let rest = rest.trim();
-                    if rest.starts_with('{')
-                        && let Some(end) = rest[1..].find('}')
-                    {
-                        let type_expr = rest[1..1 + end].trim();
+                    if let Some(type_expr) = Self::jsdoc_balanced_braced_type_expr(rest) {
                         let predicate =
                             Self::jsdoc_returns_type_predicate_from_type_expr(type_expr);
                         if let Some(ref mut cb) = current_info.callback {
@@ -1013,8 +1016,29 @@ impl<'a> CheckerState<'a> {
                     .next()
                     .unwrap_or("")
                     .to_string();
-                if before_from.starts_with('{') && before_from.ends_with('}') {
-                    let inner = &before_from[1..before_from.len() - 1];
+                // Combined default + named: `Foo, { Bar, Baz as Q } from "mod"`.
+                // Split off the default name before the `, {` and parse each
+                // half independently so both Foo and the named list are
+                // registered.
+                let combined_default_named = (|| {
+                    let comma_idx = before_from.find(',')?;
+                    let default_part = before_from[..comma_idx].trim();
+                    let named_part = before_from[comma_idx + 1..].trim();
+                    if !named_part.starts_with('{') || !named_part.ends_with('}') {
+                        return None;
+                    }
+                    if default_part.is_empty()
+                        || default_part.contains(char::is_whitespace)
+                        || default_part.contains('{')
+                    {
+                        return None;
+                    }
+                    Some((default_part.to_string(), named_part.to_string()))
+                })();
+                let push_named = |results: &mut Vec<(String, String, String)>,
+                                  named_block: &str,
+                                  spec: &str| {
+                    let inner = &named_block[1..named_block.len() - 1];
                     for part in Self::split_type_args_respecting_nesting(inner) {
                         let part = part.trim();
                         if part.is_empty() {
@@ -1024,16 +1048,18 @@ impl<'a> CheckerState<'a> {
                             Self::split_jsdoc_import_as_keyword(part)
                         {
                             let imported_name = Self::normalize_jsdoc_import_name(imported_name);
-                            results.push((
-                                local_name.to_string(),
-                                specifier.clone(),
-                                imported_name,
-                            ));
+                            results.push((local_name.to_string(), spec.to_string(), imported_name));
                         } else {
                             let imported_name = Self::normalize_jsdoc_import_name(part);
-                            results.push((imported_name.clone(), specifier.clone(), imported_name));
+                            results.push((imported_name.clone(), spec.to_string(), imported_name));
                         }
                     }
+                };
+                if let Some((default_name, named_block)) = combined_default_named {
+                    results.push((default_name, specifier.clone(), "default".to_string()));
+                    push_named(&mut results, &named_block, &specifier);
+                } else if before_from.starts_with('{') && before_from.ends_with('}') {
+                    push_named(&mut results, before_from, &specifier);
                 } else if let Some(("*", ns_name)) =
                     Self::split_jsdoc_import_as_keyword(before_from)
                 {
@@ -1630,6 +1656,21 @@ mod jsdoc_tag_boundary_tests {
         let imports = CheckerState::parse_jsdoc_typedefs("@import { Foo } from \"./types\"\n");
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0].0, "Foo");
+    }
+
+    #[test]
+    fn parse_jsdoc_callback_preserves_nested_object_return_type() {
+        let typedefs = CheckerState::parse_jsdoc_typedefs(
+            "\
+@callback MakeBox
+@returns {{ value: string }}
+",
+        );
+
+        assert_eq!(typedefs.len(), 1);
+        assert_eq!(typedefs[0].0, "MakeBox");
+        let callback = typedefs[0].1.callback.as_ref().expect("callback parsed");
+        assert_eq!(callback.return_type.as_deref(), Some("{ value: string }"));
     }
 }
 

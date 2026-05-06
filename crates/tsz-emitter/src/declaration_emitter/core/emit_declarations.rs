@@ -411,90 +411,6 @@ impl<'a> DeclarationEmitter<'a> {
         self.writer.get_output().to_string()
     }
 
-    /// Emits detached copyright comments (`/*! ... */`) at the top of the .d.ts file.
-    ///
-    /// TSC preserves `/*!` comments (copyright notices) at the very start of the file
-    /// in declaration output, even when `--removeComments` is set.
-    pub(in crate::declaration_emitter) fn emit_detached_copyright_comments(
-        &mut self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) {
-        // Find the position of the first statement
-        let first_stmt_pos = source_file
-            .statements
-            .nodes
-            .first()
-            .and_then(|&idx| self.arena.get(idx))
-            .map(|n| n.pos);
-
-        for comment in &source_file.comments {
-            // Only consider comments that appear before the first statement
-            if let Some(stmt_pos) = first_stmt_pos
-                && comment.pos >= stmt_pos
-            {
-                break;
-            }
-
-            // Only preserve /*! ... */ copyright comments
-            if !comment.is_multi_line {
-                continue;
-            }
-            let text = comment.get_text(&source_file.text);
-            if !text.starts_with("/*!") {
-                continue;
-            }
-
-            self.write(text);
-            self.write_line();
-        }
-    }
-
-    /// Emits triple-slash directives at the top of the .d.ts file.
-    ///
-    /// TypeScript uses triple-slash directives for:
-    /// - File references: `/// <reference path="other.ts" />`
-    /// - Type references: `/// <reference types="node" />`
-    /// - Lib references: `/// <reference lib="es2015" />`
-    /// - AMD directives: `/// <amd-module />`, `/// <amd-dependency />`
-    ///
-    /// These must appear at the very top of the file, before any imports or declarations.
-    pub(in crate::declaration_emitter) fn emit_triple_slash_directives(
-        &mut self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) {
-        for comment in &source_file.comments {
-            let text = &source_file.text[comment.pos as usize..comment.end as usize];
-
-            // Triple-slash directives start with ///
-            if let Some(stripped) = text.strip_prefix("///") {
-                let trimmed = stripped.trim_start();
-
-                // Preserve `<amd-module>` and `<amd-dependency>` directives.
-                // Also preserve `<reference>` directives that have `preserve="true"`.
-                let should_emit = trimmed.starts_with("<amd-module")
-                    || trimmed.starts_with("<amd-dependency")
-                    || (trimmed.starts_with("<reference") && trimmed.contains("preserve=\"true\""));
-
-                if should_emit {
-                    // Normalize spacing to match tsc:
-                    // 1. Ensure space after `///`: `///<reference` → `/// <reference`
-                    // 2. Ensure space before `/>`: `/>` → ` />`
-                    let mut normalized = if !stripped.starts_with(' ') {
-                        format!("/// {}", stripped.trim_start())
-                    } else {
-                        text.to_string()
-                    };
-                    if normalized.ends_with("/>") && !normalized.ends_with(" />") {
-                        let base = &normalized[..normalized.len() - 2];
-                        normalized = format!("{base} />");
-                    }
-                    self.write(&normalized);
-                    self.write_line();
-                }
-            }
-        }
-    }
-
     pub(in crate::declaration_emitter) fn emit_statement(&mut self, stmt_idx: NodeIndex) {
         self.emit_statement_with_options(stmt_idx, false);
     }
@@ -1345,7 +1261,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         members: &tsz_parser::parser::NodeList,
     ) -> Vec<NodeIndex> {
-        if !self.source_is_js_file {
+        if !self.source_is_js_file && !self.class_members_have_computed_names(members) {
             return members.nodes.clone();
         }
 
@@ -1381,7 +1297,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         static_members.extend(constructors);
-        static_members.extend(self.js_class_instance_member_emit_order(instance_members));
+        if self.source_is_js_file {
+            static_members.extend(self.js_class_instance_member_emit_order(instance_members));
+        } else {
+            static_members.extend(instance_members);
+        }
         static_members
     }
 
@@ -1923,94 +1843,5 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_trailing_comment(prop_node_end);
         }
         self.write_line();
-    }
-
-    pub(in crate::declaration_emitter) fn rewrite_recursive_static_class_expression_type(
-        &self,
-        prop_idx: NodeIndex,
-        type_id: tsz_solver::types::TypeId,
-    ) -> String {
-        let printed = self.print_type_id(type_id);
-        let Some(prop_node) = self.arena.get(prop_idx) else {
-            return printed;
-        };
-        let Some(prop) = self.arena.get_property_decl(prop_node) else {
-            return printed;
-        };
-        let Some(property_name) = self
-            .arena
-            .get_identifier_at(prop.name)
-            .map(|ident| ident.escaped_text.clone())
-        else {
-            return printed;
-        };
-        if !self.property_initializer_is_recursive_class_expression(prop_idx, prop.initializer) {
-            return printed;
-        }
-        let Some(interner) = self.type_interner else {
-            return printed;
-        };
-        let Some(callable) = type_queries::get_callable_shape(interner, type_id) else {
-            return printed;
-        };
-        if !callable.properties.iter().any(|prop| {
-            interner.resolve_atom(prop.name) == property_name
-                && prop.type_id == tsz_solver::TypeId::ANY
-        }) {
-            return printed;
-        }
-
-        printed.replacen(
-            &format!("{property_name}: any;"),
-            &format!("{property_name}: /*elided*/ any;"),
-            1,
-        )
-    }
-
-    pub(in crate::declaration_emitter) fn property_initializer_is_recursive_class_expression(
-        &self,
-        prop_idx: NodeIndex,
-        initializer_idx: NodeIndex,
-    ) -> bool {
-        let Some(class_expr) = self.arena.get_class_at(initializer_idx) else {
-            return false;
-        };
-        let Some(enclosing_class_idx) = self
-            .arena
-            .get_extended(prop_idx)
-            .map(|extended| extended.parent)
-            .filter(|parent| {
-                self.arena
-                    .get(*parent)
-                    .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_DECLARATION)
-            })
-        else {
-            return false;
-        };
-        let Some(enclosing_class_name) = self
-            .arena
-            .get_class_at(enclosing_class_idx)
-            .and_then(|class| self.arena.get_identifier_at(class.name))
-            .map(|ident| ident.escaped_text.clone())
-        else {
-            return false;
-        };
-        let Some(heritage_clauses) = class_expr.heritage_clauses.as_ref() else {
-            return false;
-        };
-
-        heritage_clauses.nodes.iter().copied().any(|clause_idx| {
-            self.arena
-                .get_heritage_clause_at(clause_idx)
-                .filter(|heritage| heritage.token == SyntaxKind::ExtendsKeyword as u16)
-                .and_then(|heritage| heritage.types.nodes.first().copied())
-                .map(|type_idx| {
-                    self.arena
-                        .get_expr_type_args_at(type_idx)
-                        .map_or(type_idx, |expr_type_args| expr_type_args.expression)
-                })
-                .and_then(|expr_idx| self.arena.get_identifier_at(expr_idx))
-                .is_some_and(|ident| ident.escaped_text == enclosing_class_name)
-        })
     }
 }

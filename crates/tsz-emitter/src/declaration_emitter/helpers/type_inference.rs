@@ -2054,12 +2054,19 @@ impl<'a> DeclarationEmitter<'a> {
                             .or_else(|| self.call_expression_source_return_type_text(expr_idx))
                             .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
                     });
+                let reused_type_uses_function_local_alias =
+                    reused_type_text.as_deref().is_some_and(|type_text| {
+                        self.type_text_starts_with_function_local_type_alias(type_text)
+                    });
                 if reused_type_text.is_some()
                     && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
                     && type_id != tsz_solver::types::TypeId::ANY
                     && type_id != tsz_solver::types::TypeId::ERROR
-                    && self
-                        .type_contains_conditional_alias_application_for_inferred_emit(type_id, 0)
+                    && (reused_type_uses_function_local_alias
+                        || self.should_expand_named_application_for_inferred_declaration(type_id)
+                        || self.type_contains_conditional_alias_application_for_inferred_emit(
+                            type_id, 0,
+                        ))
                 {
                     return Some(self.print_type_id_for_inferred_declaration(type_id));
                 }
@@ -2070,6 +2077,9 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.nameable_new_expression_type_text(expr_idx)
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                self.class_static_computed_index_access_type_text(expr_idx)
             }
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 let ast_type_text = self.class_expression_constructor_type_text_from_ast(expr_idx);
@@ -2567,15 +2577,178 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(in crate::declaration_emitter) fn angle_bracket_const_assertion_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::TYPE_ASSERTION {
+            return None;
+        }
+
+        let assertion = self.arena.get_type_assertion(expr_node)?;
+        let asserted_type = self.arena.get(assertion.type_node)?;
+        let is_const_assertion = asserted_type.kind == SyntaxKind::ConstKeyword as u16
+            || self
+                .get_identifier_text(assertion.type_node)
+                .or_else(|| self.emit_type_node_text(assertion.type_node))
+                .as_deref()
+                == Some("const");
+        if !is_const_assertion {
+            return None;
+        }
+
+        self.const_asserted_expression_type_text(assertion.expression, self.indent_level)
+    }
+
+    fn const_asserted_expression_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                self.arena.get_parenthesized(expr_node).and_then(|paren| {
+                    self.const_asserted_expression_type_text(paren.expression, depth)
+                })
+            }
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::BigIntLiteral as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || (k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    && self.is_negative_literal(expr_node)) =>
+            {
+                self.const_literal_initializer_text(expr_idx)
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                self.const_asserted_array_literal_type_text(expr_idx, depth)
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                self.const_asserted_object_literal_type_text(expr_idx, depth)
+            }
+            _ => self
+                .get_node_type_or_names(&[expr_idx])
+                .map(|type_id| self.print_type_id_for_inferred_declaration(type_id))
+                .or_else(|| self.infer_fallback_type_text_at(expr_idx, depth)),
+        }
+    }
+
+    fn const_asserted_array_literal_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let array = self.arena.get_literal_expr(expr_node)?;
+        let mut parts = Vec::with_capacity(array.elements.nodes.len());
+
+        for &element_idx in &array.elements.nodes {
+            let element_node = self.arena.get(element_idx)?;
+            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                let spread = self.arena.get_spread(element_node)?;
+                let spread_type = self
+                    .get_node_type_or_names(&[spread.expression])
+                    .map(|type_id| self.print_type_id_for_inferred_declaration(type_id))
+                    .or_else(|| self.infer_fallback_type_text_at(spread.expression, depth + 1))
+                    .unwrap_or_else(|| "any[]".to_string());
+                parts.push(format!("...{spread_type}"));
+                continue;
+            }
+
+            parts.push(
+                self.const_asserted_expression_type_text(element_idx, depth + 1)
+                    .unwrap_or_else(|| "any".to_string()),
+            );
+        }
+
+        Some(format!("readonly [{}]", parts.join(", ")))
+    }
+
+    fn const_asserted_object_literal_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let object = self.arena.get_literal_expr(expr_node)?;
+        let mut members = Vec::new();
+
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+                return None;
+            }
+
+            let Some(name_idx) = self.object_literal_member_name_idx(member_node) else {
+                continue;
+            };
+            let name = self.object_literal_member_name_text(name_idx)?;
+            if name.is_empty() || name == ":" {
+                continue;
+            }
+
+            if let Some(method) = self.arena.get_method_decl(member_node) {
+                let type_text = self
+                    .function_expression_type_text_from_ast(member_idx)
+                    .or_else(|| {
+                        self.get_node_type_or_names(&[member_idx])
+                            .map(|type_id| self.print_type_id(type_id))
+                    })
+                    .unwrap_or_else(|| {
+                        if method.parameters.nodes.is_empty() {
+                            "() => void".to_string()
+                        } else {
+                            "any".to_string()
+                        }
+                    });
+                members.push(format!("readonly {name}: {type_text};"));
+                continue;
+            }
+
+            let Some(initializer) = self.object_literal_member_initializer(member_node) else {
+                continue;
+            };
+            let type_text = self
+                .const_asserted_expression_type_text(initializer, depth + 1)
+                .unwrap_or_else(|| "any".to_string());
+            members.push(format!("readonly {name}: {type_text};"));
+        }
+
+        if members.is_empty() {
+            return Some("{}".to_string());
+        }
+
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let closing_indent = "    ".repeat(depth as usize);
+        let lines = members
+            .into_iter()
+            .map(|member| format!("{member_indent}{member}"))
+            .collect::<Vec<_>>();
+        Some(format!("{{\n{}\n{closing_indent}}}", lines.join("\n")))
+    }
+
     fn local_asserted_type_alias_text(
         &self,
         assertion_expr_idx: NodeIndex,
         type_node_idx: NodeIndex,
     ) -> Option<String> {
         let name = self.simple_type_reference_name_text(type_node_idx)?;
-        let alias_type_node =
-            self.find_enclosing_block_type_alias_type_node(assertion_expr_idx, &name)?;
-        let alias_text = self.emit_type_node_text_normalized(alias_type_node)?;
+        let alias_decl_idx =
+            self.find_enclosing_block_type_alias_declaration(assertion_expr_idx, &name)?;
+        let alias_node = self.arena.get(alias_decl_idx)?;
+        let alias = self.arena.get_type_alias(alias_node)?;
+        let mut alias_text = self.emit_type_node_text_normalized(alias.type_node)?;
+        let substitutions = self
+            .type_alias_application_substitutions(alias.type_parameters.as_ref(), type_node_idx);
+        if !substitutions.is_empty() {
+            alias_text = Self::replace_whole_words_in_text(&alias_text, &substitutions);
+        }
         if alias_text.contains("typeof ") {
             return Some(alias_text);
         }
@@ -2591,7 +2764,10 @@ impl<'a> DeclarationEmitter<'a> {
             );
         }
 
-        None
+        alias_text
+            .trim_start()
+            .starts_with('{')
+            .then(|| Self::normalize_local_type_literal_accessor_text(&alias_text))
     }
 
     fn type_text_contains_mapped_type_literal(text: &str) -> bool {
@@ -2656,38 +2832,6 @@ impl<'a> DeclarationEmitter<'a> {
         if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
             let type_ref = self.arena.get_type_ref(type_node)?;
             return self.type_reference_name_text(type_ref.type_name);
-        }
-        None
-    }
-
-    fn find_enclosing_block_type_alias_type_node(
-        &self,
-        from_idx: NodeIndex,
-        name: &str,
-    ) -> Option<NodeIndex> {
-        let mut current_idx = from_idx;
-        while let Some(ext) = self.arena.get_extended(current_idx) {
-            let parent_idx = ext.parent;
-            if !parent_idx.is_some() {
-                return None;
-            }
-            let parent_node = self.arena.get(parent_idx)?;
-            if parent_node.kind == syntax_kind_ext::BLOCK
-                && let Some(block) = self.arena.get_block(parent_node)
-                && let Some(type_node) =
-                    block.statements.nodes.iter().copied().find_map(|stmt_idx| {
-                        let stmt_node = self.arena.get(stmt_idx)?;
-                        if stmt_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                            return None;
-                        }
-                        let alias = self.arena.get_type_alias(stmt_node)?;
-                        (self.get_identifier_text(alias.name).as_deref() == Some(name))
-                            .then_some(alias.type_node)
-                    })
-            {
-                return Some(type_node);
-            }
-            current_idx = parent_idx;
         }
         None
     }
@@ -5866,12 +6010,8 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 let data = self.arena.get_method_decl(member_node)?;
-                let type_text = if data.parameters.nodes.is_empty() {
-                    "readonly ".to_string()
-                } else {
-                    String::new()
-                };
-                Some(format!("{type_text}{name}: any"))
+                self.method_function_type_text(member_idx, data, depth)
+                    .map(|type_text| format!("{name}: {type_text}"))
             }
             _ => None,
         }
@@ -6673,6 +6813,7 @@ impl<'a> DeclarationEmitter<'a> {
         let mut has_non_emittable_computed_members = false;
         let mut synthetic_number_index_member = None;
         let mut negative_numeric_computed_names = Vec::new();
+        let mut computed_method_value_types = Vec::new();
 
         for &member_idx in &object.elements.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -6746,11 +6887,11 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             if preserve_computed_syntax {
-                // Skip methods with computed names — the solver already produces correct
-                // method signatures (e.g., `"new"(x: number): number`). Overriding them
-                // would emit a wrong property form like `"new": any`.
                 if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
-                    continue;
+                    if let Some(value_type) = Self::object_literal_property_value_type(&member_text)
+                    {
+                        computed_method_value_types.push(value_type.to_string());
+                    }
                 }
                 only_numeric_like &= Self::is_numeric_property_name_text(&name_text);
                 computed_members.push((name_text, member_text));
@@ -6812,6 +6953,18 @@ impl<'a> DeclarationEmitter<'a> {
                         return true;
                     };
                     !computed_value_types
+                        .iter()
+                        .any(|member_value_type| member_value_type == index_value_type)
+                });
+            }
+            if !computed_method_value_types.is_empty() {
+                lines.retain(|line| {
+                    let Some(index_value_type) =
+                        Self::broad_object_index_signature_value_type(line)
+                    else {
+                        return true;
+                    };
+                    !computed_method_value_types
                         .iter()
                         .any(|member_value_type| member_value_type == index_value_type)
                 });
@@ -6918,34 +7071,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         false
-    }
-
-    fn broad_object_index_signature_value_type(line: &str) -> Option<&str> {
-        let trimmed = line.trim_start();
-        let without_readonly = trimmed
-            .strip_prefix("readonly ")
-            .unwrap_or(trimmed)
-            .trim_start();
-        (without_readonly.starts_with("[x: string]:")
-            || without_readonly.starts_with("[x: number]:")
-            || without_readonly.starts_with("[x: symbol]:"))
-        .then(|| Self::object_literal_property_value_type(without_readonly))
-        .flatten()
-    }
-
-    fn object_literal_property_value_type(line: &str) -> Option<&str> {
-        let trimmed = line.trim().trim_end_matches(';').trim();
-        let without_readonly = trimmed
-            .strip_prefix("readonly ")
-            .unwrap_or(trimmed)
-            .trim_start();
-        let colon_idx = if without_readonly.starts_with('[') {
-            let bracket_end = without_readonly.find(']')?;
-            without_readonly.get(bracket_end + 1..)?.find(':')? + bracket_end + 1
-        } else {
-            without_readonly.find(':')?
-        };
-        without_readonly.get(colon_idx + 1..).map(str::trim)
     }
 
     fn is_symbol_observer_computed_property_name_text(name_text: &str) -> bool {

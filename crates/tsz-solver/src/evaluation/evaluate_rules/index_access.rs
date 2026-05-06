@@ -1114,39 +1114,44 @@ impl<'a> TupleKeyVisitor<'a> {
         get_or_init_array_member_types(&mut self.array_member_types_cache, self.db)
     }
 
-    /// Compute the fixed length of the tuple, resolving rest spreads to
-    /// fixed-length inner tuples. Returns `None` if the length is not fixed
-    /// (e.g., rest element spreads an array or variadic tuple) or exceeds
-    /// the maximum tuple size.
-    ///
-    /// Uses an iterative approach for single-rest-element tuples (the common
-    /// `[T, ...Acc]` accumulator pattern), and bounded recursion for
-    /// multi-rest tuples to prevent O(2^n) traversal of branching spreads.
-    fn fixed_length(&self) -> Option<usize> {
+    fn length_type(&self) -> Option<TypeId> {
+        let (min, max) = self.length_bounds()?;
+        if min == max {
+            return Some(self.db.literal_number(max as f64));
+        }
+
+        let members = (min..=max)
+            .map(|len| self.db.literal_number(len as f64))
+            .collect();
+        Some(self.db.union(members))
+    }
+
+    fn length_bounds(&self) -> Option<(usize, usize)> {
         const MAX_FIXED_LENGTH: usize = 1000;
 
-        let mut total = 0usize;
-        let mut current_type = None; // type_id of rest element to descend into
+        let mut min = 0usize;
+        let mut max = 0usize;
+        let mut current_type = None;
 
-        // Process current elements
         let mut rest_count = 0;
         for element in self.elements {
             if element.rest {
                 rest_count += 1;
                 if rest_count > 1 {
-                    // Multiple rest elements at same level — bail
                     return None;
                 }
                 current_type = Some(element.type_id);
             } else {
-                total += 1;
-                if total > MAX_FIXED_LENGTH {
+                if !element.optional {
+                    min += 1;
+                }
+                max += 1;
+                if max > MAX_FIXED_LENGTH {
                     return None;
                 }
             }
         }
 
-        // Iteratively descend into single-rest chains
         while let Some(rest_type_id) = current_type.take() {
             let inner_list_id = tuple_list_id(self.db, rest_type_id)?;
             let inner_elements = self.db.tuple_list(inner_list_id);
@@ -1160,29 +1165,27 @@ impl<'a> TupleKeyVisitor<'a> {
                     }
                     current_type = Some(element.type_id);
                 } else {
-                    total += 1;
-                    if total > MAX_FIXED_LENGTH {
+                    if !element.optional {
+                        min += 1;
+                    }
+                    max += 1;
+                    if max > MAX_FIXED_LENGTH {
                         return None;
                     }
                 }
             }
         }
 
-        Some(total)
+        Some((min, max))
     }
 
     /// Check for known array members (length, methods)
     fn get_array_member_kind(&self, name: &str) -> Option<ApparentMemberKind> {
         if name == "length" {
-            // For fixed-length tuples, return the literal length type (e.g., 0, 1, 2)
-            // instead of generic `number`. This handles both simple tuples and tuples
-            // with rest spreads that resolve to fixed-length inner tuples (e.g.,
-            // `[T, ...Acc]` where `Acc` is `[any, any]` → length 3).
-            // Required for patterns like `Acc["length"] extends N` in tail-recursive
-            // conditional types.
-            if let Some(len) = self.fixed_length() {
-                let literal = self.db.literal_number(len as f64);
-                return Some(ApparentMemberKind::Value(literal));
+            // Return literal tuple lengths, including optional-element ranges
+            // like `[T?]["length"]` -> `0 | 1`.
+            if let Some(length_type) = self.length_type() {
+                return Some(ApparentMemberKind::Value(length_type));
             }
             return Some(ApparentMemberKind::Value(TypeId::NUMBER));
         }
@@ -1961,8 +1964,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         elements: &[TupleElement],
         index_type: TypeId,
     ) -> TypeId {
-        // Use TupleKeyVisitor to handle the index type
-        // The visitor handles Union distribution internally via visit_union
         let mut visitor = TupleKeyVisitor::new(self.interner(), elements);
         let result = visitor.evaluate(index_type);
 
@@ -1990,11 +1991,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     pub(crate) fn evaluate_array_index(&self, elem: TypeId, index_type: TypeId) -> TypeId {
         // Use ArrayKeyVisitor to handle the index type
-        // The visitor handles Union distribution internally via visit_union
         let mut visitor = ArrayKeyVisitor::new(self.interner(), elem);
         let result = visitor.evaluate(index_type);
 
-        // Add undefined if unchecked indexed access is allowed
         self.add_undefined_if_unchecked(result)
     }
 }

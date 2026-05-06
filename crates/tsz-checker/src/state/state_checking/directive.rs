@@ -10,7 +10,8 @@ impl<'a> CheckerState<'a> {
     /// Also emits TS1084 for malformed reference directive syntax.
     pub(crate) fn check_triple_slash_references(&mut self, file_name: &str, source_text: &str) {
         use crate::triple_slash_validator::{
-            extract_reference_paths, find_malformed_reference_directives, validate_reference_path,
+            extract_reference_paths, find_malformed_reference_directives,
+            reference_path_probe_extensions, validate_reference_path,
         };
         use std::collections::HashSet;
         use std::path::Path;
@@ -51,9 +52,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let allow_js_references = self.ctx.compiler_options.allow_js || self.ctx.is_js_file();
         let has_virtual_reference = |reference_path: &str| {
             let base = source_path.parent().unwrap_or_else(|| Path::new(""));
-            if validate_reference_path(source_path, reference_path) {
+            if validate_reference_path(source_path, reference_path, allow_js_references) {
                 return true;
             }
 
@@ -70,7 +72,7 @@ impl<'a> CheckerState<'a> {
                 .and_then(|f| f.to_str())
                 .unwrap_or(reference_path);
             if !file_name_part.contains('.') {
-                for ext in [".ts", ".tsx", ".d.ts"] {
+                for ext in reference_path_probe_extensions(allow_js_references) {
                     let candidate = base.join(format!("{reference_path}{ext}"));
                     if known_files.contains(candidate.to_string_lossy().as_ref()) {
                         return true;
@@ -114,9 +116,15 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(reference_path.as_str());
                 if !file_name_part.contains('.') {
                     let extensions = unresolved_extensions.join("', '");
+                    let display_path = if reference_path.is_empty() {
+                        let resolved = source_path.parent().unwrap_or_else(|| Path::new(""));
+                        normalize_path(resolved)
+                    } else {
+                        reference_path.clone()
+                    };
                     let message = format_message(
                         "Could not resolve the path '{0}' with the extensions: '{1}'.",
-                        &[&reference_path, &extensions],
+                        &[&display_path, &extensions],
                     );
                     self.emit_error_at(
                         pos,

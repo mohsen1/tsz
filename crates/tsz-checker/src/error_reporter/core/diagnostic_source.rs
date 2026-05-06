@@ -630,38 +630,6 @@ impl<'a> CheckerState<'a> {
         Some(symbol.escaped_name.clone())
     }
 
-    fn property_receiver_application_chain_depth(&self, ty: TypeId) -> u32 {
-        let mut current = ty;
-        let mut depth = 0;
-        let mut guard = 0;
-
-        loop {
-            let application =
-                crate::query_boundaries::common::type_application(self.ctx.types, current).or_else(
-                    || {
-                        self.ctx.types.get_display_alias(current).and_then(|alias| {
-                            crate::query_boundaries::common::type_application(self.ctx.types, alias)
-                        })
-                    },
-                );
-            let Some(app) = application else {
-                break;
-            };
-
-            depth += 1;
-            guard += 1;
-            if guard > 128 {
-                break;
-            }
-            let Some(&next) = app.args.first() else {
-                break;
-            };
-            current = next;
-        }
-
-        depth
-    }
-
     pub(crate) fn format_property_receiver_type_for_diagnostic(&mut self, ty: TypeId) -> String {
         if let Some(module_name) = self.ctx.namespace_module_names.get(&ty) {
             return format!(
@@ -688,14 +656,11 @@ impl<'a> CheckerState<'a> {
         if let Some(application_display) = application_display {
             let display_ty =
                 self.normalize_property_receiver_application_display_type(application_display);
-            let elision_end_depth = self
-                .property_receiver_application_chain_depth(display_ty)
-                .saturating_sub(4);
             let mut formatter = self
                 .ctx
                 .create_diagnostic_type_formatter()
                 .with_long_property_receiver_display()
-                .with_long_property_receiver_object_elision_end_depth(elision_end_depth)
+                .with_long_property_receiver_object_elision_end_depth(192)
                 .with_display_properties()
                 .with_skip_application_alias_names();
             return Self::truncate_property_receiver_display(
@@ -996,6 +961,77 @@ impl<'a> CheckerState<'a> {
         } else {
             "undefined[]".to_string()
         })
+    }
+
+    pub(crate) fn array_literal_tuple_source_type_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        source_type: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+        let target = self.evaluate_type_for_assignability(target);
+        if !crate::query_boundaries::common::is_tuple_type(self.ctx.types, target) {
+            return None;
+        }
+
+        let literal = self.ctx.arena.get_literal_expr(node)?;
+        if !literal.elements.nodes.is_empty() {
+            let mut parts = Vec::with_capacity(literal.elements.nodes.len());
+            for element_idx in literal.elements.nodes.iter().copied() {
+                let element_node = self.ctx.arena.get(element_idx)?;
+                if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                    return None;
+                }
+                if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                    parts.push("undefined".to_string());
+                    continue;
+                }
+
+                let element_type = self.get_type_of_node(element_idx);
+                let display_type = self.widen_type_for_display(element_type);
+                parts.push(self.format_type_for_assignability_message(display_type));
+            }
+            return Some(format!("[{}]", parts.join(", ")));
+        }
+
+        self.tuple_structural_source_display(source_type, target)
+    }
+
+    pub(crate) fn tuple_structural_source_display(
+        &mut self,
+        source_type: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        let target = self.evaluate_type_for_assignability(target);
+        if !crate::query_boundaries::common::is_tuple_type(self.ctx.types, target) {
+            return None;
+        }
+        let elements = crate::query_boundaries::common::tuple_elements(self.ctx.types, source_type)
+            .or_else(|| {
+                let evaluated = self.evaluate_type_for_assignability(source_type);
+                crate::query_boundaries::common::tuple_elements(self.ctx.types, evaluated)
+            })?;
+        if elements.is_empty() {
+            return None;
+        }
+
+        let mut parts = Vec::with_capacity(elements.len());
+        for element in elements {
+            let mut part = self.format_type_for_assignability_message(element.type_id);
+            if element.optional {
+                part.push('?');
+            }
+            if element.rest {
+                part = format!("...{part}[]");
+            }
+            parts.push(part);
+        }
+        Some(format!("[{}]", parts.join(", ")))
     }
 
     pub(crate) fn object_literal_source_type_display(

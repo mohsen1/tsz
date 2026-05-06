@@ -521,10 +521,6 @@ impl<'a> Printer<'a> {
                     contains_this_reference(self.arena, *init_idx)
                         || contains_async_arrow_function(self.arena, *init_idx)
                 });
-        let static_initializer_needs_class_alias = !class_name.is_empty()
-            && static_initializer_alias_source_nodes
-                .iter()
-                .any(|idx| self.node_text_contains_identifier(*idx, &class_name));
         let private_member_def_needs_class_alias = !class_name.is_empty()
             && (private_methods.iter().any(|method| {
                 method
@@ -539,11 +535,20 @@ impl<'a> Printer<'a> {
                         .is_some_and(|body| self.node_text_contains_identifier(body, &class_name))
             }));
 
-        // Determine if we need a class alias for static private fields
         let has_static_privates = private_fields.iter().any(|f| f.is_static)
             || private_methods.iter().any(|m| m.is_static)
             || private_accessors.iter().any(|a| a.is_static)
             || private_auto_accessors.iter().any(|a| a.is_static);
+        let static_initializer_contains_class_name = !class_name.is_empty()
+            && static_initializer_alias_source_nodes
+                .iter()
+                .any(|idx| self.node_text_contains_identifier(*idx, &class_name));
+        let static_initializer_needs_class_alias = static_initializer_contains_class_name
+            && (static_initializer_needs_this_alias
+                || has_static_privates
+                || private_member_def_needs_class_alias);
+
+        // Determine if we need a class alias for static private fields.
         let class_value_alias = if has_static_privates
             || static_initializer_needs_this_alias
             || static_initializer_needs_class_alias
@@ -2391,6 +2396,7 @@ impl<'a> Printer<'a> {
             && has_any_private_lowering
             && static_initializer_class_alias.is_some()
             && (!static_field_inits.is_empty() || !deferred_static_blocks.is_empty());
+        let mut emitted_private_auto_accessors_pre_static = false;
         if emit_private_inits_before_static_elements {
             let static_private_inits = std::mem::take(&mut self.pending_static_private_inits);
             let private_class_alias_pair = self.pending_private_class_alias.take();
@@ -2398,11 +2404,18 @@ impl<'a> Printer<'a> {
             let method_defs = std::mem::take(&mut self.pending_private_method_defs);
             let accessor_defs = std::mem::take(&mut self.pending_private_accessor_defs);
             let weakmap_inits = self.pending_weakmap_inits.clone();
+            let private_auto_instance_storage_inits: Vec<String> = private_auto_accessors
+                .iter()
+                .filter(|a| !a.is_static)
+                .map(|a| format!("{} = new WeakMap()", a.storage_name))
+                .collect();
             let has_pre_static_private_inits = private_class_alias_pair.is_some()
                 || !weakmap_inits.is_empty()
                 || instances_ws.is_some()
                 || !method_defs.is_empty()
                 || !accessor_defs.is_empty()
+                || !private_auto_accessors.is_empty()
+                || !private_auto_instance_storage_inits.is_empty()
                 || !static_private_inits.is_empty();
 
             if has_pre_static_private_inits {
@@ -2427,6 +2440,13 @@ impl<'a> Printer<'a> {
                     }
                     self.write(ws_name);
                     self.write(" = new WeakSet()");
+                    first = false;
+                }
+                for init in &private_auto_instance_storage_inits {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.write(init);
                     first = false;
                 }
                 for (var_name, body_idx, params) in &method_defs {
@@ -2490,6 +2510,36 @@ impl<'a> Printer<'a> {
                     self.emit_single_line_block(def.body);
                     self.scoped_class_expression_self_alias = prev_self_alias;
                     first = false;
+                }
+                for accessor in &private_auto_accessors {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.emit_private_auto_accessor_function_def(
+                        &accessor.get_var_name,
+                        &accessor.storage_name,
+                        accessor.is_static,
+                        true,
+                        private_class_alias_pair
+                            .as_ref()
+                            .map(|(alias, _)| alias.as_str())
+                            .or(class_value_alias.as_deref()),
+                    );
+                    self.write(", ");
+                    self.emit_private_auto_accessor_function_def(
+                        &accessor.set_var_name,
+                        &accessor.storage_name,
+                        accessor.is_static,
+                        false,
+                        private_class_alias_pair
+                            .as_ref()
+                            .map(|(alias, _)| alias.as_str())
+                            .or(class_value_alias.as_deref()),
+                    );
+                    first = false;
+                }
+                if !private_auto_accessors.is_empty() {
+                    emitted_private_auto_accessors_pre_static = true;
                 }
                 self.write(";");
                 for (var_name, init_idx) in &static_private_inits {
@@ -2902,6 +2952,7 @@ impl<'a> Printer<'a> {
         let accessor_defs = std::mem::take(&mut self.pending_private_accessor_defs);
         let private_auto_instance_storage_inits: Vec<String> = private_auto_accessors
             .iter()
+            .filter(|_| !emitted_private_auto_accessors_pre_static)
             .filter(|a| !a.is_static)
             .map(|a| format!("{} = new WeakMap()", a.storage_name))
             .collect();
@@ -3025,33 +3076,35 @@ impl<'a> Printer<'a> {
                 self.decrease_indent();
             }
 
-            for accessor in &private_auto_accessors {
-                self.write(",");
-                self.write_line();
-                self.increase_indent();
-                self.emit_private_auto_accessor_function_def(
-                    &accessor.get_var_name,
-                    &accessor.storage_name,
-                    accessor.is_static,
-                    true,
-                    private_class_alias_pair
-                        .as_ref()
-                        .map(|(alias, _)| alias.as_str())
-                        .or(class_value_alias.as_deref()),
-                );
-                self.write(",");
-                self.write_line();
-                self.emit_private_auto_accessor_function_def(
-                    &accessor.set_var_name,
-                    &accessor.storage_name,
-                    accessor.is_static,
-                    false,
-                    private_class_alias_pair
-                        .as_ref()
-                        .map(|(alias, _)| alias.as_str())
-                        .or(class_value_alias.as_deref()),
-                );
-                self.decrease_indent();
+            if !emitted_private_auto_accessors_pre_static {
+                for accessor in &private_auto_accessors {
+                    self.write(",");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_private_auto_accessor_function_def(
+                        &accessor.get_var_name,
+                        &accessor.storage_name,
+                        accessor.is_static,
+                        true,
+                        private_class_alias_pair
+                            .as_ref()
+                            .map(|(alias, _)| alias.as_str())
+                            .or(class_value_alias.as_deref()),
+                    );
+                    self.write(",");
+                    self.write_line();
+                    self.emit_private_auto_accessor_function_def(
+                        &accessor.set_var_name,
+                        &accessor.storage_name,
+                        accessor.is_static,
+                        false,
+                        private_class_alias_pair
+                            .as_ref()
+                            .map(|(alias, _)| alias.as_str())
+                            .or(class_value_alias.as_deref()),
+                    );
+                    self.decrease_indent();
+                }
             }
 
             // Emit static private field value initializations as comma items
@@ -3209,32 +3262,34 @@ impl<'a> Printer<'a> {
                 first = false;
             }
 
-            for accessor in &private_auto_accessors {
-                if !first {
+            if !emitted_private_auto_accessors_pre_static {
+                for accessor in &private_auto_accessors {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.emit_private_auto_accessor_function_def(
+                        &accessor.get_var_name,
+                        &accessor.storage_name,
+                        accessor.is_static,
+                        true,
+                        private_class_alias_pair
+                            .as_ref()
+                            .map(|(alias, _)| alias.as_str())
+                            .or(class_value_alias.as_deref()),
+                    );
                     self.write(", ");
+                    self.emit_private_auto_accessor_function_def(
+                        &accessor.set_var_name,
+                        &accessor.storage_name,
+                        accessor.is_static,
+                        false,
+                        private_class_alias_pair
+                            .as_ref()
+                            .map(|(alias, _)| alias.as_str())
+                            .or(class_value_alias.as_deref()),
+                    );
+                    first = false;
                 }
-                self.emit_private_auto_accessor_function_def(
-                    &accessor.get_var_name,
-                    &accessor.storage_name,
-                    accessor.is_static,
-                    true,
-                    private_class_alias_pair
-                        .as_ref()
-                        .map(|(alias, _)| alias.as_str())
-                        .or(class_value_alias.as_deref()),
-                );
-                self.write(", ");
-                self.emit_private_auto_accessor_function_def(
-                    &accessor.set_var_name,
-                    &accessor.storage_name,
-                    accessor.is_static,
-                    false,
-                    private_class_alias_pair
-                        .as_ref()
-                        .map(|(alias, _)| alias.as_str())
-                        .or(class_value_alias.as_deref()),
-                );
-                first = false;
             }
 
             self.write(";");

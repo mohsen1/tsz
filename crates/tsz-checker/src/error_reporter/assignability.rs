@@ -1402,6 +1402,16 @@ impl<'a> CheckerState<'a> {
                 object_display,
             );
         }
+        let expr_idx = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx));
+        if !source_from_annotation
+            && let Some(expr_idx) = expr_idx
+            && let Some(tuple_display) =
+                self.array_literal_tuple_source_type_display(expr_idx, source, target)
+        {
+            source_str = tuple_display;
+        }
         if self
             .array_literal_element_source_widening_required_for_display(anchor_idx, source, target)
         {
@@ -1733,7 +1743,6 @@ impl<'a> CheckerState<'a> {
         out
     }
 
-    /// Internal generic error reporting for type assignability failures.
     pub(crate) fn error_type_not_assignable_generic_at(
         &mut self,
         source: TypeId,
@@ -1988,8 +1997,4 @@ impl<'a> CheckerState<'a> {
             );
         }
     }
-
-    // `render_failure_reason` has been moved to `render_failure.rs`.
-    // The `format_top_level_assignability_message_types` helper remains here
-    // because it is used by both assignability entry points and the render module.
 }

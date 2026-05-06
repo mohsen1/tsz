@@ -367,6 +367,9 @@ mod class_duplicate_extends_skip_resolution_tests;
 #[path = "../tests/class_index_signature_compat_tests.rs"]
 mod class_index_signature_compat_tests;
 #[cfg(test)]
+#[path = "tests/class_static_init_self_new_tests.rs"]
+mod class_static_init_self_new_tests;
+#[cfg(test)]
 #[path = "tests/closure_destructuring_top_level_diagnostics_tests.rs"]
 mod closure_destructuring_top_level_diagnostics_tests;
 #[cfg(test)]
@@ -378,6 +381,9 @@ mod conditional_infer_tests;
 #[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
+#[cfg(test)]
+#[path = "tests/const_asserted_return_type_tests.rs"]
+mod const_asserted_return_type_tests;
 #[cfg(test)]
 #[path = "tests/contextual_return_wrapper_tests.rs"]
 mod contextual_return_wrapper_tests;

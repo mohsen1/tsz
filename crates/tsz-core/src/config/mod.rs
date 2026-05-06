@@ -236,6 +236,9 @@ pub struct CompilerOptions {
     /// Disable emitting helper declarations.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit_helpers: Option<bool>,
+    /// Emit more compliant iteration lowering for ES5/ES3 targets.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub downlevel_iteration: Option<bool>,
     /// Disable emitting comments.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub remove_comments: Option<bool>,
@@ -632,6 +635,9 @@ pub fn resolve_compiler_options(
     options: Option<&CompilerOptions>,
 ) -> Result<ResolvedCompilerOptions> {
     let mut resolved = ResolvedCompilerOptions::default();
+    // TypeScript 6 defaults alwaysStrict emit on. An explicit
+    // alwaysStrict=false below can still suppress the prologue.
+    resolved.printer.always_strict = true;
     let Some(options) = options else {
         resolved.checker.target = checker_target_from_emitter(resolved.printer.target);
         resolved.lib_files = resolve_default_lib_files(resolved.printer.target)?;
@@ -724,6 +730,7 @@ pub fn resolve_compiler_options(
     }
     if let Some(import_helpers) = options.import_helpers {
         resolved.import_helpers = import_helpers;
+        resolved.printer.import_helpers = import_helpers;
     }
     if let Some(allow_arbitrary_extensions) = options.allow_arbitrary_extensions {
         resolved.allow_arbitrary_extensions = allow_arbitrary_extensions;
@@ -925,6 +932,14 @@ pub fn resolve_compiler_options(
     if let Some(no_emit_helpers) = options.no_emit_helpers {
         resolved.printer.no_emit_helpers = no_emit_helpers;
     }
+    if options.import_helpers == Some(true) {
+        // importHelpers means "import from tslib" - suppress inline helper emission.
+        resolved.printer.no_emit_helpers = true;
+    }
+
+    if let Some(downlevel_iteration) = options.downlevel_iteration {
+        resolved.printer.downlevel_iteration = downlevel_iteration;
+    }
 
     if let Some(remove_comments) = options.remove_comments {
         resolved.printer.remove_comments = remove_comments;
@@ -1091,6 +1106,7 @@ pub fn resolve_compiler_options(
 
     if let Some(preserve) = options.preserve_const_enums {
         resolved.checker.preserve_const_enums = preserve;
+        resolved.printer.preserve_const_enums = preserve;
     }
 
     if let Some(erasable) = options.erasable_syntax_only {
@@ -1173,6 +1189,10 @@ pub fn resolve_compiler_options(
     if let Some(check_js) = options.check_js {
         resolved.check_js = check_js;
         resolved.checker.check_js = check_js;
+        if check_js && options.allow_js.is_none() {
+            resolved.allow_js = true;
+            resolved.checker.allow_js = true;
+        }
         if !check_js {
             // Record that `checkJs: false` was explicit, not just the default.
             // This suppresses even the `plainJSErrors` allowlist (TS2451, etc.).
@@ -2036,9 +2056,10 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         }
 
         // TS5052: Option '{0}' cannot be specified without specifying option '{1}'.
-        // `checkJs` requires `allowJs` to be explicitly enabled.
+        // `checkJs` implies `allowJs` unless `allowJs` is explicitly disabled.
         if option_is_truthy(compiler_opts.get("checkJs"))
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "allowJs")
+            && option_key_present_or_invalidated(compiler_opts, &ts5024_keys, "allowJs")
         {
             let msg = format_message(
                 diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
@@ -2929,16 +2950,20 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
 
 pub fn load_tsconfig(path: &Path) -> Result<TsConfig> {
     let mut visited = FxHashSet::default();
-    load_tsconfig_inner(path, &mut visited)
+    load_tsconfig_inner(path, &mut visited, false)
 }
 
 /// Load tsconfig.json and collect config-level diagnostics.
 pub fn load_tsconfig_with_diagnostics(path: &Path) -> Result<ParsedTsConfig> {
     let mut visited = FxHashSet::default();
-    load_tsconfig_inner_with_diagnostics(path, &mut visited)
+    load_tsconfig_inner_with_diagnostics(path, &mut visited, false)
 }
 
-fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<TsConfig> {
+fn load_tsconfig_inner(
+    path: &Path,
+    visited: &mut FxHashSet<PathBuf>,
+    inherited: bool,
+) -> Result<TsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
         bail!("tsconfig extends cycle detected at {}", canonical.display());
@@ -2949,6 +2974,9 @@ fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<
     let mut config = parse_tsconfig(&source)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
     anchor_inherited_path_options(&mut config, path);
+    if inherited {
+        anchor_inherited_root_selectors(&mut config, path);
+    }
 
     let extends = config.extends.take();
     if let Some(extends_value) = extends {
@@ -2961,7 +2989,7 @@ fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<
         let mut accumulated: Option<TsConfig> = None;
         for extends_path_str in &extends_paths {
             let base_path = resolve_extends_path(path, extends_path_str)?;
-            let base_config = load_tsconfig_inner(&base_path, visited)?;
+            let base_config = load_tsconfig_inner(&base_path, visited, true)?;
             accumulated = Some(match accumulated {
                 Some(acc) => merge_configs(acc, base_config),
                 None => base_config,
@@ -2979,6 +3007,7 @@ fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<
 fn load_tsconfig_inner_with_diagnostics(
     path: &Path,
     visited: &mut FxHashSet<PathBuf>,
+    inherited: bool,
 ) -> Result<ParsedTsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
@@ -2991,6 +3020,9 @@ fn load_tsconfig_inner_with_diagnostics(
     let mut parsed = parse_tsconfig_with_diagnostics(&source, &file_display)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
     anchor_inherited_path_options(&mut parsed.config, path);
+    if inherited {
+        anchor_inherited_root_selectors(&mut parsed.config, path);
+    }
 
     let extends = parsed.config.extends.take();
     if let Some(extends_value) = extends {
@@ -3006,7 +3038,7 @@ fn load_tsconfig_inner_with_diagnostics(
             // TSC checks the merged result and emits TS5102 at the child's key position
             // when removed options come from base configs via extends.
             collect_removed_options_from_config(&base_path, &mut base_removed_options);
-            let base_config = load_tsconfig_inner(&base_path, visited)?;
+            let base_config = load_tsconfig_inner(&base_path, visited, true)?;
             accumulated = Some(match accumulated {
                 Some(acc) => merge_configs(acc, base_config),
                 None => base_config,
@@ -3372,6 +3404,41 @@ fn anchor_inherited_path_options(config: &mut TsConfig, config_path: &Path) {
     }
 }
 
+fn anchor_inherited_root_selectors(config: &mut TsConfig, config_path: &Path) {
+    let Some(parent) = config_path.parent() else {
+        return;
+    };
+    let parent_abs = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+
+    if let Some(files) = config.files.as_mut() {
+        for file in files {
+            anchor_relative_selector(file, &parent_abs);
+        }
+    }
+    if let Some(include) = config.include.as_mut() {
+        for pattern in include {
+            anchor_relative_selector(pattern, &parent_abs);
+        }
+    }
+    if let Some(exclude) = config.exclude.as_mut() {
+        for pattern in exclude {
+            anchor_relative_selector(pattern, &parent_abs);
+        }
+    }
+}
+
+fn anchor_relative_selector(selector: &mut String, base_dir: &Path) {
+    let trimmed = selector.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let candidate = std::path::Path::new(trimmed);
+    if candidate.is_absolute() {
+        return;
+    }
+    *selector = base_dir.join(candidate).to_string_lossy().into_owned();
+}
+
 fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {
     let merged_compiler_options = match (base.compiler_options, child.compiler_options.take()) {
         (Some(base_opts), Some(child_opts)) => Some(merge_compiler_options(base_opts, child_opts)),
@@ -3438,6 +3505,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             out_file,
             composite,
             declaration,
+            emit_declaration_only,
             declaration_dir,
             source_map,
             inline_source_map,
@@ -3447,7 +3515,9 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             strict,
             sound,
             no_emit,
+            emit_bom,
             no_check,
+            preserve_symlinks,
             no_emit_on_error,
             isolated_modules,
             isolated_declarations,
@@ -3459,11 +3529,13 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             emit_decorator_metadata,
             import_helpers,
             no_emit_helpers,
+            downlevel_iteration,
             remove_comments,
             new_line,
             allow_js,
             check_js,
             skip_lib_check,
+            skip_default_lib_check,
             strip_internal,
             always_strict,
             use_define_for_class_fields,
@@ -3475,6 +3547,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_implicit_this,
             use_unknown_in_catch_variables,
             strict_bind_call_apply,
+            strict_builtin_iterator_return,
             exact_optional_property_types,
             no_unchecked_indexed_access,
             no_property_access_from_index_signature,
@@ -3482,6 +3555,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_unused_parameters,
             allow_unreachable_code,
             allow_unused_labels,
+            no_fallthrough_cases_in_switch,
             no_resolve,
             no_unchecked_side_effect_imports,
             no_implicit_override,
@@ -3489,6 +3563,8 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             ignore_deprecations,
             allow_umd_global_access,
             preserve_const_enums,
+            erasable_syntax_only,
+            max_node_module_js_depth,
         }
     );
     merged.invalidated_options = invalidated;
@@ -4854,6 +4930,20 @@ mod tests {
     }
 
     #[test]
+    fn test_tsconfig_emit_flags_reach_printer_options() {
+        let json = r#"{"compilerOptions":{"importHelpers":true,"preserveConstEnums":true,"downlevelIteration":true}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.import_helpers);
+        assert!(resolved.printer.import_helpers);
+        assert!(resolved.printer.no_emit_helpers);
+        assert!(resolved.checker.preserve_const_enums);
+        assert!(resolved.printer.preserve_const_enums);
+        assert!(resolved.printer.downlevel_iteration);
+    }
+
+    #[test]
     fn test_parse_module_resolution_rejects_comma_separated_value() {
         let json =
             r#"{"compilerOptions":{"moduleResolution":"node16,nodenext","module":"commonjs"}} "#;
@@ -4996,6 +5086,10 @@ mod tests {
         // When no options at all, module_explicitly_set should be false.
         let resolved = resolve_compiler_options(None).unwrap();
         assert!(!resolved.checker.module_explicitly_set);
+        assert!(
+            resolved.printer.always_strict,
+            "printer alwaysStrict should default to true with no compiler options"
+        );
     }
 
     #[test]
@@ -5225,8 +5319,9 @@ mod tests {
         let base_url = opts.base_url.expect("inherited baseUrl present");
 
         // Canonicalize to handle macOS `/var` → `/private/var` symlinks.
-        let canonical_base_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir.clone());
-        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir.clone());
+        let canonical_base_dir =
+            std::fs::canonicalize(&base_dir).unwrap_or_else(|_| base_dir.clone());
+        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or_else(|_| app_dir.clone());
         let canonical_base_url = std::path::Path::new(&base_url)
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(&base_url));
@@ -5329,7 +5424,7 @@ mod tests {
 
         // Canonicalize both sides so symlink-bearing temp paths on macOS
         // (`/var/folders/...` → `/private/var/folders/...`) compare equal.
-        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir.clone());
+        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or_else(|_| app_dir.clone());
         let canonical_base_url = std::path::Path::new(&base_url)
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(&base_url));
@@ -5803,13 +5898,13 @@ mod tests {
     }
 
     #[test]
-    fn test_ts5052_check_js_requires_allow_js() {
+    fn test_ts5052_not_emitted_when_check_js_implies_allow_js() {
         let source = r#"{"compilerOptions":{"checkJs":true}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-        let count = parsed.diagnostics.iter().filter(|d| d.code == 5052).count();
-        assert_eq!(
-            count, 1,
-            "Expected one TS5052 diagnostic when allowJs is missing, got: {:?}",
+        let has_5052 = parsed.diagnostics.iter().any(|d| d.code == 5052);
+        assert!(
+            !has_5052,
+            "Should not emit TS5052 when checkJs implies allowJs, got: {:?}",
             parsed.diagnostics
         );
     }
@@ -5846,6 +5941,18 @@ mod tests {
 
         assert!(resolved.check_js);
         assert!(resolved.checker.check_js);
+    }
+
+    #[test]
+    fn test_resolve_compiler_options_check_js_implies_allow_js() {
+        let source = r#"{"compilerOptions":{"checkJs":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.check_js);
+        assert!(resolved.checker.check_js);
+        assert!(resolved.allow_js);
+        assert!(resolved.checker.allow_js);
     }
 
     #[test]
@@ -6401,6 +6508,10 @@ mod tests {
             resolved.checker.always_strict,
             "alwaysStrict should remain true by default when strict: false"
         );
+        assert!(
+            resolved.printer.always_strict,
+            "printer alwaysStrict should remain true by default when strict: false"
+        );
     }
 
     #[test]
@@ -6445,6 +6556,10 @@ mod tests {
             resolved.checker.always_strict,
             "alwaysStrict should fall back to the TS 6.0 default when provided as a string-typed boolean"
         );
+        assert!(
+            resolved.printer.always_strict,
+            "printer alwaysStrict should fall back to the TS 6.0 default when provided as a string-typed boolean"
+        );
     }
 
     #[test]
@@ -6461,6 +6576,10 @@ mod tests {
         assert!(
             !resolved.checker.always_strict,
             "explicit alwaysStrict=false should still disable alwaysStrict"
+        );
+        assert!(
+            !resolved.printer.always_strict,
+            "explicit alwaysStrict=false should still disable printer alwaysStrict"
         );
     }
 

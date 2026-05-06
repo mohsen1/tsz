@@ -344,8 +344,12 @@ const fn is_directive_attr_name_char(ch: char) -> bool {
 /// Returns true if the file exists, false otherwise.
 /// Follows TypeScript's resolution strategy:
 /// 1. Try exact path first
-/// 2. If no extension or not found, try .ts, .tsx, .d.ts extensions
-pub fn validate_reference_path(source_file: &Path, reference_path: &str) -> bool {
+/// 2. If no extension or not found, try source extensions supported by options.
+pub fn validate_reference_path(source_file: &Path, reference_path: &str, allow_js: bool) -> bool {
+    if reference_path.is_empty() {
+        return false;
+    }
+
     if let Some(parent) = source_file.parent() {
         let base_path = parent.join(reference_path);
 
@@ -365,9 +369,7 @@ pub fn validate_reference_path(source_file: &Path, reference_path: &str) -> bool
             return false;
         }
 
-        // Try TypeScript extensions in order: .ts, .tsx, .d.ts
-        let extensions = [".ts", ".tsx", ".d.ts"];
-        for ext in &extensions {
+        for ext in reference_path_probe_extensions(allow_js) {
             let path_with_ext = parent.join(format!("{reference_path}{ext}"));
             if path_with_ext.exists() {
                 return true;
@@ -377,6 +379,14 @@ pub fn validate_reference_path(source_file: &Path, reference_path: &str) -> bool
         false
     } else {
         false
+    }
+}
+
+pub const fn reference_path_probe_extensions(allow_js: bool) -> &'static [&'static str] {
+    if allow_js {
+        &[".ts", ".tsx", ".d.ts", ".js", ".jsx"]
+    } else {
+        &[".ts", ".tsx", ".d.ts"]
     }
 }
 

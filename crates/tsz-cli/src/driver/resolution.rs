@@ -22,11 +22,10 @@ pub(crate) struct ModuleResolutionCache {
 fn package_relative_target_path(package_root: &Path, target: &str) -> Option<PathBuf> {
     let rest = target.strip_prefix("./")?;
     let path = Path::new(target);
-    if path.components().any(|component| {
-        matches!(
-            component,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_)
-        )
+    if path.components().any(|component| match component {
+        Component::ParentDir | Component::RootDir | Component::Prefix(_) => true,
+        Component::Normal(segment) => segment == "node_modules",
+        _ => false,
     }) {
         return None;
     }
@@ -804,20 +803,37 @@ pub(crate) fn collect_module_specifiers(
 
         // Handle exports: export { x } from './module'
         if let Some(export_decl) = arena.get_export_decl(stmt) {
-            if let Some(text) = arena.get_literal_text(export_decl.module_specifier) {
+            if export_decl.export_clause.is_some()
+                && let Some(import_decl) = arena.get_import_decl_at(export_decl.export_clause)
+            {
+                let import_kind = if arena.get(export_decl.export_clause).is_some_and(|node| {
+                    node.kind == tsz::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                }) {
+                    ImportKind::CjsRequire
+                } else {
+                    ImportKind::EsmReExport
+                };
+                if let Some(text) = arena.get_literal_text(import_decl.module_specifier) {
+                    specifiers.push((
+                        strip_quotes(text),
+                        import_decl.module_specifier,
+                        import_kind,
+                        import_attributes_resolution_mode(arena, export_decl.attributes),
+                    ));
+                } else if let Some(spec_text) =
+                    extract_require_specifier(arena, import_decl.module_specifier)
+                {
+                    specifiers.push((
+                        spec_text,
+                        import_decl.module_specifier,
+                        ImportKind::CjsRequire,
+                        import_attributes_resolution_mode(arena, export_decl.attributes),
+                    ));
+                }
+            } else if let Some(text) = arena.get_literal_text(export_decl.module_specifier) {
                 specifiers.push((
                     strip_quotes(text),
                     export_decl.module_specifier,
-                    ImportKind::EsmReExport,
-                    import_attributes_resolution_mode(arena, export_decl.attributes),
-                ));
-            } else if export_decl.export_clause.is_some()
-                && let Some(import_decl) = arena.get_import_decl_at(export_decl.export_clause)
-                && let Some(text) = arena.get_literal_text(import_decl.module_specifier)
-            {
-                specifiers.push((
-                    strip_quotes(text),
-                    import_decl.module_specifier,
                     ImportKind::EsmReExport,
                     import_attributes_resolution_mode(arena, export_decl.attributes),
                 ));
@@ -879,21 +895,49 @@ pub(crate) fn collect_module_specifiers(
                     }
 
                     if let Some(export_decl) = arena.get_export_decl(inner_stmt) {
-                        if let Some(text) = arena.get_literal_text(export_decl.module_specifier) {
-                            specifiers.push((
-                                strip_quotes(text),
-                                export_decl.module_specifier,
-                                ImportKind::EsmReExport,
-                                import_attributes_resolution_mode(arena, export_decl.attributes),
-                            ));
-                        } else if export_decl.export_clause.is_some()
+                        if export_decl.export_clause.is_some()
                             && let Some(import_decl) =
                                 arena.get_import_decl_at(export_decl.export_clause)
-                            && let Some(text) = arena.get_literal_text(import_decl.module_specifier)
+                        {
+                            let import_kind =
+                                if arena.get(export_decl.export_clause).is_some_and(|node| {
+                                    node.kind
+                                        == tsz::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                                }) {
+                                    ImportKind::CjsRequire
+                                } else {
+                                    ImportKind::EsmReExport
+                                };
+                            if let Some(text) = arena.get_literal_text(import_decl.module_specifier)
+                            {
+                                specifiers.push((
+                                    strip_quotes(text),
+                                    import_decl.module_specifier,
+                                    import_kind,
+                                    import_attributes_resolution_mode(
+                                        arena,
+                                        export_decl.attributes,
+                                    ),
+                                ));
+                            } else if let Some(spec_text) =
+                                extract_require_specifier(arena, import_decl.module_specifier)
+                            {
+                                specifiers.push((
+                                    spec_text,
+                                    import_decl.module_specifier,
+                                    ImportKind::CjsRequire,
+                                    import_attributes_resolution_mode(
+                                        arena,
+                                        export_decl.attributes,
+                                    ),
+                                ));
+                            }
+                        } else if let Some(text) =
+                            arena.get_literal_text(export_decl.module_specifier)
                         {
                             specifiers.push((
                                 strip_quotes(text),
-                                import_decl.module_specifier,
+                                export_decl.module_specifier,
                                 ImportKind::EsmReExport,
                                 import_attributes_resolution_mode(arena, export_decl.attributes),
                             ));
@@ -2102,7 +2146,7 @@ impl SemVer {
 const TYPES_VERSIONS_COMPILER_VERSION_FALLBACK: SemVer = SemVer {
     major: 6,
     minor: 0,
-    patch: 0,
+    patch: 3,
 };
 
 fn types_versions_compiler_version(options: &ResolvedCompilerOptions) -> SemVer {
@@ -2361,24 +2405,29 @@ fn resolve_package_imports_specifier(
         let package_json_path = current.join("package.json");
         if let Some(package_json) = resolution_cache.read_package_json(&package_json_path)
             && let Some(imports) = package_json.imports.as_ref()
-            && let Some(target) = resolve_imports_subpath(imports, module_specifier, &conditions)
         {
-            if target.starts_with('/') || target.starts_with('.') {
-                package_relative_target_path(current, &target)?;
-            }
             let package_type = package_type_from_json(Some(&package_json));
-            if let Some(resolved) =
-                resolve_package_entry(current, &target, options, package_type, resolution_cache)
+            for target in resolve_imports_subpath_candidates(imports, module_specifier, &conditions)
             {
-                return Some(resolved);
-            }
-            // Output-to-source remapping for package imports.
-            // When outDir/declarationDir is set, import targets like "./dist/index.js"
-            // point to the output directory which doesn't exist at compile time.
-            // Remap back to source files (e.g., "./index.ts").
-            if let Some(resolved) = try_remap_output_to_source(current, &target, from_file, options)
-            {
-                return Some(resolved);
+                if (target.starts_with('/') || target.starts_with('.'))
+                    && package_relative_target_path(current, &target).is_none()
+                {
+                    continue;
+                }
+                if let Some(resolved) =
+                    resolve_package_entry(current, &target, options, package_type, resolution_cache)
+                {
+                    return Some(resolved);
+                }
+                // Output-to-source remapping for package imports.
+                // When outDir/declarationDir is set, import targets like "./dist/index.js"
+                // point to the output directory which doesn't exist at compile time.
+                // Remap back to source files (e.g., "./index.ts").
+                if let Some(resolved) =
+                    try_remap_output_to_source(current, &target, from_file, options)
+                {
+                    return Some(resolved);
+                }
             }
         }
 
@@ -3284,22 +3333,86 @@ fn resolve_exports_target_versioned(
     }
 }
 
-fn resolve_imports_subpath(
+fn resolve_exports_target_candidates(
+    target: &serde_json::Value,
+    conditions: &[&str],
+) -> Vec<String> {
+    resolve_exports_target_candidates_versioned(
+        target,
+        conditions,
+        default_types_versions_compiler_version(),
+    )
+}
+
+fn resolve_exports_target_candidates_versioned(
+    target: &serde_json::Value,
+    conditions: &[&str],
+    compiler_version: SemVer,
+) -> Vec<String> {
+    match target {
+        serde_json::Value::String(value) => vec![value.clone()],
+        serde_json::Value::Array(list) => {
+            let mut candidates = Vec::new();
+            for entry in list {
+                candidates.extend(resolve_exports_target_candidates_versioned(
+                    entry,
+                    conditions,
+                    compiler_version,
+                ));
+            }
+            candidates
+        }
+        serde_json::Value::Object(map) => {
+            let mut candidates = Vec::new();
+            for (key, value) in map {
+                if let Some(at_pos) = key.find('@') {
+                    let base_condition = &key[..at_pos];
+                    let version_range = &key[at_pos + 1..];
+                    if conditions.contains(&base_condition)
+                        && match_types_versions_range(version_range, compiler_version).is_some()
+                    {
+                        if value.is_null() {
+                            return Vec::new();
+                        }
+                        candidates.extend(resolve_exports_target_candidates_versioned(
+                            value,
+                            conditions,
+                            compiler_version,
+                        ));
+                    }
+                } else if conditions.contains(&key.as_str()) {
+                    if value.is_null() {
+                        return Vec::new();
+                    }
+                    candidates.extend(resolve_exports_target_candidates_versioned(
+                        value,
+                        conditions,
+                        compiler_version,
+                    ));
+                }
+            }
+            candidates
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn resolve_imports_subpath_candidates(
     imports: &serde_json::Value,
     subpath_key: &str,
     conditions: &[&str],
-) -> Option<String> {
+) -> Vec<String> {
     let serde_json::Value::Object(map) = imports else {
-        return None;
+        return Vec::new();
     };
 
     let has_subpath_keys = map.keys().any(|key| key.starts_with('#'));
     if !has_subpath_keys {
-        return None;
+        return Vec::new();
     }
 
     if let Some(value) = map.get(subpath_key) {
-        return resolve_exports_target(value, conditions);
+        return resolve_exports_target_candidates(value, conditions);
     }
 
     let mut best_match: Option<(usize, String, &serde_json::Value)> = None;
@@ -3317,13 +3430,14 @@ fn resolve_imports_subpath(
         }
     }
 
-    if let Some((_, wildcard, value)) = best_match
-        && let Some(target) = resolve_exports_target(value, conditions)
-    {
-        return Some(apply_exports_subpath(&target, &wildcard));
+    if let Some((_, wildcard, value)) = best_match {
+        return resolve_exports_target_candidates(value, conditions)
+            .into_iter()
+            .map(|target| apply_exports_subpath(&target, &wildcard))
+            .collect();
     }
 
-    None
+    Vec::new()
 }
 
 fn match_exports_subpath(pattern: &str, subpath_key: &str) -> Option<String> {

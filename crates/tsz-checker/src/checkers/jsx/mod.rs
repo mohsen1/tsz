@@ -21,4 +21,6 @@ mod spread;
 #[cfg(test)]
 mod ref_callback_tests;
 #[cfg(test)]
+mod spread_assignability_tests;
+#[cfg(test)]
 mod tests;

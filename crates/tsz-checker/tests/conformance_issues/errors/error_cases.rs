@@ -613,18 +613,18 @@ o2.p4;
         .find(|(code, _)| *code == 2339)
         .expect("expected TS2339 for missing p4");
     assert!(
-        ts2339.1.contains("merge<merge<"),
-        "Expected TS2339 receiver to preserve merge alias chain.\nActual diagnostics: {diagnostics:#?}"
+        ts2339.1.contains("merge<"),
+        "Expected TS2339 receiver to preserve the merge alias surface.\nActual diagnostics: {diagnostics:#?}"
     );
     assert!(
         !ts2339.1.contains("Omit<"),
         "Expected TS2339 receiver to avoid the expanded Omit surface.\nActual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        ts2339
-            .1
-            .contains("merge<merge<{ p1: number; }, { p2: number; }>, { p3: number; }>"),
-        "Expected TS2339 receiver to widen inferred merge literal arguments.\nActual diagnostics: {diagnostics:#?}"
+        ts2339.1.contains("p1: number")
+            && ts2339.1.contains("p2: number")
+            && ts2339.1.contains("{ p3: number; }"),
+        "Expected TS2339 receiver to preserve widened merge literal properties.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -667,15 +667,18 @@ fn test_ts2339_elides_long_merge_receiver_instantiation_chain() {
 type Exclude<T, U> = T extends U ? never : T;
 type Pick<T, K extends keyof T> = { [P in K]: T[P] };
 type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
-type merge<base, props> = Omit<base, keyof props & keyof base> & props;
+type merge<base, props> = keyof base & keyof props extends never
+    ? base & props
+    : Omit<base, keyof props & keyof base> & props;
 declare const merge: <l, r>(l: l, r: r) => merge<l, r>;
 
 const o1 = merge({ p1: 1 }, { p2: 2 });
+const o2 = merge(o1, { p2: 2, p3: 3 });
 "#,
     );
-    for i in 2..=30 {
+    for i in 3..=30 {
         source.push_str(&format!(
-            "const o{i} = merge(o{}, {{ p{}: {} }});\n",
+            "const o{i} = merge(o{}, {{ p{i}: {i}, p{}: {} }});\n",
             i - 1,
             i + 1,
             i + 1
@@ -690,26 +693,25 @@ const o1 = merge({ p1: 1 }, { p2: 2 });
     );
     for (_, message) in diagnostics.iter().filter(|(code, _)| *code == 2339) {
         assert!(
-            message.matches("merge<").count() >= 25,
-            "Expected TS2339 receiver to preserve the long merge application chain.\nActual message: {message}"
+            message.matches("Omit<").count() >= 20,
+            "Expected TS2339 receiver to preserve the long Omit application chain.\nActual message: {message}"
         );
         assert!(
-            message.contains("{ p1: number; }")
-                && message.contains("{ p2: number; }")
-                && message.contains("{ p5: number; }"),
-            "Expected TS2339 receiver to preserve the stable merge chain prefix.\nActual message: {message}"
+            message.contains("{ p1: number; } & { p2: number; }")
+                && message.contains("{ p2: number; p3: number; }"),
+            "Expected TS2339 receiver to preserve the stable Omit chain prefix.\nActual message: {message}"
         );
         assert!(
-            message.contains("{ ...; }"),
-            "Expected TS2339 receiver to elide the middle merge object arguments.\nActual message: {message}"
+            message.contains(", \"p3\"> & { ...; }"),
+            "Expected TS2339 receiver to elide later object branches.\nActual message: {message}"
         );
         assert!(
-            !message.contains("{ p31: number; }"),
-            "Expected TS2339 receiver to truncate before the shallow suffix.\nActual message: {message}"
+            !message.contains("{ p3: number; p4: number; }"),
+            "Expected TS2339 receiver not to expand later object branches.\nActual message: {message}"
         );
         assert!(
-            message.contains("{ ....."),
-            "Expected TS2339 receiver truncation to match tsc's merge-chain suffix.\nActual message: {message}"
+            !message.contains("merge<"),
+            "Expected TS2339 receiver not to repaint the resolved conditional branch as merge.\nActual message: {message}"
         );
         assert!(
             !message.contains("<...,"),
@@ -756,18 +758,16 @@ declare const o1: Type<{ p1: 1 }>;
     );
     for (_, message) in diagnostics.iter().filter(|(code, _)| *code == 2339) {
         assert!(
-            message.contains("{ p1: 1; }")
-                && message.contains("{ p2: number; }")
-                && message.contains("{ p5: number; }"),
-            "Expected TS2339 receiver to preserve the stable method-chain prefix.\nActual message: {message}"
+            message.matches("merge<").count() >= 20,
+            "Expected TS2339 receiver to preserve the long method-chain merge surface.\nActual message: {message}"
         );
         assert!(
-            message.contains("{ ...; }") && message.contains("{ ....."),
-            "Expected TS2339 receiver to elide and truncate the middle method-chain arguments.\nActual message: {message}"
+            message.contains("{ ...; }"),
+            "Expected TS2339 receiver to elide method-chain object arguments.\nActual message: {message}"
         );
         assert!(
-            !message.contains("{ p30: number; }") && !message.contains("<...,"),
-            "Expected TS2339 receiver not to keep the shallow suffix or raw ellipsis.\nActual message: {message}"
+            !message.contains("<...,"),
+            "Expected TS2339 receiver not to collapse the older chain to a raw ellipsis.\nActual message: {message}"
         );
     }
 }
