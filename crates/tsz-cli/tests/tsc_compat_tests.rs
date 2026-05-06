@@ -2833,26 +2833,12 @@ fn tsc_parity_ts2427_null_suppresses_other_predefined_names() {
         "interface any { }\n\
          interface null {}\n",
     );
-    // We don't currently emit the TS1005 (";" expected) parse error that tsc
-    // produces for `interface null {}`, so a strict tsc-tsz match isn't
-    // possible here yet. Instead, pin the behavioral invariant we DO care
-    // about: the TS2427 for `null` is kept while the TS2427 for `any` is
-    // suppressed in the same file.
-    let (_code, output) = run_tsz_with_exit_code(
+    assert_tsc_tsz_match(
         &temp.path,
         &[
             "--target", "es2015", "--noEmit", "--pretty", "false", "test.ts",
         ],
-    )
-    .expect("tsz binary not found");
-    assert!(
-        output.contains("Interface name cannot be 'null'."),
-        "Expected TS2427 for `null`. Output:\n{output}"
-    );
-    assert!(
-        !output.contains("Interface name cannot be 'any'."),
-        "TS2427 for `any` should be suppressed when `null` is present. \
-         Output:\n{output}"
+        "TS2427 null keeps parser recovery TS1005 while any is suppressed",
     );
 }
 
