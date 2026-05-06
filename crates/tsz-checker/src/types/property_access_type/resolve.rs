@@ -2281,7 +2281,6 @@ impl<'a> CheckerState<'a> {
                     {
                         return TypeId::ANY;
                     }
-
                     if self.is_js_file()
                         && is_this_access
                         && this_owner_is_js_prototype_method
@@ -2289,7 +2288,6 @@ impl<'a> CheckerState<'a> {
                     {
                         return TypeId::ANY;
                     }
-
                     if self.is_js_file()
                         && is_this_access
                         && skip_flow_narrowing
@@ -2307,14 +2305,14 @@ impl<'a> CheckerState<'a> {
                                 access.expression,
                                 property_name,
                             );
-                        if (!object_literal_owned_this || prototype_object_literal_expando_write)
-                            && !(has_explicit_this_context && this_direct_write_rhs_is_void_zero)
-                            && !has_jsdoc_this_context
+                        if !(has_jsdoc_this_context
+                            || (object_literal_owned_this
+                                && !prototype_object_literal_expando_write)
+                            || (has_explicit_this_context && this_direct_write_rhs_is_void_zero))
                         {
                             return TypeId::ANY;
                         }
                     }
-
                     if self.is_js_file() && is_this_access && !has_explicit_this_context {
                         // Allow dynamic property on `this` in loose JS contexts, but
                         // keep checks when `this` is contextually owned by a class/object
@@ -2326,7 +2324,6 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ANY;
                         }
                     }
-
                     if self.is_js_file()
                         && property_name == "prototype"
                         && self.property_access_is_direct_write_target(idx)
@@ -2340,7 +2337,6 @@ impl<'a> CheckerState<'a> {
                     {
                         return TypeId::ANY;
                     }
-
                     if self.is_js_file()
                         && self.is_super_expression(access.expression)
                         && let Some((class_idx, is_static_access)) = resolved_class_access
@@ -2358,7 +2354,6 @@ impl<'a> CheckerState<'a> {
                     {
                         return TypeId::ANY;
                     }
-
                     // TSC does not emit TS2576 for `super.member` access. When accessing a
                     // property through `super`, TypeScript suppresses "did you mean to access
                     // the static member?" errors entirely. The TS2576 check only applies to
