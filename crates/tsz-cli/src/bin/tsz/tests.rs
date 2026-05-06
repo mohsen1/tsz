@@ -306,3 +306,40 @@ fn build_clean_removes_buildinfo_next_to_tsconfig_when_no_out_dir() {
         "tsconfig.tsbuildinfo next to tsconfig should be deleted when no outDir is set"
     );
 }
+
+#[test]
+fn build_clean_removes_explicit_tsbuildinfo_file() {
+    use std::fs;
+    use tsz_cli::project_refs::ProjectReferenceGraph;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    let tsconfig_path = root.join("tsconfig.json");
+    fs::write(
+        &tsconfig_path,
+        r#"{"compilerOptions":{"composite":true,"tsBuildInfoFile":"custom.info"}}"#,
+    )
+    .expect("write tsconfig");
+
+    let src_dir = root.join("src");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::write(src_dir.join("index.ts"), "export const x = 1;\n").expect("write entry");
+
+    let explicit_buildinfo = root.join("custom.info");
+    fs::write(&explicit_buildinfo, "{}").expect("write explicit buildinfo");
+    let default_buildinfo = root.join("tsconfig.tsbuildinfo");
+    fs::write(&default_buildinfo, "{}").expect("write default buildinfo");
+
+    let graph = ProjectReferenceGraph::load(&tsconfig_path).expect("load graph");
+    handle_build_clean(&graph, false).expect("clean");
+
+    assert!(
+        !explicit_buildinfo.exists(),
+        "explicit tsBuildInfoFile should have been deleted"
+    );
+    assert!(
+        default_buildinfo.exists(),
+        "default buildinfo should be left alone when tsBuildInfoFile is explicit"
+    );
+}

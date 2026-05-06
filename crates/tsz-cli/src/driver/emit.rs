@@ -302,7 +302,7 @@ pub(crate) fn emit_outputs(
                 printer.set_source_text(source_text);
             }
 
-            let map_info = if context.options.source_map {
+            let map_info = if context.options.source_map || context.options.inline_source_map {
                 map_output_info(&js_path)
             } else {
                 None
@@ -333,11 +333,15 @@ pub(crate) fn emit_outputs(
             if let Some((map_path, map_name, _)) = map_info
                 && let Some(map_json) = map_json
             {
-                append_source_mapping_url(&mut contents, &map_name, new_line);
-                map_output = Some(OutputFile {
-                    path: map_path,
-                    contents: map_json,
-                });
+                if context.options.inline_source_map {
+                    append_inline_source_mapping_url(&mut contents, &map_json, new_line);
+                } else {
+                    append_source_mapping_url(&mut contents, &map_name, new_line);
+                    map_output = Some(OutputFile {
+                        path: map_path,
+                        contents: map_json,
+                    });
+                }
             }
 
             // When --outFile is set, collect content for bundling.
@@ -570,7 +574,18 @@ pub(crate) fn emit_outputs(
         if matches!(context.options.printer.module, ModuleKind::AMD)
             && context.options.printer.always_strict
         {
-            prepend_use_strict_to_bundle(&mut bundled, new_line);
+            // Only prepend a top-level `"use strict";` when the bundle
+            // contains at least one script (a non-module file). For an
+            // all-modules bundle, every chunk is wrapped in `define(...)`
+            // and emits its own `"use strict";` inside the callback —
+            // tsc does not add a second one at the top of the bundle.
+            let any_script_chunk = js_bundle_chunks.iter().any(|chunk| {
+                let trimmed = chunk.trim_start();
+                !(trimmed.starts_with("define(") || trimmed.starts_with("System.register("))
+            });
+            if any_script_chunk {
+                prepend_use_strict_to_bundle(&mut bundled, new_line);
+            }
         }
         outputs.push(OutputFile {
             path: bundle_path,
@@ -1174,6 +1189,40 @@ fn append_source_mapping_url(contents: &mut String, map_name: &str, new_line: &s
     contents.push_str(map_name);
 }
 
+fn append_inline_source_mapping_url(contents: &mut String, map_json: &str, new_line: &str) {
+    if !contents.is_empty() && !contents.ends_with(new_line) {
+        contents.push_str(new_line);
+    }
+    contents.push_str("//# sourceMappingURL=data:application/json;base64,");
+    contents.push_str(&base64_encode(map_json.as_bytes()));
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = chunk.get(1).copied().unwrap_or(0);
+        let b2 = chunk.get(2).copied().unwrap_or(0);
+
+        encoded.push(ALPHABET[(b0 >> 2) as usize] as char);
+        encoded.push(ALPHABET[(((b0 & 0b0000_0011) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            encoded.push(ALPHABET[(((b1 & 0b0000_1111) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+        if chunk.len() > 2 {
+            encoded.push(ALPHABET[(b2 & 0b0011_1111) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+    }
+
+    encoded
+}
+
 const fn new_line_str(kind: NewLineKind) -> &'static str {
     match kind {
         NewLineKind::LineFeed => "\n",
@@ -1641,6 +1690,20 @@ pub(crate) fn normalize_root_dir(base_dir: &Path, dir: Option<PathBuf>) -> Optio
         };
         canonicalize_or_owned(&resolved)
     })
+}
+
+pub(crate) fn normalize_root_dirs(base_dir: &Path, roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    roots
+        .into_iter()
+        .map(|root| {
+            let resolved = if root.is_absolute() {
+                root
+            } else {
+                base_dir.join(root)
+            };
+            canonicalize_with_missing_tail(&resolved)
+        })
+        .collect()
 }
 
 pub(crate) fn normalize_type_roots(

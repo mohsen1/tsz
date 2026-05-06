@@ -369,6 +369,136 @@ export const amdCase = 1;
 }
 
 #[test]
+fn compile_source_reference_lib_unknown_name_reports_ts2726() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("invalid-lib.ts"),
+        "/// <reference lib=\"notalib\" />\nlet x = 1;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true,
+            "lib": ["es2020"]
+          },
+          "files": ["invalid-lib.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let lib_diag = result
+        .diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::CANNOT_FIND_LIB_DEFINITION_FOR)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected TS2726 for `notalib`, got: {:?}",
+                result.diagnostics
+            )
+        });
+    assert!(
+        lib_diag.message_text.contains("'notalib'"),
+        "TS2726 message should reference the offending lib name: {}",
+        lib_diag.message_text
+    );
+    // Position should anchor at the lib value (byte 20 == column 21 for
+    // `/// <reference lib="notalib" />`), matching tsc.
+    assert_eq!(lib_diag.start, 20, "diagnostic anchored at lib value start");
+    assert_eq!(lib_diag.length, 7, "length covers `notalib`");
+    assert!(
+        lib_diag.file.ends_with("invalid-lib.ts"),
+        "file should be the user source: {}",
+        lib_diag.file
+    );
+}
+
+#[test]
+fn compile_source_reference_lib_empty_name_reports_ts2726() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("empty-lib.ts"),
+        "/// <reference lib=\"\" />\nlet x = 1;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true,
+            "lib": ["es2020"]
+          },
+          "files": ["empty-lib.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let lib_diag = result
+        .diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::CANNOT_FIND_LIB_DEFINITION_FOR)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected TS2726 for empty lib name, got: {:?}",
+                result.diagnostics
+            )
+        });
+    assert!(
+        lib_diag.message_text.contains("''"),
+        "TS2726 message should render empty quotes: {}",
+        lib_diag.message_text
+    );
+    assert_eq!(lib_diag.start, 20, "diagnostic anchored at empty lib value");
+    assert_eq!(lib_diag.length, 0, "length is zero for empty lib value");
+}
+
+#[test]
+fn compile_source_reference_lib_known_name_does_not_report_ts2726() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("ok-lib.ts"),
+        "/// <reference lib=\"es2015\" />\nlet x = 1;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true,
+            "lib": ["es2020"]
+          },
+          "files": ["ok-lib.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::CANNOT_FIND_LIB_DEFINITION_FOR),
+        "known lib name should not trigger TS2726: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_triple_slash_reference_rejects_prefixed_path_attribute() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -2564,9 +2694,18 @@ fn compile_single_source_amd_outfile_emits_bundle() {
         "single-source outFile should not emit per-file main.js"
     );
     let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
+    // tsc does NOT prepend a top-level `"use strict";` to AMD outFile bundles
+    // when every chunk is a module wrapped in `define(...)` — each chunk
+    // emits its own strict directive inside the wrapper callback. The
+    // top-level prologue is reserved for bundles that include at least one
+    // script chunk (a non-module file) which has no enclosing wrapper.
     assert!(
-        bundle.starts_with("\"use strict\";\n"),
-        "expected AMD outFile bundle to start with a strict-mode prologue, got:\n{bundle}"
+        bundle.starts_with("define(\"main\","),
+        "AMD all-modules outFile bundle should start with the `define(...)` wrapper, got:\n{bundle}"
+    );
+    assert!(
+        bundle.contains("    \"use strict\";"),
+        "expected the inner strict prologue inside the AMD wrapper, got:\n{bundle}"
     );
     assert!(
         bundle.contains("define(\"main\", [\"require\", \"exports\"], function"),
@@ -2710,6 +2849,47 @@ fn compile_with_source_map_emits_map_outputs() {
     assert!(
         mappings.contains(',') || mappings.contains(';'),
         "expected non-trivial mappings, got: {mappings}"
+    );
+}
+
+#[test]
+fn compile_with_inline_source_map_embeds_map_data_url() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "inlineSourceMap": true
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/index.ts"), "export const value = 1;");
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(result.diagnostics.is_empty());
+    let js_path = base.join("dist/src/index.js");
+    let map_path = base.join("dist/src/index.js.map");
+    assert!(js_path.is_file());
+    assert!(
+        !map_path.exists(),
+        "inlineSourceMap should not write a sibling .map file"
+    );
+    let js_contents = std::fs::read_to_string(&js_path).expect("read js output");
+    assert!(
+        js_contents.contains("//# sourceMappingURL=data:application/json;base64,"),
+        "Expected inline source map data URL in JS output: {js_contents}"
+    );
+    assert!(
+        !js_contents.contains("sourceMappingURL=index.js.map"),
+        "Expected no external source map comment in JS output: {js_contents}"
     );
 }
 
@@ -5427,6 +5607,41 @@ value.toFixed();
         "Expected CLI --baseUrl to resolve bare import, got: {:?}",
         result.diagnostics
     );
+}
+
+#[test]
+fn compile_resolves_root_dirs_virtual_relative_imports() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "target": "ES2020",
+            "module": "ESNext",
+            "moduleResolution": "node10",
+            "ignoreDeprecations": "6.0",
+            "rootDirs": ["src", "generated"],
+            "noEmit": true
+          },
+          "files": ["src/main.ts", "generated/generated.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/main.ts"),
+        "import { generated } from './generated';\nconst value: string = generated.toUpperCase();\n",
+    );
+    write_file(
+        &base.join("generated/generated.ts"),
+        "export const generated = 'ok';\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
 }
 
 #[test]
@@ -15850,6 +16065,54 @@ const Frozen = Object.freeze({ A: 1 });
             |diag| diag.message_text.contains("number") && diag.message_text.contains("string")
         ),
         "Expected number-to-string Object.freeze enum initializer diagnostic, got: {ts2322:?}"
+    );
+}
+
+#[test]
+fn compile_jsdoc_satisfies_malformed_tag_does_not_apply_later_braced_type() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true,
+            "types": []
+          },
+          "files": ["satisfies-malformed.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("satisfies-malformed.js"),
+        r#"// @ts-check
+/** @satisfies nope {{ a: number }} */
+const value = { b: 1 };
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<_> = result.diagnostics.iter().map(|diag| diag.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "Expected malformed @satisfies to keep TS1005, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
+        "Expected malformed @satisfies name to keep TS2304, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+        ),
+        "Malformed @satisfies should not apply later braced type and emit TS2353, got diagnostics: {:?}",
+        result.diagnostics
     );
 }
 

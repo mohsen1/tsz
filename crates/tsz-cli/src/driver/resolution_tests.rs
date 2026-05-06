@@ -1268,6 +1268,31 @@ fn test_resolve_module_specifier_paths_without_base_url_use_project_base() {
 }
 
 #[test]
+fn test_resolve_module_specifier_root_dirs_overlay() {
+    let base = PathBuf::from("/tmp/tsz-test-rootdirs");
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        root_dirs: vec![base.join("src"), base.join("generated")],
+        ..Default::default()
+    };
+
+    let mut known_files = FxHashSet::default();
+    known_files.insert(base.join("generated/generated.ts"));
+    let mut cache = ModuleResolutionCache::default();
+
+    let resolved = resolve_module_specifier(
+        &base.join("src/main.ts"),
+        "./generated",
+        &options,
+        &base,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(resolved, Some(base.join("generated/generated.ts")));
+}
+
+#[test]
 fn test_resolve_module_specifier_classic_path_mapping_absolute_target_fallback() {
     let mut raw_paths = FxHashMap::default();
     raw_paths.insert(
