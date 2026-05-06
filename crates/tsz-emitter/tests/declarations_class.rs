@@ -202,6 +202,10 @@ fn private_auto_accessors_emit_accessor_helpers_at_es2015() {
         "Private auto-accessors should emit backing storage before extracted accessors.\nOutput:\n{output}"
     );
     assert!(
+        output.contains("_a = C1, _C1_instances = new WeakSet(), _C1_a_accessor_storage = new WeakMap(), _C1_b_accessor_storage = new WeakMap()"),
+        "Private auto-accessor storage should stay in the pre-static private initialization chain.\nOutput:\n{output}"
+    );
+    assert!(
         output.contains("_C1_c_get = function _C1_c_get() { return __classPrivateFieldGet(_a, _a, \"f\", _C1_c_accessor_storage); }, _C1_c_set = function _C1_c_set(value) { __classPrivateFieldSet(_a, _a, value, \"f\", _C1_c_accessor_storage); }"),
         "Static private auto-accessors should use the class alias and storage object.\nOutput:\n{output}"
     );
@@ -1002,6 +1006,27 @@ class ElementsArray extends Array {
             "_b = ElementsArray;\n(() => {\n    const superisArray = Reflect.get(_c, \"isArray\", _b);"
         ),
         "static block `super` should use the assigned class-value alias as receiver.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn lowered_static_block_class_name_reference_does_not_create_alias() {
+    let source = r#"export class C {
+    static x: number;
+    static {
+        C.x = 1;
+    }
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("export class C {\n}\n(() => {\n    C.x = 1;\n})();"),
+        "Plain class-name references in lowered static blocks should stay on the class value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a;") && !output.contains("_a = C"),
+        "Lowered static blocks should not create a class-value alias unless `this`, `super`, or private state needs one.\nOutput:\n{output}"
     );
 }
 

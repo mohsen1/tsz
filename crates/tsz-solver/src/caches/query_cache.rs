@@ -824,6 +824,10 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.lookup(id)
     }
 
+    fn lookup_alloc_order(&self, id: TypeId) -> Option<u32> {
+        self.interner.lookup_alloc_order(id)
+    }
+
     fn intern_string(&self, s: &str) -> Atom {
         self.interner.intern_string(s)
     }

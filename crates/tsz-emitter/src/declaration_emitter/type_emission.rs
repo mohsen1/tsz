@@ -21,17 +21,8 @@ fn escape_template_literal_text(s: &str) -> String {
         match ch {
             '\\' => out.push_str("\\\\"),
             '`' => out.push_str("\\`"),
-            '$' => {
-                // A literal `${` in the cooked text means the source wrote `\${`
-                // (the scanner consumed the backslash). Without re-escaping the
-                // `$`, the `${` would be re-interpreted as a template
-                // substitution by any consumer that re-parses the .d.ts.
-                if chars.peek() == Some(&'{') {
-                    out.push_str("\\$");
-                } else {
-                    out.push('$');
-                }
-            }
+            '$' if chars.peek() == Some(&'{') => out.push_str("\\$"),
+            '$' => out.push('$'),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),

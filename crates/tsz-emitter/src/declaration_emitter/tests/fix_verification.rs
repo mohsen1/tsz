@@ -111,6 +111,27 @@ fn fix_template_literal_with_types() {
 }
 
 #[test]
+fn fix_template_literal_escaped_substitution_preserved() {
+    let output = emit_dts(
+        r#"export type EscapedSubstitution = `prefix-\${notAType}-suffix`;
+export type EscapedOnly = `\${}`;"#,
+    );
+    println!("template escaped substitution:\n{output}");
+    assert!(
+        output.contains(r#"export type EscapedSubstitution = `prefix-\${notAType}-suffix`;"#),
+        "escaped substitution should remain literal text: {output}"
+    );
+    assert!(
+        output.contains(r#"export type EscapedOnly = `\${}`;"#),
+        "escaped empty substitution should remain literal text: {output}"
+    );
+    assert!(
+        !output.contains(r#"`prefix-${notAType}-suffix`"#) && !output.contains(r#"`${}`;"#),
+        "escaped template text should not become structural substitution: {output}"
+    );
+}
+
+#[test]
 fn fix_numeric_sep_negative() {
     // Negative number with separator
     let output = emit_dts("export declare const x: -1_000;");
@@ -1511,5 +1532,56 @@ export const b = id(a);
     assert!(
         !output.is_empty(),
         "emitter should produce output: {output}"
+    );
+}
+
+#[test]
+fn fix_const_literal_preservation_uses_lexical_const_symbol() {
+    let output = emit_dts_with_binding(
+        r#"
+const tag = "outer";
+
+export namespace N {
+  const tag = "inner";
+  export const value = tag;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("const value = \"inner\";"),
+        "Expected namespace const to preserve the inner lexical binding: {output}"
+    );
+    assert!(
+        !output.contains("const value = \"outer\";"),
+        "Declaration emit must not use the shadowed top-level const: {output}"
+    );
+}
+
+#[test]
+fn fix_identity_call_preservation_uses_lexical_callee_symbol() {
+    let output = emit_dts_with_binding(
+        r#"
+function id<T extends string>(value: T): T {
+  return value;
+}
+
+export namespace N {
+  function id(_: string) {
+    return "wide";
+  }
+
+  export const value = id("narrow");
+}
+"#,
+    );
+
+    assert!(
+        output.contains("const value: string;"),
+        "Expected local non-identity callee to widen the declaration type: {output}"
+    );
+    assert!(
+        !output.contains("const value = \"narrow\";"),
+        "Declaration emit must not use the shadowed top-level identity helper: {output}"
     );
 }
