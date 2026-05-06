@@ -369,6 +369,136 @@ export const amdCase = 1;
 }
 
 #[test]
+fn compile_source_reference_lib_unknown_name_reports_ts2726() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("invalid-lib.ts"),
+        "/// <reference lib=\"notalib\" />\nlet x = 1;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true,
+            "lib": ["es2020"]
+          },
+          "files": ["invalid-lib.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let lib_diag = result
+        .diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::CANNOT_FIND_LIB_DEFINITION_FOR)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected TS2726 for `notalib`, got: {:?}",
+                result.diagnostics
+            )
+        });
+    assert!(
+        lib_diag.message_text.contains("'notalib'"),
+        "TS2726 message should reference the offending lib name: {}",
+        lib_diag.message_text
+    );
+    // Position should anchor at the lib value (byte 20 == column 21 for
+    // `/// <reference lib="notalib" />`), matching tsc.
+    assert_eq!(lib_diag.start, 20, "diagnostic anchored at lib value start");
+    assert_eq!(lib_diag.length, 7, "length covers `notalib`");
+    assert!(
+        lib_diag.file.ends_with("invalid-lib.ts"),
+        "file should be the user source: {}",
+        lib_diag.file
+    );
+}
+
+#[test]
+fn compile_source_reference_lib_empty_name_reports_ts2726() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("empty-lib.ts"),
+        "/// <reference lib=\"\" />\nlet x = 1;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true,
+            "lib": ["es2020"]
+          },
+          "files": ["empty-lib.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let lib_diag = result
+        .diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::CANNOT_FIND_LIB_DEFINITION_FOR)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected TS2726 for empty lib name, got: {:?}",
+                result.diagnostics
+            )
+        });
+    assert!(
+        lib_diag.message_text.contains("''"),
+        "TS2726 message should render empty quotes: {}",
+        lib_diag.message_text
+    );
+    assert_eq!(lib_diag.start, 20, "diagnostic anchored at empty lib value");
+    assert_eq!(lib_diag.length, 0, "length is zero for empty lib value");
+}
+
+#[test]
+fn compile_source_reference_lib_known_name_does_not_report_ts2726() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("ok-lib.ts"),
+        "/// <reference lib=\"es2015\" />\nlet x = 1;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true,
+            "lib": ["es2020"]
+          },
+          "files": ["ok-lib.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::CANNOT_FIND_LIB_DEFINITION_FOR),
+        "known lib name should not trigger TS2726: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_triple_slash_reference_rejects_prefixed_path_attribute() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();

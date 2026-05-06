@@ -1436,6 +1436,10 @@ fn compile_inner(
         resolved.checker.no_types_and_symbols || sources_have_no_types_and_symbols(&sources);
     let lib_paths =
         resolve_effective_lib_paths(&resolved, &sources, &base_dir, disable_default_libs)?;
+    config_diagnostics.extend(collect_source_reference_lib_diagnostics(
+        &sources,
+        resolved.checker.no_lib,
+    ));
     let typescript_dom_replacement_globals = scan_typescript_dom_replacement_globals(&lib_paths);
     let lib_path_refs: Vec<&Path> = lib_paths.iter().map(PathBuf::as_path).collect();
 
@@ -2171,7 +2175,9 @@ fn resolve_effective_lib_paths(
             // Source-file `/// <reference lib="..." />` directives may name libs
             // that no longer exist in this TS version (e.g. rxjs references
             // `esnext.asynciterable`, since folded into `es2018.asynciterable`).
-            // Match tsc's behavior and silently skip unknown ones.
+            // The transitive resolver silently skips unknown names at this
+            // layer; user-facing TS2726 for invalid initial names is emitted
+            // separately by `collect_source_reference_lib_diagnostics`.
             let expanded_source_paths =
                 resolve_lib_files_with_options_transitive(&source_reference_libs, true)?;
             append_unique_lib_names(&mut lib_names, lib_names_from_paths(&expanded_source_paths));
@@ -2205,6 +2211,50 @@ fn collect_source_reference_libs(sources: &[SourceEntry]) -> Vec<String> {
         append_unique_lib_names(&mut lib_names, refs);
     }
     lib_names
+}
+
+/// Emit `TS2726` for user-authored source-file `/// <reference lib="..." />`
+/// directives whose value is empty or names a lib that does not exist.
+///
+/// `tsc` reports invalid initial lib names from user source files as
+/// `TS2726 Cannot find lib definition for '<name>'.` anchored at the lib
+/// attribute value. Transitive lib-to-lib references *inside* lib files
+/// remain silently skipped — that policy lives in the resolver in
+/// `tsz-core::config::resolve_lib_files_with_options_transitive`.
+///
+/// `no_lib` mirrors `--noLib`: when set, `tsc` ignores all lib references,
+/// so we skip diagnostic emission too.
+fn collect_source_reference_lib_diagnostics(
+    sources: &[SourceEntry],
+    no_lib: bool,
+) -> Vec<Diagnostic> {
+    if no_lib {
+        return Vec::new();
+    }
+    let mut diagnostics = Vec::new();
+    for source in sources {
+        let positioned = if let Some(text) = source.text.as_deref() {
+            tsz::config::extract_lib_references_with_positions(text)
+        } else {
+            std::fs::read_to_string(&source.path)
+                .map(|text| tsz::config::extract_lib_references_with_positions(&text))
+                .unwrap_or_default()
+        };
+        for reference in positioned {
+            if tsz::config::is_known_lib_name(&reference.raw) {
+                continue;
+            }
+            let message = format!("Cannot find lib definition for '{}'.", reference.raw.trim());
+            diagnostics.push(Diagnostic::error(
+                source.path.to_string_lossy().into_owned(),
+                reference.start,
+                reference.length,
+                message,
+                diagnostic_codes::CANNOT_FIND_LIB_DEFINITION_FOR,
+            ));
+        }
+    }
+    diagnostics
 }
 
 fn append_unique_lib_names(target: &mut Vec<String>, additional: Vec<String>) {

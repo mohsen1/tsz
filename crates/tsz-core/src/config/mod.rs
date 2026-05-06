@@ -4150,40 +4150,83 @@ const fn legacy_lib_aliases() -> &'static [(&'static str, &'static str)] {
 /// Extract /// <reference lib="..." /> directives from a source file.
 /// Returns a list of normalized referenced lib names.
 pub fn extract_lib_references(source: &str) -> Vec<String> {
+    extract_lib_references_with_positions(source)
+        .into_iter()
+        .map(|reference| normalize_lib_name(&reference.raw))
+        .collect()
+}
+
+/// A `/// <reference lib="..." />` directive captured from a source file,
+/// with the byte position of the `lib` attribute value. The raw value is
+/// returned exactly as it appeared between the quotes (including empty),
+/// so callers can render `tsc`-compatible diagnostics like
+/// `Cannot find lib definition for '<value>'.`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibReference {
+    /// Raw, un-normalized lib attribute value.
+    pub raw: String,
+    /// Byte offset within the source where the value starts (immediately
+    /// after the opening quote).
+    pub start: u32,
+    /// Byte length of the raw value (zero for an empty `lib=""`).
+    pub length: u32,
+}
+
+/// Like [`extract_lib_references`], but returns the original (un-normalized)
+/// lib values together with their byte position in the source. Used by the
+/// driver to report `TS2726` for invalid user-authored source-file
+/// directives while still feeding the transitive lib resolver.
+pub fn extract_lib_references_with_positions(source: &str) -> Vec<LibReference> {
     let mut refs = Vec::new();
     let mut in_block_comment = false;
-    for line in source.lines() {
-        let line = line.trim_start();
+    let bytes = source.as_bytes();
+    let mut line_start: usize = 0;
+    loop {
+        let line_end = bytes[line_start..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(bytes.len(), |idx| line_start + idx);
+        let line_with_cr = &source[line_start..line_end];
+        let line = line_with_cr.strip_suffix('\r').unwrap_or(line_with_cr);
+        let trimmed = line.trim_start();
+        let trim_offset = line.len() - trimmed.len();
+        let trimmed_abs = line_start + trim_offset;
+
         if in_block_comment {
-            if line.contains("*/") {
+            if trimmed.contains("*/") {
                 in_block_comment = false;
             }
-            continue;
-        }
-        if line.starts_with("/*") {
-            if !line.contains("*/") {
+        } else if trimmed.starts_with("/*") {
+            if !trimmed.contains("*/") {
                 in_block_comment = true;
             }
-            continue;
-        }
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with("///") {
-            if let Some(value) = parse_reference_lib_value(line) {
-                refs.push(normalize_lib_name(value));
+        } else if trimmed.is_empty() {
+            // skip blank line
+        } else if trimmed.starts_with("///") {
+            if let Some((value, value_offset_in_trimmed)) =
+                parse_reference_lib_value_with_offset(trimmed)
+            {
+                refs.push(LibReference {
+                    raw: value.to_string(),
+                    start: (trimmed_abs + value_offset_in_trimmed) as u32,
+                    length: value.len() as u32,
+                });
             }
-            continue;
+        } else if trimmed.starts_with("//") {
+            // skip non-triple-slash comment
+        } else {
+            break;
         }
-        if line.starts_with("//") {
-            continue;
+
+        if line_end >= bytes.len() {
+            break;
         }
-        break;
+        line_start = line_end + 1;
     }
     refs
 }
 
-fn parse_reference_lib_value(line: &str) -> Option<&str> {
+fn parse_reference_lib_value_with_offset(line: &str) -> Option<(&str, usize)> {
     let mut offset = 0;
     let bytes = line.as_bytes();
     while let Some(idx) = line[offset..].find("lib=") {
@@ -4200,11 +4243,31 @@ fn parse_reference_lib_value(line: &str) -> Option<&str> {
             offset = start + 4;
             continue;
         }
-        let rest = &line[start + 5..];
+        let value_start = start + 5;
+        let rest = &line[value_start..];
         let end = rest.find(quote as char)?;
-        return Some(&rest[..end]);
+        return Some((&rest[..end], value_start));
     }
     None
+}
+
+/// Returns whether `lib_name` resolves to a known TypeScript library file.
+///
+/// Mirrors the resolution order used by `resolve_lib_files_with_options`:
+/// the on-disk lib directory (when discoverable) takes precedence over the
+/// embedded fallback. Empty inputs always return `false`. Only intended for
+/// validation paths that need a yes/no answer without loading the file.
+pub fn is_known_lib_name(lib_name: &str) -> bool {
+    let normalized = normalize_lib_name(lib_name);
+    if normalized.is_empty() {
+        return false;
+    }
+    if let Ok(lib_dir) = default_lib_dir()
+        && let Ok(map) = build_lib_map(&lib_dir)
+    {
+        return map.contains_key(&normalized);
+    }
+    build_lib_map_from_embedded().contains_key(normalized.as_str())
 }
 
 fn normalize_lib_name(value: &str) -> String {
@@ -6584,6 +6647,56 @@ mod tests {
         "#;
 
         assert_eq!(extract_lib_references(source), vec!["es2020".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_lib_references_with_positions_anchors_at_value_start() {
+        // `/// <reference lib="notalib" />` — `notalib` starts at byte 20,
+        // matching tsc's TS2726 anchor (column 21 in 1-indexed terms).
+        let source = "/// <reference lib=\"notalib\" />\nlet x = 1;\n";
+        let refs = extract_lib_references_with_positions(source);
+        assert_eq!(refs.len(), 1, "should capture exactly one reference");
+        assert_eq!(refs[0].raw, "notalib");
+        assert_eq!(refs[0].start, 20);
+        assert_eq!(refs[0].length, 7);
+    }
+
+    #[test]
+    fn test_extract_lib_references_with_positions_handles_empty_value() {
+        let source = "/// <reference lib=\"\" />\n";
+        let refs = extract_lib_references_with_positions(source);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].raw, "");
+        assert_eq!(refs[0].start, 20);
+        assert_eq!(refs[0].length, 0);
+    }
+
+    #[test]
+    fn test_extract_lib_references_with_positions_tracks_offset_across_lines() {
+        let source = "// header\n\n/// <reference lib=\"dom\" />\n";
+        let refs = extract_lib_references_with_positions(source);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].raw, "dom");
+        // "// header\n" = 10 bytes, blank line "\n" = 1 byte, then 11 + 20 = 31.
+        assert_eq!(refs[0].start, 31);
+        assert_eq!(refs[0].length, 3);
+    }
+
+    #[test]
+    fn test_is_known_lib_name_accepts_canonical_and_normalized_forms() {
+        // Canonical names from the TS lib catalog.
+        assert!(is_known_lib_name("es2015"));
+        assert!(is_known_lib_name("dom"));
+        // Normalization: leading `lib.` prefix and case-insensitive match.
+        assert!(is_known_lib_name("lib.es2015"));
+        assert!(is_known_lib_name("ES2015"));
+    }
+
+    #[test]
+    fn test_is_known_lib_name_rejects_empty_and_unknown() {
+        assert!(!is_known_lib_name(""));
+        assert!(!is_known_lib_name("   "));
+        assert!(!is_known_lib_name("notalib"));
     }
 
     #[test]
