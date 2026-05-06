@@ -895,7 +895,19 @@ impl<'a> CheckerState<'a> {
                 // E.g.: `const f: (a: number) => string = (a) => a + 1`
                 // → TS2322 at `a + 1` with "Type 'number' is not assignable to type 'string'."
                 let display_target = self.evaluate_type_with_env(expected_return_type);
-                self.error_type_not_assignable_at_with_anchor(body_type, display_target, func.body);
+                if self.array_elaboration_widening_required_for_display(body_type, display_target) {
+                    self.error_type_not_assignable_at_with_widened_source_display(
+                        body_type,
+                        display_target,
+                        func.body,
+                    );
+                } else {
+                    self.error_type_not_assignable_at_with_anchor(
+                        body_type,
+                        display_target,
+                        func.body,
+                    );
+                }
                 true
             }
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
@@ -1080,6 +1092,12 @@ impl<'a> CheckerState<'a> {
 
         if let Some(shape) = function_shape(self.ctx.types, ty) {
             return Some(shape.return_type);
+        }
+
+        if let Some(signatures) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, ty)
+        {
+            return signatures.first().map(|sig| sig.return_type);
         }
 
         if let Some(shape) = callable_shape_for_type(self.ctx.types, ty) {

@@ -2108,7 +2108,7 @@ impl ParserState {
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
-            if had_open_paren {
+            if had_open_paren && !self.is_token(SyntaxKind::CloseBraceToken) {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
             }
@@ -2201,7 +2201,7 @@ impl ParserState {
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
-            if had_open_paren {
+            if had_open_paren && !self.is_token(SyntaxKind::CloseBraceToken) {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
             }

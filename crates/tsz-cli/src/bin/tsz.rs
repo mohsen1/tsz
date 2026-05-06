@@ -7,6 +7,7 @@ use clap::{CommandFactory, Parser};
 use rustc_hash::FxHashMap;
 use std::ffi::OsString;
 use std::io::IsTerminal;
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use tsz::checker::diagnostics::DiagnosticCategory;
@@ -89,6 +90,18 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
     }
 
+    // `--listFilesOnly` still uses the normal no-input command-line behavior before
+    // the file-list-only path can print default libs.
+    if args.list_files_only
+        && args.files.is_empty()
+        && args.project.is_none()
+        && !cwd.join("tsconfig.json").exists()
+    {
+        println!("Version {TSC_VERSION}");
+        println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
+        std::process::exit(1);
+    }
+
     // Handle --listFilesOnly: print file list and exit
     if args.list_files_only {
         return handle_list_files_only(&args, &cwd);
@@ -129,6 +142,14 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         std::process::exit(1);
     }
 
+    if let Some(profile_path) = args.generate_cpu_profile.as_ref() {
+        println!(
+            "error: --generateCpuProfile is not supported by tsz; requested profile '{}' was not created. Use --generateTrace for native trace output.",
+            profile_path.display()
+        );
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+    }
+
     // Initialize tracer if --generateTrace is specified
     let tracer = args.generate_trace.is_some().then(|| {
         let mut t = tsz_cli::trace::Tracer::new();
@@ -138,14 +159,6 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         t.metadata("process_name", meta_args);
         t
     });
-
-    // Handle --generateCpuProfile: this is a V8-specific feature not applicable to a native
-    // Rust compiler. The flag is accepted for CLI compatibility with tsc but has no effect.
-    if let Some(ref _profile_path) = args.generate_cpu_profile {
-        tracing::warn!(
-            "The --generateCpuProfile flag is a V8/Node.js feature and is not applicable to tsz (a native Rust compiler). The flag is accepted for compatibility but has no effect."
-        );
-    }
 
     let start_time = std::time::Instant::now();
     let result = match driver::compile(&args, &cwd) {
@@ -1901,6 +1914,11 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         None
     };
 
+    let base_dir = tsconfig_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .unwrap_or(cwd);
+
     // Build the compiler options map from the MERGED config (extends-resolved).
     let mut compiler_options_map: serde_json::Map<String, serde_json::Value> =
         if let Some(ref cfg) = config {
@@ -1914,6 +1932,8 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     // Issue 3: Compute and add implied options.
     show_config_add_implied_options(&mut compiler_options_map);
+
+    show_config_relativize_resolved_path_options(&mut compiler_options_map, base_dir);
 
     // Issue 5: Normalize outDir/outFile/rootDir paths with "./" prefix
     for path_key in &["outDir", "outFile", "rootDir", "declarationDir", "baseUrl"] {
@@ -1946,11 +1966,6 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         .or_else(|| resolved.as_ref().and_then(|r| r.out_dir.clone()));
 
     // Discover resolved file list
-    let base_dir = tsconfig_path
-        .as_ref()
-        .and_then(|p| p.parent())
-        .unwrap_or(cwd);
-
     let explicit_files: Vec<std::path::PathBuf> = if !args.files.is_empty() {
         args.files.clone()
     } else if let Some(ref cfg) = config {
@@ -2141,8 +2156,8 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn show_config_display_selector(base_dir: &std::path::Path, selector: &str) -> String {
-    let path = std::path::Path::new(selector);
+fn show_config_display_selector(base_dir: &Path, selector: &str) -> String {
+    let path = Path::new(selector);
     if path.is_absolute() {
         show_config_display_path(base_dir, path)
     } else {
@@ -2150,26 +2165,63 @@ fn show_config_display_selector(base_dir: &std::path::Path, selector: &str) -> S
     }
 }
 
-fn show_config_display_path(base_dir: &std::path::Path, path: &std::path::Path) -> String {
+fn show_config_display_path(base_dir: &Path, path: &Path) -> String {
     let relative = if path.is_absolute() {
-        show_config_diff_paths(path, base_dir).unwrap_or_else(|| path.to_path_buf())
+        diff_paths(path, base_dir).unwrap_or_else(|| path.to_path_buf())
     } else {
         path.to_path_buf()
     };
-    let display = relative.to_string_lossy();
-    if display.starts_with("../") || display.starts_with("./") || display == ".." {
-        display.into_owned()
+    path_to_show_config_string(&relative)
+}
+
+fn show_config_relativize_resolved_path_options(
+    options: &mut serde_json::Map<String, serde_json::Value>,
+    base_dir: &Path,
+) {
+    if let Some(serde_json::Value::String(base_url)) = options.get_mut("baseUrl") {
+        *base_url = show_config_format_path_option(base_url, base_dir);
+    }
+
+    if let Some(serde_json::Value::Array(root_dirs)) = options.get_mut("rootDirs") {
+        for root_dir in root_dirs {
+            if let serde_json::Value::String(path) = root_dir {
+                *path = show_config_format_path_option(path, base_dir);
+            }
+        }
+    }
+}
+
+fn show_config_format_path_option(path: &str, base_dir: &Path) -> String {
+    let path_obj = Path::new(path);
+    if !path_obj.is_absolute() {
+        return path.to_string();
+    }
+
+    let canonical_base = base_dir
+        .canonicalize()
+        .unwrap_or_else(|_| base_dir.to_path_buf());
+    let canonical_path = path_obj
+        .canonicalize()
+        .unwrap_or_else(|_| path_obj.to_path_buf());
+    let relative = diff_paths(&canonical_path, &canonical_base)
+        .unwrap_or_else(|| canonical_path.to_path_buf());
+    path_to_show_config_string(&relative)
+}
+
+fn path_to_show_config_string(path: &Path) -> String {
+    let display = path.to_string_lossy().replace('\\', "/");
+    if display.is_empty() || display == "." {
+        "./".to_string()
+    } else if display.starts_with("../") || display.starts_with('/') {
+        display
     } else {
         format!("./{display}")
     }
 }
 
-fn show_config_diff_paths(
-    path: &std::path::Path,
-    base: &std::path::Path,
-) -> Option<std::path::PathBuf> {
-    let path_components: Vec<std::path::Component<'_>> = path.components().collect();
-    let base_components: Vec<std::path::Component<'_>> = base.components().collect();
+fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
+    let path_components: Vec<Component<'_>> = path.components().collect();
+    let base_components: Vec<Component<'_>> = base.components().collect();
     let common_len = path_components
         .iter()
         .zip(base_components.iter())
@@ -2179,7 +2231,7 @@ fn show_config_diff_paths(
         return None;
     }
 
-    let mut result = std::path::PathBuf::new();
+    let mut result = PathBuf::new();
     for _ in common_len..base_components.len() {
         result.push("..");
     }
@@ -3144,6 +3196,29 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         resolve_json_module: resolved.resolve_json_module,
     };
 
+    let files = discover_ts_files(&discovery)?;
+    let files_from_config = args.files.is_empty()
+        && config
+            .as_ref()
+            .and_then(|config| config.files.as_ref())
+            .is_some();
+    let unsupported_js_root_diagnostics =
+        list_files_only_unsupported_js_root_diagnostics(&discovery, &files, files_from_config);
+    if !unsupported_js_root_diagnostics.is_empty() {
+        let pretty = args
+            .pretty
+            .unwrap_or_else(|| std::io::stdout().is_terminal());
+        if args.pretty == Some(true) {
+            Reporter::force_colors(true);
+        }
+        let mut reporter = Reporter::new(pretty);
+        let output = reporter.render(&unsupported_js_root_diagnostics);
+        if !output.is_empty() {
+            print!("{output}");
+        }
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+    }
+
     // Print lib files first (matching tsc --listFilesOnly order)
     if !resolved.checker.no_lib {
         for lib_file in &resolved.lib_files {
@@ -3151,12 +3226,70 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         }
     }
 
-    let files = discover_ts_files(&discovery)?;
     for file in files {
         println!("{}", file.display());
     }
 
     Ok(())
+}
+
+fn list_files_only_unsupported_js_root_diagnostics(
+    discovery: &tsz_cli::fs::FileDiscoveryOptions,
+    files: &[std::path::PathBuf],
+    files_from_config: bool,
+) -> Vec<tsz::checker::diagnostics::Diagnostic> {
+    use tsz::checker::diagnostics::{
+        Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
+    };
+    use tsz_common::file_extensions::is_js_file;
+
+    if discovery.allow_js || !discovery.files_explicitly_set {
+        return Vec::new();
+    }
+
+    files
+        .iter()
+        .filter(|file| is_js_file(file))
+        .map(|file| {
+            let file_name = file.display().to_string();
+            let mut diagnostic = Diagnostic::from_code(
+                diagnostic_codes::FILE_IS_A_JAVASCRIPT_FILE_DID_YOU_MEAN_TO_ENABLE_THE_ALLOWJS_OPTION,
+                "",
+                0,
+                0,
+                &[&file_name],
+            );
+            diagnostic
+                .related_information
+                .push(DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Message,
+                    code: diagnostic_codes::THE_FILE_IS_IN_THE_PROGRAM_BECAUSE,
+                    file: String::new(),
+                    start: 0,
+                    length: 0,
+                    message_text: "The file is in the program because:".to_string(),
+                });
+            diagnostic
+                .related_information
+                .push(DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Message,
+                    code: if files_from_config {
+                        diagnostic_codes::PART_OF_FILES_LIST_IN_TSCONFIG_JSON
+                    } else {
+                        diagnostic_codes::ROOT_FILE_SPECIFIED_FOR_COMPILATION
+                    },
+                    file: String::new(),
+                    start: 0,
+                    length: 0,
+                    message_text: if files_from_config {
+                        "Part of 'files' list in tsconfig.json".to_string()
+                    } else {
+                        "Root file specified for compilation".to_string()
+                    },
+                });
+            diagnostic
+        })
+        .collect()
 }
 
 fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
