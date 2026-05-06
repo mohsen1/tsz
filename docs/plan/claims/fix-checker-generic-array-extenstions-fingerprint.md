@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/checker-generic-array-extenstions-fingerprint`
-- **PR**: Pending
+- **PR**: #3514
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
