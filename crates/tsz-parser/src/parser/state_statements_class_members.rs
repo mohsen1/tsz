@@ -1015,6 +1015,36 @@ impl ParserState {
         is_try_block
     }
 
+    fn recover_invalid_character_class_member(&mut self) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        while self.is_token(SyntaxKind::Unknown) {
+            self.parse_error_at_current_token(
+                diagnostic_messages::INVALID_CHARACTER,
+                diagnostic_codes::INVALID_CHARACTER,
+            );
+            self.next_token();
+        }
+
+        if matches!(
+            self.token(),
+            SyntaxKind::ColonToken
+                | SyntaxKind::QuestionToken
+                | SyntaxKind::ExclamationToken
+                | SyntaxKind::EqualsToken
+        ) {
+            while !matches!(
+                self.token(),
+                SyntaxKind::SemicolonToken
+                    | SyntaxKind::CloseBraceToken
+                    | SyntaxKind::EndOfFileToken
+            ) {
+                self.next_token();
+            }
+            self.parse_optional(SyntaxKind::SemicolonToken);
+        }
+    }
+
     /// Parse a single class member
     pub(crate) fn parse_class_member(&mut self) -> NodeIndex {
         use tsz_common::diagnostics::diagnostic_codes;
@@ -1037,15 +1067,8 @@ impl ParserState {
         // We do NOT reject them here — they flow through to normal class member parsing
         // where is_property_name() correctly accepts them.
 
-        // Handle Unknown tokens (invalid characters) before class-member recovery.
-        // tsc reports scanner-shaped TS1127 diagnostics for malformed Unicode
-        // escapes in member names, not the generic TS1068 class-member error.
         if self.is_token(SyntaxKind::Unknown) {
-            self.parse_error_at_current_token(
-                tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
-                diagnostic_codes::INVALID_CHARACTER,
-            );
-            self.next_token();
+            self.recover_invalid_character_class_member();
             return NodeIndex::NONE;
         }
 

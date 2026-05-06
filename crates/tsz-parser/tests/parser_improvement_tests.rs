@@ -2827,6 +2827,30 @@ fn test_escaped_combining_mark_as_variable_name_reports_ts1127() {
 }
 
 #[test]
+fn invalid_surrogate_unicode_escapes_in_class_member_emit_ts1127() {
+    let source = r"class C { \uD800\uDEA7: string; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let first_escape = source.find(r"\uD800").expect("first escape") as u32;
+    let second_escape = source.find(r"\uDEA7").expect("second escape") as u32;
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, first_escape),
+            (diagnostic_codes::INVALID_CHARACTER, second_escape),
+        ],
+        "invalid surrogate escapes in class member names should report scanner-shaped TS1127 diagnostics, got {diagnostics:?}",
+    );
+}
+
+#[test]
 fn test_class_method_string_names_use_string_literal_nodes() {
     let source = r#"
 class C {
