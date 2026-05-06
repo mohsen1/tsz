@@ -15795,7 +15795,7 @@ fn ts2592_emitted_for_unresolved_jquery_global_without_ts2304() {
 }
 
 #[test]
-fn missing_external_globals_without_types_use_install_only_diagnostics() {
+fn missing_external_globals_without_types_use_types_field_diagnostics() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
 
@@ -15824,9 +15824,9 @@ describe("suite", () => {});
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     for code in [
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
     ] {
         assert!(
             codes.contains(&code),
@@ -15835,13 +15835,13 @@ describe("suite", () => {});
         );
     }
     for code in [
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
-        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA,
+        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
     ] {
         assert!(
             !codes.contains(&code),
-            "Did not expect types-field diagnostic {code}, got diagnostics: {:?}",
+            "Did not expect install-only diagnostic {code}, got diagnostics: {:?}",
             result.diagnostics
         );
     }
@@ -15934,13 +15934,12 @@ Buffer.from("x");
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
-    let ts2580 = diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE;
     let ts2591 = diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2;
 
     assert_eq!(
-        codes.iter().filter(|&&code| code == ts2580).count(),
+        codes.iter().filter(|&&code| code == ts2591).count(),
         2,
-        "Expected TS2580 for process and Buffer in checked JS, got diagnostics: {:?}",
+        "Expected TS2591 for process and Buffer in checked JS, got diagnostics: {:?}",
         result.diagnostics
     );
     assert!(
@@ -15960,11 +15959,6 @@ Buffer.from("x");
             result.diagnostics
         );
     }
-    assert!(
-        !codes.contains(&ts2591),
-        "Did not expect TS2591, got diagnostics: {:?}",
-        result.diagnostics
-    );
     assert!(
         result
             .diagnostics
