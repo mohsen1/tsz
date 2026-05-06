@@ -1927,12 +1927,29 @@ impl Server {
         request: &TsServerRequest,
     ) -> TsServerResponse {
         let result = (|| -> Option<bool> {
-            // If copiedFromFile is provided and we know that file, we can offer paste edits
+            if let Some(copied_text_span) = request
+                .arguments
+                .get("copiedTextSpan")
+                .and_then(|value| value.as_array())
+            {
+                let file = request
+                    .arguments
+                    .get("file")
+                    .and_then(|value| value.as_str())?;
+                let has_source =
+                    self.open_files.contains_key(file) || std::path::Path::new(file).exists();
+                let has_non_empty_span = copied_text_span.iter().any(|span| {
+                    span.get("length")
+                        .and_then(|value| value.as_u64())
+                        .is_some_and(|length| length > 0)
+                });
+                return Some(has_source && has_non_empty_span);
+            }
+
             let copied_from = request
                 .arguments
                 .get("copiedFromFile")
                 .and_then(|v| v.as_str())?;
-            // Check if we have the source file open or can read it
             if self.open_files.contains_key(copied_from)
                 || std::path::Path::new(copied_from).exists()
             {
