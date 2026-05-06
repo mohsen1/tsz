@@ -10677,6 +10677,46 @@ fn compile_cli_allow_importing_ts_extensions_accepts_no_emit_guard() {
 }
 
 #[test]
+fn compile_bundler_dts_value_import_reports_ts2846_not_ts2307() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "allowImportingTsExtensions": true,
+            "noEmit": true
+          },
+          "files": ["a.ts", "types.d.ts"]
+        }"#,
+    );
+    write_file(&base.join("a.ts"), "export {};\n");
+    write_file(&base.join("types.d.ts"), "import {} from \"./a.d.ts\";\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT
+        ),
+        "expected TS2846 for value import of ./a.d.ts, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes
+            .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "TS2846 should suppress TS2307 for ./a.d.ts when ./a.ts exists, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn cli_declaration_dir_places_declarations_outside_out_dir() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

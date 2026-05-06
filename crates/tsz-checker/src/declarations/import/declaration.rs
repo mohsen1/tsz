@@ -993,11 +993,10 @@ impl<'a> CheckerState<'a> {
         // producing extra diagnostics on missing imports.
         let module_resolves_dts = self
             .ctx
-            .resolve_import_target_from_file_for_request(
+            .resolve_import_target_from_file_with_mode(
                 self.ctx.current_file_idx,
                 module_name,
                 request_resolution_mode,
-                request_kind,
             )
             .is_some()
             || self
