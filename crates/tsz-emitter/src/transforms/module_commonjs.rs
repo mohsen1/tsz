@@ -313,6 +313,9 @@ fn collect_export_name_from_declaration(
                 if import_decl.is_type_only {
                     return;
                 }
+                if import_equals_uses_external_module_ref(arena, import_decl.module_specifier) {
+                    return;
+                }
                 // `export import A = X.Y` gets a runtime export assignment even
                 // when the alias target is type-only.
                 exports.push(name);
@@ -322,6 +325,13 @@ fn collect_export_name_from_declaration(
             // Interface, Type Alias, etc. don't need runtime exports
         }
     }
+}
+
+fn import_equals_uses_external_module_ref(arena: &NodeArena, module_specifier: NodeIndex) -> bool {
+    arena.get(module_specifier).is_some_and(|node| {
+        node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+    })
 }
 
 /// Build a set of names that have runtime value declarations in the file.
