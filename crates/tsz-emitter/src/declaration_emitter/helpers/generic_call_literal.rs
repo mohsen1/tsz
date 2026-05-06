@@ -18,6 +18,30 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
                     .or_else(|| self.generic_call_literal_type_text(expr_idx))
             })
+            .map(Self::normalize_constructor_arrow_return_object_text)
+    }
+
+    fn normalize_constructor_arrow_return_object_text(type_text: String) -> String {
+        let Some(arrow_pos) = type_text.find("=> {") else {
+            return type_text;
+        };
+        let object_start = arrow_pos + "=> ".len();
+        let Some(close_rel) = type_text[object_start + 1..].find('}') else {
+            return type_text;
+        };
+        let object_end = object_start + 1 + close_rel;
+        let member_text = type_text[object_start + 1..object_end].trim();
+        if member_text.is_empty() || member_text.contains('\n') || !member_text.contains(':') {
+            return type_text;
+        }
+
+        let member_text = member_text.trim_end_matches(';').trim();
+        let replacement = format!("{{\n    {member_text};\n}}");
+        let mut normalized = String::new();
+        normalized.push_str(&type_text[..object_start]);
+        normalized.push_str(&replacement);
+        normalized.push_str(&type_text[object_end + 1..]);
+        normalized
     }
 
     pub(in crate::declaration_emitter) fn generic_call_literal_type_text(

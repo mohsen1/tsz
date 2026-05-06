@@ -323,15 +323,17 @@ impl<'a> CheckerState<'a> {
                 };
             let fallback_is_nominal_lib_object =
                 self.is_nominal_lib_object_type_name(&fallback_name);
-            let current_satisfies_fallback = current.is_none_or(|mapped| {
-                let primitive_fails_nominal_lib_object =
+            if !unresolved {
+                // A resolved inference candidate is better contextual information
+                // than its broad constraint. Keep the nominal-lib primitive guard
+                // that intentionally falls back to the library object shape.
+                let primitive_fails_nominal_lib_object = current.is_some_and(|mapped| {
                     common::is_primitive_type(self.ctx.types, mapped)
-                        && fallback_is_nominal_lib_object;
-                !primitive_fails_nominal_lib_object
-                    && self.is_assignable_to(mapped, contextual_fallback)
-            });
-            if !unresolved && current_satisfies_fallback {
-                continue;
+                        && fallback_is_nominal_lib_object
+                });
+                if !primitive_fails_nominal_lib_object {
+                    continue;
+                }
             }
             if contextual_fallback == TypeId::UNKNOWN
                 || contextual_fallback == TypeId::ERROR

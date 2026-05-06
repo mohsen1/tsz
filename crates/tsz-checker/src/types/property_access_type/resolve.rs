@@ -1602,8 +1602,8 @@ impl<'a> CheckerState<'a> {
                     self.resolve_class_for_access(access.expression, object_type_for_access)
                 && !is_static_access
                 && matches!(
-                    self.summarize_class_chain(class_idx)
-                        .member_kind(property_name, false, true),
+                    self.class_chain_member_kind_name_only(class_idx, property_name, false, true)
+                        .map(|(kind, _)| kind),
                     Some(ClassMemberKind::FieldLike)
                 )
             {
@@ -1940,8 +1940,7 @@ impl<'a> CheckerState<'a> {
 
                     let resolved_class_access =
                         self.resolve_class_for_access(access.expression, object_type_for_access);
-                    let class_chain_summary = resolved_class_access
-                        .map(|(class_idx, _)| self.summarize_class_chain(class_idx));
+                    let mut class_chain_summary = None;
                     let static_this_member_context = is_this_access
                         && (self
                             .find_enclosing_static_block(access.expression)
@@ -1993,11 +1992,19 @@ impl<'a> CheckerState<'a> {
                     }
                     if !access.question_dot_token
                         && is_this_access
-                        && let Some((_, is_static_access)) = resolved_class_access
+                        && let Some((class_idx, is_static_access)) = resolved_class_access
                         && is_static_access
-                        && let Some(summary) = class_chain_summary.as_ref()
-                        && summary.lookup(property_name, true, true).is_none()
-                        && summary.lookup(property_name, false, true).is_some()
+                        && self
+                            .class_chain_member_kind_name_only(class_idx, property_name, true, true)
+                            .is_none()
+                        && self
+                            .class_chain_member_kind_name_only(
+                                class_idx,
+                                property_name,
+                                false,
+                                true,
+                            )
+                            .is_some()
                     {
                         self.error_property_not_exist_at(
                             property_name,
@@ -2064,6 +2071,15 @@ impl<'a> CheckerState<'a> {
                             skip_flow_narrowing,
                             false,
                         );
+                    }
+                    if class_chain_summary.is_none()
+                        && self.property_access_is_current_class_construction_recovery(
+                            access.expression,
+                            object_type_for_access,
+                        )
+                        && let Some((class_idx, _)) = resolved_class_access
+                    {
+                        class_chain_summary = Some(self.summarize_class_chain(class_idx));
                     }
                     if let Some(member_type) = self.recover_property_from_class_chain_summary(
                         access.expression,
@@ -2320,12 +2336,16 @@ impl<'a> CheckerState<'a> {
 
                     if self.is_js_file()
                         && self.is_super_expression(access.expression)
-                        && let Some((_, is_static_access)) = resolved_class_access
+                        && let Some((class_idx, is_static_access)) = resolved_class_access
                         && is_static_access
                         && matches!(
-                            class_chain_summary
-                                .as_ref()
-                                .and_then(|summary| summary.member_kind(property_name, true, true)),
+                            self.class_chain_member_kind_name_only(
+                                class_idx,
+                                property_name,
+                                true,
+                                true,
+                            )
+                            .map(|(kind, _)| kind),
                             Some(ClassMemberKind::FieldLike)
                         )
                     {
@@ -2339,29 +2359,36 @@ impl<'a> CheckerState<'a> {
                     // super access. See: superAccess2.ts — `super.y()` in instance method and
                     // `super.x()` in static method produce no TS2576 errors in tsc.
 
-                    if let Some((_, is_static_access)) = resolved_class_access
+                    if let Some((class_idx, is_static_access)) = resolved_class_access
                         && is_static_access
-                        && let Some(member_info) = class_chain_summary
+                    {
+                        if class_chain_summary.is_none() {
+                            class_chain_summary = Some(self.summarize_class_chain(class_idx));
+                        }
+                        if let Some(member_info) = class_chain_summary
                             .as_ref()
                             .and_then(|summary| summary.lookup(property_name, true, true))
-                    {
-                        return self.finalize_property_access_result(
-                            idx,
-                            effective_write_result(member_info.type_id, Some(member_info.type_id)),
-                            skip_flow_narrowing,
-                            false,
-                        );
+                        {
+                            return self.finalize_property_access_result(
+                                idx,
+                                effective_write_result(
+                                    member_info.type_id,
+                                    Some(member_info.type_id),
+                                ),
+                                skip_flow_narrowing,
+                                false,
+                            );
+                        }
                     }
 
                     // TS2576: instance.member where `member` exists on the class static side.
-                    // Route this through the shared class summary so inherited
-                    // static fields/accessors don't force another class walk.
+                    // This diagnostic only needs to know whether a static member
+                    // exists, not its full type.
                     if !self.is_super_expression(access.expression)
-                        && let Some((_, is_static_access)) = resolved_class_access
+                        && let Some((class_idx, is_static_access)) = resolved_class_access
                         && !is_static_access
-                        && class_chain_summary
-                            .as_ref()
-                            .and_then(|summary| summary.lookup(property_name, true, true))
+                        && self
+                            .class_chain_member_kind_name_only(class_idx, property_name, true, true)
                             .is_some()
                     {
                         use crate::diagnostics::{

@@ -501,14 +501,12 @@ impl<'a> CheckerState<'a> {
             .get_function(self.ctx.arena.get(function_idx)?)
         {
             &func.parameters.nodes
-        } else if let Some(method) = self
-            .ctx
-            .arena
-            .get_method_decl(self.ctx.arena.get(function_idx)?)
-        {
-            &method.parameters.nodes
         } else {
-            return None;
+            let method = self
+                .ctx
+                .arena
+                .get_method_decl(self.ctx.arena.get(function_idx)?)?;
+            &method.parameters.nodes
         };
 
         let param_position = parameters.iter().position(|&idx| idx == param_idx)?;
@@ -707,9 +705,8 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
             {
                 shapes.push(shape);
-            } else if let Some(members) =
-                crate::query_boundaries::common::union_members(self.ctx.types, ty)
-            {
+            } else {
+                let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
                 // Flatten union members: collect function shapes from each.
                 let mut found_any = false;
                 for &member in &members {
@@ -724,8 +721,6 @@ impl<'a> CheckerState<'a> {
                 if !found_any {
                     return None;
                 }
-            } else {
-                return None;
             }
         }
 
