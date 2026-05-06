@@ -1149,6 +1149,19 @@ impl<'a> CheckerState<'a> {
                 });
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                 if Self::is_simple_type_name(simple_expr) && unresolved_type {
+                    if let Some(angle_idx) = Self::find_top_level_char(simple_expr, '<')
+                        && simple_expr.ends_with('>')
+                    {
+                        let base_name = simple_expr[..angle_idx].trim();
+                        let base_is_known = Self::is_simple_type_name(base_name)
+                            && (self.resolve_jsdoc_type_str(base_name).is_some()
+                                || Self::parse_jsdoc_typedefs(&source_text)
+                                    .iter()
+                                    .any(|(name, _)| name == base_name));
+                        if base_is_known {
+                            continue;
+                        }
+                    }
                     self.emit_jsdoc_cannot_find_name(
                         simple_expr,
                         comment.pos,
