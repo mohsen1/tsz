@@ -586,7 +586,7 @@ impl<'a> CheckerState<'a> {
                                     params: sig.params.clone(),
                                     this_type: sig.this_type,
                                     return_type: rough_instance_return_type,
-                                    type_predicate: sig.type_predicate.clone(),
+                                    type_predicate: sig.type_predicate,
                                     is_method: false,
                                 })
                                 .collect(),
