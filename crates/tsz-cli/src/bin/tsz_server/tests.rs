@@ -169,6 +169,50 @@ fn prepare_paste_edits_accepts_protocol_copied_text_span() {
 }
 
 #[test]
+fn implementation_finds_cross_file_class_implementation() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/a.ts",
+                    "fileContent": "export interface Service { run(): void }\n",
+                }),
+            ))
+            .success
+    );
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/b.ts",
+                    "fileContent": "import { Service } from \"./a\";\nexport class Impl implements Service { run() {} }\n",
+                }),
+            ))
+            .success
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "implementation",
+        serde_json::json!({
+            "file": "/src/a.ts",
+            "line": 1,
+            "offset": 18,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("implementation should return a body");
+    assert_eq!(body[0]["file"], "/src/b.ts");
+    assert_eq!(
+        body[0]["start"],
+        serde_json::json!({ "line": 2, "offset": 14 })
+    );
+}
+
+#[test]
 fn reset_clears_session_state_but_keeps_server_alive() {
     let mut server = make_server();
     server
