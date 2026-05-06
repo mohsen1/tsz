@@ -623,9 +623,13 @@ impl<'a> Printer<'a> {
         source
             .lines()
             .map(str::trim)
-            .filter(|line| line.starts_with("return ") && line.ends_with(';'))
+            .filter(|line| self.is_recoverable_interface_return_statement(line))
             .map(str::to_string)
             .collect()
+    }
+
+    fn is_recoverable_interface_return_statement(&self, line: &str) -> bool {
+        line.starts_with("return ") && line.ends_with(';') && !line.contains(':')
     }
 
     fn interface_source_end(&self, start: usize) -> Option<usize> {

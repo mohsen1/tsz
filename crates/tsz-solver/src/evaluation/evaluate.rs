@@ -640,12 +640,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Try to get the type parameters for this DefId
             let type_params = self.resolver.get_lazy_type_params(def_id);
             let resolved = self.resolver.resolve_lazy(def_id, self.interner);
-            let prefer_application_display_alias = matches!(
-                self.resolver.get_def_kind(def_id),
-                Some(crate::def::DefKind::TypeAlias)
-            ) && resolved.is_some_and(|body| {
-                !matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
-            });
+            let def_kind = self.resolver.get_def_kind(def_id);
+            let is_type_alias_def = matches!(def_kind, Some(crate::def::DefKind::TypeAlias));
+            let prefer_application_display_alias = is_type_alias_def
+                && resolved.is_some_and(|body| {
+                    !matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+                });
 
             tracing::trace!(
                 ?def_id,
@@ -999,17 +999,44 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         )
                     )
                 {
-                    if prefer_application_display_alias
-                        || (self.expand_application_display_alias_args
-                            && matches!(
-                                self.interner.lookup(display_origin),
-                                Some(TypeData::Application(_))
-                            ))
-                    {
-                        self.interner
-                            .store_display_alias_preferring_application(result, display_origin);
-                    } else {
-                        self.interner.store_display_alias(result, display_origin);
+                    let result_is_non_empty_structural = match self.interner.lookup(result) {
+                        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                            let shape = self.interner.object_shape(shape_id);
+                            !shape.properties.is_empty()
+                                || shape.string_index.is_some()
+                                || shape.number_index.is_some()
+                        }
+                        Some(TypeData::Intersection(_)) => true,
+                        _ => false,
+                    };
+                    let skip_type_alias_repaint = is_type_alias_def
+                        && matches!(
+                            self.interner.lookup(display_origin),
+                            Some(TypeData::Application(_))
+                        )
+                        && match (
+                            self.interner.lookup_alloc_order(result),
+                            self.interner.lookup_alloc_order(display_origin),
+                        ) {
+                            (Some(result_order), Some(display_order)) => {
+                                result_order <= display_order
+                            }
+                            _ => result.0 <= display_origin.0,
+                        }
+                        && result_is_non_empty_structural;
+                    if !skip_type_alias_repaint {
+                        if prefer_application_display_alias
+                            || (self.expand_application_display_alias_args
+                                && matches!(
+                                    self.interner.lookup(display_origin),
+                                    Some(TypeData::Application(_))
+                                ))
+                        {
+                            self.interner
+                                .store_display_alias_preferring_application(result, display_origin);
+                        } else {
+                            self.interner.store_display_alias(result, display_origin);
+                        }
                     }
 
                     // If the conditional branch resolved to an intermediate Application
