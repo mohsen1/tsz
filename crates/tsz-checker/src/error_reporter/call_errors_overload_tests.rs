@@ -119,6 +119,33 @@ function g() {
 }
 
 #[test]
+fn ts2769_property_call_multi_arg_mismatch_anchors_property_token() {
+    let source = r#"
+interface I {
+    h(s1: string, s2: number): string;
+    h(s1: number, s2: string): number;
+}
+
+declare var x: I;
+let z: string;
+z=x.h(2,2);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2769)
+        .expect("expected TS2769");
+
+    let property_start = source.find("h(2,2)").expect("expected property call") as u32;
+    assert_eq!(
+        diag.start, property_start,
+        "TS2769 should anchor at the overloaded property token when no single argument explains the failure"
+    );
+    assert_eq!(diag.length, 1, "TS2769 should cover only `h`");
+}
+
+#[test]
 fn ts2769_provisional_callback_failures_anchor_callee_not_callback_argument() {
     let source = r#"
 declare var func: {

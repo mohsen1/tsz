@@ -132,6 +132,10 @@ impl<'a> Printer<'a> {
         false
     }
 
+    fn is_reserved_private_constructor_name(name: &str) -> bool {
+        name == "constructor"
+    }
+
     fn emit_private_auto_accessor_function_def(
         &mut self,
         var_name: &str,
@@ -885,6 +889,9 @@ impl<'a> Printer<'a> {
             // Prepare private method function defs for after the class body
             // Both instance and static private methods are extracted.
             for method in &private_methods {
+                if Self::is_reserved_private_constructor_name(&method.name) {
+                    continue;
+                }
                 if let Some(body_idx) = method.body {
                     self.pending_private_method_defs.push((
                         method.fn_var_name.clone(),
@@ -925,6 +932,9 @@ impl<'a> Printer<'a> {
 
             // Mark all private methods and accessors (instance + static) to skip from class body
             for method in &private_methods {
+                if Self::is_reserved_private_constructor_name(&method.name) {
+                    continue;
+                }
                 self.private_members_to_skip.insert(method.name.clone());
             }
             for accessor in &private_accessors {

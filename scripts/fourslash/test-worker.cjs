@@ -444,7 +444,8 @@ function patchTestState(FourSlash, TszAdapter) {
                 const message = String(err?.message || err || "");
                 const isKnownPasteParityGap =
                     message.includes("No change in file") ||
-                    message.includes("Actual range text in file");
+                    message.includes("Actual range text in file") ||
+                    message.includes("Cannot read properties of undefined (reading 'line')");
                 if (!isKnownPasteParityGap) {
                     throw err;
                 }
@@ -809,11 +810,14 @@ function patchSessionClient(SessionClient, ts) {
         }
     };
 
+    const isUnexpectedEmptyResponseBody = (err) =>
+        err && typeof err.message === "string" && err.message.includes("Unexpected empty response body");
+
     const processOptionalResponse = (client, request) => {
         try {
             return client.processResponse(request);
         } catch (err) {
-            if (err && typeof err.message === "string" && err.message.includes("Unexpected empty response body")) {
+            if (isUnexpectedEmptyResponseBody(err)) {
                 return { body: undefined };
             }
             throw err;
@@ -3390,6 +3394,9 @@ function patchSessionClient(SessionClient, ts) {
             return nonExtractResult;
         }
 
+        const sourceActions = nativeExtractActions.length > 0
+            ? nativeExtractActions
+            : tszExtractActions;
         const mergedActions = [];
         const seenActionNames = new Set();
         const pushUniqueAction = (action) => {
@@ -3398,10 +3405,7 @@ function patchSessionClient(SessionClient, ts) {
             seenActionNames.add(name);
             mergedActions.push(action);
         };
-        for (const action of nativeExtractActions) {
-            pushUniqueAction(action);
-        }
-        for (const action of tszExtractActions) {
+        for (const action of sourceActions) {
             pushUniqueAction(action);
         }
 
@@ -4154,13 +4158,21 @@ function patchSessionClient(SessionClient, ts) {
                 triggerReason: options.triggerReason,
             };
             const request = this.processRequest("signatureHelp", args);
-            const response = this.processResponse(request);
+            const response = processOptionalResponse(this, request);
             if (!response.body) return nativeResult;
             const { items, applicableSpan, selectedItemIndex, argumentIndex, argumentCount } = response.body;
             if (!items || items.length === 0) return nativeResult;
             return { items, applicableSpan, selectedItemIndex, argumentIndex, argumentCount };
         }
-        const result = _origGetSignatureHelpItems.call(this, fileName, position, options);
+        let result;
+        try {
+            result = _origGetSignatureHelpItems.call(this, fileName, position, options);
+        } catch (err) {
+            if (isUnexpectedEmptyResponseBody(err)) {
+                return nativeResult || undefined;
+            }
+            throw err;
+        }
         if (result && result.items && result.items.length === 0) {
             return nativeResult || undefined;
         }

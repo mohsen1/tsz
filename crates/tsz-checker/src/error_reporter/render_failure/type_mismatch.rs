@@ -1,4 +1,5 @@
 use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
+use crate::error_reporter::assignability::is_object_prototype_method;
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -71,10 +72,14 @@ impl<'a> CheckerState<'a> {
             source_str = self.rewrite_source_display_for_non_literal_target_assignability(
                 source, target, source_str,
             );
-            let has_declared_target_annotation = self
-                .assignment_target_expression(idx)
-                .and_then(|expr| self.declared_type_annotation_text_for_expression(expr))
-                .is_some();
+            let has_declared_target_annotation =
+                self.assignment_target_expression(idx).is_some_and(|expr| {
+                    self.declared_type_annotation_text_for_expression(expr)
+                        .is_some()
+                        || self
+                            .declared_intersection_annotation_display_for_expression(expr)
+                            .is_some()
+                });
             if !has_declared_target_annotation {
                 target_str =
                     self.rewrite_target_display_for_non_literal_assignability(target, target_str);
@@ -181,7 +186,7 @@ impl<'a> CheckerState<'a> {
             && let Some(property_name) = self.missing_single_required_property(source, target)
         {
             let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-            if prop_name.starts_with("__private_brand") {
+            if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                 let (source_display, target_display) = self
                     .finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
                 let message = self
@@ -273,6 +278,81 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
             };
             return Diagnostic::error(file_name, start, length, message, code);
+        }
+
+        if depth == 0
+            && !target_is_intersection_for_mismatch
+            && source_str == "object"
+            && crate::query_boundaries::common::union_members(self.ctx.types, source).is_some_and(
+                |members| {
+                    members
+                        .iter()
+                        .any(|member| self.is_object_intrinsic_for_missing_properties(*member))
+                },
+            )
+        {
+            let target_candidates = [
+                target,
+                self.resolve_type_for_property_access(target),
+                self.judge_evaluate(target),
+                self.evaluate_type_with_env(target),
+                self.evaluate_type_for_assignability(target),
+            ];
+            if let Some(target_with_shape) = target_candidates.into_iter().find(|candidate| {
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, *candidate)
+                    .is_some()
+            }) {
+                let target_shape = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    target_with_shape,
+                )
+                .expect("target candidate was checked for an object shape");
+                let mut missing_with_order: Vec<_> = target_shape
+                    .properties
+                    .iter()
+                    .filter(|prop| !prop.optional)
+                    .filter(|prop| {
+                        let name = self.ctx.types.resolve_atom_ref(prop.name);
+                        !is_object_prototype_method(name)
+                    })
+                    .map(|prop| (prop.declaration_order, prop.name))
+                    .collect();
+                missing_with_order.sort_by_key(|(order, _)| *order);
+                let missing_props: Vec<_> = missing_with_order
+                    .into_iter()
+                    .map(|(_, name)| name)
+                    .collect();
+                if missing_props.len() > 1 {
+                    let ordered_names =
+                        self.sort_missing_property_names_for_display(target, &missing_props);
+                    let is_truncated = ordered_names.len() > 5;
+                    let display_count = if is_truncated { 4 } else { 5 };
+                    let prop_list: Vec<String> = ordered_names
+                        .iter()
+                        .take(display_count)
+                        .map(|name| self.missing_property_name_for_display(*name, target))
+                        .collect();
+                    let props_joined = prop_list.join(", ");
+                    let message = if is_truncated {
+                        let more_count = (ordered_names.len() - display_count).to_string();
+                        format_message(
+                            diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                            &["{}", &target_str, &props_joined, &more_count],
+                        )
+                    } else {
+                        format_message(
+                            diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                            &["{}", &target_str, &props_joined],
+                        )
+                    };
+                    let code = if is_truncated {
+                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+                    } else {
+                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                    };
+                    return Diagnostic::error(file_name, start, length, message, code);
+                }
+            }
         }
 
         source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);

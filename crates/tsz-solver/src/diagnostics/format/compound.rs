@@ -1806,8 +1806,19 @@ impl<'a> TypeFormatter<'a> {
             return;
         }
 
+        let formatted = self.format(type_id);
+        let formatted = formatted.as_ref();
+        if formatted.len() >= 2
+            && formatted.starts_with('"')
+            && formatted.ends_with('"')
+            && !formatted[1..formatted.len() - 1].contains('"')
+        {
+            Self::push_template_literal_text(result, &formatted[1..formatted.len() - 1]);
+            return;
+        }
+
         result.push_str("${");
-        result.push_str(&self.format(type_id));
+        result.push_str(formatted);
         result.push('}');
     }
 
@@ -2242,7 +2253,7 @@ impl<'a> TypeFormatter<'a> {
     /// - Tier 0: Builtins/intrinsics (always first)
     /// - Tier 1: User-defined types with source info (sorted by file, then position)
     /// - Tier 2: Types without source info (preserve original order by returning sentinel)
-    fn get_source_position_for_type(
+    pub(super) fn get_source_position_for_type(
         &self,
         type_id: TypeId,
         def_store: &crate::def::DefinitionStore,
