@@ -260,27 +260,4 @@ impl<'a> CheckerState<'a> {
             .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
             .is_some_and(|ident| ident.escaped_text == name)
     }
-
-    pub(super) fn is_global_function_interface_constraint(&self, type_id: TypeId) -> bool {
-        let db = self.ctx.types.as_type_database();
-        if query::is_boxed_function_type(db, type_id) {
-            return true;
-        }
-        if !query::is_boxed_function_def(db, type_id) {
-            return false;
-        }
-
-        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) else {
-            return false;
-        };
-        if !self.ctx.symbol_is_from_lib(sym_id) {
-            return false;
-        }
-
-        let lib_binders = self.get_lib_binders();
-        self.ctx
-            .binder
-            .get_symbol_with_libs(sym_id, &lib_binders)
-            .is_some_and(|symbol| symbol.escaped_name == "Function")
-    }
 }

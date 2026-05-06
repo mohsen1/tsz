@@ -997,7 +997,6 @@ impl Server {
         if !Self::is_quoted_import_or_export_specifier_offset(arena, source_text, query_offset) {
             return None;
         }
-        type LocationKey = (String, u32, u32, u32, u32);
 
         let mut merged_refs = Vec::new();
         let loc_key = |loc: &tsz_common::position::Location| {
