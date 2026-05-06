@@ -944,6 +944,7 @@ impl Server {
             "openExternalProject" | "openExternalProjects" | "closeExternalProject" => {
                 self.handle_external_project(seq, &request)
             }
+            "synchronizeProjectList" => self.handle_synchronize_project_list(seq, &request),
             "updateOpen" => self.handle_update_open(seq, &request),
             "encodedSemanticClassifications-full" => {
                 self.handle_encoded_semantic_classifications_full(seq, &request)
