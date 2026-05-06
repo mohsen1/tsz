@@ -241,7 +241,6 @@ fn test_collect_export_names_with_multiple_named_exports() {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_collect_export_names_with_export_import_equals() {
     // `export import Foo = Bar;` where Bar is *instantiated* (has runtime
     // value declarations) does export the alias. Empty/non-instantiated

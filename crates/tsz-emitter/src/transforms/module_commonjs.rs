@@ -150,7 +150,11 @@ fn resolve_entity_chain_has_value(
                     && n == *target_name
                 {
                     if rest.is_empty() {
-                        return true;
+                        return super::emit_utils::is_instantiated_module_ext(
+                            arena,
+                            m.body,
+                            preserve_const_enums,
+                        ) || module_body_is_empty(arena, m.body);
                     }
                     if let Some(body) = arena.get(m.body)
                         && let Some(block) = arena.get_module_block(body)
@@ -222,6 +226,14 @@ fn resolve_entity_chain_has_value(
         }
     });
     !found_type_only
+}
+
+fn module_body_is_empty(arena: &NodeArena, body_idx: NodeIndex) -> bool {
+    arena
+        .get(body_idx)
+        .and_then(|body| arena.get_module_block(body))
+        .and_then(|block| block.statements.as_ref())
+        .is_none_or(|statements| statements.nodes.is_empty())
 }
 
 /// Helper function to collect export name from a single declaration node
@@ -928,6 +940,7 @@ pub fn build_type_only_declaration_names(
                         module.body,
                         preserve_const_enums,
                     )
+                    && !module_body_is_empty(arena, module.body)
                     && let Some(name) = get_identifier_text(arena, module.name)
                 {
                     type_only_names.insert(name);
@@ -1008,11 +1021,11 @@ fn collect_value_names_from_declaration(
         }
         k if k == syntax_kind_ext::MODULE_DECLARATION => {
             if let Some(module) = arena.get_module(decl_node)
-                && super::emit_utils::is_instantiated_module_ext(
+                && (super::emit_utils::is_instantiated_module_ext(
                     arena,
                     module.body,
                     preserve_const_enums,
-                )
+                ) || module_body_is_empty(arena, module.body))
                 && let Some(name) = get_identifier_text(arena, module.name)
             {
                 value_names.insert(name);
