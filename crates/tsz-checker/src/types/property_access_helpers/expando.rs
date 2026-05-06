@@ -217,6 +217,47 @@ impl<'a> CheckerState<'a> {
             || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
     }
 
+    fn root_symbol_supports_js_direct_expando_write(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+        else {
+            return false;
+        };
+
+        if symbol.has_any_flags(
+            symbol_flags::FUNCTION
+                | symbol_flags::CLASS
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::NAMESPACE_MODULE,
+        ) {
+            return true;
+        }
+
+        if !symbol.has_any_flags(symbol_flags::VARIABLE) {
+            return false;
+        }
+
+        let decl_idx = symbol.value_declaration;
+        let file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        let Some(init_node) = arena.get(var_decl.initializer) else {
+            return false;
+        };
+
+        init_node.is_function_expression_or_arrow()
+            || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+    }
+
     fn variable_declaration_has_jsdoc_type_annotation(&self, decl_idx: NodeIndex) -> bool {
         let Some(source_file) = self.source_file_data_for_node(decl_idx) else {
             return false;
@@ -1085,11 +1126,28 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        self.is_expando_property_read(object_expr_idx, property_name)
-            || (self.property_access_is_direct_write_target(property_access_idx)
-                && self
-                    .current_file_commonjs_export_member_name(property_access_idx)
-                    .is_some())
+        if self.is_expando_property_read(object_expr_idx, property_name) {
+            return true;
+        }
+
+        if self.property_access_is_direct_write_target(property_access_idx) {
+            if self
+                .current_file_commonjs_export_member_name(property_access_idx)
+                .is_some()
+            {
+                return true;
+            }
+
+            if let Some(obj_key) =
+                Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx)
+                && !self.class_has_instance_member(&obj_key, property_name)
+                && let Some(sym_id) = self.root_symbol_for_expando_read(object_expr_idx)
+            {
+                return self.root_symbol_supports_js_direct_expando_write(sym_id);
+            }
+        }
+
+        false
     }
 
     /// Check if a property access reads an expando property assigned via `X.prop = value`.

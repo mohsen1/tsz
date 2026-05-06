@@ -16,6 +16,12 @@ impl<'a> CheckerState<'a> {
     // Low-level nesting-aware string splitting
     // -----------------------------------------------------------------
 
+    pub(crate) fn jsdoc_balanced_braced_type_expr(rest: &str) -> Option<&str> {
+        let rest = rest.trim_start();
+        let (type_expr, _) = Self::parse_jsdoc_curly_type_expr(rest)?;
+        Some(type_expr.trim())
+    }
+
     /// Find the first occurrence of a character at the top level.
     pub(crate) fn find_top_level_char(s: &str, target: char) -> Option<usize> {
         let mut angle_depth = 0u32;
@@ -403,8 +409,8 @@ impl<'a> CheckerState<'a> {
     pub(super) fn extract_jsdoc_satisfies_expression(jsdoc: &str) -> Option<&str> {
         let tag_pos = Self::jsdoc_tag_offset(jsdoc, "satisfies")?;
         let rest = &jsdoc[tag_pos + "@satisfies".len()..];
-        let open = rest.find('{')?;
-        let after_open = &rest[open + 1..];
+        let rest = rest.trim_start();
+        let after_open = rest.strip_prefix('{')?;
         let mut depth = 1usize;
         let mut end_idx = None;
         for (i, ch) in after_open.char_indices() {
@@ -895,10 +901,7 @@ impl<'a> CheckerState<'a> {
                 }
                 if let Some(rest) = Self::strip_jsdoc_return_tag_prefix(line) {
                     let rest = rest.trim();
-                    if rest.starts_with('{')
-                        && let Some(end) = rest[1..].find('}')
-                    {
-                        let type_expr = rest[1..1 + end].trim();
+                    if let Some(type_expr) = Self::jsdoc_balanced_braced_type_expr(rest) {
                         let predicate =
                             Self::jsdoc_returns_type_predicate_from_type_expr(type_expr);
                         if let Some(ref mut cb) = current_info.callback {
@@ -1630,6 +1633,21 @@ mod jsdoc_tag_boundary_tests {
         let imports = CheckerState::parse_jsdoc_typedefs("@import { Foo } from \"./types\"\n");
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0].0, "Foo");
+    }
+
+    #[test]
+    fn parse_jsdoc_callback_preserves_nested_object_return_type() {
+        let typedefs = CheckerState::parse_jsdoc_typedefs(
+            "\
+@callback MakeBox
+@returns {{ value: string }}
+",
+        );
+
+        assert_eq!(typedefs.len(), 1);
+        assert_eq!(typedefs[0].0, "MakeBox");
+        let callback = typedefs[0].1.callback.as_ref().expect("callback parsed");
+        assert_eq!(callback.return_type.as_deref(), Some("{ value: string }"));
     }
 }
 

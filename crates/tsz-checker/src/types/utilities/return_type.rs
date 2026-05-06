@@ -7,6 +7,7 @@
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -356,6 +357,79 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Apply literal widening to a single return expression's inferred type,
+    /// matching tsc's `getReturnTypeFromBody` widening rules per-contribution:
+    ///
+    /// - When the function has a contextual return type, the contextual typing
+    ///   already preserved or shaped the literal type; do not widen.
+    /// - When the outer scope requested literal preservation
+    ///   (`preserve_literal_types`), do not widen.
+    /// - When the return expression is wrapped in a const assertion
+    ///   (`return x as const` or `return <const>x`), preserve the asserted
+    ///   literal type even without a contextual return type. tsc keeps the
+    ///   const-asserted literal as the inferred return type.
+    /// - Otherwise widen literal types (`return "a"` → return type `string`).
+    fn maybe_widen_return_contribution(
+        &self,
+        expr_idx: NodeIndex,
+        type_id: TypeId,
+        return_context: Option<TypeId>,
+    ) -> TypeId {
+        if return_context.is_some() {
+            return type_id;
+        }
+        if self.ctx.preserve_literal_types {
+            return type_id;
+        }
+        if self.return_expression_is_const_assertion(expr_idx) {
+            return type_id;
+        }
+        self.widen_literal_type(type_id)
+    }
+
+    /// Structurally detect whether a return expression is a const assertion
+    /// (`expr as const` or `<const>expr`), skipping any wrapping parentheses.
+    /// Mirrors the detection in `dispatch.rs` that toggles `in_const_assertion`
+    /// for type-assertion nodes.
+    fn return_expression_is_const_assertion(&self, expr_idx: NodeIndex) -> bool {
+        let mut current = expr_idx;
+        while let Some(node) = self.ctx.arena.get(current) {
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+            {
+                current = paren.expression;
+                continue;
+            }
+            if (node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::TYPE_ASSERTION)
+                && let Some(assertion) = self.ctx.arena.get_type_assertion(node)
+                && let Some(type_node) = self.ctx.arena.get(assertion.type_node)
+            {
+                if type_node.kind == SyntaxKind::ConstKeyword as u16 {
+                    return true;
+                }
+                if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && self
+                        .ctx
+                        .arena
+                        .get_type_ref(type_node)
+                        .is_some_and(|type_ref| {
+                            type_ref.type_arguments.is_none()
+                                && self
+                                    .ctx
+                                    .arena
+                                    .get_identifier_text(type_ref.type_name)
+                                    .is_some_and(|name| name == "const")
+                        })
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        false
+    }
+
     fn is_explicit_any_assertion_expression(&mut self, expr_idx: NodeIndex) -> bool {
         let mut current = expr_idx;
         while let Some(node) = self.ctx.arena.get(current) {
@@ -469,20 +543,14 @@ impl<'a> CheckerState<'a> {
         }
         self.ctx.rollback_return_type(&snap);
 
-        // Widen inferred return types when there is no contextual return type,
-        // unless the caller explicitly requested literal preservation
-        // (e.g. computed property name resolution or literal-sensitive inference).
-        // `function f() { return "a"; }` → return type `string` (widened).
-        // But `const g: () => "a" = () => "a"` → return type `"a"` (preserved
-        // by contextual typing).
-        if return_context.is_none() {
-            if self.ctx.preserve_literal_types {
-                return result;
-            }
-            self.widen_literal_type(result)
-        } else {
-            result
-        }
+        // Widening of inferred return types is performed per-return-expression
+        // during collection (`maybe_widen_return_contribution`), so that
+        // contributions from `return ... as const` (or `<const>...`) preserve
+        // their literal types while plain literal returns still widen. The only
+        // remaining case here is when the caller explicitly requested literal
+        // preservation (e.g. `preserve_literal_types`) and per-expression
+        // widening already deferred to that flag.
+        result
     }
 
     /// Inner implementation of return type inference (no diagnostic/cache cleanup).
@@ -501,7 +569,8 @@ impl<'a> CheckerState<'a> {
         };
 
         if node.kind != syntax_kind_ext::BLOCK {
-            return self.return_expression_type(body_idx, return_context);
+            let raw = self.return_expression_type(body_idx, return_context);
+            return self.maybe_widen_return_contribution(body_idx, raw, return_context);
         }
 
         let mut return_types = Vec::new();
@@ -791,7 +860,12 @@ impl<'a> CheckerState<'a> {
                         );
                         let return_type =
                             self.return_expression_type(return_data.expression, infer_context);
-                        return_types.push(return_type);
+                        let widened = self.maybe_widen_return_contribution(
+                            return_data.expression,
+                            return_type,
+                            return_context,
+                        );
+                        return_types.push(widened);
                     }
                 }
             }

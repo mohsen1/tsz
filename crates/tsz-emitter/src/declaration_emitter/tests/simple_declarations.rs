@@ -112,6 +112,58 @@ export const visible = 3;
 }
 
 #[test]
+fn strip_internal_parameter_property_comments_do_not_emit_internal_fields() {
+    let source = r#"
+export class Foo {
+  constructor(
+    /** @internal */
+    public isInternal1: string,
+    /** @internal */ public isInternal2: string, /** @internal */
+    public isInternal3: string,
+    // @internal
+    public isInternal4: string,
+    // nothing
+    /** @internal */
+    public isInternal5: string,
+    /* @internal */ public isInternal6: string,
+    /* @internal */ public isInternal7: string, /** @internal */
+    // not work
+    public notInternal1: string,
+    // @internal
+    /* not work */
+    public notInternal2: string,
+    /* not work */
+    // @internal
+    /* not work */
+    public notInternal3: string,
+  ) { }
+}
+
+export class Bar {
+  constructor(/* @internal */ public isInternal1: string) {}
+}
+"#;
+    let output = emit_dts_strip_internal(source);
+
+    assert!(
+        !output.contains("    isInternal1: string;"),
+        "Expected @internal parameter properties to skip class fields: {output}"
+    );
+    assert!(
+        output.contains("notInternal1: string;")
+            && output.contains("notInternal2: string;")
+            && output.contains("notInternal3: string;"),
+        "Expected non-internal parameter properties to remain as class fields: {output}"
+    );
+    assert!(
+        output.contains("constructor(\n    /** @internal */\n    isInternal1: string")
+            && output.contains("/** @internal */ isInternal2: string")
+            && output.contains("constructor(/* @internal */ isInternal1: string);"),
+        "Expected constructor parameters to preserve relevant inline comments: {output}"
+    );
+}
+
+#[test]
 fn test_object_rest_with_keyword_property_names_omits_destructured_key() {
     let source = r#"
 type P = {
@@ -498,7 +550,7 @@ export class Next {}
 
     assert!(
         output.contains(
-            "export declare const make: (value: string) => {\n    /** field docs */\n    field: (next: number) => void;\n    /** method docs */\n    method: any;\n};"
+            "export declare const make: (value: string) => {\n    /** field docs */\n    field: (next: number) => void;\n    /** method docs */\n    method: (next: number) => void;\n};"
         ),
         "Expected returned object literal member JSDoc to stay with members: {output}"
     );
@@ -641,14 +693,14 @@ export class C {
 "#,
     );
 
-    // tsc emits computed methods as method signatures, not property signatures.
+    // tsc emits late-bound computed methods as property-valued function types.
     assert!(
-        output.contains("[key](): string;"),
-        "Expected computed method to use method syntax (matching tsc): {output}"
+        output.contains("[key]: () => string;"),
+        "Expected computed method to use property syntax (matching tsc): {output}"
     );
     assert!(
-        !output.contains("[key]: () => string;"),
-        "Did not expect property signature for computed method: {output}"
+        !output.contains("[key](): string;"),
+        "Did not expect method signature for late-bound computed method: {output}"
     );
     assert!(
         output.contains("regular(): number;"),
@@ -970,6 +1022,31 @@ function format(x) {
     assert!(
         output.contains("declare function format(x: number): string;"),
         "Expected JSDoc function declaration types to flow into .d.ts emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_emits_constrained_jsdoc_template() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template {string} T
+ * @param {T} x
+ * @returns {T}
+ */
+export function id(x) {
+  return x;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function id<T extends string>(x: T): T;"),
+        "Expected constrained JSDoc template to emit as a type parameter constraint: {output}"
+    );
+    assert!(
+        !output.contains("id<{string}, T>"),
+        "Did not expect braced JSDoc constraint to emit as a fake type parameter: {output}"
     );
 }
 

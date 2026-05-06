@@ -818,6 +818,26 @@ fn test_collect_module_specifiers_require_has_correct_kind() {
 }
 
 #[test]
+fn test_collect_module_specifiers_export_import_require_has_correct_kind() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"export import dep = require("./dep");"#;
+    let file_name = "test.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let requires: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::CjsRequire)
+        .map(|(s, _, _, _)| s.as_str())
+        .collect();
+    assert!(
+        requires.contains(&"./dep"),
+        "Should find exported CommonJS require, got: {specifiers:?}"
+    );
+}
+
+#[test]
 fn test_collect_module_specifiers_dynamic_import_has_correct_kind() {
     use tsz::module_resolver::ImportKind;
     let text = r#"import("./foo").then(x => x);"#;
@@ -1265,6 +1285,31 @@ fn test_resolve_module_specifier_paths_without_base_url_use_project_base() {
         &known_files,
     );
     assert_eq!(baz, Some(base.join("types/main.d.ts")));
+}
+
+#[test]
+fn test_resolve_module_specifier_root_dirs_overlay() {
+    let base = PathBuf::from("/tmp/tsz-test-rootdirs");
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        root_dirs: vec![base.join("src"), base.join("generated")],
+        ..Default::default()
+    };
+
+    let mut known_files = FxHashSet::default();
+    known_files.insert(base.join("generated/generated.ts"));
+    let mut cache = ModuleResolutionCache::default();
+
+    let resolved = resolve_module_specifier(
+        &base.join("src/main.ts"),
+        "./generated",
+        &options,
+        &base,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(resolved, Some(base.join("generated/generated.ts")));
 }
 
 #[test]
