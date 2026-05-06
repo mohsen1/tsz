@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/jsdoc-satisfies-tag14-diagnostics`
-- **PR**: TBD
+- **PR**: #3629
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 - **Claimed**: 2026-05-06 05:01:00 UTC
