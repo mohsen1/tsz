@@ -1443,6 +1443,54 @@ fn tsc_compat_double_digit_line_number_pretty() {
 const TS5112_COMMAND_LINE_FILES_OUTPUT: &str = "error TS5112: tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error.\n";
 
 #[test]
+fn build_only_flags_report_ts5093_outside_build_mode() {
+    let temp = TempDir::new("build_only_flags_ts5093").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "const x = 1;\n");
+
+    for (flag, option_name) in [
+        ("--verbose", "verbose"),
+        ("--dry", "dry"),
+        ("--force", "force"),
+        ("--clean", "clean"),
+        ("--stopBuildOnErrors", "stopBuildOnErrors"),
+    ] {
+        let (code, output) =
+            run_tsz_with_exit_code(&temp.path, &["--pretty", "false", flag, "a.ts"])
+                .expect("tsz binary not found");
+        let expected = format!(
+            "error TS5093: Compiler option '--{option_name}' may only be used with '--build'.\n"
+        );
+
+        assert_eq!(code, 1, "Expected exit code 1 for {flag}, got {code}");
+        assert_eq!(output, expected, "Unexpected output for {flag}");
+        assert!(
+            !temp.path.join("a.js").exists(),
+            "{flag} outside build mode should not emit a.js"
+        );
+    }
+}
+
+#[test]
+fn build_only_explicit_false_still_reports_ts5093() {
+    let temp = TempDir::new("build_only_false_ts5093").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "const x = 1;\n");
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--pretty", "false", "--dry", "false", "a.ts"])
+            .expect("tsz binary not found");
+
+    assert_eq!(code, 1, "Expected exit code 1 for --dry false");
+    assert_eq!(
+        output,
+        "error TS5093: Compiler option '--dry' may only be used with '--build'.\n"
+    );
+    assert!(
+        !temp.path.join("a.js").exists(),
+        "--dry false outside build mode should not emit a.js"
+    );
+}
+
+#[test]
 fn unknown_flag_ts5023_format() {
     let temp = TempDir::new("unknown_flag_ts5023").expect("temp dir");
     let (code, output) =
