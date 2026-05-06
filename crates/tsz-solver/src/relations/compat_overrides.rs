@@ -17,6 +17,7 @@ use crate::relations::compat::{AssignabilityOverrideProvider, ShapeExtractor, St
 use crate::relations::subtype::TypeResolver;
 use crate::types::{LiteralValue, TypeData, TypeId};
 use crate::visitor::TypeVisitor;
+use rustc_hash::FxHashSet;
 
 use super::compat::CompatChecker;
 
@@ -75,6 +76,34 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<bool> {
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            let mut visiting = FxHashSet::default();
+            self.private_brand_assignability_override_inner(source, target, &mut visiting)
+        })
+    }
+
+    fn private_brand_assignability_override_inner(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        visiting: &mut FxHashSet<(TypeId, TypeId)>,
+    ) -> Option<bool> {
+        let pair = (source, target);
+        if !visiting.insert(pair) {
+            return None;
+        }
+
+        let result = self.private_brand_assignability_override_body(source, target, visiting);
+        visiting.remove(&pair);
+        result
+    }
+
+    fn private_brand_assignability_override_body(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        visiting: &mut FxHashSet<(TypeId, TypeId)>,
+    ) -> Option<bool> {
         use crate::types::Visibility;
 
         // Fast path: identical types don't need nominal brand override logic.
@@ -99,7 +128,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if let Some(TypeData::Union(members)) = self.interner.lookup(source) {
             let members = self.interner.type_list(members);
             for &member in members.iter() {
-                if let Some(false) = self.private_brand_assignability_override(member, target) {
+                if let Some(false) =
+                    self.private_brand_assignability_override_inner(member, target, visiting)
+                {
                     return Some(false); // Fail if any member fails
                 }
             }
@@ -112,7 +143,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             let members = self.interner.type_list(members);
             // If source matches ANY target member, it's valid
             for &member in members.iter() {
-                match self.private_brand_assignability_override(source, member) {
+                match self.private_brand_assignability_override_inner(source, member, visiting) {
                     Some(true) | None => return None, // Pass (or structural fallback)
                     Some(false) => {}                 // Keep checking other members
                 }
@@ -125,7 +156,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if let Some(TypeData::Intersection(members)) = self.interner.lookup(target) {
             let members = self.interner.type_list(members);
             for &member in members.iter() {
-                if let Some(false) = self.private_brand_assignability_override(source, member) {
+                if let Some(false) =
+                    self.private_brand_assignability_override_inner(source, member, visiting)
+                {
                     return Some(false); // Fail if any member fails
                 }
             }
@@ -137,7 +170,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if let Some(TypeData::Intersection(members)) = self.interner.lookup(source) {
             let members = self.interner.type_list(members);
             for &member in members.iter() {
-                match self.private_brand_assignability_override(member, target) {
+                match self.private_brand_assignability_override_inner(member, target, visiting) {
                     Some(true) | None => return None, // Pass (or structural fallback)
                     Some(false) => {}                 // Keep checking other members
                 }
@@ -154,7 +187,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             if resolved == source {
                 return None;
             }
-            return self.private_brand_assignability_override(resolved, target);
+            return self.private_brand_assignability_override_inner(resolved, target, visiting);
         }
 
         if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(target)
@@ -164,7 +197,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             if resolved == target {
                 return None;
             }
-            return self.private_brand_assignability_override(source, resolved);
+            return self.private_brand_assignability_override_inner(source, resolved, visiting);
         }
 
         // 6. Base case: Extract and compare object shapes
