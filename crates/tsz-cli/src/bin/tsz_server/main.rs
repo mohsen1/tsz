@@ -997,7 +997,7 @@ impl Server {
             "status" => self.stub_response(
                 seq,
                 &request,
-                Some(serde_json::json!({"version": env!("CARGO_PKG_VERSION")})),
+                Some(serde_json::json!({"version": tsz_cli::help::TSC_VERSION})),
             ),
             "compileOnSaveAffectedFileList" => {
                 self.stub_response(seq, &request, Some(serde_json::json!([])))
