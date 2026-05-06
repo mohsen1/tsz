@@ -320,7 +320,7 @@ interface ParsedSourceTest {
   links: LinkInput[];
 }
 
-function parseSourceTest(content: string): ParsedSourceTest {
+function parseSourceTest(content: string, defaultSourceFileName?: string): ParsedSourceTest {
   const options: Record<string, unknown> = {};
   const sourceFiles: Array<{ name: string; content: string }> = [];
   const links: LinkInput[] = [];
@@ -391,6 +391,21 @@ function parseSourceTest(content: string): ParsedSourceTest {
   }
 
   flushCurrentFile();
+
+  if (sourceFiles.length === 0 && defaultSourceFileName) {
+    const singleFileContent: string[] = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (/^\/\/\s*@[\w-]+(?:\s*:\s*[^\r\n]*)?$/i.test(trimmed)) {
+        continue;
+      }
+      singleFileContent.push(line);
+    }
+    sourceFiles.push({
+      name: defaultSourceFileName,
+      content: singleFileContent.join('\n').trim(),
+    });
+  }
 
   const isEntryCandidate = (file: { name: string; content: string }) => {
     return (
@@ -522,7 +537,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       } else {
         try {
           const testFileContent = await readTypeScriptTestFile(baseline.testPath);
-          const parsedSource = parseSourceTest(testFileContent);
+          const parsedSource = parseSourceTest(testFileContent, path.basename(baseline.testPath));
           directives = parsedSource.options;
           if (parsedSource.sourceFiles.length > 0) {
             sourceFiles = parsedSource.sourceFiles;
