@@ -447,11 +447,11 @@ impl<'a> CheckerState<'a> {
     /// When `is_async` is true (`for await...of`), the element type is awaited,
     /// so `Iterable<Promise<T>>` yields `T` instead of `Promise<T>`.
     pub fn for_of_element_type(&mut self, iterable_type: TypeId, is_async: bool) -> TypeId {
-        if iterable_type == TypeId::ANY
-            || iterable_type == TypeId::UNKNOWN
-            || iterable_type == TypeId::ERROR
-        {
+        if iterable_type == TypeId::ANY || iterable_type == TypeId::ERROR {
             return iterable_type;
+        }
+        if iterable_type == TypeId::UNKNOWN {
+            return TypeId::ANY;
         }
 
         // String iteration yields string
@@ -461,6 +461,9 @@ impl<'a> CheckerState<'a> {
 
         // Resolve lazy types (type aliases) before computing element type
         let iterable_type = self.resolve_lazy_type(iterable_type);
+        if iterable_type == TypeId::UNKNOWN {
+            return TypeId::ANY;
+        }
 
         if is_async {
             // For for-await-of: try async iterator protocol first (AsyncIterable<T> → T),
@@ -836,13 +839,19 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         is_async: bool,
     ) -> bool {
-        // Skip error/any/unknown types to prevent false positives
-        if expr_type == TypeId::ANY || expr_type == TypeId::UNKNOWN || expr_type == TypeId::ERROR {
+        // Skip error/any types to prevent false positives.
+        if expr_type == TypeId::ANY || expr_type == TypeId::ERROR {
             return true;
+        }
+        if expr_type == TypeId::UNKNOWN {
+            return !self.error_is_of_type_unknown(expr_idx);
         }
 
         // Resolve lazy types (type aliases) before checking iterability
         let expr_type = self.resolve_lazy_type(expr_type);
+        if expr_type == TypeId::UNKNOWN {
+            return !self.error_is_of_type_unknown(expr_idx);
+        }
 
         // Check if the expression is nullish (undefined/null)
         // Emit TS18050 "The value 'undefined'/'null' cannot be used here"
