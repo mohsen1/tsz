@@ -1084,9 +1084,12 @@ impl<'a> Printer<'a> {
         let target_is_interface_or_type_alias = is_simple_identifier_target
             && self.identifier_target_is_interface_or_type_alias(import.module_specifier);
         let script_mode_preserves_alias = is_script_mode && target_is_interface_or_type_alias;
+        let is_namespace_alias =
+            module_node.is_identifier() || module_node.kind == syntax_kind_ext::QUALIFIED_NAME;
         if !has_runtime_value
             && !script_mode_preserves_alias
             && (!is_exported_var || module_node.kind == SyntaxKind::Identifier as u16)
+            && !(is_namespace_alias && !self.ctx.file_is_module && !self.in_namespace_iife)
         {
             return;
         }
@@ -1118,8 +1121,6 @@ impl<'a> Printer<'a> {
         // This is restricted to namespace scope because top-level import
         // aliases in scripts create global variables that may be consumed
         // externally, and tsc preserves those even when unreferenced locally.
-        let is_namespace_alias =
-            module_node.is_identifier() || module_node.kind == syntax_kind_ext::QUALIFIED_NAME;
         if is_namespace_alias
             && self.in_namespace_iife
             && !is_exported_var
