@@ -1,5 +1,5 @@
 use crate::context::emit::EmitContext;
-use crate::emitter::{ModuleKind, Printer, PrinterOptions};
+use crate::emitter::{JsxEmit, ModuleKind, Printer, PrinterOptions};
 use crate::lowering::LoweringPass;
 use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
@@ -516,6 +516,41 @@ export async function f() {
     assert!(
         output.contains("return tslib_1;"),
         "Source reads should still use the user binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_import_helpers_jsx_spread_uses_tslib_assign() {
+    let source = r#"declare var React: any;
+declare var o: any;
+export const x = <span {...o} />;
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        jsx: JsxEmit::React,
+        import_helpers: true,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var tslib_1 = require(\"tslib\");"),
+        "JSX spread should request the tslib helper import.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("React.createElement(\"span\", tslib_1.__assign({}, o))"),
+        "ES5 JSX spread should call the imported __assign helper.\nOutput:\n{output}"
     );
 }
 
