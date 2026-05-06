@@ -26,6 +26,12 @@ pub struct CallPredicateMap {
 }
 
 impl CallPredicateMap {
+    pub(crate) fn iter(
+        &self,
+    ) -> impl Iterator<Item = (&u32, &(TypePredicate, Vec<ParamInfo>))> {
+        self.predicates.iter()
+    }
+
     pub(crate) fn get(&self, call_idx: &u32) -> Option<&(TypePredicate, Vec<ParamInfo>)> {
         self.predicates.get(call_idx)
     }
