@@ -3,7 +3,7 @@
 - **Date**: 2026-05-06
 - **Branch**: `fix/checker-signature-combining-rest-parameters-fingerprints`
 - **PR**: #3642
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (conformance)
 
 ## Intent
@@ -17,4 +17,10 @@ missing the expected `number[]` argument diagnostic.
 
 ## Verification
 
-- Pending.
+- `CARGO_TARGET_DIR=.target/nextest-local cargo nextest run -p tsz-checker --lib ts2345_array_literal_call_argument_display_widens_boolean_literal_element union_rest_tuple_callback_reports_nested_array_argument_mismatch`
+- `./scripts/conformance/conformance.sh run --filter "signatureCombiningRestParameters5" --verbose`
+- `./scripts/conformance/conformance.sh run --max 200`
+- `git diff --check`
+- `scripts/architecture-check.sh --quick`
+- `cargo clippy -p tsz-checker --lib -- -D warnings`
+- `cargo clippy -p tsz-lowering --lib -- -D warnings`
