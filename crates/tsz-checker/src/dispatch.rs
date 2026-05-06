@@ -203,6 +203,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         .checker
                         .apply_flow_narrowing(idx, class_member_this_type);
                 }
+                if self.checker.is_js_file()
+                    && let Some(func_idx) = self.checker.find_enclosing_non_arrow_function(idx)
+                    && let Some(jsdoc) = self.checker.get_jsdoc_for_function(func_idx)
+                    && let Some(this_expr) =
+                        CheckerState::extract_jsdoc_tag_type_expression(&jsdoc, "this")
+                    && let Some(this_type) = self.checker.resolve_jsdoc_reference(this_expr)
+                {
+                    return self.checker.apply_flow_narrowing(idx, this_type);
+                }
                 if let Some(this_type) = self.checker.current_this_type() {
                     let transient_this_marker =
                         crate::query_boundaries::property_access::is_this_type(

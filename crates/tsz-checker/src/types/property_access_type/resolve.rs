@@ -2229,6 +2229,12 @@ impl<'a> CheckerState<'a> {
                         && self
                             .property_access_direct_write_rhs(idx)
                             .is_some_and(|rhs| self.js_assignment_rhs_is_void_zero(rhs));
+                    let has_jsdoc_this_context = is_this_access
+                        && self.is_js_file()
+                        && self
+                            .find_enclosing_non_arrow_function(access.expression)
+                            .and_then(|func_idx| self.get_jsdoc_for_function(func_idx))
+                            .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"));
                     // When `this` type comes from a ThisType<T> marker (e.g., Vue 2
                     // Options API pattern), property access on unresolved type parameters
                     // should not emit TS2339. The type parameters will be inferred from the
@@ -2303,6 +2309,7 @@ impl<'a> CheckerState<'a> {
                             );
                         if (!object_literal_owned_this || prototype_object_literal_expando_write)
                             && !(has_explicit_this_context && this_direct_write_rhs_is_void_zero)
+                            && !has_jsdoc_this_context
                         {
                             return TypeId::ANY;
                         }
