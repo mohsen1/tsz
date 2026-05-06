@@ -3606,6 +3606,42 @@ fn compile_with_explicit_files_no_lib_no_emit_without_tsconfig_returns() {
 }
 
 #[test]
+fn compile_explicit_files_no_emit_without_tsconfig_still_checks_semantics() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        "const a: string = 1;\nmissingName;\n",
+    );
+
+    let args = parse_args(&[
+        "tsz",
+        "--ignoreConfig",
+        "--pretty",
+        "false",
+        "--strict",
+        "--noEmit",
+        "main.ts",
+    ]);
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected direct --noEmit compile to report TS2322, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
+        "expected direct --noEmit compile to report TS2304, got: {:?}",
+        result.diagnostics
+    );
+    assert!(result.emitted_files.is_empty());
+}
+
+#[test]
 fn compile_no_check_no_emit_is_parse_only() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
