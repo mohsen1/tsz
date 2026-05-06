@@ -19,6 +19,19 @@ pub(crate) fn replace_type_queries_and_lazies_with(
         if !active.insert(type_id) {
             return type_id;
         }
+        if let Some(element) =
+            tsz_solver::visitor::array_element_type(db.as_type_database(), type_id)
+        {
+            let rewritten_element =
+                rewrite(db, element, replacement_for, replacement_for_lazy, active);
+            let rewritten = if rewritten_element == element {
+                type_id
+            } else {
+                db.factory().array(rewritten_element)
+            };
+            active.remove(&type_id);
+            return rewritten;
+        }
         let Some(key) = db.lookup(type_id) else {
             active.remove(&type_id);
             return type_id;
@@ -60,15 +73,6 @@ pub(crate) fn replace_type_queries_and_lazies_with(
                     type_id
                 } else {
                     db.factory().intersection(rewritten)
-                }
-            }
-            TypeData::Array(element) => {
-                let rewritten_element =
-                    rewrite(db, element, replacement_for, replacement_for_lazy, active);
-                if rewritten_element == element {
-                    type_id
-                } else {
-                    db.factory().array(rewritten_element)
                 }
             }
             TypeData::Tuple(list_id) => {
