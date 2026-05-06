@@ -862,12 +862,19 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(&type_text);
                 } else if let Some(type_text) = preferred_return.as_ref()
                     && (direct_function_return
-                        || self.should_prefer_source_return_type_text(type_text, return_type_id))
+                        || self.should_prefer_source_return_type_text(type_text, return_type_id)
+                        || self.source_return_type_is_function_type_param(func, type_text))
                 {
                     let (type_text, _) =
                         self.function_return_type_text_for_declaration_scope(func, type_text);
                     self.write(": ");
                     self.write(&type_text);
+                } else if self.emit_single_nameable_new_return_type_if_solver_any(
+                    func,
+                    func_body,
+                    func_name,
+                    return_type_id,
+                ) {
                 } else {
                     let printed_type_text =
                         self.inferred_function_return_type_text(func, return_type_id);
@@ -1688,12 +1695,19 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(&type_text);
                 } else if let Some(type_text) = preferred_return.as_ref()
                     && (direct_function_return
-                        || self.should_prefer_source_return_type_text(type_text, return_type_id))
+                        || self.should_prefer_source_return_type_text(type_text, return_type_id)
+                        || self.source_return_type_is_function_type_param(func, type_text))
                 {
                     let (type_text, _) =
                         self.function_return_type_text_for_declaration_scope(func, type_text);
                     self.write(": ");
                     self.write(&type_text);
+                } else if self.emit_single_nameable_new_return_type_if_solver_any(
+                    func,
+                    func_body,
+                    func_name,
+                    return_type_id,
+                ) {
                 } else {
                     if let Some(name_text) = self.get_identifier_text(func_name)
                         && let Some(name_node) = self.arena.get(func_name)

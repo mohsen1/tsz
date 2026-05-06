@@ -333,6 +333,9 @@ mod tuple_index_access_tests;
 #[path = "../tests/typeof_unique_symbol_source_display_tests.rs"]
 mod typeof_unique_symbol_source_display_tests;
 #[cfg(test)]
+#[path = "../tests/using_binding_pattern_diagnostics_tests.rs"]
+mod using_binding_pattern_diagnostics_tests;
+#[cfg(test)]
 #[path = "../tests/value_usage_tests.rs"]
 mod value_usage_tests;
 #[cfg(test)]

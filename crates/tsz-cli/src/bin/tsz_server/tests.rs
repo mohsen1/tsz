@@ -78,6 +78,28 @@ fn make_request(command: &str, arguments: serde_json::Value) -> TsServerRequest 
 }
 
 #[test]
+fn status_returns_typescript_version_not_tsz_crate_version() {
+    let mut server = make_server();
+    let response = server.handle_tsserver_request(make_request("status", serde_json::json!({})));
+    assert!(response.success);
+    let body = response.body.expect("status should return a body");
+    let version = body
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .expect("status body should include a string version");
+    assert_eq!(
+        version,
+        tsz_cli::help::TSC_VERSION,
+        "status should report the embedded TypeScript version, not the tsz crate version"
+    );
+    assert_ne!(
+        version,
+        env!("CARGO_PKG_VERSION"),
+        "status must not report the local tsz-cli crate version"
+    );
+}
+
+#[test]
 fn test_provide_inlay_hints_respects_protocol_start_length_span() {
     let mut server = make_server();
     let source = "function f(value: number) {}\nf(1);\n";
@@ -169,6 +191,38 @@ fn emit_output_preserves_type_only_module_marker() {
 }
 
 #[test]
+fn save_to_writes_open_file_snapshot_to_tmpfile_by_ref() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let file = temp.path().join("a.ts");
+    let tmpfile = temp.path().join("copy.ts");
+    let file = file.to_string_lossy().to_string();
+    let tmpfile = tmpfile.to_string_lossy().to_string();
+
+    let mut server = make_server();
+    let open = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": &file,
+            "fileContent": "const value = 123;\n",
+        }),
+    ));
+    assert!(open.success);
+
+    let response = server.handle_tsserver_request(make_request(
+        "saveto",
+        serde_json::json!({
+            "file": &file,
+            "tmpfile": &tmpfile,
+        }),
+    ));
+    assert!(response.success);
+    assert_eq!(
+        std::fs::read_to_string(&tmpfile).expect("tmpfile should be written"),
+        "const value = 123;\n"
+    );
+}
+
+#[test]
 fn compile_on_save_reports_affected_files_and_emits_file() {
     let temp = tempfile::tempdir().expect("temp dir");
     let root = temp.path();
@@ -190,7 +244,7 @@ fn compile_on_save_reports_affected_files_and_emits_file() {
 
     let affected = server.handle_tsserver_request(make_request(
         "compileOnSaveAffectedFileList",
-        serde_json::json!({ "file": a_str.clone() }),
+        serde_json::json!({ "file": &a_str }),
     ));
     assert!(affected.success);
     let body = affected.body.expect("affected files body");
@@ -214,38 +268,6 @@ fn compile_on_save_reports_affected_files_and_emits_file() {
         emitted.exists(),
         "compile-on-save should write {}",
         emitted.display()
-    );
-}
-
-#[test]
-fn save_to_writes_open_file_snapshot_to_tmpfile() {
-    let temp = tempfile::tempdir().expect("temp dir");
-    let file = temp.path().join("a.ts");
-    let tmpfile = temp.path().join("copy.ts");
-    let file = file.to_string_lossy().to_string();
-    let tmpfile = tmpfile.to_string_lossy().to_string();
-
-    let mut server = make_server();
-    let open = server.handle_tsserver_request(make_request(
-        "open",
-        serde_json::json!({
-            "file": file.clone(),
-            "fileContent": "const value = 123;\n",
-        }),
-    ));
-    assert!(open.success);
-
-    let response = server.handle_tsserver_request(make_request(
-        "saveto",
-        serde_json::json!({
-            "file": file,
-            "tmpfile": tmpfile.clone(),
-        }),
-    ));
-    assert!(response.success);
-    assert_eq!(
-        std::fs::read_to_string(tmpfile).expect("tmpfile should be written"),
-        "const value = 123;\n"
     );
 }
 
@@ -1022,6 +1044,55 @@ fn test_semantic_diagnostics_skip_inferred_module_none_when_target_supports_impo
 }
 
 #[test]
+fn test_semantic_diagnostics_preserve_options_with_numeric_inferred_target() {
+    let mut server = make_server();
+
+    let options_resp = server.handle_tsserver_request(make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({
+            "options": {
+                "noImplicitAny": true,
+                "target": 2
+            }
+        }),
+    ));
+    assert!(options_resp.success);
+
+    let open_resp = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": "/index.ts",
+            "fileContent": "function f(x) { return x; }\n"
+        }),
+    ));
+    assert!(open_resp.success);
+
+    let diagnostics_resp = server.handle_tsserver_request(make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts"
+        }),
+    ));
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.get("code").and_then(serde_json::Value::as_u64)
+                == Some(
+                    tsz_checker::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                        as u64,
+                )
+        }),
+        "expected noImplicitAny to survive numeric target payload, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_semantic_diagnostics_skip_core_global_type_noise_for_no_lib_files() {
     let mut server = make_server();
     server.open_files.insert(
@@ -1509,6 +1580,24 @@ fn test_new_commands_are_recognized() {
 }
 
 #[test]
+fn test_signature_help_has_no_body_without_signature() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/test.ts".to_string(), "const x = 1;\n".to_string());
+    let req = make_request(
+        "signatureHelp",
+        serde_json::json!({"file": "/test.ts", "line": 1, "offset": 1}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    assert!(
+        resp.body.is_none(),
+        "signatureHelp should omit body when no signature exists"
+    );
+}
+
+#[test]
 fn test_unrecognized_command() {
     let mut server = make_server();
     let req = make_request("nonExistentCommand", serde_json::json!({}));
@@ -1518,6 +1607,28 @@ fn test_unrecognized_command() {
         resp.message
             .unwrap()
             .contains("Unrecognized command: nonExistentCommand")
+    );
+}
+
+#[test]
+fn test_watch_change_is_unrecognized() {
+    let mut server = make_server();
+    let req = make_request(
+        "watchChange",
+        serde_json::json!({
+            "id": 1,
+            "created": ["/tmp/x.ts"],
+            "changed": [],
+            "deleted": [],
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+
+    assert!(!resp.success);
+    assert!(
+        resp.message
+            .unwrap()
+            .contains("Unrecognized command: watchChange")
     );
 }
 
@@ -1578,10 +1689,7 @@ fn test_quickinfo_response_always_has_valid_spans() {
 }
 
 #[test]
-fn test_quickinfo_fallback_has_valid_spans() {
-    // When quickinfo is called on whitespace or a position where no symbol
-    // is found, the response body must still have start/end spans to avoid
-    // "Cannot read properties of undefined (reading 'line')" in the harness.
+fn test_quickinfo_has_no_body_without_info() {
     let mut server = make_server();
     server
         .open_files
@@ -1592,8 +1700,10 @@ fn test_quickinfo_fallback_has_valid_spans() {
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp.body.expect("quickinfo fallback should return a body");
-    assert_valid_span(&body, "quickinfo fallback on whitespace");
+    assert!(
+        resp.body.is_none(),
+        "quickinfo should omit body when no quickinfo exists"
+    );
 }
 
 #[test]
@@ -2328,9 +2438,7 @@ fn test_format_document_does_not_invalidate_fourslash_markers() {
 }
 
 #[test]
-fn test_quickinfo_on_nonexistent_file_has_valid_spans() {
-    // Even when the file is not open, the quickinfo fallback must return
-    // valid span data.
+fn test_quickinfo_on_nonexistent_file_has_no_body() {
     let mut server = make_server();
     let req = make_request(
         "quickinfo",
@@ -2338,8 +2446,10 @@ fn test_quickinfo_on_nonexistent_file_has_valid_spans() {
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp.body.expect("quickinfo fallback should return a body");
-    assert_valid_span(&body, "quickinfo on nonexistent file");
+    assert!(
+        resp.body.is_none(),
+        "quickinfo should omit body when the file cannot be resolved"
+    );
 }
 
 #[test]
@@ -2427,9 +2537,7 @@ fn test_definition_empty_response_is_valid_array() {
 }
 
 #[test]
-fn test_definition_and_bound_span_has_valid_text_span() {
-    // The definitionAndBoundSpan response must always have a textSpan with
-    // valid start/end, even when no definitions are found.
+fn test_definition_and_bound_span_has_no_body_without_definition() {
     let mut server = make_server();
     server
         .open_files
@@ -2440,16 +2548,9 @@ fn test_definition_and_bound_span_has_valid_text_span() {
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp
-        .body
-        .expect("definitionAndBoundSpan should return a body");
-    let text_span = body
-        .get("textSpan")
-        .expect("definitionAndBoundSpan must have textSpan");
-    assert_valid_span(text_span, "definitionAndBoundSpan textSpan");
     assert!(
-        body.get("definitions").is_some(),
-        "definitionAndBoundSpan must have definitions array"
+        resp.body.is_none(),
+        "definitionAndBoundSpan should omit body when no definition exists"
     );
 }
 
@@ -3528,6 +3629,28 @@ fn test_check_options_experimental_decorators_default_false() {
     assert!(
         !options.experimental_decorators,
         "experimentalDecorators should default to false"
+    );
+}
+
+#[test]
+fn test_check_options_deserializes_numeric_tsserver_enums() {
+    let options: CheckOptions = serde_json::from_value(serde_json::json!({
+        "noImplicitAny": true,
+        "target": 2,
+        "module": 1
+    }))
+    .unwrap();
+
+    assert_eq!(options.target.as_deref(), Some("es2015"));
+    assert_eq!(options.module.as_deref(), Some("commonjs"));
+    assert_eq!(options.no_implicit_any, Some(true));
+    assert_eq!(
+        Server::parse_target(&Some("2".to_string())),
+        tsz::emitter::ScriptTarget::ES2015
+    );
+    assert_eq!(
+        Server::parse_module(&Some("1".to_string())),
+        tsz::ModuleKind::CommonJS
     );
 }
 

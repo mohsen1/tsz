@@ -1088,6 +1088,7 @@ impl<'a> Printer<'a> {
             let inline_var_names = module_commonjs::collect_inline_exported_var_names(
                 self.arena,
                 &source.statements.nodes,
+                self.ctx.options.preserve_const_enums,
             );
             self.commonjs_exported_var_names.extend(inline_var_names);
             // When `export =` is present, suppress hoisted function exports
@@ -1825,8 +1826,11 @@ impl<'a> Printer<'a> {
                         if !self.writer.is_at_line_start() {
                             self.write_line();
                         }
-                        self.write("exports.");
-                        self.write(export_name);
+                        // Arbitrary module namespace identifiers (e.g.
+                        // `export { someValue as "<X>" }`) yield non-identifier
+                        // export names that must use bracket access — `exports.<X>`
+                        // is a syntax error.
+                        self.write_export_property_access(export_name);
                         self.write(" = ");
                         self.write(&name);
                         self.write(";");
@@ -2327,7 +2331,9 @@ impl<'a> Printer<'a> {
         }
 
         let line = crate::safe_slice::slice(text, start, line_end).ok()?;
-        if !line.trim_start().starts_with("declare namespace debugger") {
+        let trimmed = line.trim_start();
+        let rest = trimmed.strip_prefix("declare namespace debugger")?;
+        if rest.as_bytes().first().is_some_and(is_identifier_continue) {
             return None;
         }
 
@@ -2336,6 +2342,10 @@ impl<'a> Printer<'a> {
             .map(|comment_start| line[comment_start..].trim());
         Some((line_end as u32, trailing_comment))
     }
+}
+
+const fn is_identifier_continue(byte: &u8) -> bool {
+    byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'$'
 }
 
 fn jsx_dev_file_name(file_name: &str) -> String {

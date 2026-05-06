@@ -176,6 +176,44 @@ declare module "index" {
 }
 
 #[test]
+fn test_type_only_export_equals_module_collection() {
+    let program = tsz::parallel::compile_files_with_libs(
+        vec![(
+            "modules.d.ts".to_string(),
+            r#"
+declare module "interface" {
+    interface Foo { x: number }
+    export = Foo;
+}
+declare module "variable" {
+    export var Foo: { a: number };
+    export = Foo;
+}
+declare module "namespace" {
+    namespace Foo {
+        export var a: number;
+    }
+    export = Foo;
+}
+declare module "class" {
+    export class Foo { x: number }
+    export = Foo;
+}
+"#
+            .to_string(),
+        )],
+        &[],
+    );
+
+    let modules = build_type_only_export_equals_modules(&program, false);
+
+    assert!(modules.contains("interface"));
+    assert!(!modules.contains("variable"));
+    assert!(!modules.contains("namespace"));
+    assert!(!modules.contains("class"));
+}
+
+#[test]
 fn test_normalize_type_roots_keeps_existing_absolute_root() {
     let temp = tempdir().unwrap();
     let types_dir = temp.path().join("types");

@@ -1149,6 +1149,19 @@ impl<'a> CheckerState<'a> {
                 });
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                 if Self::is_simple_type_name(simple_expr) && unresolved_type {
+                    if let Some(angle_idx) = Self::find_top_level_char(simple_expr, '<')
+                        && simple_expr.ends_with('>')
+                    {
+                        let base_name = simple_expr[..angle_idx].trim();
+                        let base_is_known = self
+                            .jsdoc_generic_base_suppresses_full_name_error(base_name)
+                            || Self::parse_jsdoc_typedefs(&source_text)
+                                .iter()
+                                .any(|(name, _)| name == base_name);
+                        if base_is_known {
+                            continue;
+                        }
+                    }
                     self.emit_jsdoc_cannot_find_name(
                         simple_expr,
                         comment.pos,
@@ -1604,9 +1617,7 @@ impl<'a> CheckerState<'a> {
                         && expr.ends_with('>')
                     {
                         let base_name = expr[..angle_idx].trim();
-                        if Self::is_simple_type_name(base_name)
-                            && self.resolve_jsdoc_type_str(base_name).is_some()
-                        {
+                        if self.jsdoc_generic_base_suppresses_full_name_error(base_name) {
                             // Recurse into each type argument so unknown
                             // identifiers like `@typedef {Record<Keyword, V>} T`
                             // surface as TS2304 — tsc validates the entire
@@ -2066,6 +2077,35 @@ impl<'a> CheckerState<'a> {
             }
         }
         true
+    }
+
+    fn jsdoc_generic_base_suppresses_full_name_error(&mut self, base_name: &str) -> bool {
+        if !Self::is_simple_type_name(base_name) {
+            return false;
+        }
+        if self.resolve_jsdoc_type_str(base_name).is_some() {
+            return true;
+        }
+        self.jsdoc_generic_base_is_known_function_value(base_name)
+    }
+
+    fn jsdoc_generic_base_is_known_function_value(&self, base_name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(base_name)
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::FUNCTION))
+        {
+            return true;
+        }
+
+        self.resolve_identifier_symbol_from_all_binders(base_name, |_, symbol| {
+            symbol.has_any_flags(symbol_flags::FUNCTION)
+        })
+        .is_some()
     }
 }
 

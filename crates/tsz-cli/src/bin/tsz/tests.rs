@@ -1,5 +1,12 @@
 use super::*;
 
+fn preprocess_strs(args: &[&str]) -> Vec<String> {
+    preprocess_args(args.iter().map(OsString::from).collect())
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect()
+}
+
 #[test]
 fn split_response_line_simple() {
     assert_eq!(
@@ -227,6 +234,50 @@ fn preprocess_non_boolean_false_not_consumed() {
     let result = preprocess_args(args);
     assert!(result.iter().any(|a| a == "--outDir"));
     assert!(result.iter().any(|a| a == "false"));
+}
+
+#[test]
+fn preprocess_bare_option_bool_defaults_to_true_without_consuming_file() {
+    let result = preprocess_strs(&["tsz", "--strictNullChecks", "file.ts"]);
+    let expected = ["tsz", "--strictNullChecks=true", "file.ts"]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn preprocess_bare_option_bool_at_end_defaults_to_true() {
+    let result = preprocess_strs(&["tsz", "--noImplicitAny"]);
+    let expected = ["tsz", "--noImplicitAny=true"]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn preprocess_bare_option_bool_before_another_flag_defaults_to_true() {
+    let result = preprocess_strs(&["tsz", "--pretty", "--noEmit", "file.ts"]);
+    let expected = ["tsz", "--pretty=true", "--noEmit", "file.ts"]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn preprocess_explicit_option_bool_values_still_win() {
+    let result = preprocess_strs(&["tsz", "--noImplicitAny", "true", "--noImplicitAny", "false"]);
+    let expected = ["tsz", "--noImplicitAny=false"]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+
+    assert_eq!(result, expected);
 }
 
 // ==================== handle_build_clean respects outDir ====================
