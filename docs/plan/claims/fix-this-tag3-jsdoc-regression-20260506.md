@@ -3,7 +3,7 @@
 - **Date**: 2026-05-06
 - **Branch**: `fix/this-tag3-jsdoc-regression-20260506-213650`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
@@ -16,9 +16,13 @@ member lookup semantics.
 
 ## Files Touched
 
-- TBD after investigation.
+- `crates/tsz-checker/src/types/function_type.rs`
+- `crates/tsz-checker/tests/jsdoc_type_expression_tests.rs`
+- `docs/plan/claims/fix-this-tag3-jsdoc-regression-20260506.md`
 
 ## Verification
 
-- Focused Rust regression in the owning path.
+- `CARGO_BUILD_JOBS=2 cargo nextest run -p tsz-checker --test jsdoc_type_expression_tests jsdoc_this_tag_on_class_field_arrow_uses_lexical_this`
 - `./scripts/conformance/conformance.sh run --filter "thisTag3" --verbose`
+  - 1/1 passed
+  - Fingerprint-only: 0
