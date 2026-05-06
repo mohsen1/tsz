@@ -3138,6 +3138,29 @@ fn validate_cli_compiler_option_diagnostics(
     args: &CliArgs,
     config: Option<&TsConfig>,
 ) -> Result<Vec<Diagnostic>> {
+    use tsz::checker::diagnostics::{diagnostic_messages, format_message};
+
+    let mut diagnostics = Vec::new();
+    for key in ["paths", "plugins"] {
+        let provided = match key {
+            "paths" => cli_config_only_option_has_non_null_value(args.paths.as_ref()),
+            "plugins" => cli_config_only_option_has_non_null_value(args.plugins.as_ref()),
+            _ => false,
+        };
+        if provided {
+            diagnostics.push(Diagnostic::error(
+                String::new(),
+                0,
+                0,
+                format_message(
+                    diagnostic_messages::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
+                    &[key],
+                ),
+                diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
+            ));
+        }
+    }
+
     let mut compiler_options = serde_json::Map::new();
 
     if let Some(target) = args.target {
@@ -3275,7 +3298,7 @@ fn validate_cli_compiler_option_diagnostics(
     }
 
     if compiler_options.is_empty() {
-        return Ok(Vec::new());
+        return Ok(diagnostics);
     }
 
     let mut root = serde_json::Map::new();
@@ -3285,7 +3308,12 @@ fn validate_cli_compiler_option_diagnostics(
     );
     let source = serde_json::Value::Object(root).to_string();
     let parsed = parse_tsconfig_with_diagnostics(&source, "")?;
-    Ok(parsed.diagnostics)
+    diagnostics.extend(parsed.diagnostics);
+    Ok(diagnostics)
+}
+
+fn cli_config_only_option_has_non_null_value(values: Option<&Vec<String>>) -> bool {
+    values.is_some_and(|values| !(values.len() == 1 && values[0].eq_ignore_ascii_case("null")))
 }
 
 fn effective_ignore_deprecations_for_cli_validation<'a>(

@@ -161,6 +161,27 @@ declare const d: MethodDecorator;
 }
 
 #[test]
+fn cli_rejects_tsconfig_only_options_on_command_line() {
+    for (flag, value) in [("--paths", "@/*=src/*"), ("--plugins", "foo")] {
+        assert_cli_option_validation_reports(
+            &[
+                "tsz",
+                flag,
+                value,
+                "--noEmit",
+                "--pretty",
+                "false",
+                "--ignoreConfig",
+                "index.ts",
+            ],
+            "index.ts",
+            "export {};\n",
+            diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
+        );
+    }
+}
+
+#[test]
 fn source_file_test_pragmas_do_not_override_project_options() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

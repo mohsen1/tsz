@@ -75,6 +75,8 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         return handle_init(&args, &cwd);
     }
 
+    reject_tsconfig_only_cli_options(&args);
+
     // Handle --showConfig: print resolved configuration
     if args.show_config {
         return handle_show_config(&args, &cwd);
@@ -1600,6 +1602,22 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
         let counter_dump = tsz_common::perf_counters::PerfCounters::dump_string();
         if !counter_dump.is_empty() {
             print!("{counter_dump}");
+        }
+    }
+}
+
+fn reject_tsconfig_only_cli_options(args: &CliArgs) {
+    for (name, values) in [
+        ("paths", args.paths.as_ref()),
+        ("plugins", args.plugins.as_ref()),
+    ] {
+        let provided_non_null = values
+            .is_some_and(|values| !(values.len() == 1 && values[0].eq_ignore_ascii_case("null")));
+        if provided_non_null {
+            println!(
+                "error TS6064: Option '{name}' can only be specified in 'tsconfig.json' file or set to 'null' on command line."
+            );
+            std::process::exit(1);
         }
     }
 }
