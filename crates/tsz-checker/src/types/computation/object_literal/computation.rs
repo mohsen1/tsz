@@ -1248,8 +1248,14 @@ impl<'a> CheckerState<'a> {
                             crate::call_checker::CallableContext::none(),
                         ),
                     );
-                    let value_type =
+                    let mut value_type =
                         self.get_type_of_node_with_request(prop.initializer, &property_request);
+                    if self.ctx.in_const_assertion
+                        && let Some(literal_type) =
+                            self.literal_type_from_initializer(prop.initializer)
+                    {
+                        value_type = literal_type;
+                    }
 
                     if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
                         number_index_types.push(value_type);
@@ -2699,22 +2705,17 @@ impl<'a> CheckerState<'a> {
                         } else {
                             spread_props.clone()
                         };
-                        let idx_resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
-                        if let Some(value_type) = idx_resolver.resolve_string_index(resolved_spread)
-                        {
-                            spread_string_index_types.push(value_type);
-                        }
-                        if let Some(value_type) = idx_resolver.resolve_number_index(resolved_spread)
-                        {
-                            spread_number_index_types.push(value_type);
-                        }
-
                         // Propagate index signatures from spread source.
                         // When spreading an object with index signatures (e.g.,
                         // `{ ...roindex }` where `roindex: { readonly [x: string]: number }`),
                         // the result should inherit the index signatures (with readonly removed).
                         // These are collected separately and only included in the final type
                         // when the literal has no explicit (non-spread) properties, matching tsc.
+                        if spread_props.is_empty()
+                            && !crate::query_boundaries::type_computation::core::is_fresh_literal_indexed_object(
+                                self.ctx.types,
+                                resolved_spread,
+                            )
                         {
                             use crate::query_boundaries::common::IndexSignatureResolver;
                             let resolver = IndexSignatureResolver::new(self.ctx.types);
