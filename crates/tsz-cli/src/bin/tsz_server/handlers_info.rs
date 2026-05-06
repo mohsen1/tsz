@@ -7,7 +7,7 @@ use tsz::binder::SymbolId;
 use tsz::lsp::definition::GoToDefinition;
 use tsz::lsp::highlighting::DocumentHighlightProvider;
 use tsz::lsp::hover::HoverProvider;
-use tsz::lsp::position::LineMap;
+use tsz::lsp::position::{LineMap, Position, Range};
 use tsz::lsp::project::Project;
 use tsz::lsp::references::FindReferences;
 use tsz::lsp::rename::RenameProvider;
@@ -23,6 +23,25 @@ pub(super) struct ParsedFileContext<'a> {
     pub(super) root: tsz::parser::NodeIndex,
     pub(super) source_text: &'a str,
     pub(super) file: &'a str,
+}
+
+fn import_context_for_range(source_text: &str, range: Range) -> Option<(Position, Position)> {
+    if range.start.line != range.end.line {
+        return None;
+    }
+    let line_text = source_text.lines().nth(range.start.line as usize)?;
+    let trimmed = line_text.trim_start();
+    let is_import = trimmed.starts_with("import ")
+        || trimmed.starts_with("import{")
+        || trimmed.starts_with("import\"")
+        || trimmed.starts_with("import'");
+    if !is_import {
+        return None;
+    }
+    Some((
+        Position::new(range.start.line, 0),
+        Position::new(range.start.line, line_text.len() as u32),
+    ))
 }
 
 /// Map a `DocumentSymbol`'s kind + `kind_modifiers` to the tsserver `ScriptElementKind` string.
@@ -797,11 +816,18 @@ impl Server {
                         }
                         Some(tsz::lsp::highlighting::DocumentHighlightKind::Text) | None => "none",
                     };
-                    serde_json::json!({
+                    let mut span = serde_json::json!({
                         "start": Self::lsp_to_tsserver_position(hl.range.start),
                         "end": Self::lsp_to_tsserver_position(hl.range.end),
                         "kind": kind_str,
-                    })
+                    });
+                    if let Some((context_start, context_end)) =
+                        import_context_for_range(&source_text, hl.range)
+                    {
+                        span["contextStart"] = Self::lsp_to_tsserver_position(context_start);
+                        span["contextEnd"] = Self::lsp_to_tsserver_position(context_end);
+                    }
+                    span
                 })
                 .collect();
             // All highlights are in the same file for now

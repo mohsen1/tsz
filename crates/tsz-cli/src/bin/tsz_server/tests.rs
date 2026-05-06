@@ -191,7 +191,7 @@ fn emit_output_preserves_type_only_module_marker() {
 }
 
 #[test]
-fn save_to_writes_open_file_snapshot_to_tmpfile() {
+fn save_to_writes_open_file_snapshot_to_tmpfile_by_ref() {
     let temp = tempfile::tempdir().expect("temp dir");
     let file = temp.path().join("a.ts");
     let tmpfile = temp.path().join("copy.ts");
