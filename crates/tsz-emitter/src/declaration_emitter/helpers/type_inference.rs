@@ -2071,6 +2071,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.nameable_new_expression_type_text(expr_idx)
             }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                self.class_static_computed_index_access_type_text(expr_idx)
+            }
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 let ast_type_text = self.class_expression_constructor_type_text_from_ast(expr_idx);
                 if ast_type_text
@@ -6022,12 +6025,8 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 let data = self.arena.get_method_decl(member_node)?;
-                let type_text = if data.parameters.nodes.is_empty() {
-                    "readonly ".to_string()
-                } else {
-                    String::new()
-                };
-                Some(format!("{type_text}{name}: any"))
+                self.method_function_type_text(member_idx, data, depth)
+                    .map(|type_text| format!("{name}: {type_text}"))
             }
             _ => None,
         }
@@ -6829,6 +6828,7 @@ impl<'a> DeclarationEmitter<'a> {
         let mut has_non_emittable_computed_members = false;
         let mut synthetic_number_index_member = None;
         let mut negative_numeric_computed_names = Vec::new();
+        let mut computed_method_value_types = Vec::new();
 
         for &member_idx in &object.elements.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -6902,11 +6902,11 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             if preserve_computed_syntax {
-                // Skip methods with computed names — the solver already produces correct
-                // method signatures (e.g., `"new"(x: number): number`). Overriding them
-                // would emit a wrong property form like `"new": any`.
                 if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
-                    continue;
+                    if let Some(value_type) = Self::object_literal_property_value_type(&member_text)
+                    {
+                        computed_method_value_types.push(value_type.to_string());
+                    }
                 }
                 only_numeric_like &= Self::is_numeric_property_name_text(&name_text);
                 computed_members.push((name_text, member_text));
@@ -6968,6 +6968,18 @@ impl<'a> DeclarationEmitter<'a> {
                         return true;
                     };
                     !computed_value_types
+                        .iter()
+                        .any(|member_value_type| member_value_type == index_value_type)
+                });
+            }
+            if !computed_method_value_types.is_empty() {
+                lines.retain(|line| {
+                    let Some(index_value_type) =
+                        Self::broad_object_index_signature_value_type(line)
+                    else {
+                        return true;
+                    };
+                    !computed_method_value_types
                         .iter()
                         .any(|member_value_type| member_value_type == index_value_type)
                 });
@@ -7074,34 +7086,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         false
-    }
-
-    fn broad_object_index_signature_value_type(line: &str) -> Option<&str> {
-        let trimmed = line.trim_start();
-        let without_readonly = trimmed
-            .strip_prefix("readonly ")
-            .unwrap_or(trimmed)
-            .trim_start();
-        (without_readonly.starts_with("[x: string]:")
-            || without_readonly.starts_with("[x: number]:")
-            || without_readonly.starts_with("[x: symbol]:"))
-        .then(|| Self::object_literal_property_value_type(without_readonly))
-        .flatten()
-    }
-
-    fn object_literal_property_value_type(line: &str) -> Option<&str> {
-        let trimmed = line.trim().trim_end_matches(';').trim();
-        let without_readonly = trimmed
-            .strip_prefix("readonly ")
-            .unwrap_or(trimmed)
-            .trim_start();
-        let colon_idx = if without_readonly.starts_with('[') {
-            let bracket_end = without_readonly.find(']')?;
-            without_readonly.get(bracket_end + 1..)?.find(':')? + bracket_end + 1
-        } else {
-            without_readonly.find(':')?
-        };
-        without_readonly.get(colon_idx + 1..).map(str::trim)
     }
 
     fn is_symbol_observer_computed_property_name_text(name_text: &str) -> bool {
