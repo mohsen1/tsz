@@ -632,6 +632,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .is_assignable_to(expanded_arg_type, effective_param_type)
             };
             let assignable = assignable
+                || self.callable_satisfies_top_rest_any_constraint(
+                    expanded_arg_type,
+                    effective_param_type,
+                )
+                || self.callable_satisfies_top_rest_any_constraint(*arg_type, effective_param_type)
                 || (self.is_string_like_type(expanded_arg_type)
                     && self
                         .extract_iterable_yield_type(effective_param_type)
