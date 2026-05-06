@@ -426,22 +426,23 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Later parameter annotations can reference earlier value
-            // parameters via `typeof`.
-            self.push_typeof_param_scope(&params);
             let type_id = if param.type_annotation.is_some() {
-                match mode {
+                // Later parameter annotations can reference earlier value
+                // parameters via `typeof`.
+                self.push_typeof_param_scope(&params);
+                let type_id = match mode {
                     ParamTypeResolutionMode::InTypeLiteral => {
                         self.get_type_from_type_node_in_type_literal(param.type_annotation)
                     }
                     ParamTypeResolutionMode::FromTypeNode => {
                         self.get_type_from_type_node(param.type_annotation)
                     }
-                }
+                };
+                self.pop_typeof_param_scope(&params);
+                type_id
             } else {
                 TypeId::ANY
             };
-            self.pop_typeof_param_scope(&params);
 
             // Check for ThisKeyword parameter
             let name_node = self.ctx.arena.get(param.name);
