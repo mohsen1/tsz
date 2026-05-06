@@ -599,13 +599,14 @@ impl Server {
     }
 
     fn normalize_module_path(path: &std::path::Path) -> String {
-        let s = path.to_string_lossy();
+        let normalized = Self::normalize_path_string(path);
+        let s = normalized.as_str();
         let s = s
             .strip_suffix(".ts")
             .or_else(|| s.strip_suffix(".tsx"))
             .or_else(|| s.strip_suffix(".js"))
             .or_else(|| s.strip_suffix(".jsx"))
-            .unwrap_or(&s);
+            .unwrap_or(s);
         s.to_string()
     }
 

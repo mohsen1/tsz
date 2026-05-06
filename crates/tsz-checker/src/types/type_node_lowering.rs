@@ -101,6 +101,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             Some(def_id)
         };
         let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+            if let Some(expr_node) = self.ctx.arena.get(expr_name_idx)
+                && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+                && let Some(&param_type) =
+                    self.ctx.typeof_param_scope.get(ident.escaped_text.as_str())
+            {
+                return Some(param_type);
+            }
+
             let type_query_idx = self.ctx.arena.get_extended(expr_name_idx)?.parent;
             let type_query_node = self.ctx.arena.get(type_query_idx)?;
             if type_query_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_QUERY

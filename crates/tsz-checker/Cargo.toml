@@ -46,6 +46,10 @@ name = "generator_return_type_widening_tests"
 path = "tests/generator_return_type_widening_tests.rs"
 
 [[test]]
+name = "implicit_any_nullish_return_tests"
+path = "tests/implicit_any_nullish_return_tests.rs"
+
+[[test]]
 name = "async_return_widening_tests"
 path = "tests/async_return_widening_tests.rs"
 

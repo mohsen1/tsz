@@ -1222,6 +1222,23 @@ impl<'a> CheckerState<'a> {
             return false; // Don't suppress - let the actual assignability check run
         }
 
+        let is_single_type_param_spread_tuple = |ty: TypeId| {
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, ty).is_some_and(
+                |elements| {
+                    elements.len() == 1
+                        && elements[0].rest
+                        && crate::query_boundaries::common::type_param_info(
+                            self.ctx.types,
+                            elements[0].type_id,
+                        )
+                        .is_some()
+                },
+            )
+        };
+        if is_single_type_param_spread_tuple(source) || is_single_type_param_spread_tuple(target) {
+            return false;
+        }
+
         let evaluated_source = self.ctx.types.evaluate_type(source);
         let evaluated_target = self.ctx.types.evaluate_type(target);
         if let (Some(source_elem), Some(target_elem)) = (
