@@ -1392,7 +1392,7 @@ impl TypeInterner {
             ) || self.union_origin_overrides_canonical_application_sort(
                 current.as_ref(),
                 &origin_members,
-            ) || self.union_origin_overrides_canonical_keyof_literal_sort(
+            ) || self.union_origin_overrides_canonical_generic_display_sort(
                 current.as_ref(),
                 &origin_members,
             ) || self
@@ -1522,10 +1522,9 @@ impl TypeInterner {
             && expected_base.is_some()
     }
 
-    /// Preserve as-written order for unions that mix `keyof T` with literal
-    /// keys. TypeScript keeps the source spelling in generic mapped displays
-    /// such as `Record<keyof Shape | "knownLiteralKey", number>`.
-    fn union_origin_overrides_canonical_keyof_literal_sort(
+    /// Preserve source-written order for generic display unions whose canonical
+    /// member sort is not the order tsc prints in diagnostics.
+    fn union_origin_overrides_canonical_generic_display_sort(
         &self,
         current: &[TypeId],
         origin: &[TypeId],
@@ -1542,16 +1541,17 @@ impl TypeInterner {
             return false;
         }
 
-        let mut has_keyof = false;
-        let mut has_literal = false;
-        for &id in current {
-            match self.lookup(id) {
-                Some(TypeData::KeyOf(_)) => has_keyof = true,
-                Some(TypeData::Literal(_)) => has_literal = true,
-                _ => return false,
-            }
-        }
-        has_keyof && has_literal
+        origin.iter().any(|&id| {
+            matches!(
+                self.lookup(id),
+                Some(
+                    TypeData::Application(_)
+                        | TypeData::KeyOf(_)
+                        | TypeData::IndexAccess(_, _)
+                        | TypeData::Literal(_)
+                )
+            )
+        })
     }
 
     /// Preserve source/diagnostic order when a union contains only composite
