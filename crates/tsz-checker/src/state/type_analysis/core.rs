@@ -2194,11 +2194,7 @@ impl<'a> CheckerState<'a> {
         let result_is_lazy_to_self = {
             use crate::query_boundaries::common as common_query;
             common_query::lazy_def_id(self.ctx.types.as_type_database(), result)
-                .and_then(|def_id| {
-                    self.ctx
-                        .get_existing_def_id(sym_id)
-                        .map(|own| (def_id, own))
-                })
+                .zip(self.ctx.get_existing_def_id(sym_id))
                 .is_some_and(|(ld, od)| ld == od)
         };
         let result_cached_locally = if result_is_lazy_to_self

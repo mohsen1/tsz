@@ -378,6 +378,48 @@ n();
 }
 
 #[test]
+fn compile_for_of_unknown_expression_reports_ts18046() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"
+declare const value: unknown;
+
+for (const item of value) {
+  item;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::IS_OF_TYPE_UNKNOWN
+                && diagnostic
+                    .message_text
+                    .contains("'value' is of type 'unknown'")
+        }),
+        "expected TS18046 for for-of over unknown, got {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn plain_js_suppresses_ts2774_without_check_js() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -13413,6 +13455,54 @@ export const value = f(...s);
 }
 
 #[test]
+fn compile_es5_array_spread_packs_sparse_spread_segments() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "outDir": "dist",
+            "lib": ["es2015"],
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["src/arrays.ts"]
+        }"#,
+    );
+
+    write_file(
+        &base.join("src/arrays.ts"),
+        r#"
+const xs = Array(2);
+export const leading = [...xs, 4];
+export const middle = [1, ...xs, 4];
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Should compile without errors: {:?}",
+        result.diagnostics
+    );
+
+    let js = std::fs::read_to_string(base.join("dist/src/arrays.js")).expect("read js");
+    assert!(
+        js.contains("__spreadArray(__spreadArray([], xs, true), [4], false)"),
+        "leading sparse spread should pack holes before appending literals:\n{js}"
+    );
+    assert!(
+        js.contains("__spreadArray(__spreadArray([1], xs, true), [4], false)"),
+        "middle sparse spread should pack holes between literal segments:\n{js}"
+    );
+}
+
+#[test]
 fn compile_object_spread() {
     // Test object spread operator compilation
     let temp = TempDir::new().expect("temp dir");
@@ -16065,6 +16155,32 @@ window.localStorage;
 }
 
 #[test]
+fn script_empty_html_element_interface_augments_dom_global() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "interface HTMLElement {}\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "script HTMLElement interface should augment lib.dom without diagnostics, got: {result:?}"
+    );
+}
+
+#[test]
 fn types_entry_resolves_direct_declaration_file_from_type_root() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
@@ -18710,6 +18826,46 @@ before.toFixed();
     );
 }
 
+#[test]
+fn labeled_tuple_optional_marker_after_type_reports_ts5086() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "type T = [a: string?];\n");
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::A_LABELED_TUPLE_ELEMENT_IS_DECLARED_AS_OPTIONAL_WITH_A_QUESTION_MARK_AFTER_THE_N),
+        "Expected TS5086 for optional marker after labeled tuple type, got {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().all(|diag| {
+            diag.code
+                != diagnostic_codes::AT_THE_END_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE
+        }),
+        "Expected no TS17019 JSDoc nullable diagnostic, got {:?}",
+        result.diagnostics
+    );
+}
+
 // TS18003 should be emitted alongside TS5110 when no input files are found
 // and module/moduleResolution are incompatible.
 #[test]
@@ -19010,6 +19166,75 @@ var r5a = _.map<number, string, Date>(c2, (x, y) => { return x.toFixed() });
     assert!(
         !codes.contains(&2322),
         "Expected no inner TS2322 for block-body callback return mismatch, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_project_nested_thisless_module_state_avoids_ts18046() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "strictNullChecks": true,
+            "strictFunctionTypes": true,
+            "strictBindCallApply": true,
+            "strictPropertyInitialization": true,
+            "target": "esnext",
+            "noEmit": true
+          },
+          "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
+          "exclude": ["node_modules"]
+        }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"
+export type StateFunction<State> = (s: State, ...args: any[]) => any;
+
+type Options<State, Modules> = {
+  state?: State | (() => State) | { (): State };
+  mutations?: Record<string, StateFunction<State>>;
+  modules?: {
+    [k in keyof Modules]: Options<Modules[k], never>;
+  };
+};
+
+export function create<
+  State extends Record<string, unknown>,
+  Modules extends Record<string, Record<string, unknown>>
+>(options: Options<State, Modules>) {}
+
+create({
+  state() {
+    return { bar2: 1 };
+  },
+  mutations: { inc: (state123) => state123.bar2++ },
+  modules: {
+    foo: {
+      state() {
+        return { bar2: 1 };
+      },
+      mutations: { inc: (state) => state.bar2++ },
+    },
+  },
+});
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::IS_OF_TYPE_UNKNOWN),
+        "Nested module state should be inferred from sibling state() before mutation callbacks are checked, got diagnostics: {:?}",
         result.diagnostics
     );
 }

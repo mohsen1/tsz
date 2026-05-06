@@ -1,6 +1,7 @@
 //! Infer-result conditional helpers for TS2344 constraint validation.
 
 use crate::query_boundaries::checkers::generic as query;
+use crate::query_boundaries::type_computation::complex as type_query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -55,8 +56,21 @@ impl<'a> CheckerState<'a> {
         );
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.is_assignable_to(restricted_evaluated, inst_constraint)
+        if self.is_assignable_to(restricted_evaluated, inst_constraint)
             || self.is_assignable_to(restricted, inst_constraint)
+        {
+            return true;
+        }
+
+        let constrained =
+            type_query::instantiate_type_params_to_constraints(self.ctx.types, type_arg);
+        if constrained == type_arg {
+            return false;
+        }
+        let constrained = self.resolve_lazy_type(constrained);
+        let constrained_evaluated = self.evaluate_type_for_assignability(constrained);
+        self.is_assignable_to(constrained_evaluated, inst_constraint)
+            || self.is_assignable_to(constrained, inst_constraint)
     }
 
     fn infer_result_satisfies_via_mapped_key_subset(
