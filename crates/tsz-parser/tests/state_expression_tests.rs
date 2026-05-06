@@ -106,6 +106,24 @@ const a = ver < (MyVer.v1 >= MyVer.v2 ? MyVer.v1 : MyVer.v2)
 }
 
 #[test]
+fn object_accessors_without_body_report_open_brace_expected() {
+    for source in ["const o = { get x() , };", "const o = { set x(value) , };"] {
+        let (parser, _root) = parse_source(source);
+        let diags = parser.get_diagnostics();
+        let comma_pos = source.find(',').unwrap() as u32;
+
+        assert!(
+            diags
+                .iter()
+                .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                    && diag.start == comma_pos
+                    && diag.message == "'{' expected."),
+            "expected TS1005 open-brace diagnostic at comma for {source:?}, got {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn jsx_empty_type_arguments_accept_compound_closer_without_text_child() {
     let source = "const a = <div<>></div>;";
     let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
