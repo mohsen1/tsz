@@ -13,9 +13,14 @@
 
 use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
+
+use std::path::Path;
+use std::sync::Arc;
+use tsz_binder::lib_loader::LibFile;
 
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -39,6 +44,67 @@ fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
         .diagnostics
         .into_iter()
         .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
+fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_paths = [
+        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+    ];
+
+    lib_paths
+        .iter()
+        .filter_map(|lib_path| {
+            let content = std::fs::read_to_string(lib_path).ok()?;
+            let file_name = lib_path.file_name()?.to_string_lossy().to_string();
+            Some(Arc::new(LibFile::from_source(file_name, content)))
+        })
+        .collect()
+}
+
+fn compile_with_es5_lib_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let lib_files = load_es5_lib_files_for_test();
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let lib_contexts = lib_files
+        .iter()
+        .map(|lib| CheckerLibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
+fn relevant_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
+    compile_with_es5_lib_and_get_diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
         .collect()
 }
 
@@ -1328,6 +1394,38 @@ choose<"a">("a", "b");
     );
 }
 
+#[test]
+fn noinfer_blocks_candidates_nested_in_object_properties() {
+    let source = r#"
+declare function chooseProp<T extends string>(value: T, fallback: { x: NoInfer<T> }): void;
+chooseProp("a", { x: "b" });
+chooseProp("a", { x: "a" });
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "NoInfer nested in an object property should block fallback inference and reject only the \"b\" NoInfer property. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_blocks_candidates_nested_in_object_properties_with_lib_intrinsic() {
+    let source = r#"
+declare function chooseProp<T extends string>(value: T, fallback: { x: NoInfer<T> }): void;
+chooseProp("a", { x: "b" });
+chooseProp("a", { x: "a" });
+"#;
+    let diags = relevant_lib_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Lib intrinsic NoInfer nested in an object property should reject only the \"b\" property. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Inference with multiple callbacks ────────────────────────────────
 
 #[test]
@@ -1679,6 +1777,33 @@ x.f({s: 1})
     assert!(
         diags.iter().any(|(code, _)| *code == 2322),
         "Should also emit TS2322 for property type mismatch. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn dependent_type_parameter_constraint_checks_second_argument_against_first_inference() {
+    // Regression: typeParameterAsTypeParameterConstraint2.ts
+    // For <T, U extends T>, tsc fixes T from the first argument and then
+    // validates the second argument's inferred U against that T.
+    let source = r#"
+interface NumberVariant {
+    x: number;
+}
+
+var n: NumberVariant;
+function foo<T, U extends T>(x: T, y: U): U { return y; }
+foo(1, n);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2454),
+        "Should emit TS2454 for variable used before assignment. Got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2345 && message.contains("NumberVariant") && message.contains("number")
+        }),
+        "Should also emit TS2345 for NumberVariant not assignable to number. Got: {diags:#?}"
     );
 }
 
