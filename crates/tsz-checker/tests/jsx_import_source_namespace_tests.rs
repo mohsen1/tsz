@@ -65,13 +65,7 @@ fn compile_named_files(
         .collect()
 }
 
-#[test]
-fn jsx_import_source_namespace_overrides_global_jsx_intrinsic_elements() {
-    let diagnostics = compile_named_files(
-        &[
-            (
-                "/node_modules/react/index.d.ts",
-                r#"
+const REACT_DTS: &str = r#"
 export = React;
 export as namespace React;
 
@@ -91,17 +85,13 @@ declare global {
     }
   }
 }
-"#,
-            ),
-            (
-                "/node_modules/@emotion/react/jsx-runtime/index.d.ts",
-                r#"
+"#;
+
+const EMOTION_JSX_RUNTIME_INDEX: &str = r#"
 export { EmotionJSX as JSX } from "./jsx-namespace";
-"#,
-            ),
-            (
-                "/node_modules/@emotion/react/jsx-runtime/jsx-namespace.d.ts",
-                r#"
+"#;
+
+const EMOTION_JSX_NAMESPACE: &str = r#"
 import "react";
 
 type WithConditionalCSSProp<P> = "className" extends keyof P
@@ -118,35 +108,51 @@ type ReactJSXIntrinsicClassAttributes<T> = JSX.IntrinsicClassAttributes<T>;
 type ReactJSXIntrinsicElements = JSX.IntrinsicElements;
 
 export namespace EmotionJSX {
-  export interface Element extends ReactJSXElement {}
-  export interface ElementClass extends ReactJSXElementClass {}
-  export interface ElementAttributesProperty
+  interface Element extends ReactJSXElement {}
+  interface ElementClass extends ReactJSXElementClass {}
+  interface ElementAttributesProperty
     extends ReactJSXElementAttributesProperty {}
-  export interface ElementChildrenAttribute extends ReactJSXElementChildrenAttribute {}
+  interface ElementChildrenAttribute extends ReactJSXElementChildrenAttribute {}
 
-  export type LibraryManagedAttributes<C, P> = WithConditionalCSSProp<P> &
+  type LibraryManagedAttributes<C, P> = WithConditionalCSSProp<P> &
     ReactJSXLibraryManagedAttributes<C, P>;
 
-  export interface IntrinsicAttributes extends ReactJSXIntrinsicAttributes {}
-  export interface IntrinsicClassAttributes<T>
+  interface IntrinsicAttributes extends ReactJSXIntrinsicAttributes {}
+  interface IntrinsicClassAttributes<T>
     extends ReactJSXIntrinsicClassAttributes<T> {}
 
-  export type IntrinsicElements = {
+  type IntrinsicElements = {
     [K in keyof ReactJSXIntrinsicElements]: ReactJSXIntrinsicElements[K] & {
       css?: string;
     };
   };
 }
-"#,
-            ),
-            (
-                "/index.tsx",
-                r#"
+"#;
+
+const fn emotion_runtime_files(entry_source: &str) -> [(&str, &str); 4] {
+    [
+        ("/node_modules/react/index.d.ts", REACT_DTS),
+        (
+            "/node_modules/@emotion/react/jsx-runtime/index.d.ts",
+            EMOTION_JSX_RUNTIME_INDEX,
+        ),
+        (
+            "/node_modules/@emotion/react/jsx-runtime/jsx-namespace.d.ts",
+            EMOTION_JSX_NAMESPACE,
+        ),
+        ("/index.tsx", entry_source),
+    ]
+}
+
+#[test]
+fn jsx_import_source_namespace_overrides_global_jsx_intrinsic_elements() {
+    let diagnostics = compile_named_files(
+        &emotion_runtime_files(
+            r#"
 export const Comp = () => <div css="color: hotpink;"></div>;
 export const Bad = () => <div nope={1}></div>;
 "#,
-            ),
-        ],
+        ),
         "/index.tsx",
         CheckerOptions {
             module: ModuleKind::CommonJS,
@@ -175,5 +181,31 @@ export const Bad = () => <div nope={1}></div>;
     assert!(
         ts2322.iter().any(|(_, message)| message.contains("nope")),
         "Expected excess intrinsic attributes to still be checked. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn jsx_import_source_pragma_suppresses_runtime_bridge_alias_circularity() {
+    let diagnostics = compile_named_files(
+        &emotion_runtime_files(
+            r#"
+/* @jsxImportSource @emotion/react */
+export const Comp = () => <div css="color: hotpink;"></div>;
+"#,
+        ),
+        "/index.tsx",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            jsx_mode: JsxMode::React,
+            no_lib: true,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2456),
+        "Expected JSX import-source pragma bridge aliases to avoid false circularity. Actual diagnostics: {diagnostics:#?}"
     );
 }

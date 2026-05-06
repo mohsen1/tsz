@@ -74,6 +74,36 @@ f({ a: 1 });
 }
 
 #[test]
+fn call_missing_property_related_info_widens_fresh_inferred_target() {
+    let source = r#"
+declare function assertEqual<T>(actual: T, expected: NoInfer<T>): boolean;
+const g = { x: 3, y: 2 };
+assertEqual(g, { x: 3 });
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345 for missing inferred property");
+    let related = ts2345
+        .related_information
+        .iter()
+        .find(|info| info.message_text.contains("Property 'y' is missing"))
+        .expect("expected missing-property related information");
+    assert!(
+        related.message_text.contains("{ x: number; }")
+            && related.message_text.contains("{ x: number; y: number; }"),
+        "Expected fresh inferred object displays to be widened, got: {}",
+        related.message_text
+    );
+    assert!(
+        !related.message_text.contains("{ x: 3"),
+        "Related info should not leak fresh literal object displays, got: {}",
+        related.message_text
+    );
+}
+
+#[test]
 fn argument_not_assignable_suppressed_for_identical_types() {
     let source = r#"
 function f(x: number) {}

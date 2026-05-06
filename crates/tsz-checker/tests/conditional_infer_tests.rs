@@ -67,6 +67,60 @@ const ColumnSelectView2: new <S extends Schema>() => Table<UnrollOnHover<S>> = T
 }
 
 #[test]
+fn recursive_conditional_index_access_does_not_report_property_missing() {
+    let source = r#"
+type Flatten<T extends readonly unknown[]> = T extends unknown[] ? _Flatten<T>[] : readonly _Flatten<T>[];
+type _Flatten<T> = T extends readonly (infer U)[] ? _Flatten<U> : T;
+
+type InfiniteArray<T> = InfiniteArray<T>[];
+
+type B2 = Flatten<InfiniteArray<string>>;
+type B3 = B2[0];
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2339),
+        "recursive indexed access must not cascade into TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn nested_tuple_rest_infer_result_satisfies_array_constraint() {
+    let source = r#"
+interface Array<T> {
+    length: number;
+}
+
+type _PrependNextNum<A extends unknown[]> = A['length'] extends infer T
+    ? [T, ...A] extends [...infer X]
+        ? X
+        : never
+    : never;
+
+type _Enumerate<A extends unknown[], N extends number> = N extends A['length']
+    ? A
+    : _Enumerate<_PrependNextNum<A>, N> & number;
+
+type Enumerate<N extends number> = number extends N
+    ? number
+    : _Enumerate<[], N> extends (infer E)[]
+    ? E
+    : never;
+
+function foo2<T extends unknown[]>(value: T): Enumerate<T['length']> {
+    return value.length;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2344),
+        "tuple-rest infer result should satisfy Array<unknown> and not emit TS2344. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_conditional_object_multi_infer_resolves_true_branch() {
     let source = r#"
 type PickMeta<T> = T extends { defaultProps: infer D; propTypes: infer P } ? [D, P] : never;

@@ -1955,6 +1955,46 @@ fn test_resolver_relative_directory_applies_types_versions() {
 }
 
 #[test]
+fn test_resolver_relative_import_uses_root_dirs_overlay() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_resolver_root_dirs_overlay");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::create_dir_all(dir.join("generated")).unwrap();
+
+    fs::write(dir.join("src").join("main.ts"), "import './generated';").unwrap();
+    fs::write(
+        dir.join("generated").join("generated.ts"),
+        "export const generated = 'ok';",
+    )
+    .unwrap();
+
+    let options = crate::config::ResolvedCompilerOptions {
+        module_resolution: Some(crate::config::ModuleResolutionKind::Node),
+        root_dirs: vec![dir.join("src"), dir.join("generated")],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let resolved = resolver
+        .resolve(
+            "./generated",
+            &dir.join("src").join("main.ts"),
+            Span::new(0, 13),
+        )
+        .expect("rootDirs overlay should resolve sibling virtual path");
+
+    assert_eq!(
+        resolved.resolved_path.canonicalize().unwrap(),
+        dir.join("generated")
+            .join("generated.ts")
+            .canonicalize()
+            .unwrap()
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_subpath_ambient_module_falls_back_to_types_entry() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_subpath_ambient_module");
@@ -4655,6 +4695,227 @@ fn test_node16_module_suffix_index_file_emits_ts2834_without_suggestion() {
         other => panic!("Expected TS2834 without suggestion, got {other:?}"),
     }
     assert_eq!(failure.to_diagnostic().code, IMPORT_PATH_NEEDS_EXTENSION);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_node16_cache_separates_dynamic_import_from_cjs_require() {
+    // The same extensionless specifier in the same ESM file can be illegal for
+    // dynamic import() but legal for require-style resolution. The resolver
+    // cache must include ImportKind so those requests do not poison each other.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_node16_cache_import_kind_dynamic_first");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("main.mts"), "").unwrap();
+    fs::write(dir.join("target.mts"), "export const x = 1;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        module_suffixes: vec![String::new()],
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let containing_file = dir.join("main.mts");
+
+    let dynamic_result = resolver.resolve_with_kind(
+        "./target",
+        &containing_file,
+        Span::new(0, 10),
+        ImportKind::DynamicImport,
+    );
+    match dynamic_result {
+        Err(ResolutionFailure::ImportPathNeedsExtension {
+            suggested_extension,
+            ..
+        }) => assert_eq!(suggested_extension, ".mjs"),
+        other => panic!("Dynamic import should require an extension, got {other:?}"),
+    }
+
+    let require_result = resolver.resolve_with_kind(
+        "./target",
+        &containing_file,
+        Span::new(20, 30),
+        ImportKind::CjsRequire,
+    );
+    assert!(
+        require_result.is_ok(),
+        "CJS require-style resolution should not reuse the dynamic-import error: {require_result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_node16_cache_separates_cjs_require_from_dynamic_import() {
+    // Verify the reverse order too: a successful require-style lookup must not
+    // make a later dynamic import lookup skip Node ESM extension validation.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_node16_cache_import_kind_require_first");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("main.mts"), "").unwrap();
+    fs::write(dir.join("target.mts"), "export const x = 1;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        module_suffixes: vec![String::new()],
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let containing_file = dir.join("main.mts");
+
+    let require_result = resolver.resolve_with_kind(
+        "./target",
+        &containing_file,
+        Span::new(0, 10),
+        ImportKind::CjsRequire,
+    );
+    assert!(
+        require_result.is_ok(),
+        "CJS require-style resolution should resolve without extension validation: {require_result:?}"
+    );
+
+    let dynamic_result = resolver.resolve_with_kind(
+        "./target",
+        &containing_file,
+        Span::new(20, 30),
+        ImportKind::DynamicImport,
+    );
+    match dynamic_result {
+        Err(ResolutionFailure::ImportPathNeedsExtension {
+            suggested_extension,
+            ..
+        }) => assert_eq!(suggested_extension, ".mjs"),
+        other => panic!("Dynamic import should not reuse require-style success, got {other:?}"),
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_node16_cjs_require_uses_target_package_scope_extension_priority() {
+    // Regression test for nodeModules1.ts. A require-like relative lookup from
+    // a module package still uses Node's require resolution, but the extension
+    // priority is based on the target package scope. That makes module package
+    // targets resolve to ESM files while commonjs/default package targets keep
+    // their CJS candidates ahead of .mts.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_node16_cjs_target_package_scope");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("subfolder")).unwrap();
+    fs::create_dir_all(dir.join("subfolder2/another")).unwrap();
+
+    fs::write(dir.join("package.json"), r#"{"type":"module"}"#).unwrap();
+    fs::write(dir.join("index.mts"), "export const x = 1;").unwrap();
+    fs::write(dir.join("index.cts"), "export const x = 1;").unwrap();
+
+    fs::write(dir.join("subfolder/package.json"), r#"{"type":"commonjs"}"#).unwrap();
+    fs::write(dir.join("subfolder/index.mts"), "export const x = 1;").unwrap();
+    fs::write(dir.join("subfolder/index.cts"), "export const x = 1;").unwrap();
+
+    fs::write(dir.join("subfolder2/package.json"), "{}").unwrap();
+    fs::write(dir.join("subfolder2/index.mts"), "export const x = 1;").unwrap();
+    fs::write(dir.join("subfolder2/index.cts"), "export const x = 1;").unwrap();
+
+    fs::write(
+        dir.join("subfolder2/another/package.json"),
+        r#"{"type":"module"}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("subfolder2/another/index.mts"),
+        "export const x = 1;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("subfolder2/another/index.cts"),
+        "export const x = 1;",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        module_suffixes: vec![String::new()],
+        printer: crate::emitter::PrinterOptions {
+            module: crate::emitter::ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let containing_file = dir.join("index.mts");
+
+    let resolve_with_kind = |resolver: &mut ModuleResolver,
+                             containing_file: &std::path::Path,
+                             specifier: &str,
+                             import_kind: ImportKind| {
+        resolver
+            .resolve_with_kind(
+                specifier,
+                containing_file,
+                Span::new(0, specifier.len() as u32),
+                import_kind,
+            )
+            .unwrap_or_else(|err| panic!("expected {specifier} to resolve, got {err:?}"))
+            .resolved_path
+    };
+    let resolve_require = |resolver: &mut ModuleResolver, specifier: &str| {
+        resolve_with_kind(
+            resolver,
+            &containing_file,
+            specifier,
+            ImportKind::CjsRequire,
+        )
+    };
+
+    assert_eq!(resolve_require(&mut resolver, "./"), dir.join("index.mts"));
+    assert_eq!(
+        resolve_require(&mut resolver, "./subfolder"),
+        dir.join("subfolder/index.cts")
+    );
+    assert_eq!(
+        resolve_require(&mut resolver, "./subfolder2"),
+        dir.join("subfolder2/index.cts")
+    );
+    assert_eq!(
+        resolve_require(&mut resolver, "./subfolder2/another"),
+        dir.join("subfolder2/another/index.mts")
+    );
+
+    let containing_cjs_file = dir.join("index.cts");
+    let resolve_cjs_static_import = |resolver: &mut ModuleResolver, specifier: &str| {
+        resolve_with_kind(
+            resolver,
+            &containing_cjs_file,
+            specifier,
+            ImportKind::EsmImport,
+        )
+    };
+
+    assert_eq!(
+        resolve_cjs_static_import(&mut resolver, "./"),
+        dir.join("index.mts")
+    );
+    assert_eq!(
+        resolve_cjs_static_import(&mut resolver, "./subfolder"),
+        dir.join("subfolder/index.cts")
+    );
+    assert_eq!(
+        resolve_cjs_static_import(&mut resolver, "./subfolder2/another"),
+        dir.join("subfolder2/another/index.mts")
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

@@ -1118,13 +1118,9 @@ impl<'a> CheckerState<'a> {
                     .trim_start()
                     .trim_start_matches('*')
                     .trim_start();
-                let is_return_tag = line.starts_with("@return ")
-                    || line.starts_with("@return\t")
-                    || line.starts_with("@return{")
-                    || line.starts_with("@returns ")
-                    || line.starts_with("@returns\t")
-                    || line.starts_with("@returns{");
-                if !is_return_tag {
+                let is_param_tag = Self::strip_jsdoc_tag_prefix(line, "param").is_some();
+                let is_return_tag = Self::strip_jsdoc_return_tag_prefix(line).is_some();
+                if !is_param_tag && !is_return_tag {
                     continue;
                 }
                 let simple_expr = type_expr
@@ -1135,6 +1131,10 @@ impl<'a> CheckerState<'a> {
                 if self
                     .resolve_jsdoc_implicit_any_builtin_type(simple_expr)
                     .is_some()
+                    || crate::types_domain::queries::lib_resolution::keyword_name_to_type_id(
+                        simple_expr,
+                    )
+                    .is_some()
                     || self.source_file_declares_jsdoc_template(simple_expr)
                     || Self::parse_jsdoc_typedefs(&source_text)
                         .iter()
@@ -1144,12 +1144,11 @@ impl<'a> CheckerState<'a> {
                 }
                 let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
                 self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
-                let unresolved_return_type =
-                    self.resolve_jsdoc_type_str(simple_expr).is_none_or(|ty| {
-                        ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
-                    });
+                let unresolved_type = self.resolve_jsdoc_type_str(simple_expr).is_none_or(|ty| {
+                    ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
+                });
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
-                if Self::is_simple_type_name(simple_expr) && unresolved_return_type {
+                if Self::is_simple_type_name(simple_expr) && unresolved_type {
                     self.emit_jsdoc_cannot_find_name(
                         simple_expr,
                         comment.pos,
@@ -2046,7 +2045,6 @@ impl<'a> CheckerState<'a> {
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn report_malformed_jsdoc_satisfies_tags(&mut self, idx: NodeIndex) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_common::comments::is_jsdoc_comment;
 
         if !self.ctx.should_resolve_jsdoc() {
@@ -2063,22 +2061,7 @@ impl<'a> CheckerState<'a> {
             self.try_jsdoc_with_ancestor_walk_and_pos(idx, comments, source_text)
             && let Some(comment) = comments.iter().find(|c| c.pos == jsdoc_start)
         {
-            for (open_pos, close_pos) in
-                Self::malformed_jsdoc_satisfies_positions(source_text, comment.pos, comment.end)
-            {
-                self.ctx.error(
-                    open_pos,
-                    0,
-                    format_message(diagnostic_messages::EXPECTED, &["{"]),
-                    diagnostic_codes::EXPECTED,
-                );
-                self.ctx.error(
-                    close_pos,
-                    0,
-                    format_message(diagnostic_messages::EXPECTED, &["}"]),
-                    diagnostic_codes::EXPECTED,
-                );
-            }
+            self.emit_malformed_jsdoc_satisfies_diagnostics(source_text, comment.pos, comment.end);
         }
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -2101,22 +2084,43 @@ impl<'a> CheckerState<'a> {
                 .find(|c| c.pos == pos)
                 .filter(|c| is_jsdoc_comment(c, source_text))
         {
-            for (open_pos, close_pos) in
-                Self::malformed_jsdoc_satisfies_positions(source_text, comment.pos, comment.end)
-            {
-                self.ctx.error(
-                    open_pos,
-                    0,
-                    format_message(diagnostic_messages::EXPECTED, &["{"]),
-                    diagnostic_codes::EXPECTED,
-                );
-                self.ctx.error(
-                    close_pos,
-                    0,
-                    format_message(diagnostic_messages::EXPECTED, &["}"]),
-                    diagnostic_codes::EXPECTED,
-                );
-            }
+            self.emit_malformed_jsdoc_satisfies_diagnostics(source_text, comment.pos, comment.end);
+        }
+    }
+
+    fn emit_malformed_jsdoc_satisfies_diagnostics(
+        &mut self,
+        source_text: &str,
+        comment_pos: u32,
+        comment_end: u32,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        for (name_pos, name_len, name) in
+            Self::malformed_jsdoc_satisfies_unexpected_names(source_text, comment_pos, comment_end)
+        {
+            self.ctx.error(
+                name_pos,
+                name_len,
+                format_message(diagnostic_messages::CANNOT_FIND_NAME, &[&name]),
+                diagnostic_codes::CANNOT_FIND_NAME,
+            );
+        }
+        for (open_pos, close_pos) in
+            Self::malformed_jsdoc_satisfies_positions(source_text, comment_pos, comment_end)
+        {
+            self.ctx.error(
+                open_pos,
+                0,
+                format_message(diagnostic_messages::EXPECTED, &["{"]),
+                diagnostic_codes::EXPECTED,
+            );
+            self.ctx.error(
+                close_pos,
+                0,
+                format_message(diagnostic_messages::EXPECTED, &["}"]),
+                diagnostic_codes::EXPECTED,
+            );
         }
     }
 
@@ -2239,15 +2243,8 @@ impl<'a> CheckerState<'a> {
         for raw_line in comment_text.split_inclusive('\n') {
             let line = raw_line.trim_end_matches('\n').trim_end_matches('\r');
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let is_param_or_return = trimmed.starts_with("@param ")
-                || trimmed.starts_with("@param\t")
-                || trimmed.starts_with("@param{")
-                || trimmed.starts_with("@returns ")
-                || trimmed.starts_with("@returns\t")
-                || trimmed.starts_with("@returns{")
-                || trimmed.starts_with("@return ")
-                || trimmed.starts_with("@return\t")
-                || trimmed.starts_with("@return{");
+            let is_param_or_return = Self::strip_jsdoc_tag_prefix(trimmed, "param").is_some()
+                || Self::strip_jsdoc_return_tag_prefix(trimmed).is_some();
             if is_param_or_return && let Some(open_pos_in_line) = line.find('{') {
                 let after_open = &line[open_pos_in_line + 1..];
                 if let Some(close_rel) = after_open.find('}') {
@@ -2321,6 +2318,46 @@ impl<'a> CheckerState<'a> {
                 let open_pos = comment_pos + (after_tag + skipped) as u32;
                 let close_pos = comment_end.saturating_sub(2);
                 result.push((open_pos, close_pos));
+            }
+        }
+        result
+    }
+
+    fn malformed_jsdoc_satisfies_unexpected_names(
+        source_text: &str,
+        comment_pos: u32,
+        comment_end: u32,
+    ) -> Vec<(u32, u32, String)> {
+        let raw = &source_text[comment_pos as usize..comment_end as usize];
+        let mut result = Vec::new();
+        for tag_start in Self::jsdoc_tag_offsets(raw, "satisfies") {
+            let after_tag = tag_start + "@satisfies".len();
+            let ws_trimmed = raw[after_tag..].trim_start_matches(char::is_whitespace);
+            let skipped = raw[after_tag..].len() - ws_trimmed.len();
+            if ws_trimmed.starts_with('{') {
+                continue;
+            }
+
+            let name_start = after_tag + skipped;
+            let mut name_end = name_start;
+            for (offset, ch) in raw[name_start..].char_indices() {
+                let is_first = offset == 0;
+                let is_name_char = if is_first {
+                    ch.is_ascii_alphabetic() || ch == '_' || ch == '$'
+                } else {
+                    ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+                };
+                if !is_name_char {
+                    break;
+                }
+                name_end = name_start + offset + ch.len_utf8();
+            }
+            if name_end > name_start {
+                result.push((
+                    comment_pos + name_start as u32,
+                    (name_end - name_start) as u32,
+                    raw[name_start..name_end].to_string(),
+                ));
             }
         }
         result

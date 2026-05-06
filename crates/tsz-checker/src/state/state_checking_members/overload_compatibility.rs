@@ -58,9 +58,7 @@ impl<'a> CheckerState<'a> {
     fn jsdoc_has_explicit_return_tag(jsdoc: &str) -> bool {
         jsdoc.lines().any(|line| {
             let trimmed = line.trim();
-            trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
+            Self::strip_jsdoc_return_tag_prefix(trimmed)
                 .is_some_and(|rest| rest.trim().starts_with('{'))
         })
     }
