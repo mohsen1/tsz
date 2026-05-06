@@ -5,7 +5,8 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::widening;
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{
-    FunctionShape, ParamInfo, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate,
+    FunctionShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
+    TypePredicate,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
@@ -17,6 +18,95 @@ use super::{
 };
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn duplicate_single_arg_application_value_shape(&self, arg_type: TypeId) -> Option<TypeId> {
+        let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+            self.interner.lookup(arg_type)
+        else {
+            return None;
+        };
+        let shape = self.interner.object_shape(shape_id);
+        if shape.properties.len() < 2 {
+            return None;
+        }
+
+        let mut keys_by_prop = Vec::with_capacity(shape.properties.len());
+        let mut counts: FxHashMap<(TypeId, TypeId), usize> = FxHashMap::default();
+        for prop in shape.properties.iter() {
+            let Some(alias) = self.interner.get_display_alias(prop.type_id) else {
+                keys_by_prop.push(None);
+                continue;
+            };
+            let Some(TypeData::Application(app_id)) = self.interner.lookup(alias) else {
+                keys_by_prop.push(None);
+                continue;
+            };
+            let app = self.interner.type_application(app_id);
+            let Some(&arg) = app.args.first() else {
+                keys_by_prop.push(None);
+                continue;
+            };
+            if app.args.len() != 1
+                || crate::visitor::literal_string(self.interner.as_type_database(), arg).is_none()
+            {
+                keys_by_prop.push(None);
+                continue;
+            }
+            let key = (app.base, arg);
+            *counts.entry(key).or_default() += 1;
+            keys_by_prop.push(Some(key));
+        }
+
+        if !counts.values().any(|&count| count > 1) {
+            return None;
+        }
+
+        let properties = shape
+            .properties
+            .iter()
+            .zip(keys_by_prop)
+            .map(|(prop, key)| {
+                let is_duplicate =
+                    key.is_some_and(|key| counts.get(&key).copied().unwrap_or(0) > 1);
+                let type_id = if is_duplicate {
+                    TypeId::NEVER
+                } else {
+                    TypeId::ANY
+                };
+                PropertyInfo {
+                    name: prop.name,
+                    type_id,
+                    write_type: type_id,
+                    optional: prop.optional,
+                    readonly: prop.readonly,
+                    is_method: prop.is_method,
+                    is_class_prototype: prop.is_class_prototype,
+                    visibility: prop.visibility,
+                    parent_id: prop.parent_id,
+                    declaration_order: prop.declaration_order,
+                    is_string_named: prop.is_string_named,
+                    is_symbol_named: prop.is_symbol_named,
+                    single_quoted_name: prop.single_quoted_name,
+                }
+            })
+            .collect();
+
+        Some(self.interner.object(properties))
+    }
+
+    fn object_constraint_properties_are_any(&self, constraint: TypeId) -> bool {
+        let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+            self.interner.lookup(constraint)
+        else {
+            return false;
+        };
+        let shape = self.interner.object_shape(shape_id);
+        !shape.properties.is_empty()
+            && shape
+                .properties
+                .iter()
+                .all(|prop| prop.type_id == TypeId::ANY && prop.write_type == TypeId::ANY)
+    }
+
     fn constrain_types_for_arg_source(
         &mut self,
         arg_index: usize,
@@ -1974,6 +2064,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             if let Some(constraint) = tp.constraint {
                 let ty = final_subst.get(tp.name).unwrap_or(TypeId::ERROR);
+                if crate::visitors::visitor_predicates::contains_infer_types(
+                    self.interner.as_type_database(),
+                    constraint,
+                ) {
+                    final_subst.insert(tp.name, ty);
+                    continue;
+                }
                 let constraint_ty_raw = instantiate_call_type(
                     self.interner,
                     constraint,
@@ -2290,7 +2387,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         let tracked_final_type_params: FxHashSet<_> =
             func.type_params.iter().map(|tp| tp.name).collect();
-        let instantiated_params: Vec<ParamInfo> = if final_arg_subst.is_empty() {
+        let mut instantiated_params: Vec<ParamInfo> = if final_arg_subst.is_empty() {
             instantiated_params
         } else {
             instantiated_params
@@ -2395,6 +2492,37 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             tracing::debug!("  Param {}: {:?}", i, self.interner.lookup(param.type_id));
             tracing::debug!("  Arg   {}: {:?}", i, self.interner.lookup(arg_type));
         }
+        let final_args_len = final_args.len();
+        for (i, (param, &arg_type)) in instantiated_params
+            .iter_mut()
+            .zip(final_args.iter())
+            .enumerate()
+        {
+            let duplicate_constraint = if self.object_constraint_properties_are_any(param.type_id) {
+                Some(param.type_id)
+            } else {
+                self.param_type_for_arg_index(&func.params, i, final_args_len)
+                    .and_then(|raw| match self.interner.lookup(raw) {
+                        Some(TypeData::TypeParameter(tp)) => tp.constraint,
+                        _ => None,
+                    })
+                    .map(|constraint| {
+                        let instantiated = instantiate_call_type(
+                            self.interner,
+                            constraint,
+                            &final_subst,
+                            actual_this_type,
+                        );
+                        self.checker.evaluate_type(instantiated)
+                    })
+                    .filter(|&constraint| self.object_constraint_properties_are_any(constraint))
+            };
+            if duplicate_constraint.is_some()
+                && let Some(expected) = self.duplicate_single_arg_application_value_shape(arg_type)
+            {
+                param.type_id = expected;
+            }
+        }
         // Store instantiated params for post-inference excess property checking.
         // The checker needs these to perform EPC on the concrete (post-inference)
         // parameter types rather than the raw types that still contain type parameters.
@@ -2487,6 +2615,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let Some(constraint) = tp.constraint else {
                 continue;
             };
+            if crate::visitors::visitor_predicates::contains_infer_types(
+                self.interner.as_type_database(),
+                constraint,
+            ) {
+                continue;
+            }
             let constraint =
                 instantiate_call_type(self.interner, constraint, &final_subst, actual_this_type);
             if crate::type_queries::contains_type_parameters_db(

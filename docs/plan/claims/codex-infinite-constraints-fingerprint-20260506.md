@@ -23,10 +23,20 @@ weakening assignability.
 
 ## Verification
 
-- Focused Rust regression for the changed diagnostic path.
-- Filtered conformance for `compiler/infiniteConstraints.ts` with
-  `--print-fingerprints`.
+- `cargo fmt --check`
+- `CARGO_BUILD_JOBS=1 cargo test -p tsz-checker --test ts2322_tests test_ts2322_infinite_constraints_duplicate_value_fingerprints -- --exact --nocapture`
+- `.target/debug/tsz-conformance --test-dir <tmp> --cache-file scripts/conformance/tsc-cache-full.json --tsz-binary .target/debug/tsz --workers 1 --verbose --print-fingerprints --no-batch --timeout 60`
 
 ## Status
 
 Claimed on 2026-05-06 before implementation.
+
+Resolved on 2026-05-06 by:
+
+- skipping premature generic constraint validation for constraints containing
+  `infer`, which removes the false line 15 TS2322;
+- synthesizing a more specific expected object shape for duplicate
+  single-argument application display aliases when a broad object constraint
+  has only `any` properties, which restores the two line 32 `Value<"dup">`
+  TS2322 fingerprints;
+- adding a focused TS2322 regression for the `ensureNoDuplicates` case.

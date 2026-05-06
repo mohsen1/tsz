@@ -4654,6 +4654,69 @@ newTextChannel2.phoneNumber = '613-555-1234';
 }
 
 #[test]
+fn test_ts2322_infinite_constraints_duplicate_value_fingerprints() {
+    let source = r#"
+type AProp<T extends { a: string }> = T
+
+declare function myBug<
+  T extends { [K in keyof T]: T[K] extends AProp<infer U> ? U : never }
+>(arg: T): T
+
+const out = myBug({obj1: {a: "test"}})
+
+type Value<V extends string = string> = Record<"val", V>;
+declare function value<V extends string>(val: V): Value<V>;
+
+declare function ensureNoDuplicates<
+  T extends {
+    [K in keyof T]: Extract<T[K], Value>["val"] extends Extract<T[Exclude<keyof T, K>], Value>["val"]
+      ? never
+      : any
+  }
+>(vals: T): void;
+
+const noError = ensureNoDuplicates({main: value("test"), alternate: value("test2")});
+
+const shouldBeNoError = ensureNoDuplicates({main: value("test")});
+
+const shouldBeError = ensureNoDuplicates({main: value("dup"), alternate: value("dup")});
+"#;
+
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322
+            .iter()
+            .filter(|message| message
+                .contains("Type 'Value<\"dup\">' is not assignable to type 'never'."))
+            .count(),
+        2,
+        "expected two duplicate Value<\"dup\"> TS2322 diagnostics, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|message| !message
+                .contains("Type '{ a: string; }' is not assignable to type 'never'.")),
+        "did not expect recursive AProp inference to produce a false TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_no_false_positive_const_type_param_multi() {
     // When a function has multiple type params and the first is `const`,
     // the solver's full inference path (used for >1 type params) must not
