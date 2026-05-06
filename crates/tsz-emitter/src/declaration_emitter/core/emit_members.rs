@@ -95,9 +95,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        // tsc uses property syntax for computed method names in these cases:
-        // 1. Computed key with `any` type (from shorthand ambient modules)
-        // 2. Optional computed methods (`[key]?()` → `[key]?: (() => T) | undefined`)
+        // tsc uses property syntax for late-bound computed method names:
+        // `[key]()` becomes `[key]: () => T`.
+        // Literal and resolved computed names can stay method-like.
         // Non-computed optional methods keep method syntax: `g?(): T`
         let is_computed_name = self
             .arena
@@ -129,7 +129,8 @@ impl<'a> DeclarationEmitter<'a> {
             // the symbol expression's type is unavailable in the current cache.
             && !is_symbol_computed_name
             // Literal/reference computed method names are valid declaration method
-            // names. Keep them as methods unless optional syntax forces a property.
+            // names when the referenced key is usable as a declaration property.
+            // Keep them as methods unless optional syntax forces a property.
             && !computed_name_forces_method_syntax
             && (method.question_token || computed_key_requires_property_syntax);
 
@@ -498,11 +499,26 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
 
-        expr_node.kind == SyntaxKind::StringLiteral as u16
+        if expr_node.kind == SyntaxKind::StringLiteral as u16
             || expr_node.kind == SyntaxKind::NumericLiteral as u16
             || expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            || expr_node.kind == SyntaxKind::Identifier as u16
-            || expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            return true;
+        }
+
+        if expr_node.kind != SyntaxKind::Identifier as u16
+            && expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+
+        let Some(type_id) = self.get_node_type_or_names(&[expr_idx, name_idx]) else {
+            return false;
+        };
+        type_id != tsz_solver::types::TypeId::ANY
+            && self.type_interner.is_some_and(|interner| {
+                type_queries::is_type_usable_as_property_name(interner, type_id)
+            })
     }
 
     pub(in crate::declaration_emitter) fn emit_constructor_declaration(
@@ -696,7 +712,9 @@ impl<'a> DeclarationEmitter<'a> {
                             // include it (avoid `Type | undefined | undefined`).
                             let full = self.writer.get_output();
                             let type_text = &full[before_type..];
-                            if !type_text.ends_with("| undefined") {
+                            if !type_text.ends_with("| undefined")
+                                && !Self::type_text_has_undefined_branch(type_text)
+                            {
                                 self.write(" | undefined");
                             }
                         }

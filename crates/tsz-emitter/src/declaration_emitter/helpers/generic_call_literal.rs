@@ -10,7 +10,8 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
-        self.call_expression_returned_local_class_constructor_text(expr_idx, false)
+        self.imported_static_method_declared_return_type_text(expr_idx)
+            .or_else(|| self.call_expression_returned_local_class_constructor_text(expr_idx, false))
             .or_else(|| {
                 self.super_method_call_return_type_text(expr_idx)
                     .or_else(|| self.call_expression_source_return_type_text(expr_idx))

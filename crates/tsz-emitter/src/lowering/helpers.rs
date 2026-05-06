@@ -322,6 +322,22 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
+    /// Get the property-name node of a class member, when the member has one.
+    fn get_member_name(&self, member_node: &tsz_parser::parser::node::Node) -> Option<NodeIndex> {
+        match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                self.arena.get_method_decl(member_node).map(|m| m.name)
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                self.arena.get_property_decl(member_node).map(|p| p.name)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                self.arena.get_accessor(member_node).map(|a| a.name)
+            }
+            _ => None,
+        }
+    }
+
     /// Check if a property access expression accesses a private identifier.
     fn is_private_field_access(&self, node_idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(node_idx) else {
@@ -395,6 +411,11 @@ impl<'a> LoweringPass<'a> {
                 }
                 continue;
             }
+            if let Some(name) = self.get_member_name(member_node)
+                && self.subtree_has_private_field_read(name)
+            {
+                return true;
+            }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_field_read(body)
             {
@@ -420,6 +441,11 @@ impl<'a> LoweringPass<'a> {
                 }
                 continue;
             }
+            if let Some(name) = self.get_member_name(member_node)
+                && self.subtree_has_private_field_write(name)
+            {
+                return true;
+            }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_field_write(body)
             {
@@ -443,6 +469,11 @@ impl<'a> LoweringPass<'a> {
                     return true;
                 }
                 continue;
+            }
+            if let Some(name) = self.get_member_name(member_node)
+                && self.subtree_has_private_in_expression(name)
+            {
+                return true;
             }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_in_expression(body)
@@ -1018,6 +1049,56 @@ impl<'a> LoweringPass<'a> {
             // Recursively check nested binding patterns
             self.binding_pattern_has_object_rest(elem.name)
         })
+    }
+
+    /// Check if an assignment destructuring pattern has object rest.
+    ///
+    /// Assignment destructuring uses object/array literal nodes rather than
+    /// binding-pattern nodes, but it still lowers object rest through `__rest`.
+    pub(super) fn assignment_pattern_has_object_rest(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(node) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                match elem_node.kind {
+                    k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => true,
+                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                        .arena
+                        .get_property_assignment(elem_node)
+                        .is_some_and(|prop| {
+                            self.assignment_pattern_has_object_rest(prop.initializer)
+                        }),
+                    _ => false,
+                }
+            });
+        }
+
+        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(node) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                    && let Some(spread) = self.arena.get_spread(elem_node)
+                {
+                    return self.assignment_pattern_has_object_rest(spread.expression);
+                }
+                self.assignment_pattern_has_object_rest(elem_idx)
+            });
+        }
+
+        false
     }
 
     pub(super) fn is_binding_pattern_idx(&self, idx: NodeIndex) -> bool {
