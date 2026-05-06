@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/this-tag3-jsdoc-regression-20260506-213650`
-- **PR**: TBD
+- **PR**: #4286
 - **Status**: ready
 - **Workstream**: 1 (Conformance fixes)
 
