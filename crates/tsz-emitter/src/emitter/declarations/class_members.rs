@@ -72,6 +72,8 @@ impl<'a> Printer<'a> {
                 .get_identifier(name_node)
                 .is_some_and(|id| id.escaped_text == "(")
         });
+        let is_quoted_constructor_name =
+            self.class_member_emit_depth > 0 && self.is_quoted_constructor_method_name(method.name);
 
         // Skip method declarations without bodies (TypeScript-only overloads)
         if method.body.is_none() {
@@ -107,7 +109,9 @@ impl<'a> Printer<'a> {
             self.write("*");
         }
 
-        if method.name.is_some() && !has_recovery_missing_name {
+        if is_quoted_constructor_name {
+            self.write("constructor");
+        } else if method.name.is_some() && !has_recovery_missing_name {
             self.emit_class_member_name_preserving_class_expression_name(method.name);
         }
 
@@ -242,6 +246,17 @@ impl<'a> Printer<'a> {
         {
             self.skip_comments_in_range(type_node.pos, type_node.end);
         }
+    }
+
+    fn is_quoted_constructor_method_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        name_node.kind == SyntaxKind::StringLiteral as u16
+            && self
+                .arena
+                .get_literal(name_node)
+                .is_some_and(|lit| lit.text == "constructor")
     }
 
     /// Emit async method body lowered to __awaiter + function* for ES2015 target
@@ -1643,6 +1658,26 @@ mod tests {
         assert!(
             output.contains("constructor(x) { this.x = x; }"),
             "Single-line constructor body should stay on one line.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn quoted_constructor_method_names_emit_as_constructors() {
+        let source = "class C {\n    \"constructor\"() {}\n}\nclass D {\n    \"\\x63onstructor\"() {}\n}\nclass E {\n    ['constructor']() {}\n}\nvar o = { \"constructor\"() {} };";
+        let output = emit_ts(source);
+
+        assert_eq!(
+            output.matches("constructor() { }").count(),
+            2,
+            "Quoted constructor method names should emit as constructors.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("['constructor']() { }"),
+            "Computed constructor property names should remain computed methods.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("var o = { \"constructor\"() { } };"),
+            "Object-literal quoted constructor methods should remain quoted methods.\nOutput: {output}"
         );
     }
 

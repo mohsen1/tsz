@@ -2109,7 +2109,9 @@ impl<'a> Printer<'a> {
                         property_end.unwrap_or(member_node.end),
                     );
                 } else {
+                    self.class_member_emit_depth = self.class_member_emit_depth.saturating_add(1);
                     self.emit(member_idx);
+                    self.class_member_emit_depth = self.class_member_emit_depth.saturating_sub(1);
                 }
             }
             let mut emit_standalone_class_semicolon = false;
