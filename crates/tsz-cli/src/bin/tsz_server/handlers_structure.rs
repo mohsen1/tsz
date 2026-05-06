@@ -1669,6 +1669,24 @@ impl Server {
         )
     }
 
+    pub(crate) fn handle_reload_projects(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        self.lib_cache.clear();
+        self.unified_lib_cache = None;
+
+        let paths: Vec<String> = self.open_files.keys().cloned().collect();
+        for path in &paths {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                self.open_files.insert(path.clone(), content);
+            }
+        }
+
+        self.stub_response(seq, request, None)
+    }
+
     pub(crate) fn handle_compiler_options_for_inferred(
         &mut self,
         seq: u64,
