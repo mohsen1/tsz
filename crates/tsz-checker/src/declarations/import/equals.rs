@@ -939,21 +939,19 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS1471: require-like import only resolves to an ES module.
-        // For Node16/Node18, `import x = require("...")` must not target ESM.
-        // Node20/NodeNext suppress this diagnostic due newer interop semantics.
+        let request_kind = crate::context::ResolutionRequestKind::CjsRequire;
+        let request_resolution_mode = self.ctx.resolution_mode_for_request(request_kind, None);
+        let request_target_idx = self.ctx.resolve_import_target_from_file_for_request(
+            self.ctx.current_file_idx,
+            module_name,
+            request_resolution_mode,
+            request_kind,
+        );
         if self.ctx.compiler_options.module.is_node16_or_node18()
             && !import.is_type_only
             && !in_wrong_context
             && !inside_namespace
-            && let Some(target_idx) = self
-                .ctx
-                .resolve_import_target_from_file_with_mode(
-                    self.ctx.current_file_idx,
-                    module_name,
-                    Some(crate::context::ResolutionModeOverride::Require),
-                )
-                .or_else(|| self.ctx.resolve_import_target(module_name))
+            && let Some(target_idx) = request_target_idx
         {
             let arena = self.ctx.get_arena_for_file(target_idx as u32);
             if let Some(source_file) = arena.source_files.first() {
@@ -984,7 +982,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(ref resolved) = self.ctx.resolved_modules
+        if request_target_idx.is_some() {
+            return;
+        }
+
+        if self.ctx.resolved_module_request_paths.is_none()
+            && let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
             return;
@@ -1013,20 +1016,21 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.).
         let module_key = module_name.to_string();
-        if let Some(error) = self.ctx.get_resolution_error(module_name) {
+        if let Some(error) = self.ctx.get_resolution_error_for_request(
+            module_name,
+            request_resolution_mode,
+            request_kind,
+        ) {
             if !should_emit_module_not_found {
                 return;
             }
 
-            // Suppress TS2792/TS2307 for System/AMD modules and classic resolution.
             let module_kind = self.ctx.compiler_options.module;
             let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
             if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
                 return;
             }
-            // Extract error values before mutable borrow
             let mut error_code = error.code;
             let mut error_message = error.message.clone();
             if error_code
@@ -1058,7 +1062,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Suppress TS2792/TS2307 for System/AMD modules and classic resolution.
         let module_kind = self.ctx.compiler_options.module;
         let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
         if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
@@ -1068,8 +1071,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Use TS2792 when module resolution is "classic" (system/amd/umd modules),
-        // suggesting the user switch to nodenext or configure paths.
         let (message, code) =
             self.module_not_found_diagnostic_for_site(module_name, ModuleNotFoundSite::RequireLike);
         self.ctx.modules_with_ts2307_emitted.insert(module_key);

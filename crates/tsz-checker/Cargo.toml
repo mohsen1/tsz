@@ -781,5 +781,9 @@ path = "tests/intersection_index_signature_fingerprint_tests.rs"
 name = "shadowed_symbol_global_tests"
 path = "tests/shadowed_symbol_global_tests.rs"
 
+[[test]]
+name = "jsdoc_tag_boundary_tests"
+path = "tests/jsdoc_tag_boundary_tests.rs"
+
 [lints]
 workspace = true

@@ -350,6 +350,11 @@ impl<'a> CheckerState<'a> {
                                                         inst_constraint,
                                                     )
                                                 || self
+                                                    .type_arg_evaluates_to_array_like_infer_result_conditional(
+                                                        type_arg,
+                                                        inst_constraint,
+                                                    )
+                                                || self
                                                     .infer_result_satisfies_via_application_arg_constraints(
                                                         type_arg,
                                                         inst_constraint,
@@ -800,6 +805,11 @@ impl<'a> CheckerState<'a> {
                                         cond_true,
                                         inst_constraint,
                                     )
+                                    || self
+                                        .type_arg_evaluates_to_array_like_infer_result_conditional(
+                                            type_arg,
+                                            inst_constraint,
+                                        )
                                     || self.infer_result_satisfies_via_application_arg_constraints(
                                         type_arg,
                                         inst_constraint,
@@ -1297,8 +1307,12 @@ impl<'a> CheckerState<'a> {
                         && query::has_call_signatures(db, type_arg);
                 }
                 if !is_satisfied {
-                    is_satisfied =
-                        self.satisfies_array_like_constraint(type_arg, instantiated_constraint);
+                    is_satisfied = self
+                        .satisfies_array_like_constraint(type_arg, instantiated_constraint)
+                        || self.type_arg_evaluates_to_array_like_infer_result_conditional(
+                            type_arg,
+                            instantiated_constraint,
+                        );
                 }
                 if !is_satisfied
                     && let Some(base) = base_constraint_type
