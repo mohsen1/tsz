@@ -1679,6 +1679,8 @@ impl<'a> Printer<'a> {
                 for name in exports {
                     ancestor_qualifiers.insert(name.clone(), parent_qualifier.clone());
                 }
+                parent_exports.remove(&leaf_name);
+                ancestor_qualifiers.remove(&leaf_name);
             }
             for name in &prev_current_class_fn_enum {
                 parent_exports.remove(name);

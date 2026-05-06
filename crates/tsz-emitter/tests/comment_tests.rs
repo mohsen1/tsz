@@ -149,6 +149,18 @@ namespace m4.m5.m6 {
 }
 
 #[test]
+fn typed_parameter_line_comment_before_close_paren_stays_in_parameter_list() {
+    let source = "function blah3(a: string // trailing commen single line\n    ) {}";
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("function blah3(a // trailing commen single line\n) {"),
+        "Single-line parameter comments before the closing paren should stay inside the parameter list.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_object_literal_method_comments_stay_on_members() {
     let source = r#"var v = {
  //property
