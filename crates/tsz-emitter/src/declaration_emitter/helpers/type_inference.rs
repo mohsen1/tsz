@@ -6024,11 +6024,139 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 let data = self.arena.get_method_decl(member_node)?;
-                self.method_function_type_text(member_idx, data, depth)
-                    .map(|type_text| format!("{name}: {type_text}"))
+                if self.object_literal_method_uses_property_syntax(data) {
+                    self.method_function_type_text(member_idx, data, depth)
+                        .map(|type_text| format!("{name}: {type_text}"))
+                } else {
+                    self.method_signature_type_text_named_at(member_idx, data, name, depth)
+                }
             }
             _ => None,
         }
+    }
+
+    fn method_signature_type_text_named_at(
+        &self,
+        method_idx: NodeIndex,
+        method: &tsz_parser::parser::node::MethodDeclData,
+        name: &str,
+        depth: u32,
+    ) -> Option<String> {
+        let mut scratch = self.scratch_declaration_emitter();
+        scratch.indent_level = depth;
+        scratch.write(name);
+        if method.question_token {
+            scratch.write("?");
+        }
+
+        let jsdoc_template_params = if method
+            .type_parameters
+            .as_ref()
+            .is_none_or(|type_params| type_params.nodes.is_empty())
+        {
+            self.jsdoc_template_params_for_node(method_idx)
+        } else {
+            Vec::new()
+        };
+        if let Some(ref type_params) = method.type_parameters {
+            if !type_params.nodes.is_empty() {
+                scratch.emit_type_parameters(type_params);
+            } else if !jsdoc_template_params.is_empty() {
+                scratch.emit_jsdoc_template_parameters(&jsdoc_template_params);
+            }
+        } else if !jsdoc_template_params.is_empty() {
+            scratch.emit_jsdoc_template_parameters(&jsdoc_template_params);
+        }
+
+        scratch.write("(");
+        scratch.emit_parameters_with_body(&method.parameters, method.body);
+        scratch.write("): ");
+        scratch.emit_method_function_type_return(method_idx, method);
+        let type_text = scratch.writer.take_output();
+        (!type_text.trim().is_empty()).then_some(type_text)
+    }
+
+    fn object_literal_method_uses_property_syntax(
+        &self,
+        method: &tsz_parser::parser::node::MethodDeclData,
+    ) -> bool {
+        let Some(name_node) = self.arena.get(method.name) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        if self
+            .resolved_computed_property_name_text(method.name)
+            .is_some()
+            || self.computed_property_name_is_symbol_access(method.name)
+            || self.computed_property_name_is_literal_key(method.name)
+        {
+            return false;
+        }
+
+        let computed_key_requires_property_syntax = self
+            .arena
+            .get_computed_property(name_node)
+            .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
+            .is_none_or(|type_id| {
+                type_id == tsz_solver::types::TypeId::ANY
+                    || self.type_interner.is_some_and(|interner| {
+                        !tsz_solver::type_queries::is_type_usable_as_property_name(
+                            interner, type_id,
+                        )
+                    })
+            });
+
+        method.question_token || computed_key_requires_property_syntax
+    }
+
+    fn computed_property_name_is_literal_key(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NumericLiteral as u16
+            || expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+    }
+
+    fn computed_property_name_is_symbol_access(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        self.get_identifier_text(access.expression).as_deref() == Some("Symbol")
     }
 
     fn format_object_member_type_text(name: &str, type_text: &str, depth: u32) -> String {
@@ -6707,13 +6835,26 @@ impl<'a> DeclarationEmitter<'a> {
         let mut actual_insertions = 0usize;
         for (name_text, member_text) in computed_members {
             let line = format!("{indent}{member_text};");
+            let line_trimmed = line.trim();
+            if Self::object_literal_method_line_matches_name(line_trimmed, &name_text)
+                && lines.iter().any(|existing| {
+                    Self::object_literal_method_line_matches_name(existing.trim(), &name_text)
+                })
+            {
+                continue;
+            }
+            let exact_exists = lines.iter().any(|existing| existing.trim() == line_trimmed);
             if let Some(existing_idx) = lines.iter().position(|existing| {
-                Self::object_literal_property_line_matches(existing, &name_text, &line)
+                existing.trim() != line_trimmed
+                    && Self::object_literal_property_line_matches(existing, &name_text, &line)
             }) {
-                lines[existing_idx] = line;
+                if exact_exists {
+                    lines.remove(existing_idx);
+                } else {
+                    lines[existing_idx] = line;
+                }
             } else {
-                let line_trimmed = line.trim();
-                if !lines.iter().any(|existing| existing.trim() == line_trimmed) {
+                if !exact_exists {
                     lines.insert(insert_at + actual_insertions, line);
                     actual_insertions += 1;
                 }
@@ -6735,6 +6876,17 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some(lines.join("\n"))
+    }
+
+    fn object_literal_method_line_matches_name(existing: &str, name_text: &str) -> bool {
+        let without_readonly = existing
+            .strip_prefix("readonly ")
+            .unwrap_or(existing)
+            .trim_start();
+        without_readonly.starts_with(&format!("{name_text}("))
+            || without_readonly.starts_with(&format!("{name_text}<"))
+            || without_readonly.starts_with(&format!("{name_text}?("))
+            || without_readonly.starts_with(&format!("{name_text}?<"))
     }
 
     pub(in crate::declaration_emitter) fn object_literal_property_line_matches(
