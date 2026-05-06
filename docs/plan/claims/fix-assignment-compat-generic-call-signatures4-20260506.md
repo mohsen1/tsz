@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/assignment-compat-generic-call-signatures4-20260506`
-- **PR**: TBD
+- **PR**: #3705
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
