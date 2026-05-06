@@ -200,18 +200,34 @@ impl<'a> LoweringPass<'a> {
                         }
                     }
                     // Set __metadata helper when a decorated method WITH a body exists.
-                    // Overload signatures (no body) are not emitted as __decorate targets.
+                    // Parameter decorators also emit method metadata. Overload signatures
+                    // (no body) are not emitted as __decorate targets.
                     let is_overload = !method.body.is_some();
+                    let has_method_decorator = method.modifiers.as_ref().is_some_and(|m| {
+                        m.nodes.iter().any(|&mod_idx| {
+                            self.arena
+                                .get(mod_idx)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                        })
+                    });
+                    let has_parameter_decorator =
+                        method.parameters.nodes.iter().any(|&param_idx| {
+                            self.arena
+                                .get(param_idx)
+                                .and_then(|param_node| self.arena.get_parameter(param_node))
+                                .and_then(|param| param.modifiers.as_ref())
+                                .is_some_and(|mods| {
+                                    mods.nodes.iter().any(|&mod_idx| {
+                                        self.arena
+                                            .get(mod_idx)
+                                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                                    })
+                                })
+                        });
                     if !is_overload
                         && self.ctx.options.legacy_decorators
                         && self.ctx.options.emit_decorator_metadata
-                        && method.modifiers.as_ref().is_some_and(|m| {
-                            m.nodes.iter().any(|&mod_idx| {
-                                self.arena
-                                    .get(mod_idx)
-                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                            })
-                        })
+                        && (has_method_decorator || has_parameter_decorator)
                     {
                         self.transforms.helpers_mut().metadata = true;
                     }
