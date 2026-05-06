@@ -390,12 +390,7 @@ impl<'a> DeclarationEmitter<'a> {
         if !receiver_is_supported {
             return None;
         }
-        if self
-            .js_commonjs_export_name_text(lhs_access.name_or_argument)
-            .is_none()
-        {
-            return None;
-        }
+        self.js_commonjs_export_name_text(lhs_access.name_or_argument)?;
 
         let rhs = self
             .arena
