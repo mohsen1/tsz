@@ -2242,7 +2242,7 @@ impl<'a> TypeFormatter<'a> {
     /// - Tier 0: Builtins/intrinsics (always first)
     /// - Tier 1: User-defined types with source info (sorted by file, then position)
     /// - Tier 2: Types without source info (preserve original order by returning sentinel)
-    fn get_source_position_for_type(
+    pub(super) fn get_source_position_for_type(
         &self,
         type_id: TypeId,
         def_store: &crate::def::DefinitionStore,

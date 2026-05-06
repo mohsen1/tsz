@@ -21,12 +21,15 @@ fingerprint matches TypeScript without changing assignability behavior.
 
 ## Verification
 
-- Focused Rust regression for the display order, if there is an existing local
-  test surface for this diagnostic.
+- `CARGO_BUILD_JOBS=1 cargo test -p tsz-checker --test ts2322_tests
+  test_ts2322_keeps_outer_object_error_for_direct_index_access_target -- --exact
+  --nocapture`
+- `CARGO_BUILD_JOBS=1 cargo test -p tsz-solver diagnostics::format --
+  --nocapture`
 - Filtered conformance for
   `compiler/complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound.ts` with
-  `--print-fingerprints`.
+  `--print-fingerprints`: 1/1 passed, fingerprint-only 0.
 
 ## Status
 
-Claimed on 2026-05-06 before implementation.
+Implemented and verified on 2026-05-06.

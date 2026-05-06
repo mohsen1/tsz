@@ -4631,10 +4631,11 @@ newTextChannel2.phoneNumber = '613-555-1234';
         ts2322.iter().any(
             |(_, message)| message.contains("Type '{ type: T; localChannelId:")
                 && message.contains("}' is not assignable to type 'NewChannel<")
-                && message.contains("ChannelOfType<T, TextChannel>")
-                && message.contains("ChannelOfType<T, EmailChannel>")
+                && message.contains(
+                    "NewChannel<ChannelOfType<T, TextChannel> | ChannelOfType<T, EmailChannel>>"
+                )
         ),
-        "Expected TS2322 to stay on the outer object literal. Got: {diagnostics:?}"
+        "Expected TS2322 to keep the outer object literal and source-order target union. Got: {diagnostics:?}"
     );
     let message = &ts2322[0].1;
     assert!(
