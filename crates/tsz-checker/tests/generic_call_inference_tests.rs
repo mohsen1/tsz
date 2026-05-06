@@ -1595,6 +1595,112 @@ const check: number = result;
     );
 }
 
+#[test]
+fn conditional_alias_first_arg_context_types_binding_pattern_callback() {
+    let source = r#"
+interface TypeLambda {
+    readonly In: unknown;
+    readonly Out: unknown;
+}
+type Kind<F extends TypeLambda, In, Target> = F extends { readonly type: unknown }
+    ? (F & { readonly In: In; readonly Target: Target })["type"]
+    : { readonly F: F; readonly In: (_: In) => void; readonly Target: (_: Target) => Target };
+
+declare const map: <F extends TypeLambda, R, A, B>(
+    self: Kind<F, R, A>,
+    f: (a: A) => B
+) => Kind<F, R, B>;
+
+declare const pair: <F extends TypeLambda, R, A, B>(
+    left: Kind<F, R, A>,
+    right: Kind<F, R, B>
+) => Kind<F, R, [A, B]>;
+
+function use<F extends TypeLambda, R, A, B>(
+    left: Kind<F, R, A>,
+    right: Kind<F, R, B>,
+    f: (a: A, b: B) => string
+): Kind<F, R, string> {
+    return map(pair(left, right), ([a, b]) => f(a, b));
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| matches!(*code, 2345 | 7031)),
+        "conditional alias inference should type destructured callback params. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn overloaded_conditional_alias_first_arg_context_types_binding_pattern_callback() {
+    let source = r#"
+interface TypeLambda {
+    readonly In: unknown;
+    readonly Out: unknown;
+}
+type Kind<F extends TypeLambda, In, Target> = F extends { readonly type: unknown }
+    ? (F & { readonly In: In; readonly Target: Target })["type"]
+    : { readonly F: F; readonly In: (_: In) => void; readonly Target: (_: Target) => Target };
+
+interface Covariant<F extends TypeLambda> {
+    readonly map: {
+        <A, B>(f: (a: A) => B): <R>(self: Kind<F, R, A>) => Kind<F, R, B>;
+        <R, A, B>(self: Kind<F, R, A>, f: (a: A) => B): Kind<F, R, B>;
+    };
+}
+interface Product<F extends TypeLambda> extends Covariant<F> {
+    readonly pair: <R, A, B>(
+        left: Kind<F, R, A>,
+        right: Kind<F, R, B>
+    ) => Kind<F, R, [A, B]>;
+}
+
+function use<F extends TypeLambda, R, A, B>(
+    F: Product<F>,
+    left: Kind<F, R, A>,
+    right: Kind<F, R, B>,
+    f: (a: A, b: B) => string
+): Kind<F, R, string> {
+    return F.map(F.pair(left, right), ([a, b]) => f(a, b));
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| matches!(*code, 2345 | 7031)),
+        "overloaded conditional alias inference should type destructured callback params. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn overloaded_higher_order_rest_any_constraint_accepts_generic_body() {
+    let source = r#"
+type Parameters<T extends (...args: any[]) => any> =
+    T extends (...args: infer P) => any ? P : never;
+interface IArguments {}
+
+declare const dual: {
+    <DataLast extends (...args: any[]) => any, DataFirst extends (...args: any[]) => any>(
+        arity: Parameters<DataFirst>["length"],
+        body: DataFirst
+    ): DataLast & DataFirst;
+    <DataLast extends (...args: any[]) => any, DataFirst extends (...args: any[]) => any>(
+        isDataFirst: (args: IArguments) => boolean,
+        body: DataFirst
+    ): DataLast & DataFirst;
+};
+
+const make = (): {
+    <A, B, C>(a: A, b: B, f: (a: A, b: B) => C): C;
+} =>
+    dual(3, <A, B, C>(a: A, b: B, f: (a: A, b: B) => C): C => f(a, b));
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2769),
+        "higher-order generic body should satisfy the rest-any function constraint. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Contextual instantiation edge cases ──────────────────────────────
 
 #[test]
