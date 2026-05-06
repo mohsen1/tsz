@@ -226,7 +226,6 @@ impl<'a> CheckerState<'a> {
         .with_type_environment(&self.ctx.type_environment)
         .with_narrowing_cache(&self.ctx.narrowing_cache)
         .with_call_type_predicates(&self.ctx.call_type_predicates)
-        .with_invalid_assertion_calls(&self.ctx.invalid_assertion_calls)
         .with_flow_buffers(
             &self.ctx.flow_worklist,
             &self.ctx.flow_in_worklist,

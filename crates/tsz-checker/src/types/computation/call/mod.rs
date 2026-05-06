@@ -24,7 +24,11 @@ impl<'a> CheckerState<'a> {
         &mut self,
         call_idx: NodeIndex,
     ) -> Option<(TypePredicate, Vec<ParamInfo>)> {
-        if self.ctx.invalid_assertion_calls.contains(&call_idx.0) {
+        if self
+            .ctx
+            .call_type_predicates
+            .is_invalid_assertion_call(call_idx.0)
+        {
             return None;
         }
 
@@ -122,7 +126,9 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::ASSERTIONS_REQUIRE_THE_CALL_TARGET_TO_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME,
                 diagnostic_codes::ASSERTIONS_REQUIRE_THE_CALL_TARGET_TO_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME,
             );
-            self.ctx.invalid_assertion_calls.insert(call_idx.0);
+            self.ctx
+                .call_type_predicates
+                .mark_invalid_assertion_call(call_idx.0);
             return false;
         }
 
@@ -132,7 +138,9 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::ASSERTIONS_REQUIRE_EVERY_NAME_IN_THE_CALL_TARGET_TO_BE_DECLARED_WITH_AN_EXPLICIT,
                 diagnostic_codes::ASSERTIONS_REQUIRE_EVERY_NAME_IN_THE_CALL_TARGET_TO_BE_DECLARED_WITH_AN_EXPLICIT,
             );
-            self.ctx.invalid_assertion_calls.insert(call_idx.0);
+            self.ctx
+                .call_type_predicates
+                .mark_invalid_assertion_call(call_idx.0);
             return false;
         }
 

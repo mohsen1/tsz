@@ -19,7 +19,35 @@ type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
 type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
 /// Instantiated type predicates from generic call resolutions, keyed by call node index.
-pub(crate) type CallPredicateMap = FxHashMap<u32, (TypePredicate, Vec<ParamInfo>)>;
+#[derive(Default)]
+pub struct CallPredicateMap {
+    predicates: FxHashMap<u32, (TypePredicate, Vec<ParamInfo>)>,
+    invalid_assertion_calls: FxHashSet<u32>,
+}
+
+impl CallPredicateMap {
+    pub(crate) fn get(&self, call_idx: &u32) -> Option<&(TypePredicate, Vec<ParamInfo>)> {
+        self.predicates.get(call_idx)
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        call_idx: u32,
+        predicate: (TypePredicate, Vec<ParamInfo>),
+    ) -> Option<(TypePredicate, Vec<ParamInfo>)> {
+        self.invalid_assertion_calls.remove(&call_idx);
+        self.predicates.insert(call_idx, predicate)
+    }
+
+    pub(crate) fn mark_invalid_assertion_call(&mut self, call_idx: u32) {
+        self.predicates.remove(&call_idx);
+        self.invalid_assertion_calls.insert(call_idx);
+    }
+
+    pub(crate) fn is_invalid_assertion_call(&self, call_idx: u32) -> bool {
+        self.invalid_assertion_calls.contains(&call_idx)
+    }
+}
 
 // Guard against pathological requeue loops in flow traversal.
 // The BFS worklist re-queues CONDITION/NARROWING nodes after scheduling their
@@ -213,8 +241,6 @@ pub struct FlowAnalyzer<'a> {
     /// Instantiated type predicates from generic call resolutions.
     /// Keyed by call expression node index.
     pub(crate) call_type_predicates: Option<&'a CallPredicateMap>,
-    /// Assertion calls that failed target validation and must not narrow.
-    pub(crate) invalid_assertion_calls: Option<&'a FxHashSet<u32>>,
     /// Reusable buffers for flow analysis.
     pub(crate) flow_worklist: Option<&'a RefCell<VecDeque<(FlowNodeId, TypeId)>>>,
     pub(crate) flow_in_worklist: Option<&'a RefCell<FxHashSet<FlowNodeId>>>,
@@ -424,7 +450,6 @@ impl<'a> FlowAnalyzer<'a> {
             shared_numeric_atom_cache: None,
             narrowing_cache: None,
             call_type_predicates: None,
-            invalid_assertion_calls: None,
             flow_worklist: None,
             flow_in_worklist: None,
             flow_visited: None,
@@ -459,7 +484,6 @@ impl<'a> FlowAnalyzer<'a> {
             shared_numeric_atom_cache: None,
             narrowing_cache: None,
             call_type_predicates: None,
-            invalid_assertion_calls: None,
             flow_worklist: None,
             flow_in_worklist: None,
             flow_visited: None,
@@ -500,12 +524,6 @@ impl<'a> FlowAnalyzer<'a> {
     /// Set instantiated call type predicates from generic call resolutions.
     pub const fn with_call_type_predicates(mut self, predicates: &'a CallPredicateMap) -> Self {
         self.call_type_predicates = Some(predicates);
-        self
-    }
-
-    /// Set invalid assertion calls that must not participate in flow narrowing.
-    pub const fn with_invalid_assertion_calls(mut self, calls: &'a FxHashSet<u32>) -> Self {
-        self.invalid_assertion_calls = Some(calls);
         self
     }
 
@@ -2278,8 +2296,8 @@ impl<'a> FlowAnalyzer<'a> {
             return pre_type;
         }
         if self
-            .invalid_assertion_calls
-            .is_some_and(|calls| calls.contains(&flow.node.0))
+            .call_type_predicates
+            .is_some_and(|calls| calls.is_invalid_assertion_call(flow.node.0))
         {
             return pre_type;
         }
