@@ -4,14 +4,22 @@
 //! correct ES5 output for destructuring, class, and async transforms.
 
 use crate::output::printer::{PrintOptions, lower_and_print};
+use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 
-fn emit_es5(source: &str) -> String {
+fn emit_with_target(source: &str, target: ScriptTarget) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    let mut opts = PrintOptions::es5();
+    let mut opts = PrintOptions {
+        target,
+        ..PrintOptions::default()
+    };
     opts.remove_comments = true;
     lower_and_print(&parser.arena, root, opts).code
+}
+
+fn emit_es5(source: &str) -> String {
+    emit_with_target(source, ScriptTarget::ES5)
 }
 
 fn emit_es5_with_comments(source: &str) -> String {
@@ -113,12 +121,120 @@ console.log(value);
         "Computed property read should use a temp key.\nOutput:\n{output}"
     );
     assert!(
+        output.contains(" === void 0 ? 1 : "),
+        "Computed property default should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
         output.contains(" === \"symbol\" ? ") && output.contains(" + \"\""),
         "__rest exclusion should use TypeScript's symbol-safe computed-key coercion.\nOutput:\n{output}"
     );
     assert!(
         !output.contains("__rest(source, [getKey()])"),
         "__rest exclusion must not re-evaluate the computed key expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn object_rest_assignment_computed_exclusion_reuses_key_temp() {
+    let output = emit_es5(
+        r#"
+declare function getKey(): string;
+let value: any;
+let rest: any;
+const source: any = {};
+({ [getKey()]: value = 1, ...rest } = source);
+console.log(value);
+"#,
+    );
+
+    assert_eq!(
+        output.matches("getKey()").count(),
+        1,
+        "Computed rest assignment key expression must be evaluated once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("source[_"),
+        "Computed assignment property read should use a temp key.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === void 0 ? 1 : "),
+        "Computed assignment default should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === \"symbol\" ? ") && output.contains(" + \"\""),
+        "Assignment __rest exclusion should use symbol-safe computed-key coercion.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("source[\"\"]") && !output.contains("__rest(source, [])"),
+        "Assignment lowering must not drop the computed key.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn object_rest_es2017_computed_default_reuses_key_temp() {
+    let output = emit_with_target(
+        r#"
+declare function getKey(): string;
+const source: any = {};
+const { [getKey()]: value = 1, ...rest } = source;
+console.log(value);
+"#,
+        ScriptTarget::ES2017,
+    );
+
+    assert_eq!(
+        output.matches("getKey()").count(),
+        1,
+        "ES2017 computed rest key expression must be evaluated once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("[_"),
+        "ES2017 computed property read should use a temp key.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === void 0 ? 1 : "),
+        "ES2017 computed property default should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === \"symbol\" ? ") && output.contains(" + \"\""),
+        "ES2017 __rest exclusion should use symbol-safe computed-key coercion.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn object_rest_assignment_es2017_computed_exclusion_reuses_key_temp() {
+    let output = emit_with_target(
+        r#"
+declare function getKey(): string;
+let value: any;
+let rest: any;
+const source: any = {};
+({ [getKey()]: value = 1, ...rest } = source);
+console.log(value);
+"#,
+        ScriptTarget::ES2017,
+    );
+
+    assert_eq!(
+        output.matches("getKey()").count(),
+        1,
+        "ES2017 computed rest assignment key expression must be evaluated once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("source[_"),
+        "ES2017 computed assignment property read should use a temp key.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === void 0 ? 1 : "),
+        "ES2017 computed assignment default should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === \"symbol\" ? ") && output.contains(" + \"\""),
+        "ES2017 assignment __rest exclusion should use symbol-safe computed-key coercion.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__rest(source, [])") && !output.contains("__rest(source, [getKey()])"),
+        "ES2017 assignment lowering must not drop or re-evaluate the computed key.\nOutput:\n{output}"
     );
 }
 
