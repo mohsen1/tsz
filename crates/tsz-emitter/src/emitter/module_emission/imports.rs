@@ -604,6 +604,8 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let preserve_invalid_module_syntax = self.recovered_module_syntax_block_depth > 0;
+
         if self.import_clause_is_empty_named_import(clause) {
             if !(self.ctx.options.verbatim_module_syntax || self.source_is_js_file) {
                 return;
@@ -623,7 +625,9 @@ impl<'a> Printer<'a> {
         let mut trailing_comma = false;
 
         if clause.name.is_some() {
-            has_default = if self.ctx.options.type_only_nodes.is_empty()
+            has_default = if preserve_invalid_module_syntax {
+                true
+            } else if self.ctx.options.type_only_nodes.is_empty()
                 && !self.source_is_js_file
                 && !self.ctx.options.verbatim_module_syntax
                 && !self.is_jsx_factory_import_clause(clause)
@@ -647,6 +651,7 @@ impl<'a> Printer<'a> {
                     if self.ctx.options.type_only_nodes.is_empty()
                         && !self.source_is_js_file
                         && !self.ctx.options.verbatim_module_syntax
+                        && !preserve_invalid_module_syntax
                     {
                         value_specs = self.filter_value_specs_by_usage(node, &value_specs);
                     }
@@ -1066,6 +1071,17 @@ impl<'a> Printer<'a> {
         let Some(module_node) = self.arena.get(import.module_specifier) else {
             return;
         };
+        let is_external = module_node.is_string_literal()
+            || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
+
+        if self.recovered_module_syntax_block_depth > 0 && is_external && !is_exported_var {
+            self.write("import ");
+            self.emit(import.import_clause);
+            self.write(" = require(");
+            self.emit_module_specifier(import.module_specifier);
+            self.write(")");
+            return;
+        }
 
         let has_runtime_value = self.import_decl_has_runtime_value(import);
         if !has_runtime_value
@@ -1133,9 +1149,6 @@ impl<'a> Printer<'a> {
             }
             return;
         }
-
-        let is_external = module_node.is_string_literal()
-            || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
 
         // AMD and System bind external imports via wrapper parameters/setters,
         // so we must not emit a duplicate runtime require here.

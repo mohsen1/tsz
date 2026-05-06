@@ -322,6 +322,8 @@ impl<'a> Printer<'a> {
         // stmt_node.end past the statement boundary into the next statement's tokens,
         // so using next_stmt.pos as the scan limit prevents over-scanning.
         let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
+        let prev_recovered_module_syntax_block_depth = self.recovered_module_syntax_block_depth;
+        self.recovered_module_syntax_block_depth += 1;
         for (stmt_i, &stmt_idx) in stmts.iter().enumerate() {
             // Save state before leading comments so we can undo them if the
             // statement produces no output (e.g., namespace alias import or
@@ -488,6 +490,7 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
 
         if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
             let indent = " ".repeat(self.writer.indent_width() as usize);
