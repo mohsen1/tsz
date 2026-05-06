@@ -16879,6 +16879,38 @@ export const name = pkg.default.name;
 }
 
 #[test]
+fn resolve_json_module_does_not_make_included_json_files_roots() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "node16",
+            "moduleResolution": "node16",
+            "resolveJsonModule": true,
+            "types": [],
+            "noEmit": true
+          },
+          "include": ["**/*"]
+        }"#,
+    );
+    write_file(&base.join("app.ts"), "export const x = 1;\n");
+    write_file(&base.join("data.json"), "{ not valid json }\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "unimported JSON matched by include should not be parsed as a root: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn js_checkjs_define_property_module_exports_preserve_augmented_shape() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
