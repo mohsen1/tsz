@@ -509,7 +509,7 @@ impl<'a> CheckerContext<'a> {
             if self.global_declared_modules.is_none() {
                 let mut dm = super::GlobalDeclaredModules::default();
                 for binder in binders.iter() {
-                    for (module_spec, _) in binder.module_exports.iter() {
+                    for module_spec in binder.module_exports.keys() {
                         let normalized = module_spec.trim_matches('"').trim_matches('\'');
                         if normalized.contains('*') {
                             dm.patterns.push(normalized.to_string());

@@ -11,6 +11,23 @@ impl<'a> Printer<'a> {
     // Class Members
     // =========================================================================
 
+    pub(in crate::emitter) fn has_effective_static_modifier_js(
+        &self,
+        modifiers: &Option<NodeList>,
+    ) -> bool {
+        modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes
+                .iter()
+                .filter(|&&idx| {
+                    self.arena
+                        .get(idx)
+                        .is_some_and(|n| n.kind == SyntaxKind::StaticKeyword as u16)
+                })
+                .count()
+                == 1
+        })
+    }
+
     fn emit_class_member_name_preserving_class_expression_name(&mut self, name: NodeIndex) {
         if self
             .arena
@@ -126,6 +143,8 @@ impl<'a> Printer<'a> {
             // Keep parse-recovery emit for invalid generator member `*() {}`.
             if method.asterisk_token && has_recovery_missing_name {
                 self.write("*() { }");
+            } else if self.has_recovered_declaration_trailing_comma(node) {
+                self.emit_recovered_object_method_without_body(node);
             } else {
                 self.skip_comments_for_erased_node(node);
             }
@@ -528,7 +547,7 @@ impl<'a> Printer<'a> {
         // For ES2022+ targets, static fields with initializers are emitted as
         // `static { this.fieldName = value; }` blocks (class static initialization blocks).
         // This preserves the correct `this` and `super` binding inside the class body.
-        let is_static = self.arena.is_static(&prop.modifiers);
+        let is_static = self.has_effective_static_modifier_js(&prop.modifiers);
         let target_es2022_plus = (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
 
         let is_private_field = self

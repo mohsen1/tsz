@@ -1273,6 +1273,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let Some(key) = self.interner.lookup(arg) else {
             return arg;
         };
+        if matches!(
+            key,
+            TypeData::Application(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::Mapped(_)
+                | TypeData::TemplateLiteral(_)
+                | TypeData::KeyOf(_)
+        ) && crate::contains_this_type(self.interner, arg)
+        {
+            return arg;
+        }
         match key {
             TypeData::TypeQuery(sym_ref) => {
                 // Resolve the TypeQuery to get the VALUE type (constructor for classes).
@@ -1685,7 +1697,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Single-pass early-exit check instead of two separate O(N) scans.
         for &id in members.iter() {
-            if id.is_any() || self.is_complex_type(id) {
+            if id.is_any()
+                || crate::contains_this_type(self.interner, id)
+                || self.is_complex_type(id)
+            {
                 return;
             }
         }
