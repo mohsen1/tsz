@@ -3037,6 +3037,50 @@ fn compile_with_tsconfig_emits_outputs() {
 }
 
 #[test]
+fn compile_allow_js_passthrough_emits_skipped_node_modules_js() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "module": "commonjs",
+            "target": "es2015",
+            "outDir": "out",
+            "noCheck": true,
+            "noLib": true
+          },
+          "files": ["node_modules/untyped/index.js", "bug40140.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/untyped/index.js"),
+        "module.exports = {}",
+    );
+    write_file(
+        &base.join("bug40140.js"),
+        "const u = require('untyped');\nu.assignment.nested = true\nu.noError()\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code == 7016),
+        "Expected TS7016 for the untyped package, got: {:?}",
+        result.diagnostics
+    );
+    assert_eq!(
+        std::fs::read_to_string(base.join("out/node_modules/untyped/index.js"))
+            .expect("read emitted skipped JS"),
+        "module.exports = {}"
+    );
+}
+
+#[test]
 fn compile_emit_bom_prefixes_output_files() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
