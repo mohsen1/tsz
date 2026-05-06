@@ -706,11 +706,13 @@ pub fn resolve_compiler_options(
                 | ModuleResolutionKind::Bundler
         )
     });
+    // Per tsc 6.0, `resolvePackageJsonImports` defaults to true only for
+    // Node16/NodeNext/Bundler. Legacy `node`/`node10` does NOT resolve
+    // `package.json#imports` unless the option is explicitly enabled.
     resolved.resolve_package_json_imports = options.resolve_package_json_imports.unwrap_or({
         matches!(
             effective_resolution,
-            ModuleResolutionKind::Node
-                | ModuleResolutionKind::Node16
+            ModuleResolutionKind::Node16
                 | ModuleResolutionKind::NodeNext
                 | ModuleResolutionKind::Bundler
         )

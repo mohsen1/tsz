@@ -7966,7 +7966,11 @@ fn compile_resolves_package_imports_prefers_import_condition_for_esm() {
 }
 
 #[test]
-fn compile_prefers_browser_exports_for_bundler() {
+fn compile_bundler_does_not_default_to_browser_condition() {
+    // Per tsc 6.0, `moduleResolution: "bundler"` does NOT add `browser` to
+    // the default condition set; the user must opt in via `customConditions`.
+    // Here, with no opt-in, the resolver must select the `default` branch
+    // (a clean .d.ts), not the malformed `browser.d.ts`.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -7991,7 +7995,64 @@ fn compile_prefers_browser_exports_for_bundler() {
           "exports": {
             ".": {
               "browser": "./browser.d.ts",
-              "node": "./node.d.ts"
+              "default": "./default.d.ts"
+            }
+          }
+        }"#,
+    );
+    // The browser branch contains a syntax error; if bundler still picked
+    // it up by default, we'd see diagnostics in browser.d.ts.
+    write_file(
+        &base.join("node_modules/pkg/browser.d.ts"),
+        "export const widget = ;",
+    );
+    write_file(
+        &base.join("node_modules/pkg/default.d.ts"),
+        "export const widget = 1;",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    // Picking the `default` branch produces a clean compile.
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.file.contains("node_modules/pkg/browser.d.ts")),
+        "bundler must not default to the `browser` exports branch"
+    );
+}
+
+#[test]
+fn compile_bundler_uses_browser_condition_when_in_custom_conditions() {
+    // Opting `browser` into `customConditions` re-enables it for bundler.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "moduleResolution": "bundler",
+            "customConditions": ["browser"],
+            "noEmitOnError": true
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        "import { widget } from 'pkg'; export { widget };",
+    );
+    write_file(
+        &base.join("node_modules/pkg/package.json"),
+        r#"{
+          "exports": {
+            ".": {
+              "browser": "./browser.d.ts",
+              "default": "./default.d.ts"
             }
           }
         }"#,
@@ -8001,7 +8062,7 @@ fn compile_prefers_browser_exports_for_bundler() {
         "export const widget = ;",
     );
     write_file(
-        &base.join("node_modules/pkg/node.d.ts"),
+        &base.join("node_modules/pkg/default.d.ts"),
         "export const widget = 1;",
     );
 
