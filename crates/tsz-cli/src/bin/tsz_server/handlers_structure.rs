@@ -382,10 +382,28 @@ impl Server {
             if provider.extract_variable(root, range).is_some() {
                 refactors.push(serde_json::json!({
                     "name": "Extract Symbol",
-                    "description": "Extract expression to variable",
+                    "description": "Extract function",
                     "actions": [{
-                        "name": "constant_extractedConstant",
-                        "description": "Extract to constant in enclosing scope"
+                        "name": "function_scope_0",
+                        "description": "Extract to function in enclosing scope",
+                        "kind": "refactor.extract.function"
+                    }, {
+                        "name": "function_scope_1",
+                        "description": "Extract to function in global scope",
+                        "kind": "refactor.extract.function"
+                    }]
+                }));
+                refactors.push(serde_json::json!({
+                    "name": "Extract Symbol",
+                    "description": "Extract constant",
+                    "actions": [{
+                        "name": "constant_scope_0",
+                        "description": "Extract to constant in enclosing scope",
+                        "kind": "refactor.extract.constant"
+                    }, {
+                        "name": "constant_scope_1",
+                        "description": "Extract to constant in global scope",
+                        "kind": "refactor.extract.constant"
                     }]
                 }));
             }

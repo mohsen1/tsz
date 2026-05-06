@@ -1007,6 +1007,65 @@ fn test_apply_code_action_command_returns_array_result_shape() {
 }
 
 #[test]
+fn applicable_refactors_include_tsserver_extract_actions() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/a.ts",
+                    "fileContent": "function f() {\n  const y = 1 + 2;\n  return y;\n}\n",
+                }),
+            ))
+            .success
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "getApplicableRefactors",
+        serde_json::json!({
+            "file": "/src/a.ts",
+            "startLine": 2,
+            "startOffset": 13,
+            "endLine": 2,
+            "endOffset": 18,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("refactors should return a body");
+    let action_names = body
+        .as_array()
+        .expect("refactors should be an array")
+        .iter()
+        .flat_map(|refactor| {
+            refactor
+                .get("actions")
+                .and_then(|actions| actions.as_array())
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|action| action.get("name").and_then(|name| name.as_str()))
+        .collect::<Vec<_>>();
+
+    for expected in [
+        "function_scope_0",
+        "function_scope_1",
+        "constant_scope_0",
+        "constant_scope_1",
+    ] {
+        assert!(
+            action_names.contains(&expected),
+            "expected {expected} in applicable refactors, got {body:#}"
+        );
+    }
+    assert!(
+        !action_names.contains(&"constant_extractedConstant"),
+        "did not expect non-tsserver action name, got {body:#}"
+    );
+}
+
+#[test]
 fn test_new_commands_are_recognized() {
     let mut server = make_server();
     let commands = vec![
