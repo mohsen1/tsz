@@ -5520,57 +5520,6 @@ impl<'a> DeclarationEmitter<'a> {
         rewritten
     }
 
-    fn numeric_literal_union_widens_to_number(source_type_text: &str, inferred_text: &str) -> bool {
-        if inferred_text != "number" {
-            return false;
-        }
-
-        let mut count = 0usize;
-        for part in source_type_text.split(" | ") {
-            let part = part.trim();
-            if part.is_empty() || part.parse::<f64>().is_err() {
-                return false;
-            }
-            count += 1;
-        }
-        count > 1
-    }
-
-    fn simplify_uniform_object_keyof_index_access_text(&self, type_text: &str) -> Option<String> {
-        let trimmed = type_text.trim();
-        let (object_text, key_text) = trimmed.rsplit_once("}[keyof ")?;
-        let key_alias = key_text.strip_suffix(']')?.trim();
-        if !Self::is_simple_identifier_text(key_alias) {
-            return None;
-        }
-
-        let mut value_type = None;
-        let mut saw_member = false;
-        for line in object_text.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed == "{" {
-                continue;
-            }
-            if trimmed.contains("?:") {
-                return None;
-            }
-            let next_value_type = Self::object_literal_property_value_type(trimmed)?;
-            if next_value_type.is_empty() {
-                return None;
-            }
-            if let Some(existing) = value_type {
-                if existing != next_value_type {
-                    return None;
-                }
-            } else {
-                value_type = Some(next_value_type);
-            }
-            saw_member = true;
-        }
-
-        saw_member.then(|| value_type.unwrap_or("never").to_string())
-    }
-
     fn direct_returned_class_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
         let body_node = self.arena.get(body_idx)?;
         let block = self.arena.get_block(body_node)?;
