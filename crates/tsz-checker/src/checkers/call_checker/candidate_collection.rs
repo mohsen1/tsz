@@ -912,16 +912,18 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let rest_type = ctx.get_rest_parameter_type(effective_index)?;
+        let needs_aggregate =
+            crate::query_boundaries::checkers::call::rest_type_needs_aggregate_argument_check(
+                self.ctx.types,
+                rest_type,
+            );
         if crate::query_boundaries::common::tuple_elements(self.ctx.types, rest_type).is_some()
             && !crate::query_boundaries::common::is_union_type(self.ctx.types, rest_type)
+            && !needs_aggregate
         {
             return None;
         }
-        crate::query_boundaries::checkers::call::rest_type_needs_aggregate_argument_check(
-            self.ctx.types,
-            rest_type,
-        )
-        .then_some(rest_type)
+        needs_aggregate.then_some(rest_type)
     }
 
     fn spread_argument_marker_type(&mut self, spread_type: TypeId) -> TypeId {
