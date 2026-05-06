@@ -356,13 +356,20 @@ impl<'a> LoweringPass<'a> {
                                         .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
                                 })
                             });
+                        // The class-decorator path only writes the
+                        // `__setFunctionName(_classThis, ...)` static block when
+                        // the source class is *anonymous* (a named class
+                        // expression carries its own name to the engine). Match
+                        // that here so we don't drop a phantom helper preamble
+                        // for `const C = @dec class C {}`.
+                        let class_is_anonymous = class_data.name.is_none();
                         let helpers = self.transforms.helpers_mut();
                         helpers.es_decorate = true;
                         helpers.run_initializers = true;
                         if needs_prop_key {
                             helpers.prop_key = true;
                         }
-                        if needs_set_function_name || has_class_decorators {
+                        if needs_set_function_name || (has_class_decorators && class_is_anonymous) {
                             helpers.set_function_name = true;
                         }
                     }
