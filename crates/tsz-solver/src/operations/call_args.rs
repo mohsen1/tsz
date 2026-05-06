@@ -700,17 +700,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let Some(&arg_type) = rest_args.get(fixed_index) else {
                 break;
             };
+            let expected = self.tuple_arg_element_type(fixed_element);
             let assignable = if strict {
-                self.checker
-                    .is_assignable_to_strict(arg_type, fixed_element.type_id)
+                self.checker.is_assignable_to_strict(arg_type, expected)
             } else {
-                self.checker
-                    .is_assignable_to(arg_type, fixed_element.type_id)
+                self.checker.is_assignable_to(arg_type, expected)
             };
             if !assignable {
                 return Some(Some(CallResult::ArgumentTypeMismatch {
                     index: rest_start + fixed_index,
-                    expected: fixed_element.type_id,
+                    expected,
                     actual: arg_type,
                     fallback_return: TypeId::ERROR,
                 }));
@@ -1157,7 +1156,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> Option<TypeId> {
         let rest_index = elements.iter().position(|elem| elem.rest);
         let Some(rest_index) = rest_index else {
-            return elements.get(offset).map(|elem| self.tuple_arg_element_type(elem));
+            return elements
+                .get(offset)
+                .map(|elem| self.tuple_arg_element_type(elem));
         };
 
         let (prefix, rest_and_tail) = elements.split_at(rest_index);
