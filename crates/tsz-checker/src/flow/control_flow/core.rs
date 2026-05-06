@@ -19,7 +19,7 @@ type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
 type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
 /// Instantiated type predicates from generic call resolutions, keyed by call node index.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct CallPredicateMap {
     predicates: FxHashMap<u32, (TypePredicate, Vec<ParamInfo>)>,
     invalid_assertion_calls: FxHashSet<u32>,
