@@ -14,29 +14,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn explicit_annotation_can_defer_implicit_any_context(
-        &self,
-        annotation_idx: NodeIndex,
-    ) -> bool {
-        let Some(node) = self.ctx.arena.get(annotation_idx) else {
-            return false;
-        };
-        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
-            return true;
-        }
-        if node.kind == syntax_kind_ext::TYPE_REFERENCE
-            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-        {
-            return matches!(
-                self.resolve_identifier_symbol_in_type_position_without_tracking(
-                    type_ref.type_name
-                ),
-                crate::symbol_resolver::TypeSymbolResolution::Type(_)
-            );
-        }
-        false
-    }
-
     fn initializer_supports_binding_pattern_context(
         &self,
         pattern_idx: NodeIndex,
@@ -946,18 +923,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         TypingRequest::NONE
                     };
-                    if initializer_is_function
-                        && evaluated_type == TypeId::ERROR
-                        && var_decl.type_annotation.is_some()
-                        && checker.explicit_annotation_can_defer_implicit_any_context(
-                            var_decl.type_annotation,
-                        )
-                    {
-                        checker
-                            .ctx
-                            .implicit_any_contextual_closures
-                            .insert(var_decl.initializer);
-                    }
                     if initializer_is_function && jsdoc_blocks_callable_context {
                         checker
                             .ctx
