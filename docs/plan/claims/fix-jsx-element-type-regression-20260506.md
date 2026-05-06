@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/jsx-element-type-regression-20260506-183000`
-- **PR**: TBD
-- **Status**: implemented; awaiting PR
+- **PR**: #4209
+- **Status**: PR opened
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
