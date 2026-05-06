@@ -202,6 +202,10 @@ fn private_auto_accessors_emit_accessor_helpers_at_es2015() {
         "Private auto-accessors should emit backing storage before extracted accessors.\nOutput:\n{output}"
     );
     assert!(
+        output.contains("_a = C1, _C1_instances = new WeakSet(), _C1_a_accessor_storage = new WeakMap(), _C1_b_accessor_storage = new WeakMap()"),
+        "Private auto-accessor storage should stay in the pre-static private initialization chain.\nOutput:\n{output}"
+    );
+    assert!(
         output.contains("_C1_c_get = function _C1_c_get() { return __classPrivateFieldGet(_a, _a, \"f\", _C1_c_accessor_storage); }, _C1_c_set = function _C1_c_set(value) { __classPrivateFieldSet(_a, _a, value, \"f\", _C1_c_accessor_storage); }"),
         "Static private auto-accessors should use the class alias and storage object.\nOutput:\n{output}"
     );
