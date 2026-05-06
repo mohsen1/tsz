@@ -337,6 +337,21 @@ impl<'a> CheckerState<'a> {
                 false
             };
 
+            // TS2522: 'arguments' cannot be referenced in an async function or
+            // method in ES5. Arrow functions are transparent for `arguments`,
+            // so this checks the nearest non-arrow function boundary.
+            if !has_local_shadow
+                && self.ctx.compiler_options.target.is_es5()
+                && self.is_arguments_in_async_function_or_method(idx)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5,
+                    diagnostic_codes::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5,
+                );
+            }
+
             // If not shadowed by a local variable, resolve to the built-in IArguments type.
             // This handles both regular functions and arrow functions (which are transparent
             // for `arguments` — they capture from the enclosing regular function).

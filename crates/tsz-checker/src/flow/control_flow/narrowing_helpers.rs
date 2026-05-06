@@ -4,6 +4,7 @@
 //! resolution of a const variable's type annotation to a primitive intrinsic.
 //! Lifted out of `narrowing.rs` to keep that file under the 2000-LOC ceiling.
 
+use tsz_binder::BinderState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_scanner::SyntaxKind;
@@ -33,6 +34,34 @@ fn primitive_name_intrinsic(name: &str) -> Option<TypeId> {
         "object" => Some(TypeId::OBJECT),
         _ => None,
     }
+}
+
+/// Returns true when the identifier at `idx` spells `undefined` AND resolves
+/// to the global `undefined` (a lib symbol or unresolved). A user-declared
+/// local named `undefined` (parameter, variable, etc.) shadows the global
+/// and must not be treated as the literal `undefined` sentinel.
+pub(super) fn is_global_undefined_identifier(
+    arena: &NodeArena,
+    binder: &BinderState,
+    idx: NodeIndex,
+) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+    let Some(ident) = arena.get_identifier(node) else {
+        return false;
+    };
+    if ident.escaped_text != "undefined" {
+        return false;
+    }
+    if let Some(sym_id) = binder
+        .get_node_symbol(idx)
+        .or_else(|| binder.resolve_identifier(arena, idx))
+        && !binder.lib_symbol_ids.contains(&sym_id)
+    {
+        return false;
+    }
+    true
 }
 
 /// Resolve a const variable's `type_annotation` node to a primitive `TypeId`

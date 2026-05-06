@@ -1335,7 +1335,7 @@ impl<'a> DeclarationEmitter<'a> {
                 type_text.push_str("     */\n");
             }
             type_text.push_str("    ");
-            type_text.push_str(&property_name);
+            type_text.push_str(&Self::render_jsdoc_property_name(&property_name));
             if optional {
                 type_text.push('?');
             }
@@ -1362,6 +1362,46 @@ impl<'a> DeclarationEmitter<'a> {
             "Object" => "object".to_string(),
             other => other.to_string(),
         }
+    }
+
+    fn render_jsdoc_property_name(name: &str) -> String {
+        if Self::is_jsdoc_property_identifier_name(name) {
+            return name.to_string();
+        }
+        if Self::is_quoted_jsdoc_property_name(name) {
+            return name.to_string();
+        }
+
+        let mut quoted = String::from("\"");
+        for ch in name.chars() {
+            match ch {
+                '"' => quoted.push_str("\\\""),
+                '\\' => quoted.push_str("\\\\"),
+                '\n' => quoted.push_str("\\n"),
+                '\r' => quoted.push_str("\\r"),
+                '\t' => quoted.push_str("\\t"),
+                _ => quoted.push(ch),
+            }
+        }
+        quoted.push('"');
+        quoted
+    }
+
+    fn is_jsdoc_property_identifier_name(name: &str) -> bool {
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first == '$' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+    }
+
+    fn is_quoted_jsdoc_property_name(name: &str) -> bool {
+        let mut chars = name.chars();
+        let Some(quote @ ('"' | '\'')) = chars.next() else {
+            return false;
+        };
+        name.ends_with(quote) && name.len() > quote.len_utf8()
     }
 
     pub(in crate::declaration_emitter) fn parse_jsdoc_type_alias_decl(
