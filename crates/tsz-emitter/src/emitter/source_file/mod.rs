@@ -4,7 +4,9 @@ mod top_level_using;
 
 #[cfg(test)]
 mod tests {
+    use crate::context::emit::EmitContext;
     use crate::emitter::{ModuleKind, Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_common::ScriptTarget;
     use tsz_parser::ParserState;
@@ -105,6 +107,40 @@ mod tests {
         assert!(
             !output.contains("declare;") && !output.contains("module `fake`;"),
             "Ambient module recovery must not scan module text from comments.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn for_await_temps_do_not_leak_to_source_scope() {
+        let source =
+            "async function f() {\n    let y: any;\n    for await (const x of y) {\n    }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        let function_start = output
+            .find("async function f()")
+            .expect("function should emit");
+        let source_scope = &output[..function_start];
+
+        assert!(
+            !source_scope.contains("var _a, e_1, _b, _c;"),
+            "for-await temps should not be hoisted outside the function.\nOutput:\n{output}"
+        );
+        assert!(
+            output[function_start..].contains("var _a, e_1, _b, _c;"),
+            "for-await temps should still be declared in the function body.\nOutput:\n{output}"
         );
     }
 

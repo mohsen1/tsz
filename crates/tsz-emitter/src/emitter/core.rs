@@ -240,6 +240,7 @@ pub(crate) struct TempScopeState {
     pub(crate) preallocated_logical_assignment_value_temps: VecDeque<String>,
     pub(crate) hoisted_assignment_value_temps: Vec<String>,
     pub(crate) hoisted_assignment_temps: Vec<String>,
+    pub(crate) hoisted_for_of_temps: Vec<String>,
 }
 
 impl ParamTransformPlan {

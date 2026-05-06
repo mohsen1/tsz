@@ -499,6 +499,7 @@ impl<'a> Printer<'a> {
             std::mem::take(&mut self.preallocated_logical_assignment_value_temps);
         let saved_hoisted = std::mem::take(&mut self.hoisted_assignment_temps);
         let saved_value_temps = std::mem::take(&mut self.hoisted_assignment_value_temps);
+        let saved_for_of_temps = std::mem::take(&mut self.hoisted_for_of_temps);
         self.temp_scope_stack.push(super::TempScopeState {
             temp_var_counter: saved_counter,
             generated_temp_names: saved_names,
@@ -508,6 +509,7 @@ impl<'a> Printer<'a> {
             preallocated_logical_assignment_value_temps: saved_preallocated_logical_value_temps,
             hoisted_assignment_value_temps: saved_value_temps,
             hoisted_assignment_temps: saved_hoisted,
+            hoisted_for_of_temps: saved_for_of_temps,
         });
         self.ctx.destructuring_state.temp_var_counter = 0;
         self.first_for_of_emitted = false;
@@ -525,6 +527,7 @@ impl<'a> Printer<'a> {
                 state.preallocated_logical_assignment_value_temps;
             self.hoisted_assignment_value_temps = state.hoisted_assignment_value_temps;
             self.hoisted_assignment_temps = state.hoisted_assignment_temps;
+            self.hoisted_for_of_temps = state.hoisted_for_of_temps;
         }
     }
 
