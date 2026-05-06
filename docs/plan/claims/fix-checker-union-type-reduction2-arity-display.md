@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/checker-union-type-reduction2-callable-arity`
-- **PR**: Pending
+- **PR**: https://github.com/mohsen1/tsz/pull/3608
 - **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 
