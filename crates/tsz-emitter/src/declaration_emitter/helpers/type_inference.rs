@@ -6084,10 +6084,7 @@ impl<'a> DeclarationEmitter<'a> {
             return type_text.to_string();
         }
 
-        let mut lines: Vec<String> = type_text
-            .lines()
-            .map(Self::returned_object_method_signature_to_property_text)
-            .collect();
+        let mut lines: Vec<String> = type_text.lines().map(str::to_string).collect();
         for (name_text, comments) in commented_members.into_iter().rev() {
             let Some(line_idx) = lines.iter().position(|line| {
                 let trimmed = line.trim_start();
@@ -6104,6 +6101,8 @@ impl<'a> DeclarationEmitter<'a> {
             if line_idx > 0 && lines[line_idx - 1].trim_start().starts_with("/**") {
                 continue;
             }
+            lines[line_idx] =
+                Self::returned_object_method_signature_to_property_text(&lines[line_idx]);
             let indent_len = lines[line_idx].len() - lines[line_idx].trim_start().len();
             let indent = " ".repeat(indent_len);
             let mut comment_lines = Vec::new();
