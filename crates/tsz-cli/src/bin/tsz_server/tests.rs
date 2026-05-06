@@ -78,6 +78,28 @@ fn make_request(command: &str, arguments: serde_json::Value) -> TsServerRequest 
 }
 
 #[test]
+fn status_returns_typescript_version_not_tsz_crate_version() {
+    let mut server = make_server();
+    let response = server.handle_tsserver_request(make_request("status", serde_json::json!({})));
+    assert!(response.success);
+    let body = response.body.expect("status should return a body");
+    let version = body
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .expect("status body should include a string version");
+    assert_eq!(
+        version,
+        tsz_cli::help::TSC_VERSION,
+        "status should report the embedded TypeScript version, not the tsz crate version"
+    );
+    assert_ne!(
+        version,
+        env!("CARGO_PKG_VERSION"),
+        "status must not report the local tsz-cli crate version"
+    );
+}
+
+#[test]
 fn test_provide_inlay_hints_respects_protocol_start_length_span() {
     let mut server = make_server();
     let source = "function f(value: number) {}\nf(1);\n";
