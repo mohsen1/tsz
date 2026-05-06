@@ -1212,31 +1212,155 @@ impl Server {
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|| std::path::PathBuf::from("/"));
 
-        let mut project_files: Vec<String> = Vec::new();
+        let project_files = self.tsconfig_project_files(&config_json, &config_dir);
+
+        (lib_names, no_lib, project_files)
+    }
+
+    fn tsconfig_project_files(
+        &self,
+        config_json: &serde_json::Value,
+        config_dir: &std::path::Path,
+    ) -> Vec<String> {
         if let Some(files) = config_json
             .get("files")
             .and_then(serde_json::Value::as_array)
         {
-            for entry in files {
-                let Some(name) = entry.as_str() else {
-                    continue;
-                };
-                let absolute = if std::path::Path::new(name).is_absolute() {
-                    std::path::PathBuf::from(name)
-                } else {
-                    config_dir.join(name)
-                };
-                let absolute_str = Self::normalize_path_string(&absolute);
-                // tsserver excludes files that don't physically exist.
-                if self.open_files.contains_key(&absolute_str)
-                    || std::path::Path::new(&absolute_str).exists()
-                {
-                    project_files.push(absolute_str);
+            return self.explicit_tsconfig_files(files, config_dir);
+        }
+
+        let includes = config_json
+            .get("include")
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|arr| !arr.is_empty())
+            .unwrap_or_else(|| vec!["**/*"]);
+        let excludes = config_json
+            .get("exclude")
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| vec!["node_modules", "bower_components", "jspm_packages"]);
+
+        let Some(include_set) = Self::tsconfig_glob_set(&includes, true) else {
+            return Vec::new();
+        };
+        let exclude_set = Self::tsconfig_glob_set(&excludes, false);
+
+        let mut candidates: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for file in self.open_files.keys() {
+            if Self::path_is_under(file, config_dir) && Self::is_supported_project_source_file(file)
+            {
+                candidates.insert(file.clone());
+            }
+        }
+
+        if config_dir.exists() {
+            for entry in walkdir::WalkDir::new(config_dir)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_file())
+            {
+                let normalized = Self::normalize_path_string(entry.path());
+                if Self::is_supported_project_source_file(&normalized) {
+                    candidates.insert(normalized);
                 }
             }
         }
 
-        (lib_names, no_lib, project_files)
+        candidates
+            .into_iter()
+            .filter(|path| {
+                let relative = Self::relative_slash_path(config_dir, path);
+                include_set.is_match(&relative)
+                    && !exclude_set
+                        .as_ref()
+                        .is_some_and(|exclude_set| exclude_set.is_match(&relative))
+            })
+            .collect()
+    }
+
+    fn explicit_tsconfig_files(
+        &self,
+        files: &[serde_json::Value],
+        config_dir: &std::path::Path,
+    ) -> Vec<String> {
+        let mut project_files = Vec::new();
+        for entry in files {
+            let Some(name) = entry.as_str() else {
+                continue;
+            };
+            let absolute = if std::path::Path::new(name).is_absolute() {
+                std::path::PathBuf::from(name)
+            } else {
+                config_dir.join(name)
+            };
+            let absolute_str = Self::normalize_path_string(&absolute);
+            // tsserver excludes files that don't physically exist.
+            if self.open_files.contains_key(&absolute_str)
+                || std::path::Path::new(&absolute_str).exists()
+            {
+                project_files.push(absolute_str);
+            }
+        }
+        project_files
+    }
+
+    fn tsconfig_glob_set(patterns: &[&str], include: bool) -> Option<globset::GlobSet> {
+        let mut builder = globset::GlobSetBuilder::new();
+        for pattern in patterns {
+            let normalized = pattern.trim().trim_start_matches("./").replace('\\', "/");
+            if normalized.is_empty() {
+                continue;
+            }
+            let has_wildcard = normalized.contains('*') || normalized.contains('?');
+            let expanded = if has_wildcard {
+                normalized
+            } else if include || !Self::is_supported_project_source_file(&normalized) {
+                format!("{normalized}/**/*")
+            } else {
+                normalized
+            };
+            let glob = globset::GlobBuilder::new(&expanded)
+                .literal_separator(true)
+                .build()
+                .ok()?;
+            builder.add(glob);
+        }
+        builder.build().ok()
+    }
+
+    fn relative_slash_path(config_dir: &std::path::Path, file: &str) -> String {
+        let file_path = std::path::Path::new(file);
+        file_path
+            .strip_prefix(config_dir)
+            .map(Self::normalize_path_string)
+            .unwrap_or_else(|_| file.trim_start_matches('/').to_string())
+    }
+
+    fn path_is_under(path: &str, dir: &std::path::Path) -> bool {
+        std::path::Path::new(path).starts_with(dir)
+    }
+
+    fn is_supported_project_source_file(path: &str) -> bool {
+        path.ends_with(".ts")
+            || path.ends_with(".tsx")
+            || path.ends_with(".d.ts")
+            || path.ends_with(".mts")
+            || path.ends_with(".cts")
+            || path.ends_with(".d.mts")
+            || path.ends_with(".d.cts")
+            || path.ends_with(".js")
+            || path.ends_with(".jsx")
+            || path.ends_with(".mjs")
+            || path.ends_with(".cjs")
     }
 
     /// For an inferred project (no tsconfig), produce (libs, noLib, [`active+transitive_deps`]).
@@ -1671,6 +1795,56 @@ impl Server {
         }
 
         self.stub_response(seq, request, None)
+    }
+
+    pub(crate) fn handle_synchronize_project_list(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let include_redirect_info = request
+            .arguments
+            .get("includeProjectReferenceRedirectInfo")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let mut projects: Vec<(&String, &Vec<String>)> =
+            self.external_project_files.iter().collect();
+        projects.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+        let body: Vec<serde_json::Value> = projects
+            .into_iter()
+            .map(|(project_name, files)| {
+                let files: Vec<serde_json::Value> = if include_redirect_info {
+                    files
+                        .iter()
+                        .map(|file_name| {
+                            serde_json::json!({
+                                "fileName": file_name,
+                                "isSourceOfProjectReferenceRedirect": false,
+                            })
+                        })
+                        .collect()
+                } else {
+                    files
+                        .iter()
+                        .map(|file_name| serde_json::json!(file_name))
+                        .collect()
+                };
+                serde_json::json!({
+                    "info": {
+                        "projectName": project_name,
+                        "isInferred": false,
+                        "version": 1,
+                        "options": {},
+                        "languageServiceDisabled": false,
+                    },
+                    "files": files,
+                    "projectErrors": [],
+                })
+            })
+            .collect();
+
+        self.stub_response(seq, request, Some(serde_json::json!(body)))
     }
 
     pub(crate) fn handle_inlay_hints(

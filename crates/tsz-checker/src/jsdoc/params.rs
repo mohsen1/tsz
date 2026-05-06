@@ -2414,10 +2414,23 @@ impl<'a> CheckerState<'a> {
             let trimmed = raw_line.trim().trim_start_matches('*').trim();
             if let Some(rest) = trimmed.strip_prefix("@type") {
                 let rest = rest.trim();
-                if rest.starts_with('{')
-                    && let Some(end) = rest[1..].find('}')
-                {
-                    return Some(rest[1..1 + end].trim().to_string());
+                if let Some(after_open) = rest.strip_prefix('{') {
+                    // Balance nested braces so `{{ a: T }}` (object literal
+                    // type wrapped in `@type {...}`) extracts the full
+                    // `{ a: T }` body, not just `{ a: T`.
+                    let mut depth = 1usize;
+                    for (i, ch) in after_open.char_indices() {
+                        match ch {
+                            '{' => depth += 1,
+                            '}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    return Some(after_open[..i].trim().to_string());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                 }
             }
         }

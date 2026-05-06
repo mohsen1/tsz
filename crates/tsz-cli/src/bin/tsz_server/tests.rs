@@ -500,6 +500,66 @@ fn reset_clears_session_state_but_keeps_server_alive() {
     assert!(server.plugin_configs.is_empty());
 }
 
+#[test]
+fn test_synchronize_project_list_returns_empty_list() {
+    let mut server = make_server();
+    let response = server.handle_tsserver_request(make_request(
+        "synchronizeProjectList",
+        serde_json::json!({
+            "knownProjects": [],
+            "includeProjectReferenceRedirectInfo": false,
+        }),
+    ));
+
+    assert!(response.success);
+    assert_eq!(response.body, Some(serde_json::json!([])));
+}
+
+#[test]
+fn test_synchronize_project_list_reports_external_project_files() {
+    let mut server = make_server();
+    let open_response = server.handle_tsserver_request(make_request(
+        "openExternalProject",
+        serde_json::json!({
+            "projectFileName": "/project.csproj",
+            "rootFiles": [
+                {
+                    "fileName": "/src/a.ts",
+                    "content": "export const a = 1;\n",
+                },
+            ],
+        }),
+    ));
+    assert!(open_response.success);
+
+    let response = server.handle_tsserver_request(make_request(
+        "synchronizeProjectList",
+        serde_json::json!({
+            "knownProjects": [],
+            "includeProjectReferenceRedirectInfo": true,
+        }),
+    ));
+
+    assert!(response.success);
+    assert_eq!(
+        response.body,
+        Some(serde_json::json!([{
+            "info": {
+                "projectName": "/project.csproj",
+                "isInferred": false,
+                "version": 1,
+                "options": {},
+                "languageServiceDisabled": false,
+            },
+            "files": [{
+                "fileName": "/src/a.ts",
+                "isSourceOfProjectReferenceRedirect": false,
+            }],
+            "projectErrors": [],
+        }]))
+    );
+}
+
 fn apply_tsserver_text_edits(mut source: String, edits: &[serde_json::Value]) -> String {
     let mut spans: Vec<(usize, usize, String)> = edits
         .iter()
@@ -3556,6 +3616,45 @@ fn test_project_info_configured_project_lists_files_and_config_last() {
             "/tests/cases/fourslash/server/tsconfig.json",
         ],
         "expected tsconfig files in declared order with config file last"
+    );
+}
+
+#[test]
+fn test_project_info_configured_project_expands_include_files() {
+    let mut server = make_server_with_real_libs();
+    let tsconfig_path = "/tests/cases/fourslash/server/tsconfig.json".to_string();
+    server.open_files.insert(
+        tsconfig_path.clone(),
+        r#"{ "include": ["src/**/*.ts"], "compilerOptions": { "lib": ["es5"] } }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/src/a.ts".to_string(),
+        "export const a = 1;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/src/b.ts".to_string(),
+        "export const b = 2;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/other.ts".to_string(),
+        "export const other = 3;\n".to_string(),
+    );
+
+    let (config, files) = server.compute_project_info("/tests/cases/fourslash/server/src/a.ts");
+    assert_eq!(config, tsconfig_path);
+    let non_lib: Vec<&str> = files
+        .iter()
+        .filter(|p| !p.starts_with("/home/src/tslibs/TS/Lib/"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        non_lib,
+        vec![
+            "/tests/cases/fourslash/server/src/a.ts",
+            "/tests/cases/fourslash/server/src/b.ts",
+            "/tests/cases/fourslash/server/tsconfig.json",
+        ],
+        "include glob should add matching project files before the config"
     );
 }
 

@@ -1283,6 +1283,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
     {
         let keys: Vec<String> = compiler_opts.keys().cloned().collect();
         let mut renames: Vec<(String, String)> = Vec::new();
+        let mut unknown_keys: Vec<String> = Vec::new();
 
         for key in &keys {
             let key_lower = key.to_lowercase();
@@ -1307,15 +1308,36 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             } else {
                 // Truly unknown option — emit TS5023
                 let start = find_key_offset_in_source(&stripped, key);
-                let msg = format_message(diagnostic_messages::UNKNOWN_COMPILER_OPTION, &[key]);
-                diagnostics.push(Diagnostic::error(
-                    file_path,
-                    start,
-                    key.len() as u32 + 2,
-                    msg,
-                    diagnostic_codes::UNKNOWN_COMPILER_OPTION,
-                ));
+                if let Some(suggestion) = unknown_compiler_option_suggestion(&key_lower) {
+                    let msg = format_message(
+                        diagnostic_messages::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN,
+                        &[key, suggestion],
+                    );
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key.len() as u32 + 2,
+                        msg,
+                        diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN,
+                    ));
+                } else {
+                    let msg = format_message(diagnostic_messages::UNKNOWN_COMPILER_OPTION, &[key]);
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key.len() as u32 + 2,
+                        msg,
+                        diagnostic_codes::UNKNOWN_COMPILER_OPTION,
+                    ));
+                }
+                unknown_keys.push(key.clone());
             }
+        }
+
+        // Remove unknown keys before serde deserialization so tsz-only struct
+        // fields cannot take effect from a tsc-incompatible tsconfig option.
+        for key in unknown_keys {
+            compiler_opts.remove(&key);
         }
 
         // Rename miscased keys to canonical casing so serde can deserialize them
@@ -2792,7 +2814,6 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "skipLibCheck"
         | "sourceMap"
         | "strict"
-        | "sound"
         | "strictBindCallApply"
         | "strictBuiltinIteratorReturn"
         | "strictFunctionTypes"
@@ -2836,6 +2857,15 @@ fn removed_compiler_option(key: &str) -> Option<&'static str> {
     }
 }
 
+fn unknown_compiler_option_suggestion(key_lower: &str) -> Option<&'static str> {
+    match key_lower {
+        "disablesolutioncaching" | "disablesolutiontypechecking" => {
+            Some("disableSolutionSearching")
+        }
+        _ => None,
+    }
+}
+
 /// Comprehensive map of all known TypeScript compiler options.
 /// Maps lowercase name → canonical camelCase name.
 fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
@@ -2861,9 +2891,6 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         // Keep the historical typo alias for compatibility, but accept the real key too.
         "disablesizelimit" | "disablesizelimt" => Some("disableSizeLimit"),
         "disablesolutionsearching" => Some("disableSolutionSearching"),
-        "disablesolutiontypecheck" => Some("disableSolutionTypeCheck"),
-        "disablesolutioncaching" => Some("disableSolutionCaching"),
-        "disablesolutiontypechecking" => Some("disableSolutionTypeChecking"),
         "disablesourceofprojectreferenceredirect" => {
             Some("disableSourceOfProjectReferenceRedirect")
         }
@@ -2886,7 +2913,6 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "importhelpers" => Some("importHelpers"),
         "importsnotusedasvalues" => Some("importsNotUsedAsValues"),
         "incremental" => Some("incremental"),
-        "inlineconstants" => Some("inlineConstants"),
         "inlinesourcemap" => Some("inlineSourceMap"),
         "inlinesources" => Some("inlineSources"),
         "isolateddeclarations" => Some("isolatedDeclarations"),
@@ -2952,7 +2978,6 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "sourcemap" => Some("sourceMap"),
         "sourceroot" => Some("sourceRoot"),
         "strict" => Some("strict"),
-        "sound" => Some("sound"),
         "strictbindcallapply" => Some("strictBindCallApply"),
         "strictbuiltiniteratorreturn" => Some("strictBuiltinIteratorReturn"),
         "strictfunctiontypes" => Some("strictFunctionTypes"),
@@ -4918,6 +4943,59 @@ mod tests {
     }
 
     #[test]
+    fn test_tsz_only_compiler_options_report_unknown_from_tsconfig() {
+        let source = r#"{
+  "compilerOptions": {
+    "sound": true,
+    "inlineConstants": true,
+    "disableSolutionTypeCheck": true,
+    "disableSolutionCaching": true,
+    "disableSolutionTypeChecking": true
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(
+            codes.len(),
+            5,
+            "tsz-only options should be rejected with tsc-compatible diagnostics, got: {:?}",
+            parsed.diagnostics
+        );
+        assert_eq!(
+            codes
+                .iter()
+                .filter(|&&code| code == diagnostic_codes::UNKNOWN_COMPILER_OPTION)
+                .count(),
+            3,
+            "expected three TS5023 diagnostics, got: {:?}",
+            parsed.diagnostics
+        );
+        assert_eq!(
+            codes
+                .iter()
+                .filter(|&&code| code == diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN)
+                .count(),
+            2,
+            "expected two TS5025 diagnostics, got: {:?}",
+            parsed.diagnostics
+        );
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .filter(|diag| diag.code == diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN)
+                .all(|diag| diag.message_text.contains("disableSolutionSearching")),
+            "disableSolution typo diagnostics should suggest disableSolutionSearching, got: {:?}",
+            parsed.diagnostics
+        );
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+        assert!(
+            !resolved.checker.sound_mode,
+            "unknown `sound` in tsconfig should not enable sound mode"
+        );
+    }
+
+    #[test]
     fn test_disable_size_limit_miscase_reports_did_you_mean() {
         let source = r#"{
   "compilerOptions": {
@@ -6784,44 +6862,6 @@ mod tests {
         let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
 
         assert!(resolved.checker.no_property_access_from_index_signature);
-    }
-
-    #[test]
-    fn test_sound_resolves_from_tsconfig() {
-        let source = r#"{
-            "compilerOptions": {
-                "sound": true
-            }
-        }"#;
-        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-        assert!(
-            parsed
-                .diagnostics
-                .iter()
-                .all(|diag| diag.code != diagnostic_codes::UNKNOWN_COMPILER_OPTION),
-            "sound should be recognized as a compiler option, got diagnostics: {:?}",
-            parsed.diagnostics
-        );
-        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
-        assert!(resolved.checker.sound_mode);
-    }
-
-    #[test]
-    fn test_sound_mis_cased_option_reports_did_you_mean() {
-        let source = r#"{
-            "compilerOptions": {
-                "Sound": true
-            }
-        }"#;
-        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-        assert!(
-            parsed
-                .diagnostics
-                .iter()
-                .any(|diag| diag.code == diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN),
-            "Expected TS5025-style diagnostic for miscased sound option, got: {:?}",
-            parsed.diagnostics
-        );
     }
 
     #[test]
