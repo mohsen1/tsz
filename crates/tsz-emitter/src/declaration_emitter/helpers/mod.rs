@@ -189,6 +189,7 @@ mod emit_node;
 mod function_analysis;
 mod js_exports;
 mod jsdoc;
+mod literal_initializers;
 mod local_asserted_type_alias;
 mod portability_check;
 mod portability_resolve;
