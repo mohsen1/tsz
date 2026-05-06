@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/this-in-function-call-regression-20260506-193529`
-- **PR**: TBD
-- **Status**: implemented
+- **PR**: #4254
+- **Status**: PR opened
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
