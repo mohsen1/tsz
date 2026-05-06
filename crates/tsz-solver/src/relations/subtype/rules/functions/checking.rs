@@ -7,12 +7,15 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::type_param_info;
 use crate::types::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags,
-    ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, Visibility,
+    ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
+    Visibility,
 };
 use crate::visitor::callable_shape_id;
 
 use super::super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 use super::{erase_call_sig_to_any, erase_fn_shape_to_any, erase_type_params_to_constraints};
+
+type HoistedNonlocalTypeParams = (Vec<crate::types::TypeParamInfo>, Vec<(TypeId, TypeId)>);
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_function_subtype(
@@ -1067,7 +1070,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: &FunctionShape,
         target: &FunctionShape,
-    ) -> Option<(Vec<crate::types::TypeParamInfo>, Vec<(TypeId, TypeId)>)> {
+    ) -> Option<HoistedNonlocalTypeParams> {
         let mut source_params = Vec::new();
         let mut collect_from = |type_id: TypeId| {
             for ty in crate::visitor::collect_all_types(self.interner, type_id) {
@@ -1076,7 +1079,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 };
                 if !source_params
                     .iter()
-                    .any(|existing: &crate::types::TypeParamInfo| existing.name == info.name)
+                    .any(|existing: &TypeParamInfo| existing.name == info.name)
                 {
                     source_params.push(info);
                 }
