@@ -2054,12 +2054,19 @@ impl<'a> DeclarationEmitter<'a> {
                             .or_else(|| self.call_expression_source_return_type_text(expr_idx))
                             .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
                     });
+                let reused_type_uses_function_local_alias =
+                    reused_type_text.as_deref().is_some_and(|type_text| {
+                        self.type_text_starts_with_function_local_type_alias(type_text)
+                    });
                 if reused_type_text.is_some()
                     && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
                     && type_id != tsz_solver::types::TypeId::ANY
                     && type_id != tsz_solver::types::TypeId::ERROR
-                    && self
-                        .type_contains_conditional_alias_application_for_inferred_emit(type_id, 0)
+                    && (reused_type_uses_function_local_alias
+                        || self.should_expand_named_application_for_inferred_declaration(type_id)
+                        || self.type_contains_conditional_alias_application_for_inferred_emit(
+                            type_id, 0,
+                        ))
                 {
                     return Some(self.print_type_id_for_inferred_declaration(type_id));
                 }
@@ -2732,9 +2739,16 @@ impl<'a> DeclarationEmitter<'a> {
         type_node_idx: NodeIndex,
     ) -> Option<String> {
         let name = self.simple_type_reference_name_text(type_node_idx)?;
-        let alias_type_node =
-            self.find_enclosing_block_type_alias_type_node(assertion_expr_idx, &name)?;
-        let alias_text = self.emit_type_node_text_normalized(alias_type_node)?;
+        let alias_decl_idx =
+            self.find_enclosing_block_type_alias_declaration(assertion_expr_idx, &name)?;
+        let alias_node = self.arena.get(alias_decl_idx)?;
+        let alias = self.arena.get_type_alias(alias_node)?;
+        let mut alias_text = self.emit_type_node_text_normalized(alias.type_node)?;
+        let substitutions = self
+            .type_alias_application_substitutions(alias.type_parameters.as_ref(), type_node_idx);
+        if !substitutions.is_empty() {
+            alias_text = Self::replace_whole_words_in_text(&alias_text, &substitutions);
+        }
         if alias_text.contains("typeof ") {
             return Some(alias_text);
         }
@@ -2750,7 +2764,10 @@ impl<'a> DeclarationEmitter<'a> {
             );
         }
 
-        None
+        alias_text
+            .trim_start()
+            .starts_with('{')
+            .then(|| Self::normalize_local_type_literal_accessor_text(&alias_text))
     }
 
     fn type_text_contains_mapped_type_literal(text: &str) -> bool {
@@ -2815,38 +2832,6 @@ impl<'a> DeclarationEmitter<'a> {
         if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
             let type_ref = self.arena.get_type_ref(type_node)?;
             return self.type_reference_name_text(type_ref.type_name);
-        }
-        None
-    }
-
-    fn find_enclosing_block_type_alias_type_node(
-        &self,
-        from_idx: NodeIndex,
-        name: &str,
-    ) -> Option<NodeIndex> {
-        let mut current_idx = from_idx;
-        while let Some(ext) = self.arena.get_extended(current_idx) {
-            let parent_idx = ext.parent;
-            if !parent_idx.is_some() {
-                return None;
-            }
-            let parent_node = self.arena.get(parent_idx)?;
-            if parent_node.kind == syntax_kind_ext::BLOCK
-                && let Some(block) = self.arena.get_block(parent_node)
-                && let Some(type_node) =
-                    block.statements.nodes.iter().copied().find_map(|stmt_idx| {
-                        let stmt_node = self.arena.get(stmt_idx)?;
-                        if stmt_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                            return None;
-                        }
-                        let alias = self.arena.get_type_alias(stmt_node)?;
-                        (self.get_identifier_text(alias.name).as_deref() == Some(name))
-                            .then_some(alias.type_node)
-                    })
-            {
-                return Some(type_node);
-            }
-            current_idx = parent_idx;
         }
         None
     }

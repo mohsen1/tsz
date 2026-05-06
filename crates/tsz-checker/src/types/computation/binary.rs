@@ -311,6 +311,15 @@ impl<'a> CheckerState<'a> {
                 .any(|&member| self.is_valid_in_operator_rhs(member));
         }
 
+        let evaluated = crate::query_boundaries::dispatch::evaluate_type_with_resolver(
+            self.ctx.types,
+            &self.ctx,
+            ty,
+        );
+        if evaluated != ty {
+            return self.is_valid_in_operator_rhs(evaluated);
+        }
+
         false
     }
 
@@ -403,18 +412,74 @@ impl<'a> CheckerState<'a> {
                 .any(|&m| self.type_may_represent_primitive(m));
         }
 
-        // Intersection: all members may represent primitive
+        // Intersection: `T & {}` still may represent a primitive because `{}`
+        // only removes nullish values. However, `T & object`, `T & { x: ... }`,
+        // and `T & Interface` exclude primitives through the object-like member.
         if let Some(members) =
             crate::query_boundaries::common::intersection_members(self.ctx.types, ty)
         {
+            let has_instantiable_primitive_member = members.iter().any(|&member| {
+                crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, member)
+                    && self.type_may_represent_primitive(member)
+            });
+            if has_instantiable_primitive_member
+                && !members
+                    .iter()
+                    .any(|&member| self.in_operator_intersection_member_excludes_primitive(member))
+            {
+                return true;
+            }
+
             return members
                 .iter()
                 .all(|&m| self.type_may_represent_primitive(m));
         }
 
+        let evaluated = crate::query_boundaries::dispatch::evaluate_type_with_resolver(
+            self.ctx.types,
+            &self.ctx,
+            ty,
+        );
+        if evaluated != ty {
+            return self.type_may_represent_primitive(evaluated);
+        }
+
         // Concrete object types are NOT considered "may represent primitive" —
         // only type parameters can be instantiated with primitives at runtime.
         false
+    }
+
+    fn in_operator_intersection_member_excludes_primitive(&self, ty: TypeId) -> bool {
+        use crate::query_boundaries::{common, dispatch as query};
+
+        if ty == TypeId::OBJECT {
+            return true;
+        }
+
+        if common::is_type_parameter_like(self.ctx.types, ty) {
+            return crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                ty,
+            )
+            .is_some_and(|constraint| {
+                self.in_operator_intersection_member_excludes_primitive(constraint)
+            });
+        }
+
+        if let Some(members) = query::union_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .all(|&member| self.in_operator_intersection_member_excludes_primitive(member));
+        }
+
+        if let Some(members) = query::intersection_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .any(|&member| self.in_operator_intersection_member_excludes_primitive(member));
+        }
+
+        query::is_object_like_type(self.ctx.types, ty)
+            && !common::is_empty_object_type(self.ctx.types, ty)
     }
 
     /// Format the apparent type for display in TS2638 error messages.
