@@ -465,6 +465,10 @@ impl<'a> CheckerState<'a> {
             });
         let anchor_argument_from_first_argument_mismatch = all_failures_are_argument_mismatches
             && shared_argument_anchor.is_none()
+            && !(self.overload_callee_is_property_like(idx)
+                && self
+                    .logical_call_argument_nodes(idx)
+                    .is_some_and(|args| args.len() > 1))
             && self.first_argument_mismatches_all_overload_expected_types(idx, &argument_failures);
         let anchor_argument_from_mixed_failures = shared_argument_anchor.is_some()
             && !remaining_failures.is_empty()
@@ -626,7 +630,6 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-
         let anchor_kind = if let Some(anchor_idx) = tagged_generic_overload_anchor {
             if anchor_idx == idx {
                 DiagnosticAnchorKind::OverloadPrimary

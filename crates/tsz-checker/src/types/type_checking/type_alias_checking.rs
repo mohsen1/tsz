@@ -193,6 +193,7 @@ impl<'a> CheckerState<'a> {
                     Some(body_type),
                 );
             }
+            self.check_styled_component_inner_component_constraint(alias.type_node);
             body_type
         };
         let body_construction_too_complex = self.ctx.types.take_union_too_complex();
@@ -843,6 +844,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.get_type_from_type_node(node_idx)
                 };
+                self.check_styled_component_inner_component_constraint(node_idx);
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {

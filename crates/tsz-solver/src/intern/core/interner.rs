@@ -1389,6 +1389,9 @@ impl TypeInterner {
             ) || self.union_origin_overrides_canonical_number_literal_sort(
                 current.as_ref(),
                 &origin_members,
+            ) || self.union_origin_overrides_canonical_application_sort(
+                current.as_ref(),
+                &origin_members,
             );
             if !needs_origin {
                 return;
@@ -1462,6 +1465,57 @@ impl TypeInterner {
                 Some(TypeData::Literal(LiteralValue::Number(_)))
             )
         })
+    }
+
+    /// Decide whether storing origin is needed for a generated union of
+    /// same-base generic applications.
+    ///
+    /// Distributive conditional alias display builds unions such as
+    /// `ChannelOfType<T, TextChannel> | ChannelOfType<T, EmailChannel>`.
+    /// The semantic union comparator sorts same-base applications by their
+    /// type arguments, which can invert the branch order that tsc displays from
+    /// the source union being distributed. Preserve that origin only when the
+    /// canonical union contains exactly the same same-base applications.
+    fn union_origin_overrides_canonical_application_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != origin.len() || current == origin {
+            return false;
+        }
+
+        let mut current_sorted = current.to_vec();
+        let mut origin_sorted = origin.to_vec();
+        current_sorted.sort_unstable_by_key(|id| id.0);
+        origin_sorted.sort_unstable_by_key(|id| id.0);
+        if current_sorted != origin_sorted {
+            return false;
+        }
+
+        fn same_application_base(
+            interner: &TypeInterner,
+            ids: &[TypeId],
+            expected_base: &mut Option<TypeId>,
+        ) -> bool {
+            for &id in ids {
+                let Some(TypeData::Application(app_id)) = interner.lookup(id) else {
+                    return false;
+                };
+                let app = interner.type_application(app_id);
+                match expected_base {
+                    Some(base) if *base != app.base => return false,
+                    Some(_) => {}
+                    None => *expected_base = Some(app.base),
+                }
+            }
+            true
+        }
+
+        let mut expected_base = None;
+        same_application_base(self, origin, &mut expected_base)
+            && same_application_base(self, current, &mut expected_base)
+            && expected_base.is_some()
     }
 
     /// Look up the as-written origin members for a flattened Union TypeId.

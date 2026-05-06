@@ -303,6 +303,31 @@ mod tests {
         );
     }
 
+    /// A line comment that starts on the same source line as `(` should remain
+    /// on that line; the following newline still prevents ASI after `yield`.
+    #[test]
+    fn yield_preserves_same_line_open_paren_comment_in_type_assertion() {
+        let source =
+            "const value = 1;\nfunction* g(): any {\n  yield ( // keep\n    value as any);\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("yield ( // keep\n    value);"),
+            "Same-line comment after `yield (` should stay on the opening paren line.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("yield (\n    // keep"),
+            "Same-line comment after `yield (` must not be forced onto a new line.\nOutput:\n{output}"
+        );
+    }
+
     /// Block comments on the same line as a statement must have a space after `*/`.
     /// This ensures `/*comment*/ var x` rather than `/*comment*/var x`.
     #[test]

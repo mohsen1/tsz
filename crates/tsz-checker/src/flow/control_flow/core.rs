@@ -1660,16 +1660,6 @@ impl<'a> FlowAnalyzer<'a> {
                                             initial_type
                                         }
                                     }
-                                } else if is_destructuring
-                                    && self.arena.get(flow.node).is_some_and(|node| {
-                                        node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                                    })
-                                {
-                                    // Destructuring-assignment writes already compute a
-                                    // branch-sensitive assigned type for the specific target.
-                                    // Re-reducing against the declared annotation can leak
-                                    // unrelated union members from the old declared type.
-                                    assigned_type
                                 } else if is_control_flow_typed_any {
                                     // Unannotated mutable locals such as `let x;` evolve from
                                     // their writes rather than staying explicit `any`.

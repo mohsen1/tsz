@@ -62,6 +62,17 @@ fn test_rest_parameter_tuple_type_ok() {
 }
 
 #[test]
+fn test_rest_parameter_union_of_array_types_ok() {
+    let source = r"
+        type someArray = string[] | number[];
+        function f(...rest: someArray) {
+        }
+    ";
+
+    assert!(!has_error_ts2370(source));
+}
+
+#[test]
 fn test_rest_parameter_no_type_annotation_ok() {
     let source = r"
         function f(...rest) {
@@ -103,6 +114,18 @@ fn test_rest_parameter_in_constructor() {
     ";
 
     assert!(has_error_ts2370(source));
+}
+
+#[test]
+fn test_rest_parameter_property_without_type_does_not_emit_ts2370() {
+    let source = r"
+        class C {
+            constructor(public ...rest) {
+            }
+        }
+    ";
+
+    assert!(!has_error_ts2370(source));
 }
 
 #[test]

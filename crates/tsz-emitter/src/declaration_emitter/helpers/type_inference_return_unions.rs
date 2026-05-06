@@ -4,15 +4,6 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
-    pub(in crate::declaration_emitter) fn is_simple_identifier_text(text: &str) -> bool {
-        let mut chars = text.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        (first == '_' || first == '$' || first.is_ascii_alphabetic())
-            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-    }
-
     pub(in crate::declaration_emitter) fn serialized_property_name_length(
         &self,
         name: &str,

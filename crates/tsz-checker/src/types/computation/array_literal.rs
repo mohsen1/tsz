@@ -593,6 +593,7 @@ impl<'a> CheckerState<'a> {
         let mut element_types = Vec::new();
         let mut element_nodes = Vec::new();
         let mut tuple_elements = Vec::new();
+        let mut preserve_tuple_spread_literals = false;
         // Total element count for tuple contextual typing. Elided slots count toward
         // the position of subsequent elements (e.g. `[42,,true]` has length 3 with
         // an undefined slot at index 1), matching tsc's `elementCount = elements.length`.
@@ -720,7 +721,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     spread_expr_type,
                 ) {
-                    if let Some(ref _expected) = tuple_context {
+                    if tuple_context.is_some() || self.ctx.in_const_assertion {
                         // For tuple context, expand each element of the spread source
                         // tuple, preserving its `rest` flag so a trailing rest element
                         // (e.g. spreading `[string, boolean, ...boolean[]]`) keeps the
@@ -745,8 +746,16 @@ impl<'a> CheckerState<'a> {
                         }
                     } else {
                         // For array context, add element types
+                        preserve_tuple_spread_literals = true;
                         for elem in &elems {
-                            element_types.push(elem.type_id);
+                            if elem.rest
+                                && let Some(rest_elem) =
+                                    query_common::array_element_type(self.ctx.types, elem.type_id)
+                            {
+                                element_types.push(rest_elem);
+                            } else {
+                                element_types.push(elem.type_id);
+                            }
                         }
                     }
                     continue;
@@ -760,13 +769,18 @@ impl<'a> CheckerState<'a> {
                     self.for_of_element_type(spread_expr_type, false)
                 };
 
-                if let Some(ref _expected) = tuple_context {
+                if tuple_context.is_some() || self.ctx.in_const_assertion {
+                    let rest_type = if self.ctx.in_const_assertion && tuple_context.is_none() {
+                        factory.array(elem_type)
+                    } else {
+                        elem_type
+                    };
                     let optional = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
                         Some(el) => el.optional,
                         None => false,
                     };
                     tuple_elements.push(TupleElement {
-                        type_id: elem_type,
+                        type_id: rest_type,
                         name: None,
                         optional,
                         rest: true, // Mark as spread for non-tuple spreads in tuple context
@@ -802,7 +816,7 @@ impl<'a> CheckerState<'a> {
                 elem_type = self.get_type_of_node_with_request(binary.right, &elem_request);
             }
 
-            if let Some(ref _expected) = tuple_context {
+            if tuple_context.is_some() || self.ctx.in_const_assertion {
                 let optional = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
                     Some(el) => el.optional,
                     None => false,
@@ -879,17 +893,10 @@ impl<'a> CheckerState<'a> {
         // When in a const assertion context, array literals become tuples (not arrays)
         // This allows [1, 2, 3] as const to become readonly [1, 2, 3] instead of readonly Array<number>
         if self.ctx.in_const_assertion {
-            // Convert element_types to tuple_elements
-            let const_tuple_elements: Vec<tsz_solver::TupleElement> = element_types
-                .iter()
-                .map(|&type_id| tsz_solver::TupleElement {
-                    type_id,
-                    name: None,
-                    optional: false,
-                    rest: false,
-                })
-                .collect();
-            return factory.tuple(const_tuple_elements);
+            if tuple_elements.len() == 1 && tuple_elements[0].rest {
+                return tuple_elements[0].type_id;
+            }
+            return factory.tuple(tuple_elements);
         }
 
         // Use contextual element type when available for better inference
@@ -1006,7 +1013,7 @@ impl<'a> CheckerState<'a> {
         // skip BCT's literal widening by computing the union directly. This preserves
         // literal types like "foo" | "bar" instead of widening to string, enabling
         // correct type parameter inference (e.g., K inferred as "foo" | "bar" not string).
-        let element_type = if self.ctx.preserve_literal_types {
+        let element_type = if self.ctx.preserve_literal_types || preserve_tuple_spread_literals {
             self.ctx.types.union(element_types.clone())
         } else {
             expr_ops::compute_best_common_type_cached(

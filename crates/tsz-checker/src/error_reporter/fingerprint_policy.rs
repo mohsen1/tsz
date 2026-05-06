@@ -355,7 +355,7 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                if prop_name.starts_with("__private_brand") {
+                if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                     return None;
                 }
                 let source_display_type =

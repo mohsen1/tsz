@@ -474,15 +474,22 @@ fn jsdoc_nongeneric_instantiation_reports_ts2315_and_ts2304() {
 /**
  * @param {Void<Missing>} c
  * @param {<T>(m: Boolean<T>) => string} fn
+ * @param {fn<T>} callback
  */
-function sample(c, fn) {
-  return fn(c);
+function sample(c, fn, callback) {
+  return fn(c) || callback;
 }
+
+function fn() {}
 "#,
     );
 
     let ts2315 = diags.iter().filter(|d| d.code == 2315).count();
-    let ts2304 = diags.iter().filter(|d| d.code == 2304).count();
+    let ts2304_messages = diags
+        .iter()
+        .filter(|d| d.code == 2304)
+        .map(|d| d.message.as_str())
+        .collect::<Vec<_>>();
 
     assert!(
         ts2315 >= 2,
@@ -493,8 +500,16 @@ function sample(c, fn) {
             .collect::<Vec<_>>()
     );
     assert!(
-        ts2304 >= 1,
+        ts2304_messages.contains(&"Cannot find name 'T'."),
         "Expected at least one TS2304 diagnostic for unresolved JSDoc type arguments, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !ts2304_messages.contains(&"Cannot find name 'fn<T>'."),
+        "Known function values should suppress the full-name TS2304 while preserving argument diagnostics, got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, &d.message))
