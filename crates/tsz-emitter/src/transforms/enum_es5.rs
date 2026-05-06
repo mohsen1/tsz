@@ -917,7 +917,11 @@ impl<'a> EnumES5Transformer<'a> {
                 if let Some(&val) = self.member_values.get(id.escaped_text.as_str()) {
                     return Some(val as f64);
                 }
-                None
+                match id.escaped_text.as_str() {
+                    "NaN" => Some(f64::NAN),
+                    "Infinity" => Some(f64::INFINITY),
+                    _ => None,
+                }
             }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 let bin = self.arena.get_binary_expr(node)?;
