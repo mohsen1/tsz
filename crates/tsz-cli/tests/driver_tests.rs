@@ -6374,6 +6374,156 @@ fn compile_cli_node16_resolution_enables_package_json_exports_without_config() {
 }
 
 #[test]
+fn compile_cli_package_resolution_flags_require_modern_module_resolution() {
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "custom_conditions",
+            &[
+                "tsz",
+                "--moduleResolution",
+                "classic",
+                "--ignoreDeprecations",
+                "6.0",
+                "--customConditions",
+                "dev",
+                "--noEmit",
+                "--pretty",
+                "false",
+                "--ignoreConfig",
+                "index.ts",
+            ],
+        ),
+        (
+            "resolve_package_json_exports",
+            &[
+                "tsz",
+                "--moduleResolution",
+                "classic",
+                "--ignoreDeprecations",
+                "6.0",
+                "--resolvePackageJsonExports",
+                "true",
+                "--noEmit",
+                "--pretty",
+                "false",
+                "--ignoreConfig",
+                "index.ts",
+            ],
+        ),
+        (
+            "resolve_package_json_imports",
+            &[
+                "tsz",
+                "--moduleResolution",
+                "classic",
+                "--ignoreDeprecations",
+                "6.0",
+                "--resolvePackageJsonImports",
+                "true",
+                "--noEmit",
+                "--pretty",
+                "false",
+                "--ignoreConfig",
+                "index.ts",
+            ],
+        ),
+    ];
+
+    for (name, argv) in cases {
+        let temp = TempDir::new().expect("temp dir");
+        let base = &temp.path;
+        write_file(&base.join("index.ts"), "export {};\n");
+
+        let args = CliArgs::try_parse_from(argv.iter().copied()).unwrap_or_else(|err| {
+            panic!("failed to parse {name} args: {err}");
+        });
+        let result = compile(&args, base).expect("compile should succeed");
+        let codes: Vec<u32> = result.diagnostics.iter().map(|diag| diag.code).collect();
+
+        assert!(
+            codes.contains(
+                &diagnostic_codes::OPTION_CAN_ONLY_BE_USED_WHEN_MODULERESOLUTION_IS_SET_TO_NODE16_NODENEXT_OR_BUNDL
+            ),
+            "{name} should report TS5098 with classic moduleResolution, got: {codes:?}"
+        );
+    }
+}
+
+#[test]
+fn compile_cli_package_resolution_flags_use_config_module_resolution_for_ts5098() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "moduleResolution": "classic",
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "export {};\n");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--customConditions",
+        "dev",
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|diag| diag.code).collect();
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::OPTION_CAN_ONLY_BE_USED_WHEN_MODULERESOLUTION_IS_SET_TO_NODE16_NODENEXT_OR_BUNDL
+        ),
+        "CLI customConditions should report TS5098 with config moduleResolution classic, got: {codes:?}"
+    );
+}
+
+#[test]
+fn compile_cli_package_resolution_flags_accept_modern_module_resolution() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("index.ts"), "export {};\n");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--moduleResolution",
+        "node16",
+        "--module",
+        "node16",
+        "--customConditions",
+        "dev",
+        "--resolvePackageJsonExports",
+        "true",
+        "--resolvePackageJsonImports",
+        "true",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--ignoreConfig",
+        "index.ts",
+    ])
+    .expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|diag| diag.code).collect();
+
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::OPTION_CAN_ONLY_BE_USED_WHEN_MODULERESOLUTION_IS_SET_TO_NODE16_NODENEXT_OR_BUNDL
+        ),
+        "modern moduleResolution should not report TS5098, got: {codes:?}"
+    );
+}
+
+#[test]
 fn compile_uses_versioned_types_export_conditions_without_false_ts2551() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

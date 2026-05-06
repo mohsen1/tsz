@@ -3152,6 +3152,26 @@ fn validate_cli_compiler_option_diagnostics(
             cli_module_resolution_value(module_resolution).into(),
         );
     }
+    let config_options = config.and_then(|cfg| cfg.compiler_options.as_ref());
+    let cli_package_resolution_option = args.custom_conditions.is_some()
+        || args.resolve_package_json_exports == Some(true)
+        || args.resolve_package_json_imports == Some(true);
+    if cli_package_resolution_option {
+        if args.module_resolution.is_none()
+            && let Some(module_resolution) =
+                config_options.and_then(|options| options.module_resolution.as_ref())
+        {
+            compiler_options.insert(
+                "moduleResolution".to_string(),
+                module_resolution.clone().into(),
+            );
+        }
+        if args.module.is_none()
+            && let Some(module) = config_options.and_then(|options| options.module.as_ref())
+        {
+            compiler_options.insert("module".to_string(), module.clone().into());
+        }
+    }
     if let Some(always_strict) = args.always_strict {
         compiler_options.insert("alwaysStrict".to_string(), always_strict.into());
     }
@@ -3207,6 +3227,29 @@ fn validate_cli_compiler_option_diagnostics(
     }
     if args.verbatim_module_syntax {
         compiler_options.insert("verbatimModuleSyntax".to_string(), true.into());
+    }
+    if let Some(resolve_package_json_exports) = args.resolve_package_json_exports {
+        compiler_options.insert(
+            "resolvePackageJsonExports".to_string(),
+            resolve_package_json_exports.into(),
+        );
+    }
+    if let Some(resolve_package_json_imports) = args.resolve_package_json_imports {
+        compiler_options.insert(
+            "resolvePackageJsonImports".to_string(),
+            resolve_package_json_imports.into(),
+        );
+    }
+    if let Some(custom_conditions) = args.custom_conditions.as_ref() {
+        compiler_options.insert(
+            "customConditions".to_string(),
+            serde_json::Value::Array(
+                custom_conditions
+                    .iter()
+                    .map(|condition| serde_json::Value::String(condition.clone()))
+                    .collect(),
+            ),
+        );
     }
     if args.downlevel_iteration {
         compiler_options.insert("downlevelIteration".to_string(), true.into());
