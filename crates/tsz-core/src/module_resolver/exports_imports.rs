@@ -188,18 +188,16 @@ impl ModuleResolver {
             PackageExports::String(s) => vec![s.clone()],
             PackageExports::Conditional(cond_entries) => {
                 // Iterate condition map entries in JSON key order
+                let mut results = Vec::new();
                 for (key, nested) in cond_entries {
                     if conditions.iter().any(|c| c == key) {
                         if matches!(nested, PackageExports::Null) {
                             return Vec::new();
                         }
-                        let results = Self::resolve_export_targets_to_strings(nested, conditions);
-                        if !results.is_empty() {
-                            return results;
-                        }
+                        results.extend(Self::resolve_export_targets_to_strings(nested, conditions));
                     }
                 }
-                Vec::new()
+                results
             }
             PackageExports::Array(elements) => {
                 // Array of fallback targets — preserve order so the caller can

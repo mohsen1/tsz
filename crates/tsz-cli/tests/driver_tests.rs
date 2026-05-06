@@ -7004,6 +7004,52 @@ fn compile_resolves_package_imports_array_fallback_after_missing_target() {
 }
 
 #[test]
+fn compile_resolves_package_imports_conditional_fallback_after_missing_target() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("package.json"),
+        r##"{
+          "name": "app",
+          "imports": {
+            "#x": {
+              "import": "./missing.d.ts",
+              "default": "./ok.d.ts"
+            }
+          }
+        }"##,
+    );
+    write_file(&base.join("ok.d.ts"), "export declare const v: number;");
+    write_file(
+        &base.join("index.ts"),
+        "import { v } from '#x';\nconst n: number = v;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        !result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected package imports conditional target to fall back to ok.d.ts, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_rejects_root_slash_package_import_specifier_under_node16() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
