@@ -937,10 +937,10 @@ var x: 6;
     }
 
     #[test]
-    fn fundule_redecl_widens_literal_return_types_in_message() {
-        // The TS2403 message should display widened literal types in the
-        // function return shape — `{ x: number; y: number; }` not `{ x: 0; y: 0; }`
-        // — matching tsc. Regression test for FunctionAndModuleWithSameNameAndCommonRoot.ts.
+    fn fundule_redecl_uses_typeof_value_display_in_message() {
+        // tsc displays a function+namespace merge as the value side
+        // (`typeof Point`) in TS2403 instead of expanding the callable object.
+        // Regression test for FunctionAndModuleWithSameNameAndCommonRoot.ts.
         let source = r#"
 namespace B {
     export function Point() {
@@ -965,13 +965,12 @@ var fn2 = B.Point;
         );
         let msg = &ts2403[0].message_text;
         assert!(
-            !msg.contains("{ x: 0; y: 0; }"),
-            "TS2403 message should widen literal return types, got: {msg}"
+            msg.contains("here has type 'typeof Point'"),
+            "TS2403 message should display fundule values as 'typeof Point', got: {msg}"
         );
         assert!(
-            msg.contains("{ x: number; y: number; }"),
-            "TS2403 message should display widened return type \
-             '{{ x: number; y: number; }}', got: {msg}"
+            !msg.contains("Origin:") && !msg.contains("{ ():"),
+            "TS2403 message should not expand the merged callable namespace object, got: {msg}"
         );
     }
 }
