@@ -143,6 +143,8 @@ impl<'a> Printer<'a> {
             // Keep parse-recovery emit for invalid generator member `*() {}`.
             if method.asterisk_token && has_recovery_missing_name {
                 self.write("*() { }");
+            } else if self.has_recovered_declaration_trailing_comma(node) {
+                self.emit_recovered_object_method_without_body(node);
             } else {
                 self.skip_comments_for_erased_node(node);
             }

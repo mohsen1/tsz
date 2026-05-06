@@ -2040,10 +2040,12 @@ impl<'a> Printer<'a> {
                     // Bodyless methods are erased (abstract methods without body,
                     // overload signatures). Abstract methods WITH a body (an error
                     // in TS) are still emitted by tsc, so we must not erase them.
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_method_decl(member_node)
-                        .is_some_and(|m| m.body.is_none()),
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        self.arena.get_method_decl(member_node).is_some_and(|m| {
+                            m.body.is_none()
+                                && !self.has_recovered_declaration_trailing_comma(member_node)
+                        })
+                    }
                     // Abstract accessors without body are erased. Bodyless non-abstract
                     // accessors (error case) are kept — tsc emits them as `{}`.
                     // Abstract accessors WITH a body (error case) are also kept.
