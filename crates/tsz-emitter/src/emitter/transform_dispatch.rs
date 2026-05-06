@@ -605,7 +605,7 @@ impl<'a> Printer<'a> {
                         self.ctx.original_module_kind = prev_original;
                     } else if !is_default
                         && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                        && let Some(inline_decls) = self.try_collect_inline_cjs_exports(node)
+                        && let Some(inline_decls) = self.try_collect_inline_cjs_exports(idx, node)
                     {
                         // Inline form: exports.x = initializer;
                         let decl_count = inline_decls.len();

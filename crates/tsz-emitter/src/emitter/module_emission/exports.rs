@@ -358,7 +358,8 @@ impl<'a> Printer<'a> {
                     if !self.ctx.module_state.has_export_assignment {
                         // Try inline form: exports.x = initializer;
                         // TSC emits this for simple single-binding declarations.
-                        if let Some(inline_decls) = self.try_collect_inline_cjs_exports(clause_node)
+                        if let Some(inline_decls) =
+                            self.try_collect_inline_cjs_exports(export.export_clause, clause_node)
                         {
                             let decl_count = inline_decls.len();
                             for (i, (decoded_name, emit_name, init_idx)) in

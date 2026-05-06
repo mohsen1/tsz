@@ -1021,6 +1021,36 @@ fn inline_cjs_export_skips_initializerless_vars() {
     );
 }
 
+#[test]
+fn transformed_class_expression_var_export_emits_inline_assignment() {
+    let source = "export var noPrivates = class {\n    static getTags() { }\n    tags() { }\n    private static ps = -1;\n    private p = 12;\n};\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.noPrivates = (_a = class {"),
+        "Transformed class expression export should inline the comma expression.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var noPrivates ="),
+        "Transformed class expression export should not keep a redundant local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.noPrivates = noPrivates;"),
+        "Transformed class expression export should not need a trailing self-assignment.\nOutput:\n{output}"
+    );
+}
+
 /// Merged enum declarations in ESM should only have `export` on the first
 /// declaration's `var` statement. Subsequent IIFEs should be bare.
 #[test]
