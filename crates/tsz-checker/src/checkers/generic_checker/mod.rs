@@ -10,6 +10,7 @@ use tsz_solver::TypeId;
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct CallTypeArgumentValidation {
     pub count_mismatch: bool,
+    pub constraint_violation: bool,
 }
 
 // =============================================================================
@@ -559,6 +560,7 @@ impl<'a> CheckerState<'a> {
                         );
                         return CallTypeArgumentValidation {
                             count_mismatch: true,
+                            constraint_violation: false,
                         };
                     }
                 }
@@ -570,6 +572,7 @@ impl<'a> CheckerState<'a> {
                 );
                 return CallTypeArgumentValidation {
                     count_mismatch: true,
+                    constraint_violation: false,
                 };
             }
             return CallTypeArgumentValidation::default();
@@ -593,6 +596,7 @@ impl<'a> CheckerState<'a> {
                 );
                 return CallTypeArgumentValidation {
                     count_mismatch: true,
+                    constraint_violation: false,
                 };
             }
             // TS2558: Expected N type arguments, but got M.
@@ -609,11 +613,16 @@ impl<'a> CheckerState<'a> {
             );
             return CallTypeArgumentValidation {
                 count_mismatch: true,
+                constraint_violation: false,
             };
         }
 
+        let diagnostics_before = self.ctx.diagnostics.len();
         self.validate_type_args_against_params(&type_params, type_args_list);
-        CallTypeArgumentValidation::default()
+        CallTypeArgumentValidation {
+            count_mismatch: false,
+            constraint_violation: self.ctx.diagnostics.len() > diagnostics_before,
+        }
     }
 
     /// Validate type arguments against their constraints for type references (e.g., `A<X, Y>`).

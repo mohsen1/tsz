@@ -29,6 +29,20 @@ fn object_rest_without_initializer_recovery_stays_syntactically_valid() {
 }
 
 #[test]
+fn rest_parameter_object_binding_with_rest_emits_body_preamble() {
+    let source =
+        "function e(...{0: a = 1, 1: b = true, ...rest: rest}: [boolean, string, number]) { }";
+    let output = parse_and_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains(
+            "function e(..._a) { var { 0: a = 1, 1: b = true } = _a, rest = __rest(_a, [\"0\", \"1\"]); }"
+        ),
+        "rest parameter object binding should preserve rest syntax and emit the object-rest preamble.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn recovered_empty_variable_initializer_preserves_equals() {
     let source = "var NUMBER1 = var NUMBER-;";
     let output = parse_and_print(source);

@@ -2340,6 +2340,25 @@ Object.defineProperty(module.exports, "value", { value: Headers });
     }
 }
 
+#[test]
+fn nested_commonjs_export_assignment_makes_js_file_external_module() {
+    let source = r#"
+const URL = 1;
+function publish() {
+    module.exports.value = URL;
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(
+        binder.is_external_module,
+        "nested CommonJS export assignments should make checked JS files module-scoped"
+    );
+}
+
 // =============================================================================
 // 7. FLOW GRAPH ADVANCED PATTERNS
 // =============================================================================
