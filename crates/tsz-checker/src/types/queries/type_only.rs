@@ -41,6 +41,15 @@ impl<'a> CheckerState<'a> {
 
         let arena = self.ctx.get_arena_for_file(file_idx as u32);
         arena.source_files.iter().any(|source_file| {
+            if !source_file.text.contains("@typedef")
+                && !source_file.text.contains("@callback")
+                && !source_file.text.contains("@import")
+            {
+                return false;
+            }
+            if !export_name.is_empty() && !source_file.text.contains(export_name) {
+                return false;
+            }
             source_file.comments.iter().any(|comment| {
                 if !is_jsdoc_comment(comment, &source_file.text) {
                     return false;
@@ -64,6 +73,16 @@ impl<'a> CheckerState<'a> {
         let namespace_prefix = format!("{export_name}.");
         let arena = self.ctx.get_arena_for_file(file_idx as u32);
         arena.source_files.iter().any(|source_file| {
+            if !source_file.text.contains("@namespace")
+                && !source_file.text.contains("@typedef")
+                && !source_file.text.contains("@callback")
+                && !source_file.text.contains("@import")
+            {
+                return false;
+            }
+            if !source_file.text.contains(export_name) {
+                return false;
+            }
             source_file.comments.iter().any(|comment| {
                 if !is_jsdoc_comment(comment, &source_file.text) {
                     return false;

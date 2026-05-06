@@ -110,10 +110,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let text = &source_file.text;
-        if !Self::jsdoc_contains_tag(text, "typedef")
-            && !Self::jsdoc_contains_tag(text, "callback")
-            && !Self::jsdoc_contains_tag(text, "import")
-        {
+        if !text.contains("@typedef") && !text.contains("@callback") && !text.contains("@import") {
             return false;
         }
         if !name.is_empty() && !text.contains(name) {
