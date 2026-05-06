@@ -3386,6 +3386,10 @@ fn is_identifier_part(ch: u32) -> bool {
         return true;
     }
 
+    if is_unicode_other_id_continue(ch) {
+        return true;
+    }
+
     // Unicode combining marks (Mn, Mc categories) - needed for scripts like Devanagari, Arabic, etc.
     // This covers the most common combining mark ranges used in identifiers:
     // - Combining Diacritical Marks (U+0300-U+036F)
@@ -3394,6 +3398,20 @@ fn is_identifier_part(ch: u32) -> bool {
     // - Hebrew combining marks (U+0591-U+05C7)
     // - And other Indic scripts
     is_unicode_combining_mark(ch)
+}
+
+/// Unicode Other_ID_Continue code points that ECMAScript admits as
+/// identifier continuation characters even though they are not alphabetic,
+/// decimal digits, join controls, or combining marks.
+const fn is_unicode_other_id_continue(ch: u32) -> bool {
+    matches!(
+        ch,
+        0x00B7 // MIDDLE DOT
+            | 0x0387 // GREEK ANO TELEIA
+            | 0x1369
+            ..=0x1371 // ETHIOPIC DIGIT ONE..THREE
+            | 0x19DA // NEW TAI LUE THAM DIGIT ONE
+    )
 }
 
 /// Check if a character is a Unicode decimal digit (Nd category).
@@ -3602,6 +3620,13 @@ mod tests {
         assert_eq!(tokens[1], (SyntaxKind::Identifier, "bar".to_string()));
         assert_eq!(tokens[2], (SyntaxKind::Identifier, "_baz".to_string()));
         assert_eq!(tokens[3], (SyntaxKind::Identifier, "$qux".to_string()));
+    }
+
+    #[test]
+    fn scan_identifier_with_other_id_continue_middle_dot() {
+        let tokens = scan_all("a·b");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0], (SyntaxKind::Identifier, "a·b".to_string()));
     }
 
     // ── Keywords ──────────────────────────────────────────────────────
@@ -4000,6 +4025,11 @@ mod tests {
         assert!(is_identifier_part(0x39)); // '9'
         // Letters should be accepted
         assert!(is_identifier_part(0x61)); // 'a'
+        // Other_ID_Continue characters should be accepted
+        assert!(is_identifier_part(0x00B7)); // · MIDDLE DOT
+        assert!(is_identifier_part(0x0387)); // · GREEK ANO TELEIA
+        assert!(is_identifier_part(0x1369)); // ፩ ETHIOPIC DIGIT ONE
+        assert!(is_identifier_part(0x19DA)); // ᧚ NEW TAI LUE THAM DIGIT ONE
     }
 
     #[test]
