@@ -38,6 +38,38 @@ use super::{
 };
 
 impl<'a> DeclarationEmitter<'a> {
+    fn is_js_commonjs_export_identifier_text(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !matches!(first, 'A'..='Z' | 'a'..='z' | '_' | '$') {
+            return false;
+        }
+        chars.all(|ch| matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_' | '$'))
+    }
+
+    pub(in crate::declaration_emitter) fn js_commonjs_export_name_text(
+        &self,
+        name_idx: NodeIndex,
+    ) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self.get_identifier_text(name_idx),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let literal = self.arena.get_literal(name_node)?;
+                if Self::is_js_commonjs_export_identifier_text(&literal.text) {
+                    Some(literal.text.clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub(in crate::declaration_emitter) fn is_js_function_initializer(
         &self,
         node_idx: NodeIndex,
@@ -344,7 +376,9 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .skip_parenthesized_and_assertions_and_comma(binary.left);
         let lhs_node = self.arena.get(lhs)?;
-        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
             return None;
         }
         let lhs_access = self.arena.get_access_expr(lhs_node)?;
@@ -357,9 +391,8 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         if self
-            .arena
-            .get(lhs_access.name_or_argument)
-            .is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
+            .js_commonjs_export_name_text(lhs_access.name_or_argument)
+            .is_none()
         {
             return None;
         }
@@ -610,7 +643,7 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some((export_name_idx, rhs_idx)) =
                 self.js_commonjs_named_export_for_statement(stmt_idx)
             {
-                let Some(export_name) = self.get_identifier_text(export_name_idx) else {
+                let Some(export_name) = self.js_commonjs_export_name_text(export_name_idx) else {
                     continue;
                 };
                 let rhs_idx = self
@@ -970,7 +1003,7 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
-            let Some(export_name) = self.get_identifier_text(name_idx) else {
+            let Some(export_name) = self.js_commonjs_export_name_text(name_idx) else {
                 continue;
             };
 
@@ -1131,7 +1164,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<(NodeIndex, NodeIndex)> {
         let (name_idx, initializer) = self.js_commonjs_named_export_for_statement(stmt_idx)?;
 
-        if let Some(export_name) = self.get_identifier_text(name_idx)
+        if let Some(export_name) = self.js_commonjs_export_name_text(name_idx)
             && let Some(local_name) = self.get_identifier_text(initializer)
             && local_name == export_name
         {
@@ -1179,7 +1212,7 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(class) = self.arena.get_class(init_node) else {
             return false;
         };
-        let Some(export_name) = self.get_identifier_text(export_name_idx) else {
+        let Some(export_name) = self.js_commonjs_export_name_text(export_name_idx) else {
             return false;
         };
         self.get_identifier_text(class.name)
