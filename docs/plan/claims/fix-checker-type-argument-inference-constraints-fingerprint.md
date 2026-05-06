@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-type-argument-inference-constraints-fingerprint`
-- **PR**: TBD
+- **PR**: #3484
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
