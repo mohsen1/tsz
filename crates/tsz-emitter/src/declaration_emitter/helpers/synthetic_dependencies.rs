@@ -141,6 +141,130 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn retain_imported_static_call_dependencies_in_statements(
+        &mut self,
+        statements: &NodeList,
+    ) {
+        let imported_modules = self.named_import_modules_in_statements(statements);
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            if !self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            {
+                continue;
+            }
+            for &decl_idx in &var_stmt.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if decl.initializer.is_none() {
+                    continue;
+                }
+                self.retain_imported_static_call_dependency(decl.initializer, &imported_modules);
+            }
+        }
+    }
+
+    fn retain_imported_static_call_dependency(
+        &mut self,
+        initializer: NodeIndex,
+        imported_modules: &rustc_hash::FxHashMap<String, String>,
+    ) {
+        let Some(init_idx) = self.skip_parenthesized_expression(initializer) else {
+            return;
+        };
+        let Some(init_node) = self.arena.get(init_idx) else {
+            return;
+        };
+        if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return;
+        }
+        let Some(call) = self.arena.get_call_expr(init_node) else {
+            return;
+        };
+        let Some(callee_node) = self.arena.get(call.expression) else {
+            return;
+        };
+        let Some(access) = self.arena.get_access_expr(callee_node) else {
+            return;
+        };
+        let Some(receiver_name) = self.get_identifier_text(access.expression) else {
+            return;
+        };
+        let Some(binder) = self.binder else {
+            return;
+        };
+        if let Some(module) = imported_modules.get(&receiver_name).cloned() {
+            self.required_imports
+                .entry(module)
+                .or_default()
+                .push(receiver_name.clone());
+        }
+        let Some(sym_id) = binder.file_locals.get(receiver_name.as_str()) else {
+            return;
+        };
+        let Some(used_symbols) = self.used_symbols.as_mut() else {
+            return;
+        };
+        used_symbols
+            .entry(sym_id)
+            .and_modify(|kind| *kind |= UsageKind::TYPE)
+            .or_insert(UsageKind::TYPE);
+    }
+
+    fn named_import_modules_in_statements(
+        &self,
+        statements: &NodeList,
+    ) -> rustc_hash::FxHashMap<String, String> {
+        let mut modules = rustc_hash::FxHashMap::default();
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_node) = self.arena.get(import.module_specifier) else {
+                continue;
+            };
+            let Some(module_lit) = self.arena.get_literal(module_node) else {
+                continue;
+            };
+            let Some(clause_node) = self.arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if clause.named_bindings.is_some()
+                && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                && let Some(bindings) = self.arena.get_named_imports(bindings_node)
+            {
+                for &spec_idx in &bindings.elements.nodes {
+                    let Some(spec_node) = self.arena.get(spec_idx) else {
+                        continue;
+                    };
+                    let Some(specifier) = self.arena.get_specifier(spec_node) else {
+                        continue;
+                    };
+                    if let Some(local_name) = self.get_identifier_text(specifier.name) {
+                        modules.insert(local_name, module_lit.text.clone());
+                    }
+                }
+            }
+        }
+        modules
+    }
+
     fn type_reference_identifier_names(type_text: &str) -> Vec<String> {
         let bytes = type_text.as_bytes();
         let mut names = Vec::new();

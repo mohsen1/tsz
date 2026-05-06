@@ -12,7 +12,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
     fn strip_synthetic_optional_from_display(display: String) -> String {
@@ -2297,6 +2297,18 @@ impl<'a> CheckerState<'a> {
         let direct_param_display = self.format_type_diagnostic(param_type);
 
         if let Some(display) =
+            self.constrained_variadic_tuple_parameter_display(param_type, arg_type)
+        {
+            return display;
+        }
+
+        if let Some(display) =
+            self.underfilled_generic_variadic_tuple_parameter_display(param_type, arg_type)
+        {
+            return display;
+        }
+
+        if let Some(display) =
             self.expanded_rest_tuple_parameter_display_for_call(param_type, arg_idx)
         {
             return display;
@@ -2742,6 +2754,14 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        Some(self.format_tuple_element_display(&elements, readonly))
+    }
+
+    pub(crate) fn format_tuple_element_display(
+        &mut self,
+        elements: &[TupleElement],
+        readonly: bool,
+    ) -> String {
         let parts: Vec<String> = elements
             .iter()
             .map(|element| {
@@ -2768,11 +2788,11 @@ impl<'a> CheckerState<'a> {
             .collect();
         let tuple_display = format!("[{}]", parts.join(", "));
 
-        Some(if readonly {
+        if readonly {
             format!("readonly {tuple_display}")
         } else {
             tuple_display
-        })
+        }
     }
 
     fn contextual_generic_call_parameter_display(

@@ -46,7 +46,9 @@ impl<'a> CheckerState<'a> {
             current_type,
         );
         let prev_type_str = self.format_type_diagnostic_widened(prev_display);
-        let current_type_str = self.format_type_diagnostic_widened(current_display);
+        let current_type_str = self
+            .ts2403_typeof_fundule_initializer_display(idx)
+            .unwrap_or_else(|| self.format_type_diagnostic_widened(current_display));
         // Suppress when both types format to the same name. This handles cross-binder
         // scenarios where a lib_checker resolves a type annotation (e.g., `Document`)
         // to a separate DefId from the main checker's version. Interface declaration
@@ -59,6 +61,32 @@ impl<'a> CheckerState<'a> {
             "Subsequent variable declarations must have the same type. Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
         );
         self.error_at_node(idx, &message, diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP);
+    }
+
+    fn ts2403_typeof_fundule_initializer_display(&self, decl_idx: NodeIndex) -> Option<String> {
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let init_idx = decl.initializer;
+        let init_node = self.ctx.arena.get(init_idx)?;
+
+        let sym_id = if init_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            self.resolve_identifier_symbol_without_tracking(init_idx)
+        } else if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.resolve_qualified_symbol(init_idx)
+        } else {
+            None
+        }?;
+
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        let is_fundule = symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION)
+            && symbol.has_any_flags(
+                tsz_binder::symbol_flags::VALUE_MODULE | tsz_binder::symbol_flags::NAMESPACE_MODULE,
+            );
+        if !is_fundule || symbol.escaped_name.is_empty() {
+            return None;
+        }
+
+        Some(format!("typeof {}", symbol.escaped_name))
     }
 
     /// Report TS2454: Variable is used before being assigned.
