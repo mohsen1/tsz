@@ -33,12 +33,17 @@ fn check_no_lib(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
 // =============================================================================
 
 #[test]
-fn test_node_global_require_without_types_emits_ts2580() {
+fn test_node_global_require_without_explicit_types_emits_ts2591() {
+    // tsc emits TS2591 ("install @types/node and add 'node' to the types
+    // field") when the `types` compiler option is unset — the user must
+    // both install types and configure them. TS2580 is reserved for the
+    // case where `types` is explicitly set (e.g. `// @types: *` in the
+    // conformance harness), where only the install is missing.
     let diags = check_no_lib("const x = require('fs');");
-    let ts2580: Vec<_> = diags.iter().filter(|d| d.code == 2580).collect();
+    let ts2591: Vec<_> = diags.iter().filter(|d| d.code == 2591).collect();
     assert!(
-        !ts2580.is_empty(),
-        "Expected TS2580 for 'require' (Node global), got: {diags:?}"
+        !ts2591.is_empty(),
+        "Expected TS2591 for 'require' (Node global, no explicit types), got: {diags:?}"
     );
 }
 
