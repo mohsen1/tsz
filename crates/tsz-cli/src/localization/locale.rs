@@ -30,6 +30,7 @@
 
 use rustc_hash::FxHashMap;
 use std::sync::OnceLock;
+use tsz_common::diagnostics::get_message_template;
 
 /// Global locale state for the current process.
 static LOCALE: OnceLock<LocaleMessages> = OnceLock::new();
@@ -125,7 +126,7 @@ pub fn translate(code: u32, fallback: &str) -> String {
     let template = locale.get_message_owned(code, fallback);
 
     // If template doesn't have placeholders, return it directly
-    if !template.contains("{0}") {
+    if !contains_placeholder(&template) {
         return template;
     }
 
@@ -135,24 +136,146 @@ pub fn translate(code: u32, fallback: &str) -> String {
 
 /// Extract parameters from an English formatted message and substitute into a translated template.
 ///
-/// This works by matching common patterns in TypeScript diagnostic messages.
-/// For example, for TS2322 "Type 'X' is not assignable to type 'Y'":
+/// Prefer matching against TypeScript's generated English diagnostic template. That recovers
+/// unquoted parameters such as TS2554's numeric counts, while the quoted-string fallback keeps
+/// compatibility with hand-authored diagnostics that still follow TypeScript's common quoting
+/// pattern. For example, for TS2322 "Type 'X' is not assignable to type 'Y'":
 /// - English formatted: "Type 'string' is not assignable to type 'number'."
 /// - Template: "型 '{0}' を型 '{1}' に割り当てることはできません。"
 /// - Result: "型 'string' を型 'number' に割り当てることはできません。"
-fn substitute_params_from_english(_code: u32, template: &str, formatted_english: &str) -> String {
-    // Extract quoted strings from the formatted English message
-    // TypeScript typically uses single quotes around parameter values
-    let params = extract_quoted_strings(formatted_english);
+fn substitute_params_from_english(code: u32, template: &str, formatted_english: &str) -> String {
+    if let Some(english_template) = get_message_template(code)
+        && let Some(params) = extract_params_from_template(english_template, formatted_english)
+        && params.iter().any(Option::is_some)
+    {
+        return substitute_params(template, &params);
+    }
 
+    let params = extract_quoted_strings(formatted_english)
+        .into_iter()
+        .map(|param| Some(param.to_string()))
+        .collect::<Vec<_>>();
+
+    substitute_params(template, &params)
+}
+
+/// Substitute indexed placeholders with extracted parameter values.
+fn substitute_params(template: &str, params: &[Option<String>]) -> String {
     // Substitute parameters into the template
     let mut result = template.to_string();
     for (i, param) in params.iter().enumerate() {
-        let placeholder = format!("{{{i}}}");
-        result = result.replace(&placeholder, param);
+        if let Some(param) = param {
+            let placeholder = format!("{{{i}}}");
+            result = result.replace(&placeholder, param);
+        }
     }
 
     result
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TemplatePart<'a> {
+    Literal(&'a str),
+    Placeholder(usize),
+}
+
+fn contains_placeholder(template: &str) -> bool {
+    parse_template_parts(template)
+        .iter()
+        .any(|part| matches!(part, TemplatePart::Placeholder(_)))
+}
+
+fn extract_params_from_template(
+    english_template: &str,
+    formatted_english: &str,
+) -> Option<Vec<Option<String>>> {
+    let parts = parse_template_parts(english_template);
+    if !parts
+        .iter()
+        .any(|part| matches!(part, TemplatePart::Placeholder(_)))
+    {
+        return Some(Vec::new());
+    }
+
+    let mut params = Vec::<Option<String>>::new();
+    let mut formatted_pos = 0;
+
+    for (idx, part) in parts.iter().enumerate() {
+        match part {
+            TemplatePart::Literal(literal) => {
+                if !formatted_english[formatted_pos..].starts_with(literal) {
+                    return None;
+                }
+                formatted_pos += literal.len();
+            }
+            TemplatePart::Placeholder(param_idx) => {
+                if matches!(parts.get(idx + 1), Some(TemplatePart::Placeholder(_))) {
+                    return None;
+                }
+
+                let next_literal = parts[idx + 1..].iter().find_map(|part| match part {
+                    TemplatePart::Literal(literal) if !literal.is_empty() => Some(*literal),
+                    _ => None,
+                });
+
+                let param_end = if let Some(next_literal) = next_literal {
+                    formatted_english[formatted_pos..]
+                        .find(next_literal)
+                        .map(|offset| formatted_pos + offset)?
+                } else {
+                    formatted_english.len()
+                };
+
+                if params.len() <= *param_idx {
+                    params.resize_with(param_idx + 1, || None);
+                }
+                params[*param_idx] = Some(formatted_english[formatted_pos..param_end].to_string());
+                formatted_pos = param_end;
+            }
+        }
+    }
+
+    if formatted_pos == formatted_english.len() {
+        Some(params)
+    } else {
+        None
+    }
+}
+
+fn parse_template_parts(template: &str) -> Vec<TemplatePart<'_>> {
+    let mut parts = Vec::new();
+    let mut literal_start = 0;
+    let mut search_start = 0;
+
+    while let Some(open_offset) = template[search_start..].find('{') {
+        let open = search_start + open_offset;
+
+        if let Some((placeholder_end, param_idx)) = parse_placeholder_at(template, open) {
+            if open > literal_start {
+                parts.push(TemplatePart::Literal(&template[literal_start..open]));
+            }
+            parts.push(TemplatePart::Placeholder(param_idx));
+            literal_start = placeholder_end;
+            search_start = placeholder_end;
+        } else {
+            search_start = open + 1;
+        }
+    }
+
+    if literal_start < template.len() {
+        parts.push(TemplatePart::Literal(&template[literal_start..]));
+    }
+
+    parts
+}
+
+fn parse_placeholder_at(template: &str, open: usize) -> Option<(usize, usize)> {
+    let close = open + 1 + template[open + 1..].find('}')?;
+    let index = &template[open + 1..close];
+    if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((close + 1, index.parse().ok()?))
 }
 
 /// Extract single-quoted strings from a message.

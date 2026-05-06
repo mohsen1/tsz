@@ -1,12 +1,15 @@
+use super::CompilationCache;
 use super::FileReadResult;
 use super::check_module_resolution_compatibility;
 use super::check_module_resolution_compatibility_mut;
+use super::compilation_cache_to_build_info;
 use super::compile;
 use super::find_tsconfig;
 use super::no_input_diagnostics_for_config;
 use super::read_source_file;
 use crate::args::CliArgs;
 use crate::config::{CompilerOptions, ResolvedCompilerOptions};
+use crate::incremental::compute_file_version;
 use clap::Parser;
 use std::fs;
 use std::io::Write;
@@ -78,6 +81,33 @@ fn find_tsconfig_walks_up_from_project_subdirectory() {
     fs::create_dir_all(&nested).expect("create nested project dir");
 
     assert_eq!(find_tsconfig(&nested), Some(config));
+}
+
+#[test]
+fn compilation_cache_build_info_uses_source_hash_for_file_version() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let source_path = dir.path().join("src/index.ts");
+    fs::create_dir_all(source_path.parent().unwrap()).expect("create source dir");
+    fs::write(&source_path, "export const value = 1;").expect("write source");
+
+    let mut cache = CompilationCache::default();
+    cache.export_hashes.insert(source_path.clone(), 0x1234);
+
+    let build_info = compilation_cache_to_build_info(
+        &cache,
+        std::slice::from_ref(&source_path),
+        dir.path(),
+        &ResolvedCompilerOptions::default(),
+    );
+    let file_info = build_info
+        .get_file_info("src/index.ts")
+        .expect("source file should be recorded");
+
+    assert_eq!(
+        file_info.version,
+        compute_file_version(&source_path).unwrap()
+    );
+    assert_eq!(file_info.signature.as_deref(), Some("0000000000001234"));
 }
 
 #[test]
@@ -359,6 +389,64 @@ fn test_cli_module_resolution_preserves_config_package_json_resolution_false() {
 }
 
 #[test]
+fn test_cli_no_unchecked_side_effect_imports_overrides_config_false() {
+    let args =
+        CliArgs::try_parse_from(["tsz", "--noUncheckedSideEffectImports"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.no_unchecked_side_effect_imports = false;
+    let config_options = CompilerOptions {
+        no_unchecked_side_effect_imports: Some(false),
+        ..Default::default()
+    };
+    super::apply_cli_overrides_with_config_options(&mut options, &args, Some(&config_options))
+        .expect("apply overrides");
+
+    assert!(options.checker.no_unchecked_side_effect_imports);
+}
+
+#[test]
+fn test_compile_no_unchecked_side_effect_imports_cli_reenables_ts2882() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(dir.path().join("index.ts"), "import \"./missing.css\";\n").expect("write source");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "noEmit": true,
+    "noUncheckedSideEffectImports": false
+  },
+  "files": ["index.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let config_args = CliArgs::try_parse_from(["tsz", "-p", "tsconfig.json"]).expect("parse args");
+    let config_result = compile(&config_args, dir.path()).expect("compile config");
+    assert!(
+        config_result
+            .diagnostics
+            .iter()
+            .all(|diag| diag.code != 2882),
+        "config false should suppress TS2882, got: {:?}",
+        config_result.diagnostics
+    );
+
+    let cli_args = CliArgs::try_parse_from([
+        "tsz",
+        "-p",
+        "tsconfig.json",
+        "--noUncheckedSideEffectImports",
+    ])
+    .expect("parse args");
+    let cli_result = compile(&cli_args, dir.path()).expect("compile cli override");
+    assert!(
+        cli_result.diagnostics.iter().any(|diag| diag.code == 2882),
+        "CLI override should re-enable TS2882, got: {:?}",
+        cli_result.diagnostics
+    );
+}
+
+#[test]
 fn test_cli_overrides_apply_type_and_declaration_options() {
     let args = CliArgs::try_parse_from([
         "tsz",
@@ -388,6 +476,30 @@ fn test_cli_overrides_apply_type_and_declaration_options() {
         options.declaration_dir.as_deref(),
         Some(Path::new("declarations"))
     );
+}
+
+#[test]
+fn test_cli_overrides_apply_umd_and_synthetic_default_interop_options() {
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--allowUmdGlobalAccess",
+        "--allowSyntheticDefaultImports",
+        "false",
+    ])
+    .expect("parse args");
+    let mut options = ResolvedCompilerOptions {
+        allow_synthetic_default_imports: true,
+        checker: tsz::checker::context::CheckerOptions {
+            allow_synthetic_default_imports: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(options.checker.allow_umd_global_access);
+    assert!(!options.allow_synthetic_default_imports);
+    assert!(!options.checker.allow_synthetic_default_imports);
 }
 
 #[test]
@@ -1351,4 +1463,72 @@ fn js_only_syntactic_error_suppresses_semantic_diagnostics_program_wide() {
             result.diagnostics,
         );
     }
+}
+
+#[test]
+fn module_preserve_checked_js_resolved_require_does_not_emit_missing_node_global() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    fs::create_dir_all(base.join("node_modules/dep")).expect("create dep package");
+    fs::write(
+        base.join("node_modules/dep/package.json"),
+        r#"{
+          "name": "dep",
+          "exports": {
+            "import": "./import.mjs",
+            "require": "./require.js"
+          }
+        }"#,
+    )
+    .expect("write package");
+    fs::write(
+        base.join("node_modules/dep/import.d.mts"),
+        "export const esm: \"esm\";\n",
+    )
+    .expect("write import types");
+    fs::write(
+        base.join("node_modules/dep/require.d.ts"),
+        "declare const cjs: \"cjs\";\nexport = cjs;\n",
+    )
+    .expect("write require types");
+    fs::write(
+        base.join("index.ts"),
+        "import { esm } from \"dep\";\nimport cjs = require(\"dep\");\n",
+    )
+    .expect("write index");
+    fs::write(
+        base.join("main.js"),
+        "import { esm } from \"dep\";\nconst cjs = require(\"dep\");\n",
+    )
+    .expect("write main");
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "preserve",
+            "target": "esnext",
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["index.ts", "main.js"]
+        }"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let node_global_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2591)
+        .collect();
+    assert!(
+        node_global_diags.is_empty(),
+        "module preserve require forms should not emit TS2591 when the package resolves; got: {node_global_diags:?}; all diagnostics: {:?}",
+        result.diagnostics,
+    );
 }

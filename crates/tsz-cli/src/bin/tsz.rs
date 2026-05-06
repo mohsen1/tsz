@@ -18,6 +18,7 @@ use tsz_cli::{driver, locale, reporter::Reporter, watch};
 const EXIT_SUCCESS: i32 = 0;
 const EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED: i32 = 1;
 const EXIT_DIAGNOSTICS_OUTPUTS_GENERATED: i32 = 2;
+const TS5112_COMMAND_LINE_FILES_MESSAGE: &str = "tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error.";
 
 fn main() -> Result<()> {
     // Initialize tracing if TSZ_LOG or RUST_LOG is set (zero cost otherwise).
@@ -75,9 +76,16 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         return handle_init(&args, &cwd);
     }
 
+    reject_tsconfig_only_cli_options(&args);
+
     // Handle --showConfig: print resolved configuration
     if args.show_config {
         return handle_show_config(&args, &cwd);
+    }
+
+    if should_report_ts5112_for_command_line_files(&args, &cwd) {
+        println!("error TS5112: {TS5112_COMMAND_LINE_FILES_MESSAGE}");
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
     }
 
     // Handle --listFilesOnly: print file list and exit
@@ -279,6 +287,14 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     std::process::exit(EXIT_SUCCESS);
 }
 
+fn should_report_ts5112_for_command_line_files(args: &CliArgs, cwd: &std::path::Path) -> bool {
+    !args.ignore_config
+        && !args.build
+        && args.project.is_none()
+        && !args.files.is_empty()
+        && cwd.join("tsconfig.json").exists()
+}
+
 const fn should_use_large_stack_thread(args: &CliArgs) -> bool {
     args.project.is_some() || args.build || args.watch || args.batch || args.files.len() != 1
 }
@@ -383,6 +399,7 @@ fn run_batch_mode() -> Result<()> {
 ///   `-v` maps to `--build-verbose`, `-d` maps to `--dry`, `-f` maps to `--force`
 /// - Case-insensitive flag names: `--NoEmit` → `--noEmit` (tsc v6 compat)
 /// - Boolean flag values: `--strict false` → strip the flag (tsc v6 compat)
+/// - Optional boolean flags: `--strictNullChecks file.ts` → `--strictNullChecks=true file.ts`
 /// - Duplicate flags: `--strict --strict` → deduplicated (tsc v6 compat)
 fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
     let flag_lookup = build_flag_lookup();
@@ -595,15 +612,13 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 let next_lower = next_str.to_lowercase();
                 if next_lower == "false" {
                     if option_bool_flags.contains(flag_name.as_str()) {
-                        // Option<bool> flag: emit --flag=false so clap gets the value
-                        let combined = format!("{flag_name}=false");
-                        if let Some(&prev_idx) = flag_positions.get(&flag_name) {
-                            skip_positions[prev_idx] = true;
-                        }
-                        let current_idx = final_result.len();
-                        flag_positions.insert(flag_name, current_idx);
-                        final_result.push(OsString::from(combined));
-                        skip_positions.push(false);
+                        push_option_bool_arg(
+                            &mut final_result,
+                            &mut skip_positions,
+                            &mut flag_positions,
+                            &flag_name,
+                            false,
+                        );
                         i += 2;
                         continue;
                     }
@@ -616,21 +631,34 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                     continue;
                 } else if next_lower == "true" {
                     if option_bool_flags.contains(flag_name.as_str()) {
-                        // Option<bool> flag: emit --flag=true so clap gets the value
-                        let combined = format!("{flag_name}=true");
-                        if let Some(&prev_idx) = flag_positions.get(&flag_name) {
-                            skip_positions[prev_idx] = true;
-                        }
-                        let current_idx = final_result.len();
-                        flag_positions.insert(flag_name, current_idx);
-                        final_result.push(OsString::from(combined));
-                        skip_positions.push(false);
+                        push_option_bool_arg(
+                            &mut final_result,
+                            &mut skip_positions,
+                            &mut flag_positions,
+                            &flag_name,
+                            true,
+                        );
                         i += 2;
                         continue;
                     }
                     // Plain bool flag: keep the flag, skip the "true" token
                     i += 1;
                 }
+            }
+
+            if is_boolean
+                && !arg_str.contains('=')
+                && option_bool_flags.contains(flag_name.as_str())
+            {
+                push_option_bool_arg(
+                    &mut final_result,
+                    &mut skip_positions,
+                    &mut flag_positions,
+                    &flag_name,
+                    true,
+                );
+                i += 1;
+                continue;
             }
 
             // Deduplicate: if we've seen this flag before, mark old position for skip
@@ -669,6 +697,23 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
         .zip(skip_positions)
         .filter_map(|(arg, skip)| if skip { None } else { Some(arg) })
         .collect()
+}
+
+fn push_option_bool_arg(
+    final_result: &mut Vec<OsString>,
+    skip_positions: &mut Vec<bool>,
+    flag_positions: &mut FxHashMap<String, usize>,
+    flag_name: &str,
+    value: bool,
+) {
+    if let Some(&prev_idx) = flag_positions.get(flag_name) {
+        skip_positions[prev_idx] = true;
+    }
+
+    let current_idx = final_result.len();
+    flag_positions.insert(flag_name.to_string(), current_idx);
+    final_result.push(OsString::from(format!("{flag_name}={value}")));
+    skip_positions.push(false);
 }
 
 /// Build a lookup table from lowercase flag names (without `--`) to their canonical
@@ -1600,6 +1645,22 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
         let counter_dump = tsz_common::perf_counters::PerfCounters::dump_string();
         if !counter_dump.is_empty() {
             print!("{counter_dump}");
+        }
+    }
+}
+
+fn reject_tsconfig_only_cli_options(args: &CliArgs) {
+    for (name, values) in [
+        ("paths", args.paths.as_ref()),
+        ("plugins", args.plugins.as_ref()),
+    ] {
+        let provided_non_null = values
+            .is_some_and(|values| !(values.len() == 1 && values[0].eq_ignore_ascii_case("null")));
+        if provided_non_null {
+            println!(
+                "error TS6064: Option '{name}' can only be specified in 'tsconfig.json' file or set to 'null' on command line."
+            );
+            std::process::exit(1);
         }
     }
 }
@@ -2912,10 +2973,15 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         args.project
             .as_ref()
             .map(|p| {
-                if p.is_dir() {
-                    p.join("tsconfig.json")
+                let resolved = if p.is_relative() {
+                    cwd.join(p)
                 } else {
                     p.clone()
+                };
+                if resolved.is_dir() {
+                    resolved.join("tsconfig.json")
+                } else {
+                    resolved
                 }
             })
             .or_else(|| {

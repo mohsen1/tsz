@@ -103,7 +103,7 @@ impl<'a> CheckerContext<'a> {
             symbol_last_assignment_pos: RefCell::new(FxHashMap::default()),
             symbol_flow_confirmed: RefCell::new(FxHashMap::default()),
             narrowing_cache: tsz_solver::NarrowingCache::new(),
-            call_type_predicates: FxHashMap::default(),
+            call_type_predicates: crate::control_flow::CallPredicateMap::default(),
             daa_error_nodes: FxHashSet::default(),
             deferred_ts2454_errors: Vec::new(),
             flow_narrowed_nodes: FxHashSet::with_capacity_and_hasher(256, Default::default()),

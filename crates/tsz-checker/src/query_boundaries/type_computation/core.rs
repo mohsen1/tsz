@@ -88,3 +88,10 @@ pub(crate) fn compute_template_expression_type(
 ) -> TypeId {
     tsz_solver::expression_ops::compute_template_expression_type(db, texts, parts)
 }
+
+pub(crate) fn is_fresh_literal_indexed_object(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(shape_id) = tsz_solver::visitor::object_with_index_shape_id(db, type_id) else {
+        return false;
+    };
+    db.object_shape(shape_id).is_fresh_literal()
+}

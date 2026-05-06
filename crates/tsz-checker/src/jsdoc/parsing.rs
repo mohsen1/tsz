@@ -724,6 +724,63 @@ impl<'a> CheckerState<'a> {
     // JSDoc typedef / callback / import parsing
     // -----------------------------------------------------------------
 
+    /// Collapse multi-line `@import` clauses onto a single line so the
+    /// downstream tag parser sees the full clause text. JSDoc allows the
+    /// import to wrap across lines:
+    ///
+    /// ```text
+    /// /**
+    ///  * @import
+    ///  * { A, B }
+    ///  * from "./types"
+    ///  */
+    /// ```
+    /// Without this preprocessing, the line-based tag parser sees only
+    /// `@import` (empty rest) and silently fails to register A and B.
+    pub(super) fn merge_jsdoc_import_continuations(jsdoc: &str) -> String {
+        let mut result = String::with_capacity(jsdoc.len());
+        let mut pending: Option<String> = None;
+        let strip_jsdoc_leading = |line: &str| -> String {
+            let mut s = line.trim();
+            s = s
+                .trim_start_matches("/**")
+                .trim_start_matches("/*")
+                .trim_start_matches('*')
+                .trim();
+            s = s.trim_end_matches("*/").trim();
+            s.to_string()
+        };
+        for line in jsdoc.lines() {
+            let stripped = strip_jsdoc_leading(line);
+            if let Some(text) = pending.as_mut() {
+                let already_complete = text.contains(" from \"")
+                    || text.contains(" from '")
+                    || text.contains(" from `");
+                if !already_complete && !stripped.is_empty() && !stripped.starts_with('@') {
+                    text.push(' ');
+                    text.push_str(&stripped);
+                    continue;
+                }
+                let flushed = pending
+                    .take()
+                    .expect("pending import text is present while flushing continuation");
+                result.push_str(&flushed);
+                result.push('\n');
+            }
+            if Self::strip_jsdoc_tag_prefix(&stripped, "import").is_some() {
+                pending = Some(line.to_string());
+                continue;
+            }
+            result.push_str(line);
+            result.push('\n');
+        }
+        if let Some(text) = pending {
+            result.push_str(&text);
+            result.push('\n');
+        }
+        result
+    }
+
     pub(crate) fn parse_jsdoc_typedefs(jsdoc: &str) -> Vec<(String, JsdocTypedefInfo)> {
         let mut typedefs = Vec::new();
         let mut current_name: Option<String> = None;
@@ -739,6 +796,14 @@ impl<'a> CheckerState<'a> {
                 .into_iter()
                 .map(|(name, constraint)| JsdocTemplateParamInfo { name, constraint })
                 .collect();
+        // Multi-line `@import` continuation: when the import clause is split
+        // across lines (e.g. `@import\n* { A, B }\n* from "./types"`), the
+        // line-by-line tag parser sees an empty rest on the `@import` line
+        // and silently registers nothing. Rewrite the input so each
+        // `@import` and its continuation lines collapse onto a single line
+        // before tag-level parsing.
+        let jsdoc_owned = Self::merge_jsdoc_import_continuations(jsdoc);
+        let jsdoc = jsdoc_owned.as_str();
         for raw_line in jsdoc.lines() {
             // Normalize both multiline (`/** ... */`) and single-line (`/** ... */`)
             // JSDoc block-comment lines into tag content before parsing.
@@ -1016,8 +1081,29 @@ impl<'a> CheckerState<'a> {
                     .next()
                     .unwrap_or("")
                     .to_string();
-                if before_from.starts_with('{') && before_from.ends_with('}') {
-                    let inner = &before_from[1..before_from.len() - 1];
+                // Combined default + named: `Foo, { Bar, Baz as Q } from "mod"`.
+                // Split off the default name before the `, {` and parse each
+                // half independently so both Foo and the named list are
+                // registered.
+                let combined_default_named = (|| {
+                    let comma_idx = before_from.find(',')?;
+                    let default_part = before_from[..comma_idx].trim();
+                    let named_part = before_from[comma_idx + 1..].trim();
+                    if !named_part.starts_with('{') || !named_part.ends_with('}') {
+                        return None;
+                    }
+                    if default_part.is_empty()
+                        || default_part.contains(char::is_whitespace)
+                        || default_part.contains('{')
+                    {
+                        return None;
+                    }
+                    Some((default_part.to_string(), named_part.to_string()))
+                })();
+                let push_named = |results: &mut Vec<(String, String, String)>,
+                                  named_block: &str,
+                                  spec: &str| {
+                    let inner = &named_block[1..named_block.len() - 1];
                     for part in Self::split_type_args_respecting_nesting(inner) {
                         let part = part.trim();
                         if part.is_empty() {
@@ -1027,16 +1113,18 @@ impl<'a> CheckerState<'a> {
                             Self::split_jsdoc_import_as_keyword(part)
                         {
                             let imported_name = Self::normalize_jsdoc_import_name(imported_name);
-                            results.push((
-                                local_name.to_string(),
-                                specifier.clone(),
-                                imported_name,
-                            ));
+                            results.push((local_name.to_string(), spec.to_string(), imported_name));
                         } else {
                             let imported_name = Self::normalize_jsdoc_import_name(part);
-                            results.push((imported_name.clone(), specifier.clone(), imported_name));
+                            results.push((imported_name.clone(), spec.to_string(), imported_name));
                         }
                     }
+                };
+                if let Some((default_name, named_block)) = combined_default_named {
+                    results.push((default_name, specifier.clone(), "default".to_string()));
+                    push_named(&mut results, &named_block, &specifier);
+                } else if before_from.starts_with('{') && before_from.ends_with('}') {
+                    push_named(&mut results, before_from, &specifier);
                 } else if let Some(("*", ns_name)) =
                     Self::split_jsdoc_import_as_keyword(before_from)
                 {

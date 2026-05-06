@@ -712,7 +712,9 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name) {
+        if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name)
+            && self.cached_lib_type_is_usable(name, *cached)
+        {
             return *cached;
         }
         // Skip shared cache when this checker locally augments `name`.
@@ -721,10 +723,12 @@ impl<'a> CheckerState<'a> {
             && let Some(entry) = shared.get(name)
         {
             let cached = *entry;
-            self.ctx
-                .lib_type_resolution_cache
-                .insert(name.to_string(), cached);
-            return cached;
+            if self.cached_lib_type_is_usable(name, cached) {
+                self.ctx
+                    .lib_type_resolution_cache
+                    .insert(name.to_string(), cached);
+                return cached;
+            }
         }
 
         tracing::trace!(name, "resolve_lib_type_by_name: called");
@@ -1281,11 +1285,35 @@ impl<'a> CheckerState<'a> {
 
         result
     }
+
+    fn cached_lib_type_is_usable(&self, name: &str, cached: Option<TypeId>) -> bool {
+        let Some(type_id) = cached else {
+            return true;
+        };
+        if !crate::query_boundaries::common::type_id_is_known_to_db(self.ctx.types, type_id) {
+            return false;
+        }
+        let Some(global_name) = name.strip_suffix("Constructor") else {
+            return true;
+        };
+        if !self.is_known_global_value_name(global_name)
+            || matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
+        {
+            return true;
+        }
+
+        crate::query_boundaries::common::has_construct_signatures(self.ctx.types, type_id)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::CheckerOptions;
+    use crate::query_boundaries::type_construction::TypeInterner;
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_solver::QueryDatabase;
 
     // ---- keyword_syntax_to_type_id ----
 
@@ -1512,6 +1540,34 @@ mod tests {
         assert_eq!(super::no_value_resolver(NodeIndex(0)), None);
         assert_eq!(super::no_value_resolver(NodeIndex(42)), None);
         assert_eq!(super::no_value_resolver(NodeIndex(u32::MAX)), None);
+    }
+
+    #[test]
+    fn known_global_constructor_cache_rejects_non_constructable_type() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let checker = CheckerState::new(
+            &arena,
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let non_constructable = types.factory().object(Vec::new());
+
+        assert!(
+            !checker.cached_lib_type_is_usable("ErrorConstructor", Some(non_constructable)),
+            "known global constructor cache entries must actually be constructable"
+        );
+        assert!(
+            checker.cached_lib_type_is_usable("Error", Some(non_constructable)),
+            "non-constructor lib cache entries are not filtered by constructability"
+        );
+        assert!(
+            !checker.cached_lib_type_is_usable("Error", Some(TypeId(10_000))),
+            "cached non-intrinsic TypeIds must belong to the current interner"
+        );
     }
 }
 
@@ -1885,11 +1941,8 @@ mod integration_tests {
         let _codes = check_source_codes("declare function iter(): AsyncIterable<string>;");
     }
 
-    // ---- lib ref lowering: heritage chain depth ----
-
     #[test]
     fn array_method_access_no_crash() {
-        // Array extends ReadonlyArray — exercises heritage chain merging
         let _codes =
             check_source_codes("let a: Array<number> = [1, 2, 3]; let b = a.map(x => x + 1);");
     }
@@ -1901,11 +1954,8 @@ mod integration_tests {
 
     #[test]
     fn symbol_iterator_no_crash() {
-        // Symbol.iterator exercises deep lib heritage chains
         let _codes = check_source_codes("let s = Symbol.iterator;");
     }
-
-    // ---- lib ref + global augmentation patterns ----
 
     #[test]
     fn declare_global_interface_augmentation_no_crash() {
@@ -1923,11 +1973,8 @@ mod integration_tests {
         );
     }
 
-    // ---- keyword type consistency ----
-
     #[test]
     fn keyword_types_in_generic_position_no_crash() {
-        // Keyword types used as generic arguments should resolve correctly
         let codes = check_source_codes(
             "type Box<T> = { value: T }; \
              let a: Box<string>; let b: Box<number>; let c: Box<boolean>;",

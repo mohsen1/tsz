@@ -17,6 +17,10 @@ use super::assignability::{
 };
 mod type_mismatch;
 impl<'a> CheckerState<'a> {
+    fn is_object_intrinsic_for_missing_properties(&self, type_id: TypeId) -> bool {
+        query_utils::is_object_intrinsic_type(self.ctx.types, type_id)
+    }
+
     fn no_union_member_matches_switch_source_display(
         &mut self,
         source: TypeId,
@@ -192,7 +196,7 @@ impl<'a> CheckerState<'a> {
                     if prop.parent_id == Some(target_symbol) {
                         saw_own = true;
                         let name = self.ctx.types.resolve_atom_ref(prop.name);
-                        if !name.starts_with("__private_brand")
+                        if !tsz_solver::utils::is_synthetic_private_brand_name(&name)
                             && !is_object_prototype_method(&name)
                             && !source_props.contains(&prop.name)
                             && !class_own_missing.contains(&prop.name)
@@ -238,7 +242,6 @@ impl<'a> CheckerState<'a> {
                 self.normalized_anchor_span(idx, pos, end.saturating_sub(pos))
             });
         let file_name = self.ctx.file_name.clone();
-
         // TS2696: property-only failures from the `Object` wrapper use the
         // specialized message unless the target is callable/constructable.
         if depth == 0 {
@@ -584,7 +587,7 @@ impl<'a> CheckerState<'a> {
                 target_union_members: _,
             } => {
                 let display_source = if depth == 0 { source } else { *source_type };
-                let (mut source_str, target_str) = if depth == 0 {
+                let (mut source_str, mut target_str) = if depth == 0 {
                     let use_structural_source_display =
                         crate::query_boundaries::common::enum_def_id(
                             self.ctx.types,
@@ -640,6 +643,15 @@ impl<'a> CheckerState<'a> {
                         self.no_union_member_matches_switch_source_display(source, target, idx)
                 {
                     source_str = switch_display;
+                }
+                if let Some(display) = self
+                    .object_literal_property_literal_union_alias_target_display(
+                        target,
+                        &target_str,
+                        idx,
+                    )
+                {
+                    target_str = display;
                 }
                 let evaluated_target_for_suggestion = self.evaluate_type_with_env(target);
                 if let Some(suggestion) = self.find_string_literal_spelling_suggestion(
@@ -859,7 +871,16 @@ impl<'a> CheckerState<'a> {
                         anchor_idx: idx,
                     },
                 );
-                let target_str = self.format_assignability_type_for_message(target, source);
+                let mut target_str = self.format_assignability_type_for_message(target, source);
+                if let Some(display) = self
+                    .object_literal_property_literal_union_alias_target_display(
+                        target,
+                        &target_str,
+                        idx,
+                    )
+                {
+                    target_str = display;
+                }
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
@@ -873,6 +894,86 @@ impl<'a> CheckerState<'a> {
                 )
             }
         }
+    }
+
+    fn object_literal_property_literal_union_alias_target_display(
+        &mut self,
+        target: TypeId,
+        current_display: &str,
+        anchor_idx: NodeIndex,
+    ) -> Option<String> {
+        if current_display.contains(" | ")
+            || !self.anchor_is_within_object_literal_property(anchor_idx)
+        {
+            return None;
+        }
+
+        let evaluated = self.evaluate_type_for_assignability(target);
+        let display_target =
+            if crate::query_boundaries::common::union_members(self.ctx.types, target).is_some() {
+                target
+            } else {
+                evaluated
+            };
+        let members =
+            crate::query_boundaries::common::union_members(self.ctx.types, display_target)?;
+        if members.len() < 2
+            || !members.iter().all(|&member| {
+                crate::query_boundaries::common::literal_value(self.ctx.types, member).is_some()
+                    || member == TypeId::BOOLEAN_TRUE
+                    || member == TypeId::BOOLEAN_FALSE
+            })
+        {
+            return None;
+        }
+
+        let mut formatter = self.ctx.create_diagnostic_type_formatter();
+        Some(
+            members
+                .iter()
+                .map(|&member| formatter.format(member).into_owned())
+                .collect::<Vec<_>>()
+                .join(" | "),
+        )
+    }
+
+    fn anchor_is_within_object_literal_property(&self, anchor_idx: NodeIndex) -> bool {
+        let mut current = anchor_idx;
+        for _ in 0..12 {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if matches!(
+                node.kind,
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    || k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+            ) {
+                return self
+                    .ctx
+                    .arena
+                    .get_extended(current)
+                    .and_then(|ext| self.ctx.arena.get(ext.parent))
+                    .is_some_and(|parent| {
+                        parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    });
+            }
+            if matches!(
+                node.kind,
+                k if k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+            ) {
+                return false;
+            }
+            let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+                return false;
+            };
+            if parent.is_none() {
+                return false;
+            }
+            current = parent;
+        }
+        false
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -890,8 +991,9 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> Diagnostic {
+        let source_type_is_object = self.is_object_intrinsic_for_missing_properties(source_type);
         // Primitive sources use TS2322 rather than missing-property wording.
-        let display_src_str = if depth == 0 && source_type != tsz_solver::TypeId::OBJECT {
+        let display_src_str = if depth == 0 && !source_type_is_object {
             self.format_type_for_diagnostic_role(
                 source,
                 DiagnosticTypeDisplayRole::AssignmentSource {
@@ -911,7 +1013,7 @@ impl<'a> CheckerState<'a> {
         let outer_source_is_primitive =
             crate::query_boundaries::common::is_primitive_type(self.ctx.types, source)
                 || is_primitive_type_name(&display_src_str);
-        let inner_source_type_is_primitive = source_type != tsz_solver::TypeId::OBJECT
+        let inner_source_type_is_primitive = !source_type_is_object
             && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type);
         let is_source_primitive =
             outer_source_is_primitive || (depth > 0 && inner_source_type_is_primitive);
@@ -1228,7 +1330,7 @@ impl<'a> CheckerState<'a> {
 
         // Private brand properties handling
         let prop_name = self.ctx.types.resolve_atom_ref(property_name).to_string();
-        if prop_name.starts_with("__private_brand") {
+        if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
             let src_str = if depth == 0 {
                 self.format_type_for_diagnostic_role(
                     source,
@@ -1647,8 +1749,11 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> Diagnostic {
+        let source_type_is_object = self.is_object_intrinsic_for_missing_properties(source_type);
         // TSC emits TS2322 instead of TS2739/TS2740 when the source is a primitive type.
-        if crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type) {
+        if !source_type_is_object
+            && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type)
+        {
             let src_str = self.format_type_diagnostic(source_type);
             let tgt_str = self.format_type_diagnostic(target_type);
             let message = format_message(
@@ -1852,7 +1957,7 @@ impl<'a> CheckerState<'a> {
         }
         let _has_non_proto_missing = property_names.iter().any(|name| {
             let s = self.ctx.types.resolve_atom_ref(*name);
-            !s.starts_with("__private_brand")
+            !tsz_solver::utils::is_synthetic_private_brand_name(&s)
                 && if is_array_target {
                     !is_object_prototype_method_for_array_target(&s)
                 } else {
@@ -1863,7 +1968,7 @@ impl<'a> CheckerState<'a> {
             .iter()
             .filter(|name| {
                 let s = self.ctx.types.resolve_atom_ref(**name);
-                if s.starts_with("__private_brand") {
+                if tsz_solver::utils::is_synthetic_private_brand_name(&s) {
                     return false;
                 }
                 if is_array_target {
@@ -1904,7 +2009,7 @@ impl<'a> CheckerState<'a> {
                 self.private_or_protected_member_missing_display(source_type, target_type, None)
             {
                 let widened_source = self.widen_type_for_display(source_type);
-                let src_str = if source_type == TypeId::OBJECT {
+                let src_str = if source_type_is_object {
                     "{}".to_string()
                 } else {
                     self.format_type_diagnostic(widened_source)
@@ -1927,7 +2032,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
             let src_str = if depth == 0 {
-                if source_type == TypeId::OBJECT {
+                if source_type_is_object {
                     "{}".to_string()
                 } else {
                     let source_display = self.format_type_for_diagnostic_role(
@@ -1943,7 +2048,7 @@ impl<'a> CheckerState<'a> {
                         source_display,
                     )
                 }
-            } else if source_type == TypeId::OBJECT {
+            } else if source_type_is_object {
                 "{}".to_string()
             } else {
                 let widened_source = self.widen_type_for_display(source_type);
@@ -1983,13 +2088,17 @@ impl<'a> CheckerState<'a> {
                 )
             {
                 let src_str = if depth == 0 {
-                    self.format_type_for_diagnostic_role(
-                        source,
-                        DiagnosticTypeDisplayRole::AssignmentSource {
-                            target,
-                            anchor_idx: idx,
-                        },
-                    )
+                    if source_type_is_object {
+                        "{}".to_string()
+                    } else {
+                        self.format_type_for_diagnostic_role(
+                            source,
+                            DiagnosticTypeDisplayRole::AssignmentSource {
+                                target,
+                                anchor_idx: idx,
+                            },
+                        )
+                    }
                 } else {
                     self.format_type_diagnostic(source_type)
                 };
@@ -2076,7 +2185,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let src_str = if depth == 0 {
-                if source_type == TypeId::OBJECT {
+                if source_type_is_object {
                     "{}".to_string()
                 } else if let Some(base_display) =
                     self.private_identifier_missing_source_base_display(source, filtered_names[0])
@@ -2091,7 +2200,7 @@ impl<'a> CheckerState<'a> {
                         },
                     )
                 }
-            } else if source_type == TypeId::OBJECT {
+            } else if source_type_is_object {
                 "{}".to_string()
             } else {
                 let widened_source = self.widen_type_for_display(source_type);
@@ -2142,7 +2251,9 @@ impl<'a> CheckerState<'a> {
             // `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
             // line 91, where `type NumberToNumber = NumberTo<number>` is
             // displayed as `NumberTo<number>` in the missing-properties source.
-            if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
+            if source_type_is_object {
+                "{}".to_string()
+            } else if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
                 self.format_type_diagnostic(unfolded)
             } else {
                 self.format_type_for_diagnostic_role(

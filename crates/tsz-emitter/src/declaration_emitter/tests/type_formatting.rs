@@ -249,6 +249,39 @@ const foo = <T,>(x: T) => {
 }
 
 #[test]
+fn test_direct_returned_function_expression_preserves_outer_alias() {
+    let source = r#"
+export function needsRenameForShadowing<T>() {
+  type A = T;
+  return function O<T>(t: A, t2: T) {
+  }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let func = parser
+        .arena
+        .nodes
+        .iter()
+        .find_map(|node| {
+            parser.arena.get_function(node).filter(|func| {
+                parser.arena.get_identifier_text(func.name) == Some("needsRenameForShadowing")
+            })
+        })
+        .expect("missing function");
+    let interner = TypeInterner::new();
+    let type_cache = TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let type_text = emitter
+        .direct_returned_function_expression_type_text(func)
+        .expect("missing returned function type");
+
+    assert_eq!(type_text, "<T_1>(t: T, t2: T_1) => void");
+}
+
+#[test]
 fn test_returned_class_expression_preserves_extends_type_parameter() {
     let source = r#"
 export type Constructor<T = {}> = new (...args: any[]) => T;

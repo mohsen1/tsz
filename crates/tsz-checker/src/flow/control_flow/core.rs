@@ -19,7 +19,39 @@ type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
 type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
 /// Instantiated type predicates from generic call resolutions, keyed by call node index.
-pub(crate) type CallPredicateMap = FxHashMap<u32, (TypePredicate, Vec<ParamInfo>)>;
+#[derive(Debug, Default)]
+pub struct CallPredicateMap {
+    predicates: FxHashMap<u32, (TypePredicate, Vec<ParamInfo>)>,
+    invalid_assertion_calls: FxHashSet<u32>,
+}
+
+impl CallPredicateMap {
+    pub fn iter(&self) -> impl Iterator<Item = (&u32, &(TypePredicate, Vec<ParamInfo>))> {
+        self.predicates.iter()
+    }
+
+    pub(crate) fn get(&self, call_idx: &u32) -> Option<&(TypePredicate, Vec<ParamInfo>)> {
+        self.predicates.get(call_idx)
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        call_idx: u32,
+        predicate: (TypePredicate, Vec<ParamInfo>),
+    ) -> Option<(TypePredicate, Vec<ParamInfo>)> {
+        self.invalid_assertion_calls.remove(&call_idx);
+        self.predicates.insert(call_idx, predicate)
+    }
+
+    pub(crate) fn mark_invalid_assertion_call(&mut self, call_idx: u32) {
+        self.predicates.remove(&call_idx);
+        self.invalid_assertion_calls.insert(call_idx);
+    }
+
+    pub(crate) fn is_invalid_assertion_call(&self, call_idx: u32) -> bool {
+        self.invalid_assertion_calls.contains(&call_idx)
+    }
+}
 
 // Guard against pathological requeue loops in flow traversal.
 // The BFS worklist re-queues CONDITION/NARROWING nodes after scheduling their
@@ -1386,6 +1418,9 @@ impl<'a> FlowAnalyzer<'a> {
                                 })
                             });
                         let ant_needs_defer = (ant_flags & flow_flags::CONDITION) != 0
+                            // Closure START nodes may carry the enclosing flow
+                            // that preserves narrowing for effectively-const captures.
+                            || (ant_flags & flow_flags::START) != 0
                             || (ant_flags & flow_flags::CALL) != 0
                             || (ant_flags & flow_flags::LOOP_LABEL) != 0
                             || (ant_flags & flow_flags::BRANCH_LABEL) != 0
@@ -1625,16 +1660,6 @@ impl<'a> FlowAnalyzer<'a> {
                                             initial_type
                                         }
                                     }
-                                } else if is_destructuring
-                                    && self.arena.get(flow.node).is_some_and(|node| {
-                                        node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                                    })
-                                {
-                                    // Destructuring-assignment writes already compute a
-                                    // branch-sensitive assigned type for the specific target.
-                                    // Re-reducing against the declared annotation can leak
-                                    // unrelated union members from the old declared type.
-                                    assigned_type
                                 } else if is_control_flow_typed_any {
                                     // Unannotated mutable locals such as `let x;` evolve from
                                     // their writes rather than staying explicit `any`.
@@ -2262,6 +2287,12 @@ impl<'a> FlowAnalyzer<'a> {
             return pre_type;
         };
         if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return pre_type;
+        }
+        if self
+            .call_type_predicates
+            .is_some_and(|calls| calls.is_invalid_assertion_call(flow.node.0))
+        {
             return pre_type;
         }
         let Some(call) = self.arena.get_call_expr(node) else {

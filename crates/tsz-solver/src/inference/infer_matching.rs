@@ -1134,10 +1134,18 @@ impl<'a> InferenceContext<'a> {
         for target_sig in &target.call_signatures {
             for source_sig in &source.call_signatures {
                 if source_sig.params.len() == target_sig.params.len() {
+                    let was_contra = self.in_contra_mode;
+                    self.in_contra_mode = true;
                     for (s_param, t_param) in source_sig.params.iter().zip(target_sig.params.iter())
                     {
-                        self.infer_from_types(t_param.type_id, s_param.type_id, priority)?;
+                        let result =
+                            self.infer_from_types(t_param.type_id, s_param.type_id, priority);
+                        if result.is_err() {
+                            self.in_contra_mode = was_contra;
+                            return result;
+                        }
                     }
+                    self.in_contra_mode = was_contra;
                     self.infer_from_types(
                         source_sig.return_type,
                         target_sig.return_type,
@@ -1152,10 +1160,18 @@ impl<'a> InferenceContext<'a> {
         for target_sig in &target.construct_signatures {
             for source_sig in &source.construct_signatures {
                 if source_sig.params.len() == target_sig.params.len() {
+                    let was_contra = self.in_contra_mode;
+                    self.in_contra_mode = true;
                     for (s_param, t_param) in source_sig.params.iter().zip(target_sig.params.iter())
                     {
-                        self.infer_from_types(t_param.type_id, s_param.type_id, priority)?;
+                        let result =
+                            self.infer_from_types(t_param.type_id, s_param.type_id, priority);
+                        if result.is_err() {
+                            self.in_contra_mode = was_contra;
+                            return result;
+                        }
                     }
+                    self.in_contra_mode = was_contra;
                     self.infer_from_types(
                         source_sig.return_type,
                         target_sig.return_type,
@@ -1200,9 +1216,16 @@ impl<'a> InferenceContext<'a> {
     ) -> Result<(), InferenceError> {
         let source = self.interner.function_shape(source_func);
         // Parameters are contravariant
+        let was_contra = self.in_contra_mode;
+        self.in_contra_mode = true;
         for (s_param, t_param) in source.params.iter().zip(target_sig.params.iter()) {
-            self.infer_from_types(t_param.type_id, s_param.type_id, priority)?;
+            let result = self.infer_from_types(t_param.type_id, s_param.type_id, priority);
+            if result.is_err() {
+                self.in_contra_mode = was_contra;
+                return result;
+            }
         }
+        self.in_contra_mode = was_contra;
         // Return type is covariant
         self.infer_from_types(source.return_type, target_sig.return_type, priority)?;
         Ok(())
@@ -1218,9 +1241,16 @@ impl<'a> InferenceContext<'a> {
     ) -> Result<(), InferenceError> {
         let target = self.interner.function_shape(target_func);
         // Parameters are contravariant
+        let was_contra = self.in_contra_mode;
+        self.in_contra_mode = true;
         for (s_param, t_param) in source_sig.params.iter().zip(target.params.iter()) {
-            self.infer_from_types(t_param.type_id, s_param.type_id, priority)?;
+            let result = self.infer_from_types(t_param.type_id, s_param.type_id, priority);
+            if result.is_err() {
+                self.in_contra_mode = was_contra;
+                return result;
+            }
         }
+        self.in_contra_mode = was_contra;
         // Return type is covariant
         self.infer_from_types(source_sig.return_type, target.return_type, priority)?;
         Ok(())
@@ -1635,6 +1665,31 @@ impl<'a> InferenceContext<'a> {
                 )?;
             }
             return Ok(());
+        }
+
+        if let Some(TypeData::TemplateLiteral(source_template)) = source_key {
+            let source_spans = self.interner.template_list(*source_template);
+            if source_spans.len() == spans.len() {
+                let source_spans: Vec<TemplateSpan> = source_spans.iter().cloned().collect();
+                let target_spans: Vec<TemplateSpan> = spans.iter().cloned().collect();
+                let mut matched = true;
+                for (source_span, target_span) in source_spans.iter().zip(target_spans.iter()) {
+                    match (source_span, target_span) {
+                        (TemplateSpan::Text(source_text), TemplateSpan::Text(target_text))
+                            if source_text == target_text => {}
+                        (TemplateSpan::Type(source_type), TemplateSpan::Type(target_type)) => {
+                            self.infer_from_types(*source_type, *target_type, priority)?;
+                        }
+                        _ => {
+                            matched = false;
+                            break;
+                        }
+                    }
+                }
+                if matched {
+                    return Ok(());
+                }
+            }
         }
 
         // For literal string types, perform the actual pattern matching

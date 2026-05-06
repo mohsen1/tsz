@@ -1691,11 +1691,13 @@ impl<'a> CheckerState<'a> {
         if return_type == TypeId::VOID {
             return false;
         }
-        // null and undefined are valid inferred return types, not implicit any.
-        // tsc does not emit TS7010 for functions that return null/undefined,
-        // regardless of strictNullChecks. Only report when the return type is
-        // exactly `any`.
-        return_type == TypeId::ANY
+        if return_type == TypeId::ANY {
+            return true;
+        }
+
+        // With strictNullChecks disabled, tsc treats a null/undefined-only
+        // inferred return as implicit any under noImplicitAny.
+        !self.ctx.strict_null_checks() && self.is_null_or_undefined_only(return_type)
     }
 
     // =========================================================================

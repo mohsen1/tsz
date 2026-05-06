@@ -374,6 +374,9 @@ impl<'a> CheckerState<'a> {
                     } else {
                         instantiated_params.clone()
                     };
+                    let retry_params = retry_params.map(|params| {
+                        self.resolve_signature_parameter_type_queries(&sig.params, &params)
+                    });
                     let (final_arg_types, final_return_type) = if !sig.type_params.is_empty()
                         && !contextual_refresh_args.is_empty()
                         && let Some(instantiated_params) = retry_params.as_ref()
@@ -936,6 +939,9 @@ impl<'a> CheckerState<'a> {
                 } else {
                     instantiated_params.clone()
                 };
+                let retry_params = retry_params.map(|params| {
+                    self.resolve_signature_parameter_type_queries(&sig.params, &params)
+                });
 
                 if let Some(instantiated_params) = retry_params.as_ref() {
                     self.ctx
@@ -1195,6 +1201,8 @@ impl<'a> CheckerState<'a> {
             } else {
                 instantiated_params.clone()
             };
+            let retry_params = retry_params
+                .map(|params| self.resolve_signature_parameter_type_queries(&sig.params, &params));
             if !sig.type_params.is_empty()
                 && !contextual_refresh_args.is_empty()
                 && let Some(instantiated_params) = retry_params.as_ref()

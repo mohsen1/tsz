@@ -9,13 +9,13 @@
 use crate::TypeDatabase;
 use crate::type_queries::data::get_object_shape_id;
 use crate::types::{
-    MappedModifier, MappedTypeId, ObjectShapeId, PropertyInfo, TypeId, TypeParamInfo,
+    MappedModifier, MappedTypeId, ObjectShapeId, PropertyInfo, TupleElement, TypeId, TypeParamInfo,
 };
 use crate::visitor::enum_components;
 use crate::visitor::{
-    application_id, index_access_parts, is_identity_comparable_type, is_literal_type,
-    keyof_inner_type, lazy_def_id, mapped_type_id, readonly_inner_type, tuple_list_id,
-    type_param_info, union_list_id,
+    application_id, array_element_type, index_access_parts, is_identity_comparable_type,
+    is_literal_type, keyof_inner_type, lazy_def_id, mapped_type_id, readonly_inner_type,
+    tuple_list_id, type_param_info, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -103,6 +103,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // This handles: T <: [...T], T <: readonly [...T]
         {
             // Unwrap readonly wrapper if present
+            let target_is_readonly = readonly_inner_type(self.interner, target).is_some();
             let inner_target = readonly_inner_type(self.interner, target).unwrap_or(target);
             if let Some(t_list) = tuple_list_id(self.interner, inner_target) {
                 let t_elems = self.interner.tuple_list(t_list);
@@ -110,6 +111,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     && t_elems[0].rest
                     && type_param_info(self.interner, t_elems[0].type_id)
                         .is_some_and(|inner_info| inner_info.name == s_info.name)
+                    && self.type_param_constraint_allows_spread_identity(
+                        s_info.constraint,
+                        target_is_readonly,
+                    )
                 {
                     return SubtypeResult::True;
                 }
@@ -117,6 +122,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         SubtypeResult::False
+    }
+
+    fn type_param_constraint_allows_spread_identity(
+        &self,
+        constraint: Option<TypeId>,
+        target_is_readonly: bool,
+    ) -> bool {
+        let Some(constraint) = constraint else {
+            return false;
+        };
+        let constraint_is_readonly = readonly_inner_type(self.interner, constraint).is_some();
+        let array_like = if let Some(inner) = readonly_inner_type(self.interner, constraint) {
+            array_element_type(self.interner, inner).is_some()
+                || tuple_list_id(self.interner, inner).is_some()
+        } else {
+            array_element_type(self.interner, constraint).is_some()
+                || tuple_list_id(self.interner, constraint).is_some()
+        };
+
+        array_like && (target_is_readonly || !constraint_is_readonly)
     }
 
     /// Check if a type (identified by name and optional constraint) is assignable
@@ -434,6 +459,115 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         SubtypeResult::True
     }
+
+    /// Tuple variant of `type_related_to_discriminated_type`.
+    ///
+    /// TypeScript accepts a tuple whose element contains a finite literal union
+    /// when each literal arm is accepted by a matching target tuple union member:
+    /// `["a" | "b", 1]` is assignable to `["a", number] | ["b", number]`.
+    pub(crate) fn type_related_to_discriminated_tuple_type(
+        &mut self,
+        source: TypeId,
+        target_members: &[TypeId],
+    ) -> SubtypeResult {
+        let Some(source_list_id) = tuple_list_id(self.interner, source) else {
+            return SubtypeResult::False;
+        };
+        let source_elems = self.interner.tuple_list(source_list_id);
+        if source_elems.is_empty() || source_elems.iter().any(|elem| elem.rest) {
+            return SubtypeResult::False;
+        }
+
+        let mut target_tuples = Vec::with_capacity(target_members.len());
+        for &member in target_members {
+            let Some(list_id) = tuple_list_id(self.interner, member) else {
+                return SubtypeResult::False;
+            };
+            let elems = self.interner.tuple_list(list_id);
+            if elems.len() != source_elems.len() || elems.iter().any(|elem| elem.rest) {
+                return SubtypeResult::False;
+            }
+            target_tuples.push(elems);
+        }
+
+        let mut disc_positions = Vec::new();
+        let mut disc_values = Vec::new();
+        for (index, source_elem) in source_elems.iter().enumerate() {
+            let values = get_discriminant_values(self.interner, source_elem.type_id);
+            if values.len() <= 1 {
+                continue;
+            }
+
+            let mut has_unit = false;
+            let mut seen_types = Vec::new();
+            for target_tuple in &target_tuples {
+                let target_type = target_tuple[index].type_id;
+                if !seen_types.contains(&target_type) {
+                    seen_types.push(target_type);
+                }
+                for &constituent in &get_type_constituents(self.interner, target_type) {
+                    if is_identity_comparable_type(self.interner, constituent)
+                        || is_literal_type(self.interner, constituent)
+                    {
+                        has_unit = true;
+                    }
+                }
+            }
+
+            if has_unit && seen_types.len() > 1 {
+                disc_positions.push(index);
+                disc_values.push(values);
+            }
+        }
+
+        if disc_positions.is_empty() {
+            return SubtypeResult::False;
+        }
+
+        let total_combinations: usize = disc_values.iter().map(|values| values.len()).product();
+        if total_combinations > MAX_DISCRIMINANT_COMBINATIONS {
+            return SubtypeResult::False;
+        }
+
+        let mut combo_indices = vec![0usize; disc_values.len()];
+        loop {
+            let narrowed = narrow_tuple_elements(
+                self.interner,
+                &source_elems,
+                &disc_positions,
+                &disc_values,
+                &combo_indices,
+            );
+
+            let mut found = false;
+            for &target_member in target_members {
+                if self.check_subtype(narrowed, target_member).is_true() {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return SubtypeResult::False;
+            }
+
+            let mut carry = true;
+            for d in (0..disc_values.len()).rev() {
+                if carry {
+                    combo_indices[d] += 1;
+                    if combo_indices[d] >= disc_values[d].len() {
+                        combo_indices[d] = 0;
+                    } else {
+                        carry = false;
+                    }
+                }
+            }
+            if carry {
+                break;
+            }
+        }
+
+        SubtypeResult::True
+    }
 }
 
 // ── Helper functions for discriminated union checking ──
@@ -632,4 +766,19 @@ fn narrow_object_properties(
     }
 
     db.object(new_props)
+}
+
+fn narrow_tuple_elements(
+    db: &dyn TypeDatabase,
+    source_elems: &[TupleElement],
+    disc_positions: &[usize],
+    disc_values: &[smallvec::SmallVec<[TypeId; 4]>],
+    combo_indices: &[usize],
+) -> TypeId {
+    let mut elements = source_elems.to_vec();
+    for (d, &position) in disc_positions.iter().enumerate() {
+        elements[position].type_id = disc_values[d][combo_indices[d]];
+        elements[position].optional = false;
+    }
+    db.tuple(elements)
 }

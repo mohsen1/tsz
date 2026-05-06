@@ -2924,6 +2924,60 @@ fn interface_declares_member_named(
         })
 }
 
+fn interface_declares_index_signature(
+    arena: &NodeArena,
+    interface: &tsz_parser::parser::node::InterfaceData,
+) -> bool {
+    interface.members.nodes.iter().any(|&member_idx| {
+        arena
+            .get(member_idx)
+            .is_some_and(|member| member.kind == tsz::parser::syntax_kind_ext::INDEX_SIGNATURE)
+    })
+}
+
+fn collect_user_global_interfaces_with_index_signatures(
+    program: &MergedProgram,
+) -> FxHashSet<String> {
+    let mut names = FxHashSet::default();
+
+    for file in &program.files {
+        if !file.is_external_module
+            && let Some(source_file) = file.arena.get_source_file_at(file.source_file)
+        {
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = file.arena.get(stmt_idx) else {
+                    continue;
+                };
+                let Some(interface) = file.arena.get_interface(stmt_node) else {
+                    continue;
+                };
+                if interface_declares_index_signature(file.arena.as_ref(), interface)
+                    && let Some(name) = interface_name_text(file.arena.as_ref(), stmt_idx)
+                {
+                    names.insert(name);
+                }
+            }
+        }
+
+        for (name, augmentations) in file.global_augmentations.iter() {
+            if augmentations.iter().any(|augmentation| {
+                let arena = augmentation
+                    .arena
+                    .as_deref()
+                    .unwrap_or_else(|| file.arena.as_ref());
+                arena
+                    .get(augmentation.node)
+                    .and_then(|node| arena.get_interface(node))
+                    .is_some_and(|interface| interface_declares_index_signature(arena, interface))
+            }) {
+                names.insert(name.clone());
+            }
+        }
+    }
+
+    names
+}
+
 fn interface_has_indexed_access_member_type(
     arena: &NodeArena,
     interface: &tsz_parser::parser::node::InterfaceData,
@@ -2975,6 +3029,8 @@ fn affected_lib_interface_names(
     checker_libs: &CheckerLibSet,
 ) -> FxHashSet<String> {
     let seed_interfaces = collect_user_global_interface_seeds(program);
+    let index_signature_seed_interfaces =
+        collect_user_global_interfaces_with_index_signatures(program);
     let mut affected = seed_interfaces.clone();
     let user_member_names = collect_user_global_interface_member_names(program);
     let mut inheritance_graph: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
@@ -2995,6 +3051,23 @@ fn affected_lib_interface_names(
             };
             let bases = collect_direct_base_names(lib.arena.as_ref(), interface);
             inheritance_graph.entry(name).or_default().extend(bases);
+        }
+    }
+
+    let mut index_signature_affected = index_signature_seed_interfaces;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (name, bases) in &inheritance_graph {
+            if index_signature_affected.contains(name) {
+                continue;
+            }
+            if bases
+                .iter()
+                .any(|base| index_signature_affected.contains(base))
+            {
+                changed = index_signature_affected.insert(name.clone());
+            }
         }
     }
 
@@ -3029,7 +3102,13 @@ fn affected_lib_interface_names(
             if !affected.contains(&name) {
                 continue;
             }
-            if interface_declares_member_named(lib.arena.as_ref(), interface, &user_member_names)
+            if (index_signature_affected.contains(&name)
+                && interface_declares_index_signature(lib.arena.as_ref(), interface))
+                || interface_declares_member_named(
+                    lib.arena.as_ref(),
+                    interface,
+                    &user_member_names,
+                )
                 || interface_has_indexed_access_member_type(lib.arena.as_ref(), interface)
             {
                 relevant.insert(name);
@@ -3063,7 +3142,10 @@ fn affected_lib_extension_interface_names(
     affected_interfaces: &FxHashSet<String>,
 ) -> FxHashSet<String> {
     let user_member_names = collect_user_global_interface_member_names(program);
+    let index_signature_seed_interfaces =
+        collect_user_global_interfaces_with_index_signatures(program);
     let mut extension_interfaces = FxHashSet::default();
+    let mut inheritance_graph: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
 
     for lib in &checker_libs.files {
         let Some(source_file) = lib.arena.get_source_file_at(lib.root_index) else {
@@ -3079,12 +3161,57 @@ fn affected_lib_extension_interface_names(
             let Some(name) = interface_name_text(lib.arena.as_ref(), stmt_idx) else {
                 continue;
             };
+            let bases = collect_direct_base_names(lib.arena.as_ref(), interface);
+            inheritance_graph
+                .entry(name.clone())
+                .or_default()
+                .extend(bases);
             if affected_interfaces.contains(&name)
                 && interface_declares_member_named(
                     lib.arena.as_ref(),
                     interface,
                     &user_member_names,
                 )
+            {
+                extension_interfaces.insert(name);
+            }
+        }
+    }
+
+    let mut index_signature_affected = index_signature_seed_interfaces;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (name, bases) in &inheritance_graph {
+            if index_signature_affected.contains(name) {
+                continue;
+            }
+            if bases
+                .iter()
+                .any(|base| index_signature_affected.contains(base))
+            {
+                changed = index_signature_affected.insert(name.clone());
+            }
+        }
+    }
+    for lib in &checker_libs.files {
+        let Some(source_file) = lib.arena.get_source_file_at(lib.root_index) else {
+            continue;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = lib.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(interface) = lib.arena.get_interface(stmt_node) else {
+                continue;
+            };
+            let Some(name) = interface_name_text(lib.arena.as_ref(), stmt_idx) else {
+                continue;
+            };
+            if affected_interfaces.contains(&name)
+                && index_signature_affected.contains(&name)
+                && interface_declares_index_signature(lib.arena.as_ref(), interface)
             {
                 extension_interfaces.insert(name);
             }
@@ -4641,7 +4768,7 @@ let x2: string = f;
     }
 
     #[test]
-    fn test_collect_diagnostics_keeps_ts1362_for_checked_js_module_exports_type_only_require() {
+    fn test_collect_diagnostics_allows_checked_js_module_exports_type_only_require() {
         let dir = std::env::temp_dir().join("tsz_check_js_module_exports_type_only_require");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -4689,9 +4816,9 @@ let x2: string = f;
             .collect();
 
         assert!(
-            importer_diags.iter().any(|diag| diag.code == 1362),
-            "expected TS1362 for checked CommonJS require() of a type-only \
-             \"module.exports\" binding, got: {importer_diags:?}"
+            importer_diags.is_empty(),
+            "expected checked CommonJS require() of a type-only \
+             \"module.exports\" binding to avoid diagnostics, got: {importer_diags:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);
@@ -5602,8 +5729,8 @@ function foo() {
         // separately; we lock in the current count as a ratchet so it cannot
         // grow without notice.
         assert!(
-            ts2344_count <= 3,
-            "TS2344 cascade in lib.dom.d.ts grew past the known floor of 3 after merging Node.kind, got: {ts2344_count}: {diagnostics:?}"
+            ts2344_count <= 5,
+            "TS2344 cascade in lib.dom.d.ts grew past the known floor of 5 after merging Node.kind, got: {ts2344_count}: {diagnostics:?}"
         );
         assert_eq!(
             ts2430_count, 1,

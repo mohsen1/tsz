@@ -84,6 +84,16 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn default_expression_has_safe_nameable_surface_type(&self, expr_idx: NodeIndex) -> bool {
+        if self
+            .call_expression_reused_type_text(expr_idx)
+            .is_some_and(|type_text| {
+                Self::type_text_starts_with_import_type(&type_text)
+                    && !self.import_type_uses_private_package_subpath(&type_text)
+            })
+        {
+            return true;
+        }
+
         let Some(resolved_type) = self.resolve_declaration_type_text(&[expr_idx], Some(expr_idx))
         else {
             return false;
@@ -801,11 +811,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         let func_body = func.body;
         let func_name = func.name;
-        let preferred_return = if func_body.is_some() {
-            self.function_body_preferred_return_type_text(func_body)
-        } else {
-            None
-        };
+        let (preferred_return, direct_function_return) =
+            self.function_body_return_hint(func, func_body);
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
@@ -854,12 +861,20 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&type_text);
                 } else if let Some(type_text) = preferred_return.as_ref()
-                    && self.should_prefer_source_return_type_text(type_text, return_type_id)
+                    && (direct_function_return
+                        || self.should_prefer_source_return_type_text(type_text, return_type_id)
+                        || self.source_return_type_is_function_type_param(func, type_text))
                 {
                     let (type_text, _) =
                         self.function_return_type_text_for_declaration_scope(func, type_text);
                     self.write(": ");
                     self.write(&type_text);
+                } else if self.emit_single_nameable_new_return_type_if_solver_any(
+                    func,
+                    func_body,
+                    func_name,
+                    return_type_id,
+                ) {
                 } else {
                     let printed_type_text =
                         self.inferred_function_return_type_text(func, return_type_id);
@@ -1071,7 +1086,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
-        for &member_idx in &class.members.nodes {
+        for member_idx in self.class_member_emit_order(&class.members) {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(mn) = self.arena.get(member_idx) {
@@ -1534,7 +1549,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
-        for &member_idx in &class.members.nodes {
+        for member_idx in self.class_member_emit_order(&class.members) {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(member_node) = self.arena.get(member_idx) {
@@ -1629,11 +1644,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         let func_body = func.body;
         let func_name = func.name;
-        let preferred_return = if func_body.is_some() {
-            self.function_body_preferred_return_type_text(func_body)
-        } else {
-            None
-        };
+        let (preferred_return, direct_function_return) =
+            self.function_body_return_hint(func, func_body);
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
@@ -1682,12 +1694,20 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&type_text);
                 } else if let Some(type_text) = preferred_return.as_ref()
-                    && self.should_prefer_source_return_type_text(type_text, return_type_id)
+                    && (direct_function_return
+                        || self.should_prefer_source_return_type_text(type_text, return_type_id)
+                        || self.source_return_type_is_function_type_param(func, type_text))
                 {
                     let (type_text, _) =
                         self.function_return_type_text_for_declaration_scope(func, type_text);
                     self.write(": ");
                     self.write(&type_text);
+                } else if self.emit_single_nameable_new_return_type_if_solver_any(
+                    func,
+                    func_body,
+                    func_name,
+                    return_type_id,
+                ) {
                 } else {
                     if let Some(name_text) = self.get_identifier_text(func_name)
                         && let Some(name_node) = self.arena.get(func_name)

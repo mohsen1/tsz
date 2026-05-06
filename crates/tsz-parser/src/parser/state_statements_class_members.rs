@@ -129,12 +129,12 @@ impl ParserState {
                         diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
                     );
                 }
-                // TS1029: static must come after accessibility, before certain others
-                if seen_abstract || seen_readonly || seen_override || seen_accessor || seen_async {
+                // TS1029: static must come after accessibility, before certain others.
+                // `static` with `abstract` is illegal in either order; the checker
+                // emits TS1243 for that pair, so do not also emit an ordering error.
+                if seen_readonly || seen_override || seen_accessor || seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
-                    let other = if seen_abstract {
-                        "abstract"
-                    } else if seen_override {
+                    let other = if seen_override {
                         "override"
                     } else if seen_readonly {
                         "readonly"
@@ -1562,7 +1562,7 @@ impl ParserState {
         if let Some(name_node) = self.arena.get(name)
             && name_node.kind == SyntaxKind::PrivateIdentifier as u16
             && let Some(ident) = self.arena.get_identifier(name_node)
-            && ident.escaped_text == "#constructor"
+            && (ident.escaped_text == "constructor" || ident.escaped_text == "#constructor")
         {
             self.parse_error_at(
                 name_node.pos,

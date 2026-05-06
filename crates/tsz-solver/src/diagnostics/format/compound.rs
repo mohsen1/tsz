@@ -1433,12 +1433,20 @@ impl<'a> TypeFormatter<'a> {
     }
 
     pub(super) fn format_tuple(&mut self, elements: &[TupleElement]) -> String {
-        // Normalize: a tuple with a single rest element `[...T[]]` displays as `T[]`
-        // to match tsc's display behavior.  Named rest elements (`[...urls: string[]]`)
-        // are also simplified because the label is irrelevant in type display.
+        // Normalize: a tuple with a single concrete rest element `[...T[]]`
+        // displays as `T[]` to match tsc's display behavior. Type-parameter
+        // spreads must keep their tuple wrapper (`[...T]`) so diagnostics can
+        // distinguish the mutable tuple view from the bare type parameter `T`.
         if elements.len() == 1 && elements[0].rest {
-            let inner = self.format(elements[0].type_id);
-            return inner.into_owned();
+            if matches!(
+                self.interner.lookup(elements[0].type_id),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            ) {
+                // Fall through to normal tuple formatting.
+            } else {
+                let inner = self.format(elements[0].type_id);
+                return inner.into_owned();
+            }
         }
         // Format each element's type independently, then apply namespace
         // disambiguation across elements whose display names collide —
@@ -1798,8 +1806,19 @@ impl<'a> TypeFormatter<'a> {
             return;
         }
 
+        let formatted = self.format(type_id);
+        let formatted = formatted.as_ref();
+        if formatted.len() >= 2
+            && formatted.starts_with('"')
+            && formatted.ends_with('"')
+            && !formatted[1..formatted.len() - 1].contains('"')
+        {
+            Self::push_template_literal_text(result, &formatted[1..formatted.len() - 1]);
+            return;
+        }
+
         result.push_str("${");
-        result.push_str(&self.format(type_id));
+        result.push_str(formatted);
         result.push('}');
     }
 
@@ -2234,7 +2253,7 @@ impl<'a> TypeFormatter<'a> {
     /// - Tier 0: Builtins/intrinsics (always first)
     /// - Tier 1: User-defined types with source info (sorted by file, then position)
     /// - Tier 2: Types without source info (preserve original order by returning sentinel)
-    fn get_source_position_for_type(
+    pub(super) fn get_source_position_for_type(
         &self,
         type_id: TypeId,
         def_store: &crate::def::DefinitionStore,

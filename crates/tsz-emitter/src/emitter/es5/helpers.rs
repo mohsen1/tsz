@@ -951,14 +951,43 @@ impl<'a> Printer<'a> {
                     self.write_line();
                     self.increase_indent();
                     self.write("set: function (");
-                    self.emit_function_parameters_js(&accessor.parameters.nodes);
+                    let needs_param_transforms =
+                        accessor.parameters.nodes.iter().any(|&param_idx| {
+                            self.arena
+                                .get(param_idx)
+                                .and_then(|param_node| self.arena.get_parameter(param_node))
+                                .is_some_and(|param| {
+                                    param.dot_dot_dot_token
+                                        || param.initializer.is_some()
+                                        || self.is_binding_pattern(param.name)
+                                })
+                        });
+                    let param_transforms = if needs_param_transforms {
+                        let transforms =
+                            self.emit_function_parameters_es5(&accessor.parameters.nodes);
+                        Some(transforms)
+                    } else {
+                        self.emit_function_parameters_js(&accessor.parameters.nodes);
+                        None
+                    };
                     self.write(") ");
                     let prev_fb = self.emitting_function_body_block;
                     self.emitting_function_body_block = true;
                     let saved_temps = std::mem::take(&mut self.hoisted_assignment_temps);
-                    self.emit(accessor.body);
+                    if let Some(transforms) = &param_transforms {
+                        if transforms.has_transforms() {
+                            self.emit_block_with_param_prologue(accessor.body, transforms);
+                        } else {
+                            self.emit(accessor.body);
+                        }
+                    } else {
+                        self.emit(accessor.body);
+                    }
                     self.hoisted_assignment_temps = saved_temps;
                     self.emitting_function_body_block = prev_fb;
+                    if param_transforms.is_some() {
+                        self.pop_temp_scope();
+                    }
                     if let Some(body_node) = self.arena.get(accessor.body) {
                         self.emit_accessor_descriptor_trailing(body_node.pos, body_node.end);
                     }

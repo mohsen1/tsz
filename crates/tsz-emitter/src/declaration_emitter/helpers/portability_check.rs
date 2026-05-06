@@ -118,6 +118,16 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        if self
+            .call_expression_reused_type_text(initializer)
+            .is_some_and(|type_text| {
+                Self::type_text_starts_with_import_type(&type_text)
+                    && !self.import_type_uses_private_package_subpath(&type_text)
+            })
+        {
+            return;
+        }
+
         // Get the callee's type from the type cache
         let Some(interner) = self.type_interner else {
             return;
@@ -1618,6 +1628,18 @@ impl<'a> DeclarationEmitter<'a> {
         pos: u32,
         length: u32,
     ) -> bool {
+        if let Some((module_specifier, _)) = self.parse_import_type_text(printed_type_text)
+            && !module_specifier.starts_with('.')
+            && !module_specifier.starts_with('/')
+            && let Some(binder) = self.binder
+            && self
+                .matching_module_export_paths(binder, file, &module_specifier)
+                .into_iter()
+                .any(|module_path| !module_path.contains("node_modules"))
+        {
+            return false;
+        }
+
         let Some(sym_id) = self.find_symbol_for_import_type_text(printed_type_text) else {
             if let Some((from_path, type_name)) =
                 self.private_import_type_package_root_reference(printed_type_text)

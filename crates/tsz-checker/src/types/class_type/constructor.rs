@@ -541,15 +541,72 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if sigs.is_empty() {
-                // Default construct signature (like the default constructor)
-                sigs.push(CallSignature {
-                    type_params: class_type_params.clone(),
-                    params: Vec::new(),
-                    this_type: None,
-                    return_type: rough_instance_return_type,
-                    type_predicate: None,
-                    is_method: false,
-                });
+                // No own constructor — try to inherit construct signatures from
+                // the base class so that the partial constructor type used by
+                // static-property initializers (`new Derived(...)` inside
+                // Derived's `static create = ...`) reflects the base's arity
+                // instead of the default 0-arg fallback. This is a rough
+                // approximation: we don't yet have a substitution for the
+                // class's type arguments, so the inherited sigs may reference
+                // base type parameters. For arity checking inside static
+                // initializers that's fine — the precise instantiation runs
+                // during the outer `get_class_constructor_type_inner` call.
+                let inherited_rough_sigs: Option<Vec<CallSignature>> = (|| {
+                    let heritage_clauses = class.heritage_clauses.as_ref()?;
+                    for &clause_idx in &heritage_clauses.nodes {
+                        let clause_node = self.ctx.arena.get(clause_idx)?;
+                        let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+                        if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                            continue;
+                        }
+                        let &type_idx = heritage.types.nodes.first()?;
+                        let type_node = self.ctx.arena.get(type_idx)?;
+                        let (expr_idx, type_arguments) = if let Some(expr_type_args) =
+                            self.ctx.arena.get_expr_type_args(type_node)
+                        {
+                            (
+                                expr_type_args.expression,
+                                expr_type_args.type_arguments.as_ref(),
+                            )
+                        } else {
+                            (type_idx, None)
+                        };
+                        let base_constructor_type =
+                            self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
+                        let base_sigs =
+                            construct_signatures_for_type(self.ctx.types, base_constructor_type)?;
+                        if base_sigs.is_empty() {
+                            return None;
+                        }
+                        return Some(
+                            base_sigs
+                                .iter()
+                                .map(|sig| CallSignature {
+                                    type_params: class_type_params.clone(),
+                                    params: sig.params.clone(),
+                                    this_type: sig.this_type,
+                                    return_type: rough_instance_return_type,
+                                    type_predicate: sig.type_predicate,
+                                    is_method: false,
+                                })
+                                .collect(),
+                        );
+                    }
+                    None
+                })();
+                if let Some(inherited) = inherited_rough_sigs {
+                    sigs = inherited;
+                } else {
+                    // Default construct signature (like the default constructor)
+                    sigs.push(CallSignature {
+                        type_params: class_type_params.clone(),
+                        params: Vec::new(),
+                        this_type: None,
+                        return_type: rough_instance_return_type,
+                        type_predicate: None,
+                        is_method: false,
+                    });
+                }
             }
             sigs
         };

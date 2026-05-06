@@ -129,6 +129,42 @@ impl<'a> CheckerState<'a> {
         parts.join(" & ")
     }
 
+    pub(in crate::checkers_domain::jsx) fn build_jsx_union_props_display_target(
+        &mut self,
+        props_type: TypeId,
+        component_type: Option<TypeId>,
+        tag_name_idx: NodeIndex,
+        fallback: &str,
+    ) -> String {
+        let Some(component_type) = component_type else {
+            return fallback.to_string();
+        };
+        let Some(props_display) = self
+            .get_jsx_component_extends_props_display_text_with_children(tag_name_idx, props_type)
+        else {
+            return fallback.to_string();
+        };
+
+        let mut outer = Vec::new();
+        if let Some(ia) = self.get_intrinsic_attributes_lazy_type() {
+            outer.push(self.format_type(ia));
+        }
+
+        let Some(intrinsic_class_attrs) =
+            self.get_intrinsic_class_attributes_type_for_component(component_type)
+        else {
+            return fallback.to_string();
+        };
+        let class_target = self.format_type(intrinsic_class_attrs);
+        if class_target.is_empty() || props_display.is_empty() {
+            return fallback.to_string();
+        }
+
+        let class_and_props = format!("{class_target} & ({props_display})");
+        outer.push(format!("({class_and_props})"));
+        outer.join(" & ")
+    }
+
     pub(crate) fn get_class_instance_type_for_component(
         &mut self,
         component_type: TypeId,
@@ -598,6 +634,98 @@ impl<'a> CheckerState<'a> {
         }
 
         self.format_jsx_props_display_text_from_type_node(first_param.constraint)
+    }
+
+    fn get_jsx_component_extends_props_display_text_with_children(
+        &mut self,
+        tag_name_idx: NodeIndex,
+        props_type: TypeId,
+    ) -> Option<String> {
+        let sym_id = self.resolve_jsx_tag_symbol_for_diagnostics(tag_name_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        for decl_idx in symbol.all_declarations() {
+            let mut decl_idx = decl_idx;
+            let mut decl_node = self.ctx.arena.get(decl_idx)?;
+            if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(parent) = self.ctx.arena.parent_of(decl_idx)
+                && parent.is_some()
+            {
+                decl_idx = parent;
+                decl_node = self.ctx.arena.get(decl_idx)?;
+            }
+            if decl_node.kind != syntax_kind_ext::CLASS_DECLARATION
+                && decl_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+            {
+                continue;
+            }
+            let class = self.ctx.arena.get_class(decl_node)?;
+            let Some(props_display) = self.get_class_extends_first_type_arg_display_text(class)
+            else {
+                continue;
+            };
+            return Some(self.append_jsx_children_display_to_props(props_display, props_type));
+        }
+        None
+    }
+
+    fn get_class_extends_first_type_arg_display_text(
+        &mut self,
+        class: &ClassData,
+    ) -> Option<String> {
+        let heritage_clauses = class.heritage_clauses.as_ref()?;
+        for &clause_idx in &heritage_clauses.nodes {
+            let clause_node = self.ctx.arena.get(clause_idx)?;
+            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+            if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            for &type_idx in &heritage.types.nodes {
+                let type_node = self.ctx.arena.get(type_idx)?;
+                let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) else {
+                    continue;
+                };
+                let Some(first_arg) = expr_type_args
+                    .type_arguments
+                    .as_ref()
+                    .and_then(|type_args| type_args.nodes.first().copied())
+                else {
+                    continue;
+                };
+                if let Some(display) = self.format_jsx_props_display_text_from_type_node(first_arg)
+                    && !display.is_empty()
+                {
+                    return Some(display);
+                }
+            }
+        }
+        None
+    }
+
+    fn append_jsx_children_display_to_props(
+        &mut self,
+        props_display: String,
+        props_type: TypeId,
+    ) -> String {
+        if props_display.contains("children") {
+            return props_display;
+        }
+        use crate::query_boundaries::common::PropertyAccessResult;
+        let props_for_access = self.normalize_jsx_required_props_target(props_type);
+        match self.resolve_property_access_with_env(props_for_access, "children") {
+            PropertyAccessResult::Success { type_id, .. }
+            | PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(type_id),
+                ..
+            } => {
+                let children_display = self.format_type(type_id);
+                if children_display.is_empty() {
+                    props_display
+                } else {
+                    format!("{props_display} & {{ children?: {children_display}; }}")
+                }
+            }
+            _ => props_display,
+        }
     }
 
     fn get_jsx_component_props_display_text_from_type_node(

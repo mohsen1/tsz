@@ -39,9 +39,6 @@ pub(crate) struct PrivateMemberInfo {
     pub fn_ref: Option<String>,
     /// For accessors: the setter variable name (e.g., `_C_prop_set`).
     pub setter_ref: Option<String>,
-    /// Whether this is a static member.
-    /// Used to replace receiver class-name references with the class alias.
-    pub is_static: bool,
     /// The WeakSet/class-alias variable used as the `state` argument.
     /// For instance methods/accessors: `_ClassName_instances`.
     /// For static members: the class alias variable.
@@ -122,6 +119,10 @@ pub struct PrinterOptions {
     pub legacy_decorators: bool,
     /// Emit design-type metadata for decorated declarations (`__metadata` style)
     pub emit_decorator_metadata: bool,
+    /// True when emitting without default library declarations.
+    pub no_lib: bool,
+    /// True when `--isolatedModules` is enabled.
+    pub isolated_modules: bool,
     /// Emit interop helpers (`__importStar`, `__importDefault`) for CJS/ESM interop
     pub es_module_interop: bool,
     /// When true, treat all non-declaration files as modules (moduleDetection=force)
@@ -152,6 +153,8 @@ pub struct PrinterOptions {
     pub external_const_enum_values: FxHashMap<String, FxHashMap<String, EnumValue>>,
     /// Local binding names that refer to external const enums.
     pub external_const_enum_bindings: FxHashSet<String>,
+    /// External ambient modules whose `export =` target is type-only.
+    pub type_only_export_equals_modules: FxHashSet<String>,
     /// Import helpers from tslib instead of inlining them
     pub import_helpers: bool,
     /// JSX emit mode
@@ -200,6 +203,8 @@ impl Default for PrinterOptions {
             use_define_for_class_fields: false,
             legacy_decorators: false,
             emit_decorator_metadata: false,
+            no_lib: false,
+            isolated_modules: false,
             es_module_interop: false,
             module_detection_force: false,
             module_detection_legacy: false,
@@ -209,6 +214,7 @@ impl Default for PrinterOptions {
             no_const_enum_inlining: false,
             external_const_enum_values: FxHashMap::default(),
             external_const_enum_bindings: FxHashSet::default(),
+            type_only_export_equals_modules: FxHashSet::default(),
             import_helpers: false,
             jsx: JsxEmit::Preserve,
             jsx_factory: None,
@@ -240,6 +246,7 @@ pub(crate) struct TempScopeState {
     pub(crate) preallocated_logical_assignment_value_temps: VecDeque<String>,
     pub(crate) hoisted_assignment_value_temps: Vec<String>,
     pub(crate) hoisted_assignment_temps: Vec<String>,
+    pub(crate) hoisted_for_of_temps: Vec<String>,
 }
 
 impl ParamTransformPlan {
@@ -365,6 +372,13 @@ pub struct Printer<'a> {
     /// Marker that the next block emission is a function body.
     pub(crate) emitting_function_body_block: bool,
 
+    /// Parameter nodes for the next function body block.
+    ///
+    /// ES5 block-scoped lowering needs parameters in the function's scope map
+    /// before body declarations are emitted, so `let x` can become `var x_1`
+    /// when it would otherwise collide with parameter `x`.
+    pub(crate) pending_function_body_parameters: Vec<NodeIndex>,
+
     /// The name of the current namespace we're emitting inside (if any).
     /// Used for nested exported namespaces to emit proper IIFE parameters.
     pub(crate) current_namespace_name: Option<String>,
@@ -413,7 +427,7 @@ pub struct Printer<'a> {
 
     /// For CommonJS class exports, emit `exports.X = X;` immediately after class
     /// declaration and before post-class lowered statements (static fields/blocks).
-    pub(crate) pending_commonjs_class_export_name: Option<String>,
+    pub(crate) pending_commonjs_class_export_name: Option<(NodeIndex, String)>,
 
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(crate) declared_namespace_names: FxHashSet<String>,
@@ -553,6 +567,11 @@ pub struct Printer<'a> {
     /// Used to determine if we're inside a function scope (depth > 0) or at top level (0).
     pub(crate) function_scope_depth: u32,
 
+    /// Current nesting depth of arrow-function scopes.
+    /// Used with `function_scope_depth` to determine whether an async arrow's
+    /// lexical `this` comes from a non-arrow function or from the top level.
+    pub(crate) arrow_function_scope_depth: u32,
+
     /// Current nesting depth for iterator for-of emission.
     pub(crate) iterator_for_of_depth: usize,
 
@@ -581,6 +600,9 @@ pub struct Printer<'a> {
 
     /// Depth counter for accessor members emitted from object literal syntax.
     object_literal_accessor_depth: u32,
+
+    /// Depth counter for members emitted from class syntax.
+    pub(crate) class_member_emit_depth: u32,
 
     /// Whether the current root source file has a JavaScript-like extension.
     pub(crate) is_current_root_js_source: bool,
@@ -880,12 +902,14 @@ impl<'a> Printer<'a> {
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),
             function_scope_depth: 0,
+            arrow_function_scope_depth: 0,
             first_for_of_emitted: false,
             in_namespace_iife: false,
             namespace_scope_end: u32::MAX,
             enum_namespace_export: None,
             namespace_export_inner: false,
             emitting_function_body_block: false,
+            pending_function_body_parameters: Vec::new(),
             current_namespace_name: None,
             parent_namespace_name: None,
             anonymous_default_export_name: None,
@@ -935,6 +959,7 @@ impl<'a> Printer<'a> {
             paren_in_new_callee: false,
             paren_is_direct_call_callee: false,
             object_literal_accessor_depth: 0,
+            class_member_emit_depth: 0,
             is_current_root_js_source: false,
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),

@@ -68,6 +68,87 @@ fn test_extract_no_references() {
 }
 
 #[test]
+fn extract_reference_paths_rejects_substring_attribute_names() {
+    // The attribute name `path` must be matched as an exact attribute, not
+    // as a substring of `notpath`. tsc reports TS1084 for this directive
+    // and does not pull in the referenced file (issue #3375).
+    let source = r#"/// <reference notpath="./extra.d.ts" />
+const x = 1;
+"#;
+    let refs = extract_reference_paths(source);
+    assert!(
+        refs.is_empty(),
+        "notpath attribute must not be parsed as path: {refs:?}"
+    );
+
+    // The same directive must be reported as malformed so TS1084 fires.
+    let malformed = find_malformed_reference_directives(source);
+    assert_eq!(
+        malformed.len(),
+        1,
+        "directive with only `notpath` must be flagged malformed"
+    );
+}
+
+#[test]
+fn extract_reference_paths_still_finds_real_path_alongside_substring_match() {
+    // `notpath="..."` must be ignored, but a real `path="..."` on the same
+    // line must still be picked up.
+    let source = r#"/// <reference notpath="./bogus.d.ts" path="./real.d.ts" />
+const x = 1;
+"#;
+    let refs = extract_reference_paths(source);
+    assert_eq!(refs.len(), 1, "only the real path attribute should match");
+    assert_eq!(refs[0].0, "./real.d.ts");
+}
+
+#[test]
+fn extract_reference_types_rejects_substring_attribute_names() {
+    let source = r#"/// <reference nottypes="node" />"#;
+    let types = extract_reference_types(source);
+    assert!(
+        types.is_empty(),
+        "nottypes must not be parsed as types: {types:?}"
+    );
+}
+
+#[test]
+fn extract_amd_module_names_rejects_substring_attribute_names() {
+    let source = r#"/// <amd-module notname="ShouldNotMatch" />"#;
+    let amd = extract_amd_module_names(source);
+    assert!(
+        amd.is_empty(),
+        "notname must not be parsed as name: {amd:?}"
+    );
+}
+
+#[test]
+fn extract_quoted_attr_rejects_substring_match() {
+    // Directly exercise the extractor to lock the boundary contract:
+    // `notpath` must not satisfy a `path` attribute lookup.
+    assert_eq!(
+        extract_quoted_attr(r#"notpath="./extra.d.ts""#, "path"),
+        None,
+        "substring `path` inside `notpath` must not match"
+    );
+    assert_eq!(
+        extract_quoted_attr(r#"library="es2015""#, "lib"),
+        None,
+        "prefix `lib` inside `library` must not match"
+    );
+    assert_eq!(
+        extract_quoted_attr(r#"pathology="x""#, "path"),
+        None,
+        "prefix `path` followed by other letters must not match"
+    );
+    // But a real attribute alongside a substring decoy still works.
+    assert_eq!(
+        extract_quoted_attr(r#"notpath="x" path="./real.ts""#, "path"),
+        Some("./real.ts".to_string())
+    );
+}
+
+#[test]
 fn test_extract_quoted_attr_basic() {
     assert_eq!(
         extract_quoted_attr(r#"path="./file.ts""#, "path"),
@@ -131,23 +212,50 @@ fn test_validate_extensionless_references() {
 
     // Test extension-less references
     assert!(
-        validate_reference_path(&source_file, "a"),
+        validate_reference_path(&source_file, "a", false),
         "Should find a.ts"
     );
     assert!(
-        validate_reference_path(&source_file, "b"),
+        validate_reference_path(&source_file, "b", false),
         "Should find b.d.ts"
     );
     assert!(
-        validate_reference_path(&source_file, "c"),
+        validate_reference_path(&source_file, "c", false),
         "Should find c.ts"
     );
     assert!(
-        !validate_reference_path(&source_file, "missing"),
+        !validate_reference_path(&source_file, "missing", false),
         "Should not find missing file"
     );
 
     // Clean up
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn validate_extensionless_references_probe_js_when_allow_js() {
+    use std::fs;
+
+    let temp_dir = std::env::temp_dir().join("tsz_test_refs_allow_js");
+    let _ = fs::create_dir_all(&temp_dir);
+    fs::write(temp_dir.join("dep.js"), "const value = 1;").unwrap();
+    fs::write(temp_dir.join("view.jsx"), "const view = <div />;").unwrap();
+
+    let source_file = temp_dir.join("main.ts");
+
+    assert!(
+        !validate_reference_path(&source_file, "dep", false),
+        "allowJs=false should not probe .js"
+    );
+    assert!(
+        validate_reference_path(&source_file, "dep", true),
+        "allowJs=true should probe .js"
+    );
+    assert!(
+        validate_reference_path(&source_file, "view", true),
+        "allowJs=true should probe .jsx"
+    );
+
     let _ = fs::remove_dir_all(&temp_dir);
 }
 
@@ -160,7 +268,7 @@ fn validate_reference_path_rejects_empty_path() {
     let source_file = temp_dir.join("index.ts");
 
     assert!(
-        !validate_reference_path(&source_file, ""),
+        !validate_reference_path(&source_file, "", false),
         "empty reference paths should not resolve to the containing directory"
     );
 
@@ -393,10 +501,10 @@ fn validate_reference_path_explicit_extension_only_tries_exact() {
 
     let source_file = temp_dir.join("t.ts");
     // Exact path with .ts extension that exists → true.
-    assert!(validate_reference_path(&source_file, "file.ts"));
+    assert!(validate_reference_path(&source_file, "file.ts", false));
     // Reference with non-existent .js extension — must NOT fall back to
     // `.ts`/`.tsx`/`.d.ts` because the reference already has an extension.
-    assert!(!validate_reference_path(&source_file, "file.js"));
+    assert!(!validate_reference_path(&source_file, "file.js", false));
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
@@ -411,7 +519,7 @@ fn validate_reference_path_returns_false_when_source_has_no_parent() {
     let source_file = PathBuf::from("/");
     // Paths under `/` likely don't exist; just verify the function does not
     // panic and produces a deterministic boolean.
-    let _ = validate_reference_path(&source_file, "non-existent");
+    let _ = validate_reference_path(&source_file, "non-existent", false);
 }
 
 // =========================================================================

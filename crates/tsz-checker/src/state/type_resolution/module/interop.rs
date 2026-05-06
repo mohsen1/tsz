@@ -19,14 +19,14 @@ impl<'a> CheckerState<'a> {
         };
         let file_name = source_file.file_name.as_str();
 
-        if self.source_file_idx_is_js_with_esm_syntax(target_idx) {
-            return true;
-        }
         if file_name.ends_with(".mjs") || file_name.ends_with(".mts") {
             return true;
         }
         if file_name.ends_with(".cjs") || file_name.ends_with(".cts") {
             return false;
+        }
+        if self.source_file_idx_is_js_with_esm_syntax(target_idx) {
+            return true;
         }
 
         self.ctx

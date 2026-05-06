@@ -27,6 +27,7 @@ const TS_DIR = path.join(ROOT_DIR, 'TypeScript');
 const BASELINES_DIR = path.join(TS_DIR, 'tests/baselines/reference');
 const CACHE_DIR = path.join(__dirname, '../.cache');
 const DTS_DISCOVERY_CACHE = path.join(CACHE_DIR, 'dts-baseline-index.json');
+const DTS_DISCOVERY_CACHE_VERSION = 2;
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -126,6 +127,7 @@ interface CacheEntry {
 }
 
 interface DtsDiscoveryEntry {
+  version: number;
   mtimeMs: number;
   size: number;
   hasDts: boolean;
@@ -447,13 +449,13 @@ async function filterToDtsBaselines(jsFiles: string[]): Promise<string[]> {
     const fullPath = path.join(BASELINES_DIR, file);
     const stat = await fs.promises.stat(fullPath);
     const entry = cached[file];
-    if (entry && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) {
+    if (entry && entry.version === DTS_DISCOVERY_CACHE_VERSION && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) {
       return { file, hasDts: entry.hasDts };
     }
 
     const content = await readLimit(() => fs.promises.readFile(fullPath, 'utf-8'));
-    const hasDts = /\[\s*[^\]]+\.d\.ts\s*]/i.test(content);
-    updated[file] = { mtimeMs: stat.mtimeMs, size: stat.size, hasDts };
+    const hasDts = parseBaseline(content).dts !== null;
+    updated[file] = { version: DTS_DISCOVERY_CACHE_VERSION, mtimeMs: stat.mtimeMs, size: stat.size, hasDts };
     return { file, hasDts };
   })));
 
@@ -663,6 +665,38 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       if (baseline.files.has(expectedJsName)) {
         baseline.js = baseline.files.get(expectedJsName) ?? baseline.js;
         baseline.jsFileName = expectedJsName;
+      }
+    }
+    if (!outFile && sourceFileName && baseline.jsFileName) {
+      const jsSourceBasenames = new Set(
+        sourceFiles
+          .filter(file => /\.(js|jsx|mjs|cjs)$/.test(file.name))
+          .map(file => path.basename(file.name)),
+      );
+      const expectedJsLooksLikeSourceInput =
+        /\.(js|jsx|mjs|cjs)$/.test(baseline.jsFileName) &&
+        jsSourceBasenames.has(baseline.jsFileName);
+      if (expectedJsLooksLikeSourceInput) {
+        const sourceBase = path.basename(sourceFileName).replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
+        const sourceExt = sourceFileName.match(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/)?.[1] ?? 'ts';
+        const expectedJsExt =
+          sourceExt === 'tsx' || sourceExt === 'jsx' ? 'jsx' :
+          sourceExt === 'mts' || sourceExt === 'mjs' ? 'mjs' :
+          sourceExt === 'cts' || sourceExt === 'cjs' ? 'cjs' : 'js';
+        const expectedJsName = `${sourceBase}.${expectedJsExt}`;
+        if (baseline.files.has(expectedJsName) && !jsSourceBasenames.has(expectedJsName)) {
+          baseline.js = baseline.files.get(expectedJsName) ?? baseline.js;
+          baseline.jsFileName = expectedJsName;
+        } else {
+          for (const [name, fileContent] of baseline.files) {
+            if (!/\.(js|jsx|mjs|cjs)$/.test(name) || jsSourceBasenames.has(path.basename(name))) {
+              continue;
+            }
+            baseline.js = fileContent;
+            baseline.jsFileName = name;
+            break;
+          }
+        }
       }
     }
 
