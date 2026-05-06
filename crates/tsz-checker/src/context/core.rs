@@ -1505,6 +1505,8 @@ impl<'a> CheckerContext<'a> {
             || code == 2416
             || code == 2430
             || code == 2536
+            || code == 2537
+            || code == 2538
             || code == 4094
         {
             use std::hash::{Hash, Hasher};
@@ -1548,8 +1550,8 @@ impl<'a> CheckerContext<'a> {
     /// - TS2430 uses (start ^ `message_hash`, code) to allow multiple
     ///   "incorrectly extends" errors at the same interface name when an interface
     ///   incompatibly extends several distinct bases.
-    /// - TS2536 uses the same scheme so nested indexed-access failures can report
-    ///   multiple distinct messages at the same indexed-access start.
+    /// - TS2536/TS2537/TS2538 use the same scheme so indexed-access failures can
+    ///   report multiple distinct messages at the same indexed-access start.
     /// - TS4094 uses (start ^ `message_hash`, code) because tsc anchors every
     ///   private/protected member of an exported anonymous class expression at the
     ///   owning variable/function name, producing one TS4094 per member at the
