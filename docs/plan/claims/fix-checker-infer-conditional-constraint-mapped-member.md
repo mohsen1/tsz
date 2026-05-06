@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/checker-infer-conditional-constraint-mapped-member`
-- **PR**: TBD
+- **PR**: #3590
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 - **Claimed**: 2026-05-06 02:07:12 UTC
