@@ -18,13 +18,21 @@ impl<'a> CheckerContext<'a> {
         specifier: &str,
         resolution_mode_override: Option<ResolutionModeOverride>,
     ) -> Option<&ResolutionError> {
-        let request_kind = match resolution_mode_override {
-            Some(ResolutionModeOverride::Require) => ResolutionRequestKind::CjsRequire,
-            _ => ResolutionRequestKind::EsmImport,
-        };
-        if let Some(error) =
-            self.get_resolution_error_for_request(specifier, resolution_mode_override, request_kind)
-        {
+        if let Some(error) = self.get_resolution_error_for_request(
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::EsmImport,
+        ) {
+            return Some(error);
+        }
+        if matches!(
+            resolution_mode_override,
+            Some(ResolutionModeOverride::Require)
+        ) && let Some(error) = self.get_resolution_error_for_request(
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::CjsRequire,
+        ) {
             return Some(error);
         }
 
@@ -64,15 +72,22 @@ impl<'a> CheckerContext<'a> {
         specifier: &str,
         resolution_mode_override: Option<ResolutionModeOverride>,
     ) -> Option<usize> {
-        let request_kind = match resolution_mode_override {
-            Some(ResolutionModeOverride::Require) => ResolutionRequestKind::CjsRequire,
-            _ => ResolutionRequestKind::EsmImport,
-        };
         if let Some(target_idx) = self.resolve_import_target_from_file_for_request(
             source_file_idx,
             specifier,
             resolution_mode_override,
-            request_kind,
+            ResolutionRequestKind::EsmImport,
+        ) {
+            return Some(target_idx);
+        }
+        if matches!(
+            resolution_mode_override,
+            Some(ResolutionModeOverride::Require)
+        ) && let Some(target_idx) = self.resolve_import_target_from_file_for_request(
+            source_file_idx,
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::CjsRequire,
         ) {
             return Some(target_idx);
         }

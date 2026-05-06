@@ -13,7 +13,7 @@ use tsz::emitter::{NewLineKind, Printer};
 use tsz::enums::evaluator::{EnumEvaluator, EnumValue};
 use tsz::parallel::{BoundFile, MergedProgram};
 use tsz_common::common::ModuleKind;
-use tsz_common::diagnostics::Diagnostic;
+use tsz_common::diagnostics::{Diagnostic, DiagnosticCategory};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -23,6 +23,7 @@ use tsz_scanner::SyntaxKind;
 pub(crate) struct OutputFile {
     pub(crate) path: PathBuf,
     pub(crate) contents: String,
+    pub(crate) source_path: Option<PathBuf>,
 }
 
 pub(crate) struct EmitOutputsContext<'a> {
@@ -340,6 +341,7 @@ pub(crate) fn emit_outputs(
                     map_output = Some(OutputFile {
                         path: map_path,
                         contents: map_json,
+                        source_path: Some(input_path.clone()),
                     });
                 }
             }
@@ -351,6 +353,7 @@ pub(crate) fn emit_outputs(
                 outputs.push(OutputFile {
                     path: js_path,
                     contents,
+                    source_path: Some(input_path.clone()),
                 });
                 if let Some(map_output) = map_output {
                     outputs.push(map_output);
@@ -495,7 +498,7 @@ pub(crate) fn emit_outputs(
                 let emitter_diagnostics = normalize_ts2883_diagnostics(emitter.take_diagnostics());
                 let declaration_emit_blocked = emitter_diagnostics
                     .iter()
-                    .any(|diagnostic| diagnostic.code == 7056);
+                    .any(|diagnostic| diagnostic.category == DiagnosticCategory::Error);
                 emit_diagnostics.extend(emitter_diagnostics);
                 if declaration_emit_blocked {
                     declaration_bundle_blocked = true;
@@ -513,6 +516,7 @@ pub(crate) fn emit_outputs(
                     map_output = Some(OutputFile {
                         path: map_path,
                         contents: map_json,
+                        source_path: Some(input_path.clone()),
                     });
                 }
 
@@ -532,6 +536,7 @@ pub(crate) fn emit_outputs(
                     outputs.push(OutputFile {
                         path: dts_path,
                         contents,
+                        source_path: Some(input_path.clone()),
                     });
                     if let Some(map_output) = map_output {
                         outputs.push(map_output);
@@ -590,6 +595,7 @@ pub(crate) fn emit_outputs(
         outputs.push(OutputFile {
             path: bundle_path,
             contents: bundled,
+            source_path: None,
         });
     }
 
@@ -600,6 +606,7 @@ pub(crate) fn emit_outputs(
         outputs.push(OutputFile {
             path: bundle_path,
             contents: join_declaration_bundle_chunks(&declaration_bundle_chunks, new_line),
+            source_path: None,
         });
     }
 
