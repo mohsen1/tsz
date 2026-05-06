@@ -2658,6 +2658,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
         }
         for (i, (&arg_type, raw_param)) in final_args.iter().zip(func.params.iter()).enumerate() {
+            if raw_param.rest {
+                continue;
+            }
             let raw_param_type = raw_param.type_id;
             let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(raw_param_type) else {
                 continue;
