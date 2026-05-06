@@ -302,13 +302,77 @@ fn test_static_computed_methods_emit_body_inferred_return_types() {
     export const staticLookup = Holder["x"];
     "#,
     );
-    // tsc emits computed methods as method signatures, not property signatures.
+    // tsc emits late-bound computed methods as property-valued function types.
     assert!(
-        output.contains("static [f1](): {")
+        output.contains("static [f1]: () => {")
             && output.contains("static: boolean;")
-            && output.contains("static [f2](): {")
+            && output.contains("static [f2]: () => {")
             && output.contains("static: string;"),
-        "Expected static computed methods to use method syntax with body-inferred return types: {output}"
+        "Expected static computed methods to use property syntax with body-inferred return types: {output}"
+    );
+}
+
+#[test]
+fn test_simple_computed_names_match_declaration_baseline_shape() {
+    let output = emit_dts(
+        r#"
+    export const fieldName = Math.random() > 0.5 ? "f1" : "f2";
+    export const conatainer = {
+        [fieldName]() {
+            return "result";
+        }
+    };
+
+    const classFieldName = Math.random() > 0.5 ? "g1" : "g2";
+    const otherField = classFieldName === "g1" ? "g2" : "g1";
+    const staticField = Math.random() > 0.5 ? "s1" : "s2";
+    export class Holder {
+        [classFieldName]() {
+            return "value";
+        }
+        [otherField]() {
+            return 42;
+        }
+        static [staticField]() {
+            return { static: true };
+        }
+        static [staticField]() {
+            return { static: "sometimes" };
+        }
+    }
+
+    export const staticLookup = Holder["some" + "thing"];
+    export const instanceLookup = (new Holder())["some" + "thing"];
+    "#,
+    );
+
+    assert!(
+        output.contains("[fieldName]: () => string;"),
+        "Expected object computed method to retain its late-bound key: {output}"
+    );
+    assert!(
+        !output.contains("[x: string]: () => string;"),
+        "Did not expect computed object method to degrade to a string indexer: {output}"
+    );
+    let static_pos = output
+        .find("static [staticField]: () => {")
+        .expect("missing static computed member");
+    let instance_pos = output
+        .find("[classFieldName]: () => string;")
+        .expect("missing instance computed member");
+    assert!(
+        static_pos < instance_pos,
+        "Expected static computed members before instance computed members: {output}"
+    );
+    assert!(
+        output.contains("    static [staticField]: () => {\n        static: boolean;\n    };"),
+        "Expected multiline static computed return type to be indented: {output}"
+    );
+    assert!(
+        output.contains(
+            "export declare const staticLookup: Holder | (() => {\n    static: boolean;\n}) | (() => {\n    static: string;\n});"
+        ),
+        "Expected broad static lookup to include static computed method types: {output}"
     );
 }
 
