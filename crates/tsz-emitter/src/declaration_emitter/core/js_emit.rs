@@ -282,6 +282,9 @@ impl<'a> DeclarationEmitter<'a> {
             || self
                 .js_anonymous_export_equals_value_initializer(stmt_idx)
                 .is_some()
+            || self
+                .js_commonjs_define_property_export_for_statement(stmt_idx)
+                .is_some()
     }
 
     pub(in crate::declaration_emitter) fn emit_js_synthetic_expression_statement(
@@ -308,6 +311,12 @@ impl<'a> DeclarationEmitter<'a> {
             .copied()
         {
             self.emit_js_synthetic_value_declaration(name_idx, initializer, is_exported);
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+
+        if let Some(property) = self.js_commonjs_define_property_export_for_statement(stmt_idx) {
+            self.emit_js_commonjs_define_property_export(&property);
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             return;
         }
@@ -563,6 +572,20 @@ impl<'a> DeclarationEmitter<'a> {
         if is_exported {
             self.emitted_module_indicator = true;
         }
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_commonjs_define_property_export(
+        &mut self,
+        property: &super::super::helpers::JsDefinedPropertyDecl,
+    ) {
+        self.write_indent();
+        self.write("export const ");
+        self.write(&property.name);
+        self.write(": ");
+        self.write(&property.type_text);
+        self.write(";");
+        self.write_line();
+        self.emitted_module_indicator = true;
     }
 
     pub(in crate::declaration_emitter) fn emit_js_named_class_expression_declaration(
