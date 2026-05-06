@@ -557,6 +557,62 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn recovered_class_member_enum_emits_after_class() {
+        let source = "namespace M {\n    class C {\n\n    enum E {\n    }\n}\n";
+
+        let mut parser = ParserState::new(
+            "parserErrorRecovery_ClassElement2.ts".to_string(),
+            source.to_string(),
+        );
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "    class C {\n    }\n    let E;\n    (function (E) {\n    })(E || (E = {}));"
+            ),
+            "Recovered enum class member should emit as a sibling after the class.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn recovered_nested_class_emits_after_class() {
+        let source = "class C {\n\n// Classes can't be nested.  So we should bail out of parsing here and recover\n// this as a source unit element.\nclass D {\n}";
+
+        let mut parser = ParserState::new(
+            "parserErrorRecovery_ClassElement1.ts".to_string(),
+            source.to_string(),
+        );
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                always_strict: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("class D {\n}"),
+            "Recovered nested class should emit as a sibling after the outer class.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn esm_suppresses_redundant_export_empty_when_real_exports_exist() {
         // When a file has both `export {};` and `export { C };`, the empty export
         // is redundant and should be suppressed. tsc omits it.
