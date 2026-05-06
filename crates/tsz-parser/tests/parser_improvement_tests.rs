@@ -3483,6 +3483,59 @@ fn test_import_defer_type_modifier_conflict_anchors_from_at_namespace_token() {
 }
 
 #[test]
+fn test_import_defer_from_equals_routes_to_import_declaration() {
+    // `import defer from = require("m")` — `defer` has no import-equals form,
+    // so the lookahead must route this to import-declaration. tsc parses it as
+    // `defer` modifier + `from` binding name, then expects the `from` keyword
+    // and finds `=` at column 19 (start=18). The lookahead must NOT route to
+    // import-equals (which would emit `'=' expected.` at column 14 plus a
+    // trailing `';' expected.`).
+    let source = r#"import defer from = require("m");"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1005: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
+    assert!(
+        !ts1005.iter().any(|d| d.message.contains("'=' expected")),
+        "Should not emit `'=' expected.` for `import defer from = require(...)`: {ts1005:?}"
+    );
+    assert!(
+        !ts1005.iter().any(|d| d.message.contains("';' expected")),
+        "Should not emit `';' expected.` for `import defer from = require(...)`: {ts1005:?}"
+    );
+    let from_expected: Vec<_> = ts1005
+        .iter()
+        .filter(|d| d.message.contains("'from' expected"))
+        .collect();
+    assert!(
+        from_expected.iter().any(|d| d.start == 18),
+        "Expected `'from' expected.` anchored at column 19 (start=18), got {from_expected:?} (all ts1005: {ts1005:?})"
+    );
+}
+
+#[test]
+fn test_import_type_from_equals_still_routes_to_import_equals() {
+    // Regression for the sibling case: `import type from = require("m")` IS
+    // valid type-only import-equals (with `from` as the binding name). The
+    // narrow `defer` fix must not regress the `type` branch, so the parser
+    // should accept this without parser-level recovery diagnostics.
+    let source = r#"import type from = require("m");"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let parse_errors: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code < 2000)
+        .collect();
+    assert!(
+        parse_errors.is_empty(),
+        "Expected no parse errors for `import type from = require(...)`, got {parse_errors:?}"
+    );
+}
+
+#[test]
 fn test_regex_named_capturing_groups_do_not_emit_unexpected_paren() {
     let source = r#"const re = /(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})/u;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
