@@ -5992,6 +5992,46 @@ fn compile_resolves_node_modules_exports_subpath() {
 }
 
 #[test]
+fn compile_rejects_package_exports_target_with_node_modules_segment() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "node16",
+            "moduleResolution": "node16",
+            "noEmit": true
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        "import { value } from 'pkg/secret';\nconst n: number = value;\n",
+    );
+    write_file(
+        &base.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{"./secret":"./node_modules/secret.d.ts"}}"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg/node_modules/secret.d.ts"),
+        "export declare const value: number;",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected TS2307 for exports target under node_modules, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_cli_node16_resolution_enables_package_json_exports_without_config() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -6958,6 +6998,46 @@ fn compile_resolves_package_imports_wildcard() {
             .any(|diag| diag.file.contains("types/widget.d.ts"))
     );
     assert!(!base.join("dist/src/index.js").is_file());
+}
+
+#[test]
+fn compile_rejects_package_imports_target_with_node_modules_segment() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "node16",
+            "moduleResolution": "node16",
+            "noEmit": true
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("package.json"),
+        r##"{"name":"app","imports":{"#secret":"./node_modules/secret.d.ts"}}"##,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        "import { value } from '#secret';\nconst n: number = value;\n",
+    );
+    write_file(
+        &base.join("node_modules/secret.d.ts"),
+        "export declare const value: number;",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected TS2307 for imports target under node_modules, got diagnostics: {:?}",
+        result.diagnostics
+    );
 }
 
 #[test]
