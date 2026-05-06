@@ -2215,19 +2215,20 @@ impl<'a> CheckerState<'a> {
             .get(&cache_key)
             .copied()
         {
-            return Some(sym_id);
+            return sym_id;
         }
 
+        let cache_miss = visited_aliases.len() == 0;
         let resolved = self.resolve_named_export_via_export_equals_tracked_uncached(
             module_specifier,
             export_name,
             visited_aliases,
         );
-        if let Some(sym_id) = resolved {
+        if resolved.is_some() || cache_miss {
             self.ctx
                 .export_equals_named_cache
                 .borrow_mut()
-                .insert(cache_key, sym_id);
+                .insert(cache_key, resolved);
         }
         resolved
     }

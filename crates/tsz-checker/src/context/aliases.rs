@@ -48,9 +48,9 @@ pub type ModuleExportsIndexMap = FxHashMap<String, ModuleExportsByName>;
 /// `(file_idx, SymbolId)` where the export is declared.
 pub type GlobalModuleExportsIndex = Arc<ModuleExportsIndexMap>;
 
-/// Per-checker positive cache for named exports reached through `export=`.
+/// Per-checker cache for named exports reached through `export=`.
 /// Keyed by `(current_file_idx, module_specifier, export_name)`.
-pub type ExportEqualsNamedCache = FxHashMap<(usize, String, String), SymbolId>;
+pub type ExportEqualsNamedCache = FxHashMap<(usize, String, String), Option<SymbolId>>;
 
 /// Global cross-binder index: module specifier → list of `(file_idx, augmentation)`
 /// entries that contribute to that module's merged type.
