@@ -365,6 +365,59 @@ impl<'a> Printer<'a> {
         crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
     }
 
+    /// Check if an external import-equals alias is only value-used through a
+    /// later namespace import alias, such as:
+    /// `import ReactRouter = require("react-router");`
+    /// `import Route = ReactRouter.Route;`
+    /// `<Route />`
+    pub(in crate::emitter) fn import_equals_has_value_usage_through_namespace_alias_after_node(
+        &self,
+        import_stmt_idx: NodeIndex,
+        import_data: &tsz_parser::parser::node::ImportDeclData,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        let root_name = self.get_identifier_text_idx(import_data.import_clause);
+        if root_name.is_empty() {
+            return false;
+        }
+
+        let mut after_import = false;
+        for &stmt_idx in &source.statements.nodes {
+            if stmt_idx == import_stmt_idx {
+                after_import = true;
+                continue;
+            }
+            if !after_import {
+                continue;
+            }
+
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                continue;
+            }
+            let Some(alias_import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            if alias_import.is_type_only || !self.import_decl_has_runtime_value(alias_import) {
+                continue;
+            }
+            if self
+                .get_module_root_name(alias_import.module_specifier)
+                .as_deref()
+                != Some(root_name.as_str())
+            {
+                continue;
+            }
+            if self.import_equals_has_value_usage_after_node(stmt_node, alias_import) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Check if an import alias name has value usage in the remaining source.
     /// Used for namespace-scoped import alias elision: tsc erases `import X = Y`
     /// inside namespaces when X is only used in type positions.
