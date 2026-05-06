@@ -2761,6 +2761,9 @@ fn apply_cli_overrides_with_config_options(
         options.rewrite_relative_import_extensions = true;
         options.printer.rewrite_relative_import_extensions = true;
     }
+    if args.trace_resolution {
+        options.trace_resolution = true;
+    }
     if let Some(custom_conditions) = args.custom_conditions.as_ref() {
         options.custom_conditions = custom_conditions.clone();
     }
@@ -2866,6 +2869,9 @@ fn apply_cli_overrides_with_config_options(
     if args.no_unchecked_indexed_access {
         options.checker.no_unchecked_indexed_access = true;
     }
+    if args.no_unchecked_side_effect_imports {
+        options.checker.no_unchecked_side_effect_imports = true;
+    }
     if args.exact_optional_property_types {
         options.checker.exact_optional_property_types = true;
     }
@@ -2935,6 +2941,10 @@ fn apply_cli_overrides_with_config_options(
         options.allow_synthetic_default_imports = true;
         options.checker.allow_synthetic_default_imports = true;
     }
+    if let Some(allow_synthetic_default_imports) = args.allow_synthetic_default_imports {
+        options.allow_synthetic_default_imports = allow_synthetic_default_imports;
+        options.checker.allow_synthetic_default_imports = allow_synthetic_default_imports;
+    }
     if args.no_emit {
         options.no_emit = true;
     }
@@ -2944,6 +2954,9 @@ fn apply_cli_overrides_with_config_options(
     if args.no_resolve {
         options.no_resolve = true;
         options.checker.no_resolve = true;
+    }
+    if args.allow_umd_global_access {
+        options.checker.allow_umd_global_access = true;
     }
     if args.preserve_symlinks {
         options.preserve_symlinks = true;

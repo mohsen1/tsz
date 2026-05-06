@@ -85,6 +85,18 @@ class D extends B {
     );
 }
 
+#[test]
+fn abstract_static_illegal_pair_does_not_emit_ts1029() {
+    let source = "abstract class A { abstract static x: number }\n";
+    let diagnostics = parse_diagnostics(source);
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 1029 && message.contains("'static' modifier must precede 'abstract'")
+        }),
+        "`abstract static` should be left to TS1243 without an extra TS1029: {diagnostics:?}"
+    );
+}
+
 // =========================================================================
 // TS1040: override in ambient context (declare)
 // =========================================================================

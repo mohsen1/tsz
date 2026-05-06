@@ -25,6 +25,15 @@ impl<'a> Printer<'a> {
         node: &Node,
         clause: &tsz_parser::parser::node::ImportClauseData,
     ) -> bool {
+        if self.import_clause_is_namespace_only(clause)
+            && self
+                .arena
+                .get_import_decl(node)
+                .is_some_and(|import| self.import_references_type_only_export_equals_module(import))
+        {
+            return false;
+        }
+
         let mut names = Vec::new();
         if clause.name.is_some() {
             let default_name = self.get_identifier_text_idx(clause.name);
@@ -125,6 +134,35 @@ impl<'a> Printer<'a> {
         }
         self.ctx.target_es5
             && self.async_return_type_uses_imported_promise_constructor_after_node(node, &names)
+    }
+
+    fn import_clause_is_namespace_only(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
+                .is_some_and(|named| named.name.is_some() && named.elements.nodes.is_empty())
+    }
+
+    pub(in crate::emitter) fn import_references_type_only_export_equals_module(
+        &self,
+        import: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        let Some(module_node) = self.arena.get(import.module_specifier) else {
+            return false;
+        };
+        let Some(lit) = self.arena.get_literal(module_node) else {
+            return false;
+        };
+        self.ctx
+            .options
+            .type_only_export_equals_modules
+            .contains(lit.text.as_str())
     }
 
     fn async_return_type_uses_imported_promise_constructor_after_node(
@@ -311,6 +349,10 @@ impl<'a> Printer<'a> {
         node: &Node,
         import_data: &tsz_parser::parser::node::ImportDeclData,
     ) -> bool {
+        if self.import_references_type_only_export_equals_module(import_data) {
+            return false;
+        }
+
         let name = self.get_identifier_text_idx(import_data.import_clause);
         if name.is_empty() {
             return true;
@@ -1025,8 +1067,48 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if !is_exported_var && !self.import_decl_has_runtime_value(import) {
+        let has_runtime_value = self.import_decl_has_runtime_value(import);
+        // Script-mode preservation: when the file is not a module and the
+        // alias targets a top-level *interface or type alias* identifier,
+        // tsc preserves `var x = T;` (broken-at-runtime) instead of
+        // eliding. Top-level type-only declarations create a global
+        // identifier that the alias references, so tsc emits the
+        // assignment as written. Non-instantiated namespaces are
+        // different — tsc still elides them to avoid duplicate-`var`
+        // conflicts when the alias name shadows an existing binding
+        // (`var a; namespace M {} import a = M;` elides the alias).
+        let is_simple_identifier_target = module_node.is_identifier();
+        let is_script_mode = !self.ctx.file_is_module
+            && self.ctx.original_module_kind.is_none()
+            && !self.ctx.options.module_detection_force;
+        let target_is_interface_or_type_alias = is_simple_identifier_target
+            && self.identifier_target_is_interface_or_type_alias(import.module_specifier);
+        let script_mode_preserves_alias = is_script_mode && target_is_interface_or_type_alias;
+        if !has_runtime_value
+            && !script_mode_preserves_alias
+            && (!is_exported_var || module_node.kind == SyntaxKind::Identifier as u16)
+        {
             return;
+        }
+        // Even when the alias has the `export` modifier, skip the runtime
+        // assignment when the qualified target chain resolves to an
+        // *exported* interface or type alias (e.g. `export import b = a.I`
+        // where namespace `a` exports `interface I`). tsc emits neither the
+        // void-0 preamble nor `exports.b = a.I;` in that case. Non-exported
+        // inner members are unreachable from outside the namespace and tsc
+        // preserves the (broken) runtime emit, so we must not elide there.
+        if is_exported_var {
+            let stmts = self.scope_statements_for_runtime_lookup(None);
+            if !stmts.is_empty()
+                && crate::transforms::module_commonjs::import_alias_resolves_to_exported_type_only(
+                    self.arena,
+                    import.module_specifier,
+                    &stmts,
+                    self.ctx.options.preserve_const_enums,
+                )
+            {
+                return;
+            }
         }
 
         // Inside namespace IIFEs, elide namespace aliases (`import X = Y;`)

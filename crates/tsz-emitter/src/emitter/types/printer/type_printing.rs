@@ -2104,8 +2104,17 @@ impl<'a> TypePrinter<'a> {
                     result.push_str(&self.resolve_atom(*atom));
                 }
                 tsz_solver::types::TemplateSpan::Type(type_id) => {
+                    let printed = self.print_type(*type_id);
+                    if printed.len() >= 2
+                        && printed.starts_with('"')
+                        && printed.ends_with('"')
+                        && !printed[1..printed.len() - 1].contains('"')
+                    {
+                        result.push_str(&printed[1..printed.len() - 1]);
+                        continue;
+                    }
                     result.push_str("${");
-                    result.push_str(&self.print_type(*type_id));
+                    result.push_str(&printed);
                     result.push('}');
                 }
             }

@@ -3,6 +3,14 @@
 use super::*;
 use crate::types::IntrinsicKind;
 
+const fn merge_intersection_visibility(a: Visibility, b: Visibility) -> Visibility {
+    match (a, b) {
+        (Visibility::Private, _) | (_, Visibility::Private) => Visibility::Private,
+        (Visibility::Public, _) | (_, Visibility::Public) => Visibility::Public,
+        (Visibility::Protected, Visibility::Protected) => Visibility::Protected,
+    }
+}
+
 impl TypeInterner {
     /// Check if a type is an empty object type (no properties, no index signatures).
     ///
@@ -745,15 +753,11 @@ impl TypeInterner {
                                 self.intersection2(existing.write_type, prop.write_type);
                         }
                     }
-                    // For visibility: most restrictive wins (Private > Protected > Public)
-                    // { private a: number } & { public a: number } = { private a: number }
-                    existing.visibility = match (existing.visibility, prop.visibility) {
-                        (Visibility::Private, _) | (_, Visibility::Private) => Visibility::Private,
-                        (Visibility::Protected, _) | (_, Visibility::Protected) => {
-                            Visibility::Protected
-                        }
-                        (Visibility::Public, Visibility::Public) => Visibility::Public,
-                    };
+                    // Private remains inaccessible, all-protected remains protected,
+                    // and any public constituent makes the merged intersection
+                    // property public.
+                    existing.visibility =
+                        merge_intersection_visibility(existing.visibility, prop.visibility);
                 } else {
                     let new_idx = merged_props.len();
                     prop_index.insert(prop.name, new_idx);
