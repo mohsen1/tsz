@@ -428,6 +428,40 @@ function foo<S extends Foo<S>>() {}
 }
 
 #[test]
+fn test_ts2313_no_false_positive_for_applied_generic_class_with_output_default() {
+    let source = r"
+export interface TypeDef {}
+export type BoxedAny = Boxed<any, any, any>;
+export type Unbox<T extends Boxed<any, any, any>> = T['_output'];
+export abstract class Boxed<Output, Def extends TypeDef = TypeDef, Input = Output> {
+    readonly _output!: Output;
+    readonly _input!: Input;
+    readonly _def!: Def;
+    optional(): OptionalBox<this> {
+        return null as any;
+    }
+    or<T extends BoxedAny>(option: T): UnionBox<[this, T]> {
+        return null as any;
+    }
+}
+export class OptionalBox<T extends BoxedAny> extends Boxed<T['_output'] | undefined> {}
+export class UnionBox<T extends [BoxedAny, ...BoxedAny[]]> extends Boxed<T[number]['_output']> {}
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    let ts2313_count = diags.iter().filter(|d| d.code == 2313).count();
+    assert_eq!(
+        ts2313_count,
+        0,
+        "Expected 0 TS2313 errors for applied generic class constraint, got {ts2313_count}. Diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_ts2313_non_cyclic_chain_not_flagged() {
     // U extends T, T extends V, V extends T: U is NOT part of the cycle
     let source = r"

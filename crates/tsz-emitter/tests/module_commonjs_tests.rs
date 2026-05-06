@@ -242,11 +242,20 @@ fn test_collect_export_names_with_multiple_named_exports() {
 
 #[test]
 fn test_collect_export_names_with_export_import_equals() {
-    let export_names = parse_collect_exports("export import Foo = require(\"./bar\");");
+    let export_names = parse_collect_exports("namespace Bar {}\nexport import Foo = Bar;");
     assert_eq!(
         export_names,
         vec!["Foo"],
-        "Expected export name from export import equals"
+        "Expected export name from namespace export import equals"
+    );
+}
+
+#[test]
+fn test_collect_export_names_skips_external_export_import_equals() {
+    let export_names = parse_collect_exports("export import Foo = require(\"./bar\");");
+    assert!(
+        export_names.is_empty(),
+        "External export import equals should not get a void 0 preamble"
     );
 }
 
