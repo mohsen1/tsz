@@ -1044,6 +1044,55 @@ fn test_semantic_diagnostics_skip_inferred_module_none_when_target_supports_impo
 }
 
 #[test]
+fn test_semantic_diagnostics_preserve_options_with_numeric_inferred_target() {
+    let mut server = make_server();
+
+    let options_resp = server.handle_tsserver_request(make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({
+            "options": {
+                "noImplicitAny": true,
+                "target": 2
+            }
+        }),
+    ));
+    assert!(options_resp.success);
+
+    let open_resp = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": "/index.ts",
+            "fileContent": "function f(x) { return x; }\n"
+        }),
+    ));
+    assert!(open_resp.success);
+
+    let diagnostics_resp = server.handle_tsserver_request(make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts"
+        }),
+    ));
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.get("code").and_then(serde_json::Value::as_u64)
+                == Some(
+                    tsz_checker::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                        as u64,
+                )
+        }),
+        "expected noImplicitAny to survive numeric target payload, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_semantic_diagnostics_skip_core_global_type_noise_for_no_lib_files() {
     let mut server = make_server();
     server.open_files.insert(
@@ -3572,6 +3621,28 @@ fn test_check_options_experimental_decorators_default_false() {
     assert!(
         !options.experimental_decorators,
         "experimentalDecorators should default to false"
+    );
+}
+
+#[test]
+fn test_check_options_deserializes_numeric_tsserver_enums() {
+    let options: CheckOptions = serde_json::from_value(serde_json::json!({
+        "noImplicitAny": true,
+        "target": 2,
+        "module": 1
+    }))
+    .unwrap();
+
+    assert_eq!(options.target.as_deref(), Some("es2015"));
+    assert_eq!(options.module.as_deref(), Some("commonjs"));
+    assert_eq!(options.no_implicit_any, Some(true));
+    assert_eq!(
+        Server::parse_target(&Some("2".to_string())),
+        tsz::emitter::ScriptTarget::ES2015
+    );
+    assert_eq!(
+        Server::parse_module(&Some("1".to_string())),
+        tsz::ModuleKind::CommonJS
     );
 }
 

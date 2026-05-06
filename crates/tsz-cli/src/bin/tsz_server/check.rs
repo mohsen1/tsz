@@ -12,7 +12,7 @@ use tsz::checker::context::{CheckerOptions, LibContext, ProjectEnv};
 use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz::checker::module_resolution::build_module_resolution_maps;
 use tsz::checker::state::CheckerState;
-use tsz::emitter::ScriptTarget;
+use tsz::emitter::{ModuleKind, ScriptTarget};
 use tsz::lib_loader::LibFile;
 use tsz::parallel;
 use tsz::parser::ParserState;
@@ -814,8 +814,25 @@ impl Server {
 
     pub(crate) fn parse_target(target: &Option<String>) -> ScriptTarget {
         match target.as_deref() {
-            Some(value) => ScriptTarget::from_ts_str(value).unwrap_or(ScriptTarget::ESNext),
+            Some(value) => value
+                .parse::<u32>()
+                .ok()
+                .and_then(ScriptTarget::from_ts_numeric)
+                .or_else(|| ScriptTarget::from_ts_str(value))
+                .unwrap_or(ScriptTarget::ESNext),
             None => ScriptTarget::ES5,
+        }
+    }
+
+    pub(crate) fn parse_module(module: &Option<String>) -> ModuleKind {
+        match module.as_deref() {
+            Some(value) => value
+                .parse::<u32>()
+                .ok()
+                .and_then(ModuleKind::from_ts_numeric)
+                .or_else(|| ModuleKind::from_ts_str(value))
+                .unwrap_or(ModuleKind::None),
+            None => ModuleKind::CommonJS,
         }
     }
 
@@ -850,27 +867,7 @@ impl Server {
             no_types_and_symbols: false,
             types_explicitly_set: false,
             target: checker_target,
-            module: if let Some(module_str) = &options.module {
-                // Parse module kind from string (inline version of parse_module_kind)
-                match module_str.to_lowercase().as_str() {
-                    "commonjs" => tsz::ModuleKind::CommonJS,
-                    "amd" => tsz::ModuleKind::AMD,
-                    "umd" => tsz::ModuleKind::UMD,
-                    "system" => tsz::ModuleKind::System,
-                    "es2015" => tsz::ModuleKind::ES2015,
-                    "es2020" => tsz::ModuleKind::ES2020,
-                    "es2022" => tsz::ModuleKind::ES2022,
-                    "esnext" => tsz::ModuleKind::ESNext,
-                    "node16" => tsz::ModuleKind::Node16,
-                    "node18" => tsz::ModuleKind::Node18,
-                    "node20" => tsz::ModuleKind::Node20,
-                    "nodenext" => tsz::ModuleKind::NodeNext,
-                    _ => tsz::ModuleKind::None,
-                }
-            } else {
-                // Default to CommonJS if not specified (matches tsc behavior)
-                tsz::ModuleKind::CommonJS
-            },
+            module: Self::parse_module(&options.module),
             es_module_interop: options.es_module_interop,
             allow_synthetic_default_imports: options
                 .allow_synthetic_default_imports
