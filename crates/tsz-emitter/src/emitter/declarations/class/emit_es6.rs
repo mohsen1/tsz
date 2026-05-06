@@ -2330,7 +2330,15 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+        if self
+            .pending_commonjs_class_export_name
+            .as_ref()
+            .is_some_and(|(class_idx, _)| *class_idx == _idx)
+        {
+            let (_, class_name) = self
+                .pending_commonjs_class_export_name
+                .take()
+                .expect("pending class export should be present");
             self.write_line();
             self.write("exports.");
             self.write(&class_name);
