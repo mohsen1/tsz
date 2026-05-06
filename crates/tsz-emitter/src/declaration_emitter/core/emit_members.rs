@@ -95,9 +95,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        // tsc uses property syntax for computed method names in these cases:
-        // 1. Computed key with `any` type (from shorthand ambient modules)
-        // 2. Optional computed methods (`[key]?()` → `[key]?: (() => T) | undefined`)
+        // tsc uses property syntax for late-bound computed method names:
+        // `[key]()` becomes `[key]: () => T`.
+        // Literal and resolved computed names can stay method-like.
         // Non-computed optional methods keep method syntax: `g?(): T`
         let is_computed_name = self
             .arena
@@ -128,8 +128,8 @@ impl<'a> DeclarationEmitter<'a> {
             // Well-known symbol names are valid declaration method names even when
             // the symbol expression's type is unavailable in the current cache.
             && !is_symbol_computed_name
-            // Literal/reference computed method names are valid declaration method
-            // names. Keep them as methods unless optional syntax forces a property.
+            // Literal computed method names are valid declaration method names.
+            // Keep them as methods unless optional syntax forces a property.
             && !computed_name_forces_method_syntax
             && (method.question_token || computed_key_requires_property_syntax);
 
@@ -501,8 +501,6 @@ impl<'a> DeclarationEmitter<'a> {
         expr_node.kind == SyntaxKind::StringLiteral as u16
             || expr_node.kind == SyntaxKind::NumericLiteral as u16
             || expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            || expr_node.kind == SyntaxKind::Identifier as u16
-            || expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
     }
 
     pub(in crate::declaration_emitter) fn emit_constructor_declaration(

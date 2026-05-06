@@ -5964,20 +5964,7 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
-        let computed_key_requires_property_syntax = self
-            .arena
-            .get_computed_property(name_node)
-            .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
-            .is_none_or(|type_id| {
-                type_id == tsz_solver::types::TypeId::ANY
-                    || self.type_interner.is_some_and(|interner| {
-                        !tsz_solver::type_queries::is_type_usable_as_property_name(
-                            interner, type_id,
-                        )
-                    })
-            });
-
-        method.question_token || computed_key_requires_property_syntax
+        true
     }
 
     fn computed_property_name_is_literal_key(&self, name_idx: NodeIndex) -> bool {
@@ -6097,7 +6084,10 @@ impl<'a> DeclarationEmitter<'a> {
             return type_text.to_string();
         }
 
-        let mut lines: Vec<String> = type_text.lines().map(str::to_string).collect();
+        let mut lines: Vec<String> = type_text
+            .lines()
+            .map(Self::returned_object_method_signature_to_property_text)
+            .collect();
         for (name_text, comments) in commented_members.into_iter().rev() {
             let Some(line_idx) = lines.iter().position(|line| {
                 let trimmed = line.trim_start();
@@ -6130,6 +6120,68 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             lines.join("\n")
         }
+    }
+
+    fn returned_object_method_signature_to_property_text(line: &str) -> String {
+        let trimmed = line.trim_start();
+        let indent_len = line.len() - trimmed.len();
+        let Some(open_paren) = trimmed.find('(') else {
+            return line.to_string();
+        };
+        let name = trimmed[..open_paren].trim_end_matches('?').trim();
+        if name.is_empty()
+            || name == "new"
+            || name.contains(' ')
+            || name.starts_with('[')
+            || trimmed[..open_paren].contains(':')
+        {
+            return line.to_string();
+        }
+        let Some(close_paren) = Self::matching_top_level_paren(trimmed, open_paren) else {
+            return line.to_string();
+        };
+        let rest = trimmed[close_paren + 1..].trim_start();
+        let Some(return_text) = rest.strip_prefix(':') else {
+            return line.to_string();
+        };
+        let return_text = return_text.trim_start().trim_end_matches(';');
+        format!(
+            "{}{}: ({}) => {};",
+            &line[..indent_len],
+            name,
+            &trimmed[open_paren + 1..close_paren],
+            return_text
+        )
+    }
+
+    fn matching_top_level_paren(text: &str, open_paren: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        let mut quote: Option<u8> = None;
+        let mut escaped = false;
+        for (idx, byte) in text.bytes().enumerate().skip(open_paren) {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+            match byte {
+                b'\'' | b'"' => quote = Some(byte),
+                b'(' => depth += 1,
+                b')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(idx);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     fn function_initializer_unique_returned_object_literal(
