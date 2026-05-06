@@ -7196,13 +7196,17 @@ fn test_symbol_property_access_methods() {
     let types = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&types);
 
-    // toString and valueOf should return ANY for now (function types are complex)
+    // toString and valueOf should use the symbol apparent method return types.
     let result_to_string = evaluator.resolve_property_access(TypeId::SYMBOL, "toString");
     match result_to_string {
         PropertyAccessResult::Success {
             type_id: prop_type, ..
         } => {
-            assert_eq!(prop_type, TypeId::ANY);
+            let Some(TypeData::Function(shape_id)) = types.lookup(prop_type) else {
+                panic!("Expected symbol.toString to resolve to function type");
+            };
+            let shape = types.function_shape(shape_id);
+            assert_eq!(shape.return_type, TypeId::STRING);
         }
         _ => panic!("Expected Success for symbol.toString, got: {result_to_string:?}"),
     }
@@ -7212,7 +7216,11 @@ fn test_symbol_property_access_methods() {
         PropertyAccessResult::Success {
             type_id: prop_type, ..
         } => {
-            assert_eq!(prop_type, TypeId::ANY);
+            let Some(TypeData::Function(shape_id)) = types.lookup(prop_type) else {
+                panic!("Expected symbol.valueOf to resolve to function type");
+            };
+            let shape = types.function_shape(shape_id);
+            assert_eq!(shape.return_type, TypeId::SYMBOL);
         }
         _ => panic!("Expected Success for symbol.valueOf, got: {result_value_of:?}"),
     }

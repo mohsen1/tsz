@@ -1137,10 +1137,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
-        if prop_name == "toString" || prop_name == "valueOf" {
-            return PropertyAccessResult::simple(TypeId::ANY);
-        }
-
         self.resolve_apparent_property(IntrinsicKind::Symbol, TypeId::SYMBOL, prop_name, prop_atom)
     }
 
