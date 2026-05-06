@@ -1624,3 +1624,38 @@ export namespace N {
         "Declaration emit must not use the shadowed top-level identity helper: {output}"
     );
 }
+
+#[test]
+fn fix_returned_object_jsdoc_keeps_method_signature() {
+    let output = emit_dts_with_binding(
+        r#"
+export const foo = (p: string) => {
+    return {
+        /**
+         * comment2
+         * @param s
+         */
+        bar: (s: number) => {},
+        /**
+         * comment3
+         * @param s
+         */
+        bar2(s: number) {},
+    };
+};
+"#,
+    );
+
+    assert!(
+        output.contains("bar: (s: number) => void;"),
+        "property function syntax should stay unchanged: {output}"
+    );
+    assert!(
+        output.contains("bar2(s: number): void;"),
+        "method syntax should survive JSDoc insertion: {output}"
+    );
+    assert!(
+        !output.contains("bar2: (s: number) => void;"),
+        "returned object methods must not be rewritten as property functions: {output}"
+    );
+}
