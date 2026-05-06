@@ -198,21 +198,22 @@ fn test_emitter_file_size_ceiling() {
 
     // Current oversized files (16 as of 2026-05-06):
     //   declaration_emitter/helpers/type_inference.rs (7932),
-    //   emitter/declarations/class/emit_es6.rs (3497),
-    //   transforms/class_es5_ir.rs (3250),
+    //   emitter/declarations/class/emit_es6.rs (3634),
+    //   transforms/class_es5_ir.rs (3257),
     //   declaration_emitter/core/js_emit.rs (2986),
     //   declaration_emitter/helpers/portability_resolve.rs (2844),
     //   transforms/async_es5_ir.rs (2844),
     //   declaration_emitter/helpers/js_exports.rs (2699),
-    //   transforms/ir_printer.rs (2455),
-    //   declaration_emitter/exports/imports_and_modules.rs (2464),
-    //   emitter/types/printer/type_printing.rs (2348),
+    //   transforms/ir_printer.rs (2481),
+    //   declaration_emitter/exports/imports_and_modules.rs (2468),
+    //   emitter/types/printer/type_printing.rs (2405),
     //   declaration_emitter/helpers/function_analysis.rs (2317),
-    //   emitter/source_file/emit.rs (2329),
-    //   emitter/statements/core.rs (2293),
-    //   emitter/core.rs (2127),
-    //   declaration_emitter/exports/mod.rs (2043),
-    //   declaration_emitter/core/emit_declarations.rs (2016).
+    //   emitter/source_file/emit.rs (2364),
+    //   emitter/functions.rs (2228),
+    //   emitter/es5/bindings_assignment.rs (2165),
+    //   emitter/core.rs (2158),
+    //   declaration_emitter/exports/mod.rs (2063),
+    //   emitter/module_emission/core/mod.rs (2056).
     const FILE_COUNT_CEILING: usize = 16;
     assert!(
         oversized.len() <= FILE_COUNT_CEILING,
