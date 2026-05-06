@@ -107,6 +107,49 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .all(|prop| prop.type_id == TypeId::ANY && prop.write_type == TypeId::ANY)
     }
 
+    pub(crate) fn top_rest_any_callable_constraint(&self, constraint: TypeId) -> bool {
+        if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(constraint)
+            && let Some(constraint) = tp.constraint
+        {
+            return self.top_rest_any_callable_constraint(constraint);
+        }
+        let Some(shape) = Self::get_contextual_signature_cached(self.interner, constraint) else {
+            return false;
+        };
+        if shape.is_constructor || shape.params.len() != 1 || !shape.params[0].rest {
+            return false;
+        }
+        let rest_type = self.unwrap_readonly(shape.params[0].type_id);
+        let rest_elem = if let Some(TypeData::Tuple(tuple_id)) = self.interner.lookup(rest_type) {
+            let elems = self.interner.tuple_list(tuple_id);
+            elems
+                .iter()
+                .find(|elem| elem.rest)
+                .and_then(|elem| {
+                    crate::type_queries::get_array_element_type(
+                        self.interner.as_type_database(),
+                        elem.type_id,
+                    )
+                    .or(Some(elem.type_id))
+                })
+                .unwrap_or(rest_type)
+        } else {
+            crate::type_queries::get_array_element_type(self.interner.as_type_database(), rest_type)
+                .unwrap_or(rest_type)
+        };
+        rest_elem.is_any_or_unknown() && shape.return_type.is_any_or_unknown()
+    }
+
+    pub(crate) fn callable_satisfies_top_rest_any_constraint(
+        &self,
+        candidate: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        self.top_rest_any_callable_constraint(constraint)
+            && Self::get_contextual_signature_cached(self.interner, candidate)
+                .is_some_and(|shape| !shape.is_constructor)
+    }
+
     fn constrain_types_for_arg_source(
         &mut self,
         arg_index: usize,
@@ -966,6 +1009,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     .checker
                                     .is_assignable_to(contextual_arg_type, inst_check_type)
                                     && !self.is_function_union_compat(
+                                        contextual_arg_type,
+                                        inst_check_type,
+                                    )
+                                    && !self.callable_satisfies_top_rest_any_constraint(
                                         contextual_arg_type,
                                         inst_check_type,
                                     )
@@ -1987,11 +2034,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // type to enable proper contextual typing of callbacks.
                 let constructor_context_can_fill_unknown =
                     func.is_constructor && structural_return_subst.get(tp.name).is_some();
-                if !has_constraints
-                    && ty == TypeId::UNKNOWN
-                    && direct_param_vars.contains(&var)
-                    && !constructor_context_can_fill_unknown
-                {
+                let keep_direct_param_inference = direct_param_vars.contains(&var)
+                    && ((!has_constraints
+                        && ty == TypeId::UNKNOWN
+                        && !constructor_context_can_fill_unknown)
+                        || (ty != TypeId::UNKNOWN && ty != TypeId::ERROR));
+                if keep_direct_param_inference {
                     ty
                 } else {
                     let can_apply = self.can_apply_contextual_return_substitution(
@@ -2099,7 +2147,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Strip freshness before constraint check: inferred types should not
                 // trigger excess property checking against type parameter constraints.
                 let ty_for_check = crate::relations::freshness::widen_freshness(self.interner, ty);
-                if !self.checker.is_assignable_to(ty_for_check, constraint_ty) {
+                if !self.checker.is_assignable_to(ty_for_check, constraint_ty)
+                    && !self.callable_satisfies_top_rest_any_constraint(ty_for_check, constraint_ty)
+                {
                     // When the inferred type is a TypeParameter whose own constraint
                     // is structurally equivalent to the target constraint, accept it.
                     // This handles: K extends keyof S passed to K2 extends keyof S
@@ -2633,6 +2683,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             if !self.checker.is_assignable_to(arg_type, constraint)
                 && !self.is_function_union_compat(arg_type, constraint)
+                && !self.callable_satisfies_top_rest_any_constraint(arg_type, constraint)
             {
                 return CallResult::ArgumentTypeMismatch {
                     index: i,
