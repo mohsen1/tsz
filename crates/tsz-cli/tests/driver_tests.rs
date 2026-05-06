@@ -1911,7 +1911,7 @@ export const works1 = fn((x: number) => x);
 
     let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
     assert!(
-        dts.contains("export declare const fail1: (<T>(x: T) => T);"),
+        dts.contains("export declare const fail1: <T>(x: T) => T;"),
         "expected inferred generic function type argument: {dts}"
     );
     assert!(
