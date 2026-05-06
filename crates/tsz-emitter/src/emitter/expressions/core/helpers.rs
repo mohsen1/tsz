@@ -299,7 +299,113 @@ impl<'a> Printer<'a> {
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         self.ctx.flags.paren_leftmost_function_or_object = prev_paren_leftmost;
+        if let Some(inner_node) = self.arena.get(paren.expression) {
+            let close_paren_pos = self
+                .find_token_end_before_trivia(node.pos, node.end)
+                .saturating_sub(1);
+            let inner_token_end =
+                self.find_token_end_before_trivia(inner_node.pos, close_paren_pos);
+            let normalize_inner_trivia =
+                self.source_range_has_newline(inner_token_end, close_paren_pos);
+            let (emitted_inner_comments, _, _) = self.emit_comments_in_range(
+                inner_token_end,
+                close_paren_pos,
+                true,
+                normalize_inner_trivia,
+            );
+            if emitted_inner_comments && normalize_inner_trivia {
+                self.write(" ");
+            }
+        }
         self.write(")");
+        let close_paren_end = self.find_token_end_before_trivia(node.pos, node.end);
+        let trailing_comment_end =
+            self.parenthesized_same_line_trailing_comment_end(close_paren_end);
+        self.emit_parenthesized_same_line_trailing_comments(close_paren_end, trailing_comment_end);
+    }
+
+    fn parenthesized_same_line_trailing_comment_end(&self, start: u32) -> u32 {
+        let Some(text) = self.source_text else {
+            return start;
+        };
+        let bytes = text.as_bytes();
+        let mut pos = std::cmp::min(start as usize, bytes.len());
+        let mut end = pos;
+
+        loop {
+            while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t') {
+                pos += 1;
+            }
+
+            if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+                pos += 2;
+                while pos + 1 < bytes.len() {
+                    if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                        pos += 2;
+                        end = pos;
+                        break;
+                    }
+                    pos += 1;
+                }
+                continue;
+            }
+
+            if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
+                pos += 2;
+                while pos < bytes.len() && !matches!(bytes[pos], b'\n' | b'\r') {
+                    pos += 1;
+                }
+                end = pos;
+            }
+
+            break;
+        }
+
+        end as u32
+    }
+
+    fn emit_parenthesized_same_line_trailing_comments(&mut self, start: u32, end: u32) {
+        if self.ctx.options.remove_comments || start >= end {
+            return;
+        }
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        let mut first_comment_pos = None;
+        let mut idx = self.comment_emit_idx;
+        while idx < self.all_comments.len() {
+            let comment = &self.all_comments[idx];
+            if comment.pos >= end {
+                break;
+            }
+            if comment.end > start {
+                first_comment_pos = Some(comment.pos);
+                break;
+            }
+            idx += 1;
+        }
+
+        let Some(first_comment_pos) = first_comment_pos else {
+            return;
+        };
+
+        if !self.comment_preceded_by_newline(first_comment_pos) {
+            self.write(" ");
+        }
+        if let Ok(comment_text) =
+            crate::safe_slice::slice(text, first_comment_pos as usize, end as usize)
+        {
+            self.write(comment_text);
+        }
+
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.pos >= end {
+                break;
+            }
+            self.comment_emit_idx += 1;
+        }
     }
 
     fn parenthesized_span_has_newline(&self, node: &Node) -> bool {

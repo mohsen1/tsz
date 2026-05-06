@@ -31,6 +31,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parenthesized_expression_preserves_comments_around_close_paren() {
+        let source = "/*1*/(/*2*/ \"foo\" /*3*/)/*4*/;\n// open\n/*1*/(\n    // next\n    /*2*/\"foo\"\n    //close\n    /*3*/)/*4*/;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("/*1*/ ( /*2*/\"foo\" /*3*/) /*4*/;"),
+            "Same-line parenthesized comments should stay before the semicolon.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("//close\n/*3*/ ) /*4*/;"),
+            "Multiline parenthesized comments should stay around the closing paren.\nOutput:\n{output}"
+        );
+    }
+
     /// Dynamic `import('path')` expressions must emit the `import` keyword.
     /// Previously the emitter's `emit_node_by_kind` dispatch had no handler for
     /// `SyntaxKind::ImportKeyword`, so the keyword was silently dropped and the
