@@ -1151,6 +1151,22 @@ fn recovered_typeof_member_type_tail_emits_as_statement() {
 }
 
 #[test]
+fn typeof_text_inside_string_literal_type_is_erased() {
+    let source = r#"var a: ".typeof(foo)";"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("var a;"),
+        "String-literal type annotation should erase to a declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("typeof (foo);"),
+        "Recovery must not scan `.typeof(...)` inside string-literal type text.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn valid_typeof_property_call_does_not_emit_extra_statement() {
     // A method literally named `typeof` is a valid JS property. The emitter must
     // not treat it as a recovered type-annotation tail and emit a duplicate
@@ -1172,6 +1188,26 @@ result;"#;
     assert!(
         !output.contains(r#"typeof ("ok");"#),
         "Valid .typeof() call must not produce a spurious typeof statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_arrow_recovery_ignores_string_literal_initializer() {
+    let source = r#"var x = "async (a): Foo = await =>";"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains(r#"var x = "async (a): Foo = await =>";"#),
+        "String literal initializer should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(", Foo"),
+        "Recovery must not add a return-type binding from string contents.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("{\n}"),
+        "Recovery must not emit an extra block from string contents.\nOutput:\n{output}"
     );
 }
 

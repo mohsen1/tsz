@@ -38,6 +38,14 @@ impl ModuleResolver {
 
     /// Try to resolve a file with various extensions
     pub(super) fn try_file(&self, path: &Path) -> Option<PathBuf> {
+        self.try_file_with_package_type(path, self.current_package_type)
+    }
+
+    pub(super) fn try_file_with_package_type(
+        &self,
+        path: &Path,
+        package_type: Option<PackageType>,
+    ) -> Option<PathBuf> {
         let suffixes = &self.module_suffixes;
         if let Some(extension) = path.extension().and_then(|ext| ext.to_str())
             && split_path_extension(path).is_none()
@@ -86,7 +94,7 @@ impl ModuleResolver {
             return None;
         }
 
-        let extensions = self.extension_candidates_for_resolution();
+        let extensions = self.extension_candidates_for_package_type(package_type);
         for ext in extensions {
             if let Some(resolved) = try_file_with_suffixes_and_extension(path, ext, suffixes) {
                 return Some(resolved);
@@ -107,6 +115,14 @@ impl ModuleResolver {
     /// Used for ESM packages in Node16/NodeNext where directory index resolution
     /// is not allowed by Node.js.
     pub(super) fn try_file_no_index(&self, path: &Path) -> Option<PathBuf> {
+        self.try_file_no_index_with_package_type(path, self.current_package_type)
+    }
+
+    pub(super) fn try_file_no_index_with_package_type(
+        &self,
+        path: &Path,
+        package_type: Option<PackageType>,
+    ) -> Option<PathBuf> {
         let suffixes = &self.module_suffixes;
         if let Some(extension) = path.extension().and_then(|ext| ext.to_str())
             && split_path_extension(path).is_none()
@@ -147,7 +163,7 @@ impl ModuleResolver {
             return None;
         }
 
-        let extensions = self.extension_candidates_for_resolution();
+        let extensions = self.extension_candidates_for_package_type(package_type);
         for ext in extensions {
             if let Some(resolved) = try_file_with_suffixes_and_extension(path, ext, suffixes) {
                 return Some(resolved);
@@ -157,33 +173,34 @@ impl ModuleResolver {
         None
     }
 
-    pub(super) const fn extension_candidates_for_resolution(&self) -> &'static [&'static str] {
+    pub(super) const fn extension_candidates_for_package_type(
+        &self,
+        package_type: Option<PackageType>,
+    ) -> &'static [&'static str] {
         match self.resolution_kind {
-            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
-                match self.current_package_type {
-                    Some(PackageType::Module) => {
-                        if self.allow_js {
-                            &NODE16_MODULE_ALLOWJS_EXTENSION_CANDIDATES
-                        } else {
-                            &NODE16_MODULE_EXTENSION_CANDIDATES
-                        }
-                    }
-                    Some(PackageType::CommonJs) => {
-                        if self.allow_js {
-                            &NODE16_COMMONJS_ALLOWJS_EXTENSION_CANDIDATES
-                        } else {
-                            &NODE16_COMMONJS_EXTENSION_CANDIDATES
-                        }
-                    }
-                    None => {
-                        if self.allow_js {
-                            &TS_JS_EXTENSION_CANDIDATES
-                        } else {
-                            &TS_EXTENSION_CANDIDATES
-                        }
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => match package_type {
+                Some(PackageType::Module) => {
+                    if self.allow_js {
+                        &NODE16_MODULE_ALLOWJS_EXTENSION_CANDIDATES
+                    } else {
+                        &NODE16_MODULE_EXTENSION_CANDIDATES
                     }
                 }
-            }
+                Some(PackageType::CommonJs) => {
+                    if self.allow_js {
+                        &NODE16_COMMONJS_ALLOWJS_EXTENSION_CANDIDATES
+                    } else {
+                        &NODE16_COMMONJS_EXTENSION_CANDIDATES
+                    }
+                }
+                None => {
+                    if self.allow_js {
+                        &TS_JS_EXTENSION_CANDIDATES
+                    } else {
+                        &TS_EXTENSION_CANDIDATES
+                    }
+                }
+            },
             ModuleResolutionKind::Classic => {
                 if self.allow_js {
                     &TS_JS_EXTENSION_CANDIDATES
@@ -201,7 +218,11 @@ impl ModuleResolver {
         }
     }
 
-    pub(super) fn try_directory(&self, path: &Path) -> Option<PathBuf> {
+    pub(super) fn try_directory_with_package_type(
+        &self,
+        path: &Path,
+        package_type: Option<PackageType>,
+    ) -> Option<PathBuf> {
         if !path.is_dir() {
             return None;
         }
@@ -244,24 +265,32 @@ impl ModuleResolver {
             }
             if let Some(main) = &pj.main {
                 let main_path = path.join(main);
-                if let Some(resolved) = self.try_file(&main_path) {
+                if let Some(resolved) = self.try_file_with_package_type(&main_path, package_type) {
                     return Some(resolved);
                 }
             }
         }
 
         let index = path.join("index");
-        self.try_file(&index)
+        self.try_file_with_package_type(&index, package_type)
     }
 
     /// Try to resolve a path as a file or directory
     pub(super) fn try_file_or_directory(&self, path: &Path) -> Option<PathBuf> {
+        self.try_file_or_directory_with_package_type(path, self.current_package_type)
+    }
+
+    pub(super) fn try_file_or_directory_with_package_type(
+        &self,
+        path: &Path,
+        package_type: Option<PackageType>,
+    ) -> Option<PathBuf> {
         // Try as file first
-        if let Some(resolved) = self.try_file(path) {
+        if let Some(resolved) = self.try_file_with_package_type(path, package_type) {
             return Some(resolved);
         }
 
-        self.try_directory(path)
+        self.try_directory_with_package_type(path, package_type)
     }
 
     /// Resolve an exports target without Node16 extension substitution.

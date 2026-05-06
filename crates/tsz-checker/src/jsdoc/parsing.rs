@@ -293,6 +293,10 @@ impl<'a> CheckerState<'a> {
         Self::strip_jsdoc_tag_prefix(line, tag_name).is_some()
     }
 
+    pub(crate) fn line_starts_with_jsdoc_tag(line: &str, tag_name: &str) -> bool {
+        Self::jsdoc_line_starts_with_tag(line, tag_name)
+    }
+
     pub(crate) fn strip_jsdoc_return_tag_prefix(text: &str) -> Option<&str> {
         Self::strip_jsdoc_tag_prefix(text, "returns")
             .or_else(|| Self::strip_jsdoc_tag_prefix(text, "return"))
@@ -881,7 +885,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if current_info.callback.is_some() {
-                if let Some(rest) = line.strip_prefix("@param") {
+                if let Some(rest) = Self::strip_jsdoc_tag_prefix(line, "param") {
                     if let Some(param_info) = Self::parse_jsdoc_param_tag(rest)
                         && let Some(ref mut cb) = current_info.callback
                     {
@@ -1270,9 +1274,9 @@ impl<'a> CheckerState<'a> {
 
     pub(super) fn parse_jsdoc_property_type(line: &str) -> Option<JsdocPropertyTagInfo> {
         let mut rest = line.trim();
-        if let Some(after_tag) = rest.strip_prefix("@property") {
+        if let Some(after_tag) = Self::strip_jsdoc_tag_prefix(rest, "property") {
             rest = after_tag.trim();
-        } else if let Some(after_tag) = rest.strip_prefix("@prop") {
+        } else if let Some(after_tag) = Self::strip_jsdoc_tag_prefix(rest, "prop") {
             rest = after_tag.trim();
         } else {
             return None;
