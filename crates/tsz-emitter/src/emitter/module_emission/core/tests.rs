@@ -403,6 +403,47 @@ fn reserved_private_constructor_method_is_not_extracted() {
 }
 
 #[test]
+fn computed_class_member_private_access_inlines_weakmap_init() {
+    let source = r#"let getX: (a: A) => number;
+
+class A {
+    #x = 100;
+    [(getX = (a: A) => a.#x, "_")]() {}
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __classPrivateFieldGet ="),
+        "Computed member names with private reads should request the helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "[(_A_x = new WeakMap(), getX = (a) => __classPrivateFieldGet(a, _A_x, \"f\"), \"_\")]"
+        ),
+        "WeakMap initialization should be sequenced inside the computed member name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n_A_x = new WeakMap();"),
+        "WeakMap initialization should not be emitted again after the class.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_class_super_parameter_skips_user_binding() {
     let source = r#"class Base {}
 
