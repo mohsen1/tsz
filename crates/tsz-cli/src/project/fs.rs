@@ -241,11 +241,23 @@ fn expand_include_patterns(patterns: &[String]) -> Vec<String> {
             continue;
         }
 
+        if is_terminal_wildcard_pattern(pattern) {
+            let base = pattern.trim_end_matches('/');
+            expanded.push(base.to_string());
+            expanded.push(format!("{base}/**/*"));
+            continue;
+        }
+
         // Directory pattern (no extension or glob at end) - expand to match all files
         let base = pattern.trim_end_matches('/');
         expanded.push(format!("{base}/**/*"));
     }
     expanded
+}
+
+fn is_terminal_wildcard_pattern(pattern: &str) -> bool {
+    let pattern = pattern.trim_end_matches('/');
+    pattern == "*" || pattern.ends_with("/*")
 }
 
 fn build_exclude_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
@@ -510,6 +522,7 @@ mod tests {
         let expanded = expand_include_patterns(&[
             "src".to_string(),
             "tests/".to_string(),
+            "src/*".to_string(),
             "already/**/*".to_string(),
             "index.ts".to_string(),
             "subdir/*.tsx".to_string(),
@@ -520,11 +533,45 @@ mod tests {
             vec![
                 "src/**/*".to_string(),
                 "tests/**/*".to_string(),
+                "src/*".to_string(),
+                "src/*/**/*".to_string(),
                 "already/**/*".to_string(),
                 "index.ts".to_string(),
                 "subdir/*.tsx".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_discover_terminal_include_star_matches_direct_files() {
+        let dir = unique_temp_dir("terminal_include_star");
+        fs::create_dir_all(dir.join("src/nested")).unwrap();
+        fs::write(dir.join("src/a.js"), "const direct = 1;").unwrap();
+        fs::write(dir.join("src/nested/b.js"), "const nested = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: Vec::new(),
+            files_explicitly_set: false,
+            include: Some(vec!["src/*".to_string()]),
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: true,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            result.iter().any(|path| path.ends_with("src/a.js")),
+            "terminal include star should match direct files, got: {result:?}"
+        );
+        assert!(
+            result.iter().any(|path| path.ends_with("src/nested/b.js")),
+            "terminal include star should also recurse through matched directories, got: {result:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
