@@ -5,6 +5,11 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+struct RecoveredSwitchClass {
+    header: String,
+    inline_body: Option<String>,
+}
+
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_if_statement(&mut self, node: &Node) {
         let Some(if_stmt) = self.arena.get_if_statement(node) else {
@@ -829,14 +834,23 @@ impl<'a> Printer<'a> {
         self.write(") ");
         // case_block is a NodeIndex pointing to a CaseBlock node
         self.emit(switch.case_block);
-        if let Some(class_name) =
+        if let Some(recovered_class) =
             self.recovered_class_after_unterminated_empty_switch(node, switch.case_block)
         {
             self.write_line();
             self.write("class ");
-            self.write(&class_name);
+            self.write(&recovered_class.header);
             self.write(" {");
             self.write_line();
+            if let Some(body) = recovered_class.inline_body {
+                self.increase_indent();
+                self.write(&body);
+                if !body.ends_with(';') {
+                    self.write(";");
+                }
+                self.decrease_indent();
+                self.write_line();
+            }
             self.write("}");
         }
     }
@@ -845,7 +859,7 @@ impl<'a> Printer<'a> {
         &self,
         node: &Node,
         case_block_idx: NodeIndex,
-    ) -> Option<String> {
+    ) -> Option<RecoveredSwitchClass> {
         let case_block_node = self.arena.get(case_block_idx)?;
         let case_block = self.arena.blocks.get(case_block_node.data_index as usize)?;
         if !case_block.statements.nodes.is_empty() {
@@ -865,8 +879,32 @@ impl<'a> Printer<'a> {
                 .chars()
                 .take_while(|&ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
                 .collect();
-            if !name.is_empty() && rest[name.len()..].trim_start().starts_with('{') {
-                return Some(name);
+            if name.is_empty() {
+                continue;
+            }
+
+            if rest[name.len()..].trim_start().starts_with('{') {
+                return Some(RecoveredSwitchClass {
+                    header: name,
+                    inline_body: None,
+                });
+            }
+
+            let Some(open_brace) = rest.find('{') else {
+                continue;
+            };
+            let Some(close_brace) = rest[open_brace + 1..].rfind('}') else {
+                continue;
+            };
+            let header = rest[..open_brace].trim_end().to_string();
+            let inline_body = rest[open_brace + 1..open_brace + 1 + close_brace]
+                .trim()
+                .to_string();
+            if !header.is_empty() && !inline_body.is_empty() {
+                return Some(RecoveredSwitchClass {
+                    header,
+                    inline_body: Some(inline_body),
+                });
             }
         }
         None
