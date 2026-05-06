@@ -902,6 +902,20 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if (stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                || stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+                && self.statement_has_export_modifier(stmt_node)
+            {
+                let export_names = self.get_export_names_from_clause(stmt_idx);
+                for name in export_names {
+                    names.insert(name);
+                }
+            }
+        }
         names
     }
 
