@@ -1579,12 +1579,22 @@ impl<'a> Printer<'a> {
                 for name in entry.iter() {
                     local_exports.insert(name.clone());
                 }
-                entry.extend(local_exports.iter().cloned());
+                entry.extend(
+                    local_exports
+                        .iter()
+                        .filter(|name| !class_fn_enum_names.contains(*name))
+                        .cloned(),
+                );
                 if ns_name != leaf_name {
                     self.namespace_prior_exports
                         .entry(ns_name.clone())
                         .or_default()
-                        .extend(local_exports.iter().cloned());
+                        .extend(
+                            local_exports
+                                .iter()
+                                .filter(|name| !class_fn_enum_names.contains(*name))
+                                .cloned(),
+                        );
                 }
 
                 // Class/fn/enum names from EARLIER reopenings of this same

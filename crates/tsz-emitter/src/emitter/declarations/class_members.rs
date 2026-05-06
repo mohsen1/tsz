@@ -75,7 +75,10 @@ impl<'a> Printer<'a> {
             }
             self.write(")]");
         } else {
+            let prev_ns = self.suppress_ns_qualification;
+            self.suppress_ns_qualification = true;
             self.emit(name);
+            self.suppress_ns_qualification = prev_ns;
         }
         self.scoped_class_expression_self_alias = prev_alias;
     }
@@ -1700,6 +1703,20 @@ mod tests {
         assert!(
             output.contains("static foo()"),
             "Static modifier and method name should be emitted.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn namespace_export_does_not_qualify_static_method_name() {
+        let source = "namespace A {\n    export class Point {\n        static Origin() { return { x: 0, y: 0 }; }\n    }\n\n    export namespace Point {\n        export function Origin() { return \"\"; }\n    }\n}";
+        let output = emit_ts(source);
+        assert!(
+            output.contains("static Origin()"),
+            "Class method declarations should keep bare member names inside namespace IIFEs.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("static A.Origin()"),
+            "Namespace export qualification must not apply to class method names.\nOutput: {output}"
         );
     }
 

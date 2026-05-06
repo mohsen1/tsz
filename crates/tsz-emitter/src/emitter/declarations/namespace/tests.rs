@@ -249,3 +249,25 @@ fn dotted_namespace_reopen_qualifies_prior_value_exports() {
         "Parent namespace export should not remain a bare identifier.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn nested_namespace_uses_parent_current_class_lexically() {
+    let source = "namespace A {\n  export class Point {\n    constructor(public x: number, public y: number) {}\n  }\n\n  export namespace B {\n    export var Origin: Point = new Point(0, 0);\n  }\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("B.Origin = new Point(0, 0);"),
+        "Nested namespace should use parent current-block classes through lexical scope.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("B.Origin = new A.Point(0, 0);"),
+        "Current-block parent class should not be treated as a prior namespace-object export.\nOutput:\n{output}"
+    );
+}
