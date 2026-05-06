@@ -169,6 +169,55 @@ fn emit_output_preserves_type_only_module_marker() {
 }
 
 #[test]
+fn compile_on_save_reports_affected_files_and_emits_file() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let root = temp.path();
+    let config = root.join("tsconfig.json");
+    let a = root.join("a.ts");
+    let b = root.join("b.ts");
+    std::fs::write(
+        &config,
+        r#"{"compileOnSave":true,"compilerOptions":{"target":"es2015","module":"commonjs","outDir":"dist"},"files":["a.ts","b.ts"]}"#,
+    )
+    .expect("write config");
+    std::fs::write(&a, "export const a = 1;\n").expect("write a");
+    std::fs::write(&b, "import { a } from \"./a\";\nexport const b = a + 1;\n").expect("write b");
+
+    let mut server = make_server();
+    let a_str = a.to_string_lossy().to_string();
+    let b_str = b.to_string_lossy().to_string();
+    let config_str = config.to_string_lossy().to_string();
+
+    let affected = server.handle_tsserver_request(make_request(
+        "compileOnSaveAffectedFileList",
+        serde_json::json!({ "file": a_str.clone() }),
+    ));
+    assert!(affected.success);
+    let body = affected.body.expect("affected files body");
+    assert_eq!(body[0]["projectFileName"], config_str);
+    assert_eq!(body[0]["fileNames"], serde_json::json!([a_str, b_str]));
+    assert_eq!(body[0]["projectUsesOutFile"], false);
+
+    let emit = server.handle_tsserver_request(make_request(
+        "compileOnSaveEmitFile",
+        serde_json::json!({ "file": a_str, "richResponse": true, "includeLinePosition": true }),
+    ));
+    assert!(emit.success);
+    assert_eq!(emit.body.as_ref().unwrap()["emitSkipped"], false);
+    assert!(
+        emit.body.as_ref().unwrap()["diagnostics"]
+            .as_array()
+            .is_some()
+    );
+    let emitted = root.join("dist").join("a.js");
+    assert!(
+        emitted.exists(),
+        "compile-on-save should write {}",
+        emitted.display()
+    );
+}
+
+#[test]
 fn file_rename_updates_extensionless_relative_import() {
     let mut server = make_server();
     assert!(
