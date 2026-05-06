@@ -17553,6 +17553,46 @@ const force = "x";
 }
 
 #[test]
+fn compile_checked_js_jsdoc_numeric_literal_type_accepts_exponent_syntax() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true,
+            "pretty": false,
+            "strict": true
+          },
+          "files": ["test.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("test.js"),
+        r#"// @ts-check
+/** @type {1e3} */
+let bad = 999;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && d.message_text.contains("'999'")
+                && d.message_text.contains("'1000'")
+        }),
+        "Expected TS2322 for JSDoc 1e3 numeric literal type, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_js_static_expando_members_from_assignments_across_files() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

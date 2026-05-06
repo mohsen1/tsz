@@ -88,6 +88,8 @@ mod tests {
         assert_eq!(parse_numeric_literal_value("123"), Some(123.0));
         assert_eq!(parse_numeric_literal_value("123.456"), Some(123.456));
         assert_eq!(parse_numeric_literal_value("1_000"), Some(1000.0));
+        assert_eq!(parse_numeric_literal_value("1e3"), Some(1000.0));
+        assert_eq!(parse_numeric_literal_value("1E-3"), Some(0.001));
         assert_eq!(parse_numeric_literal_value("0b11"), Some(3.0));
         assert_eq!(parse_numeric_literal_value("0B111"), Some(7.0));
         assert_eq!(parse_numeric_literal_value("0o10"), Some(8.0));
