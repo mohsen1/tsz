@@ -39,9 +39,6 @@ pub(crate) struct PrivateMemberInfo {
     pub fn_ref: Option<String>,
     /// For accessors: the setter variable name (e.g., `_C_prop_set`).
     pub setter_ref: Option<String>,
-    /// Whether this is a static member.
-    /// Used to replace receiver class-name references with the class alias.
-    pub is_static: bool,
     /// The WeakSet/class-alias variable used as the `state` argument.
     /// For instance methods/accessors: `_ClassName_instances`.
     /// For static members: the class alias variable.

@@ -281,6 +281,47 @@ export const result = [new C().getX(), _C_x];
 }
 
 #[test]
+fn nested_classes_preserve_outer_private_name_scope() {
+    let source = r#"class A {
+    static #x = 5;
+    constructor () {
+        class B {
+            #x = 5;
+            constructor() {
+                class C {
+                    constructor() {
+                        A.#x;
+                    }
+                }
+            }
+        }
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("__classPrivateFieldGet(_a, _B_x, \"f\")"),
+        "Nested class should lower the nearest lexical private name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("A.;"),
+        "Private field access should not drop the private identifier.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_class_super_parameter_skips_user_binding() {
     let source = r#"class Base {}
 
