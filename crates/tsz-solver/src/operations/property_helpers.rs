@@ -1154,13 +1154,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
-        // For fixed-length tuples, .length returns a literal numeric type (e.g., 2 for [string, number])
-        // instead of the generic `number` from the Array<T> interface.
+        // For fixed-length tuples, .length returns literal numeric types
+        // instead of the generic `number` from the Array<T> interface. Optional
+        // elements contribute a range: `[number?]["length"]` is `0 | 1`.
         if prop_name == "length"
-            && let Some(len) = self.compute_tuple_fixed_length(array_type)
+            && let Some(length_type) = self.compute_tuple_length_type(array_type)
         {
-            let literal = self.interner().literal_number(len as f64);
-            return PropertyAccessResult::simple(literal);
+            return PropertyAccessResult::simple(length_type);
         }
 
         if prop_name == "toLocaleString" {
@@ -1498,6 +1498,85 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         Some(total)
+    }
+
+    fn compute_tuple_length_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let (min, max) = self.compute_tuple_length_bounds(type_id)?;
+        if min == max {
+            return Some(self.interner().literal_number(max as f64));
+        }
+
+        let members = (min..=max)
+            .map(|len| self.interner().literal_number(len as f64))
+            .collect();
+        Some(self.interner().union(members))
+    }
+
+    fn compute_tuple_length_bounds(&self, type_id: TypeId) -> Option<(usize, usize)> {
+        const MAX_FIXED_LENGTH: usize = 1000;
+
+        if type_id.is_intrinsic() {
+            return None;
+        }
+        let list_id = match self.interner().lookup(type_id) {
+            Some(TypeData::Tuple(id)) => id,
+            _ => return None,
+        };
+
+        let elements = self.interner().tuple_list(list_id);
+        let mut min = 0usize;
+        let mut max = 0usize;
+        let mut rest_type: Option<TypeId> = None;
+        let mut rest_count = 0;
+
+        for elem in elements.iter() {
+            if elem.rest {
+                rest_count += 1;
+                if rest_count > 1 {
+                    return None;
+                }
+                rest_type = Some(elem.type_id);
+            } else {
+                if !elem.optional {
+                    min += 1;
+                }
+                max += 1;
+                if max > MAX_FIXED_LENGTH {
+                    return None;
+                }
+            }
+        }
+
+        while let Some(rest_id) = rest_type.take() {
+            if rest_id.is_intrinsic() {
+                return None;
+            }
+            let inner_list_id = match self.interner().lookup(rest_id) {
+                Some(TypeData::Tuple(id)) => id,
+                _ => return None,
+            };
+            let inner_elements = self.interner().tuple_list(inner_list_id);
+            let mut inner_rest_count = 0;
+            for elem in inner_elements.iter() {
+                if elem.rest {
+                    inner_rest_count += 1;
+                    if inner_rest_count > 1 {
+                        return None;
+                    }
+                    rest_type = Some(elem.type_id);
+                } else {
+                    if !elem.optional {
+                        min += 1;
+                    }
+                    max += 1;
+                    if max > MAX_FIXED_LENGTH {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        Some((min, max))
     }
 
     pub(super) fn resolve_function_property(
