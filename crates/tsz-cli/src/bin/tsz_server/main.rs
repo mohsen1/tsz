@@ -997,7 +997,7 @@ impl Server {
                 self.handle_encoded_semantic_classifications_full(seq, &request)
             }
             "inlayHints" | "provideInlayHints" => self.handle_inlay_hints(seq, &request),
-            "selectionRange" => self.handle_selection_range(seq, &request),
+            "selectionRange" | "selectionRange-full" => self.handle_selection_range(seq, &request),
             "linkedEditingRange" => self.handle_linked_editing_range(seq, &request),
             "prepareCallHierarchy" => self.handle_prepare_call_hierarchy(seq, &request),
             "provideCallHierarchyIncomingCalls" | "provideCallHierarchyOutgoingCalls" => {
