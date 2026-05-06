@@ -550,6 +550,9 @@ impl<'a> CheckerState<'a> {
         if source_fn.type_params.is_empty() || source_fn.params.len() > target_fn.params.len() {
             return source_ty;
         }
+        if !target_fn.type_params.is_empty() {
+            return source_ty;
+        }
 
         let target_param_types: Vec<_> = target_fn
             .params
@@ -623,6 +626,7 @@ impl<'a> CheckerState<'a> {
             param_ty != TypeId::ANY
                 && param_ty != TypeId::UNKNOWN
                 && !common::contains_infer_types(self.ctx.types, param_ty)
+                && !common::contains_type_parameters(self.ctx.types, param_ty)
         });
         if !has_concrete_param_context {
             return source_ty;
@@ -2455,11 +2459,23 @@ impl<'a> CheckerState<'a> {
                 || expected == TypeId::ERROR
                 || common::contains_infer_types(self.ctx.types, expected)
         });
-        let needs_contextual_signature_instantiation =
-            self.expression_needs_contextual_signature_instantiation(arg_idx, expected_type);
-        let apply_contextual = syntax_needs_contextual || needs_contextual_signature_instantiation;
         let expected_context_type =
             self.contextual_type_option_for_call_argument(expected_type, arg_idx, callable_ctx);
+        let expected_context_is_generic_callable =
+            expected_context_type.or(expected_type).is_some_and(|ty| {
+                let evaluated = self.evaluate_type_with_env(ty);
+                call_checker::get_contextual_signature(self.ctx.types, ty)
+                    .or_else(|| call_checker::get_contextual_signature(self.ctx.types, evaluated))
+                    .is_some_and(|shape| !shape.type_params.is_empty())
+            });
+        let skip_generic_callable_context_for_annotated_generic_function =
+            expected_context_is_generic_callable
+                && self.explicit_generic_function_has_fully_annotated_signature(arg_idx);
+        let needs_contextual_signature_instantiation =
+            self.expression_needs_contextual_signature_instantiation(arg_idx, expected_type);
+        let apply_contextual = (syntax_needs_contextual
+            || needs_contextual_signature_instantiation)
+            && !skip_generic_callable_context_for_annotated_generic_function;
         let suppress_unresolved_object_literal_context = self
             .ctx
             .arena
@@ -2584,6 +2600,10 @@ impl<'a> CheckerState<'a> {
         } else {
             TypingRequest::NONE
         };
+        if skip_generic_callable_context_for_annotated_generic_function {
+            self.invalidate_expression_for_contextual_retry(arg_idx);
+            self.clear_contextual_resolution_cache();
+        }
 
         // Snapshot diagnostic + closure state when in speculative round2.
         // Round2 marks closures as "already checked" even when their TS7006 diagnostics are later

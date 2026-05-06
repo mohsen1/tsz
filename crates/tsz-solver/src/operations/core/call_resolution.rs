@@ -9,15 +9,99 @@ use super::call_evaluator::{
     AssignabilityChecker, CallEvaluator, CallResult, CallWithCheckerResult, CombinedUnionSignature,
     UnionCallSignatureCompatibility,
 };
-use crate::instantiation::instantiate::TypeSubstitution;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, IntrinsicKind, ParamInfo, TupleElement, TypeData,
-    TypeId, TypeListId,
+    TypeId, TypeListId, TypeParamInfo,
 };
 use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::FxHashSet;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn generic_function_shape_for_inference(
+        &mut self,
+        func: &FunctionShape,
+        arg_types: &[TypeId],
+    ) -> Option<FunctionShape> {
+        if func.type_params.is_empty() {
+            return None;
+        }
+
+        let collides = func.type_params.iter().any(|tp| {
+            arg_types
+                .iter()
+                .copied()
+                .flat_map(|ty| {
+                    crate::visitor::collect_referenced_types(self.interner.as_type_database(), ty)
+                })
+                .any(|referenced| {
+                    crate::type_param_info(self.interner.as_type_database(), referenced)
+                        .is_some_and(|referenced_tp| referenced_tp.name == tp.name)
+                })
+        });
+        if !collides {
+            return None;
+        }
+
+        let mut substitution = TypeSubstitution::new();
+        let mut fresh_params = Vec::with_capacity(func.type_params.len());
+        let mut name_buf = String::with_capacity(32);
+        for tp in &func.type_params {
+            crate::operations::generic_call::unique_placeholder_name(&mut name_buf);
+            let fresh_name = self.interner.intern_string(&name_buf);
+            let fresh_type = self.interner.type_param(TypeParamInfo {
+                name: fresh_name,
+                constraint: None,
+                default: None,
+                is_const: tp.is_const,
+            });
+            substitution.insert(tp.name, fresh_type);
+            fresh_params.push((tp, fresh_name));
+        }
+
+        Some(FunctionShape {
+            params: func
+                .params
+                .iter()
+                .map(|param| ParamInfo {
+                    name: param.name,
+                    type_id: instantiate_type(self.interner, param.type_id, &substitution),
+                    optional: param.optional,
+                    rest: param.rest,
+                })
+                .collect(),
+            return_type: instantiate_type(self.interner, func.return_type, &substitution),
+            this_type: func
+                .this_type
+                .map(|this_type| instantiate_type(self.interner, this_type, &substitution)),
+            type_params: fresh_params
+                .into_iter()
+                .map(|(tp, fresh_name)| TypeParamInfo {
+                    name: fresh_name,
+                    constraint: tp.constraint.map(|constraint| {
+                        instantiate_type(self.interner, constraint, &substitution)
+                    }),
+                    default: tp
+                        .default
+                        .map(|default| instantiate_type(self.interner, default, &substitution)),
+                    is_const: tp.is_const,
+                })
+                .collect(),
+            type_predicate: func.type_predicate.as_ref().map(|predicate| {
+                crate::types::TypePredicate {
+                    asserts: predicate.asserts,
+                    target: predicate.target,
+                    type_id: predicate
+                        .type_id
+                        .map(|ty| instantiate_type(self.interner, ty, &substitution)),
+                    parameter_index: predicate.parameter_index,
+                }
+            }),
+            is_constructor: func.is_constructor,
+            is_method: func.is_method,
+        })
+    }
+
     fn intersect_union_call_param_types(&self, param_types: &[TypeId]) -> TypeId {
         let mut non_any = param_types
             .iter()
@@ -1365,6 +1449,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> CallResult {
         // Handle generic functions FIRST so uninstantiated this_types don't fail assignability
         if !func.type_params.is_empty() {
+            if let Some(func) = self.generic_function_shape_for_inference(func, arg_types) {
+                return self.resolve_generic_call(&func, arg_types);
+            }
             return self.resolve_generic_call(func, arg_types);
         }
 
