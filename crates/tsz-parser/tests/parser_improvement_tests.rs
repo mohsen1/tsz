@@ -362,7 +362,7 @@ fn test_property_access_missing_name_at_eof_reports_ts1003_after_dot() {
 }
 
 #[test]
-fn test_missing_arrow_expression_body_consumes_synthetic_close_brace() {
+fn test_missing_arrow_expression_body_preserves_close_brace() {
     let source = r"
 namespace N {
     namespace Inner {
@@ -382,8 +382,8 @@ namespace N {
         "Expected only the missing-expression TS1109 for recovered arrow body, got {diagnostics:?}"
     );
     assert_eq!(
-        ts1128_count, 0,
-        "Recovered expression-bodied arrows should consume their synthetic close brace: {diagnostics:?}"
+        ts1128_count, 1,
+        "Recovered expression-bodied arrows should preserve the close brace for outer recovery: {diagnostics:?}"
     );
 }
 
