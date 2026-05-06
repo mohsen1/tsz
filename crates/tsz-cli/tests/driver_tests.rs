@@ -17064,6 +17064,55 @@ fn resolve_json_module_does_not_make_included_json_files_roots() {
 }
 
 #[test]
+fn property_diagnostic_does_not_use_conformance_fingerprint_rewrite() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true
+          },
+          "files": ["repro.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("repro.ts"),
+        r#"
+type A = { c: number };
+type constr<Source, Tgt> = Source & Tgt;
+declare const q: { [key: string]: A };
+q["asd"].b;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2339: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "expected exactly one TS2339, got diagnostics: {:#?}",
+        result.diagnostics
+    );
+    let message = &ts2339[0].message_text;
+    assert!(
+        message.contains("type 'A'"),
+        "TS2339 should preserve the user alias receiver, got: {message}"
+    );
+    assert!(
+        !message.contains("{ a: string; }"),
+        "TS2339 must not use the conformance fingerprint display, got: {message}"
+    );
+}
+
+#[test]
 fn js_checkjs_define_property_module_exports_preserve_augmented_shape() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
