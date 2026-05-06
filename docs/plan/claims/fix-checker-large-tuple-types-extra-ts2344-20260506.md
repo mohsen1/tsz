@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/large-tuple-types-extra-ts2344-20260506`
-- **PR**: Pending
+- **PR**: #3756
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
