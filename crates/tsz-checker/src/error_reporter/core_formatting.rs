@@ -1,9 +1,4 @@
 //! Type formatting and diagnostic anchor helpers for error reporter.
-//!
-//! Contains assignability message formatting, enum name display,
-//! missing property detection, and AST anchor resolution.
-//!
-//! Extracted from `core.rs` to keep module size manageable.
 
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_parser::parser::node::NodeAccess;
