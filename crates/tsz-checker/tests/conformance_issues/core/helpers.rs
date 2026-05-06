@@ -897,7 +897,7 @@ export let ctor: IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<n
         ts2322.iter().any(|diag| {
             diag.start == blah_start
                 && diag.message_text.contains(
-                    "Type '(x: string) => void' is not assignable to type 'ConstructableA | IDirectiveLinkFn<number> | IDirectivePrePost<number>'."
+                    "Type '(x: string) => void' is not assignable to type 'IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<number>'."
                 )
         }),
         "Expected the function assignment diagnostic to preserve the construct-interface display. Actual diagnostics: {diagnostics:#?}"
@@ -906,7 +906,7 @@ export let ctor: IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<n
         ts2322.iter().any(|diag| {
             diag.start == ctor_start
                 && diag.message_text.contains(
-                    "Type 'typeof ctor' is not assignable to type 'ConstructableA | IDirectiveLinkFn<number> | IDirectivePrePost<number>'."
+                    "Type 'typeof ctor' is not assignable to type 'IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<number>'."
                 )
         }),
         "Expected the class assignment diagnostic to stay anchored on `ctor`. Actual diagnostics: {diagnostics:#?}"
