@@ -227,6 +227,11 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&return_type_text);
+        } else if !is_private
+            && let Some(type_text) = self.static_method_returning_this_type_text(method_idx, method)
+        {
+            self.write(": ");
+            self.write(&type_text);
         } else if !is_private && self.method_body_returns_this(method_body) {
             self.write(": this");
         } else if !is_private
@@ -318,6 +323,10 @@ impl<'a> DeclarationEmitter<'a> {
         method: &MethodDeclData,
     ) {
         let method_body = method.body;
+        if let Some(type_text) = self.static_method_returning_this_type_text(method_idx, method) {
+            self.write(&type_text);
+            return;
+        }
         if self.method_body_returns_this(method_body) {
             self.write("this");
             return;
@@ -393,6 +402,38 @@ impl<'a> DeclarationEmitter<'a> {
         } else if !self.source_is_declaration_file {
             self.write("any");
         }
+    }
+
+    fn static_method_returning_this_type_text(
+        &self,
+        method_idx: NodeIndex,
+        method: &MethodDeclData,
+    ) -> Option<String> {
+        if !self.arena.is_static(&method.modifiers) || !self.method_body_returns_this(method.body) {
+            return None;
+        }
+
+        let class_idx = self.enclosing_class_for_member(method_idx)?;
+        let class_node = self.arena.get(class_idx)?;
+        let class = self.arena.get_class(class_node)?;
+        let class_name = self.get_identifier_text(class.name)?;
+        Some(format!("typeof {class_name}"))
+    }
+
+    fn enclosing_class_for_member(&self, member_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = member_idx;
+        for _ in 0..8 {
+            let parent_idx = self.arena.parent_of(current)?;
+            if !parent_idx.is_some() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent_idx)?;
+            if self.arena.get_class(parent_node).is_some() {
+                return Some(parent_idx);
+            }
+            current = parent_idx;
+        }
+        None
     }
 
     fn method_body_returns_this(&self, body_idx: NodeIndex) -> bool {
