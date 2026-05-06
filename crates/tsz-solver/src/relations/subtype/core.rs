@@ -2269,8 +2269,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 // Try the Array<T> interface for full structural comparison.
                 // This handles cases like: number[] <: { toString(): string }
-                if let Some(elem) = array_element_type(self.interner, source)
-                    && let Some(result) = self.check_array_interface_subtype(elem, target)
+                // and tuple rest inference against evaluated Array<T> constraints.
+                if let Some(elem) = array_element_type(self.interner, source).or_else(|| {
+                    crate::type_queries::get_tuple_element_type_union(self.interner, source)
+                }) && let Some(result) = self.check_array_interface_subtype(elem, target)
                 {
                     return result;
                 }
@@ -2352,8 +2354,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 // Target has non-empty properties + index signature.
                 // Try the Array<T> interface for full structural comparison.
-                if let Some(elem) = array_element_type(self.interner, source)
-                    && let Some(result) = self.check_array_interface_subtype(elem, target)
+                if let Some(elem) = array_element_type(self.interner, source).or_else(|| {
+                    crate::type_queries::get_tuple_element_type_union(self.interner, source)
+                }) && let Some(result) = self.check_array_interface_subtype(elem, target)
                 {
                     return result;
                 }
