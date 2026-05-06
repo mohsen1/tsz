@@ -5066,6 +5066,40 @@ fn test_ts2322_too_many_parameters_emits_chained_target_signature_elaboration() 
     );
 }
 
+#[test]
+fn test_reverse_mapped_contextual_target_display_uses_inferred_application_args() {
+    let source = r#"
+        type Selector<S, R> = (state: S) => R;
+
+        declare function createStructuredSelector<S, T>(
+            selectors: {[K in keyof T]: Selector<S, T[K]>},
+        ): Selector<S, T>;
+
+        const editable = () => ({});
+
+        const mapStateToProps = createStructuredSelector({
+            editable: (state: any, props: any) => editable(),
+        });
+    "#;
+
+    let diags = diagnostics_for_source(source);
+    let mismatch = diags
+        .iter()
+        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diags:#?}"));
+
+    assert!(
+        mismatch.message_text.contains("Selector<unknown, {}>"),
+        "expected contextual target display to use inferred application args; got: {mismatch:#?}"
+    );
+    assert!(
+        !mismatch
+            .message_text
+            .contains("Selector<S, T[\"editable\"]>"),
+        "target display should not expose unresolved reverse-mapped type parameters; got: {mismatch:#?}"
+    );
+}
+
 // =============================================================================
 // @ts-nocheck / @ts-check pragma: must only honour directives in comments
 // (issue #2821)
