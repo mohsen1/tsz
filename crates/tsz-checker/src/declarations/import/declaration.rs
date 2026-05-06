@@ -1226,13 +1226,6 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
-                if self.is_ambient_module_match(module_name) {
-                    tracing::trace!(%module_name, "check_import_declaration: resolution error suppressed by ambient module match");
-                    self.check_imported_members(import, module_name);
-                    self.ctx.import_resolution_stack.pop();
-                    return;
-                }
-
                 // Side-effect imports use TS2882 instead of TS2307/TS2792,
                 // but only when noUncheckedSideEffectImports is enabled.
                 // When disabled (default), tsc silently ignores all resolution failures.
