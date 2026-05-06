@@ -252,6 +252,22 @@ impl<'a> CheckerState<'a> {
             return true;
         };
 
+        let source_type = self
+            .ctx
+            .types
+            .get_display_alias(object_type)
+            .unwrap_or(object_type);
+        if access_info.level == MemberAccessLevel::Protected
+            && self.intersection_has_unrelated_public_property_member(
+                source_type,
+                property_name,
+                access_info.declaring_class_idx,
+                is_static,
+            )
+        {
+            return true;
+        }
+
         let current_class_idx = self
             .ctx
             .enclosing_class
@@ -708,6 +724,69 @@ impl<'a> CheckerState<'a> {
 
         let display = self.format_type_diagnostic(object_type);
         display.contains(" & ").then_some(display)
+    }
+
+    fn intersection_has_unrelated_public_property_member(
+        &mut self,
+        source_type: tsz_solver::TypeId,
+        property_name: &str,
+        protected_declaring_class_idx: NodeIndex,
+        is_static: bool,
+    ) -> bool {
+        let Some(members) = crate::query_boundaries::property_access::intersection_members(
+            self.ctx.types,
+            source_type,
+        ) else {
+            return false;
+        };
+        if members.len() < 2 {
+            return false;
+        }
+
+        for member in members {
+            let resolved_member = self.resolve_type_for_property_access(member);
+            let visibility = self
+                .receiver_property_visibility(resolved_member, property_name)
+                .or_else(|| self.receiver_property_visibility(member, property_name));
+            if visibility != Some(tsz_solver::Visibility::Public) {
+                continue;
+            }
+
+            let Some(member_class_idx) = self.get_class_decl_from_type(resolved_member) else {
+                return true;
+            };
+            if self
+                .find_member_access_info(member_class_idx, property_name, is_static)
+                .is_some()
+            {
+                continue;
+            }
+            if member_class_idx == protected_declaring_class_idx
+                || self.is_class_derived_from(member_class_idx, protected_declaring_class_idx)
+                || self.is_class_derived_from(protected_declaring_class_idx, member_class_idx)
+            {
+                continue;
+            }
+            if self.class_expression_has_base(member_class_idx) {
+                continue;
+            }
+            return true;
+        }
+
+        false
+    }
+
+    fn class_expression_has_base(&self, class_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_class(node)
+            .is_some_and(|class| self.class_has_base(class))
     }
 
     /// Collect all class declaration candidates from brand properties on a type.

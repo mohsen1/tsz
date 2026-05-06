@@ -3,6 +3,7 @@
 
 mod compound;
 mod display_simplification;
+mod intrinsic;
 // `test_tracing` exercises `debug!` / `debug_span!` / `trace_span!`. The
 // workspace `tracing` dep filters those macros out at compile time when
 // `debug_assertions` is off (via the `release_max_level_warn` feature), so
@@ -23,7 +24,7 @@ use crate::diagnostics::{
     get_message_template,
 };
 use crate::types::{
-    IntrinsicKind, MappedModifier, StringIntrinsicKind, TypeData, TypeId, TypeListId, TypeParamInfo,
+    MappedModifier, StringIntrinsicKind, TypeData, TypeId, TypeListId, TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -1249,7 +1250,7 @@ impl<'a> TypeFormatter<'a> {
 
     fn format_key(&mut self, type_id: TypeId, key: &TypeData) -> Cow<'static, str> {
         match key {
-            TypeData::Intrinsic(kind) => Cow::Borrowed(self.format_intrinsic(*kind)),
+            TypeData::Intrinsic(kind) => Cow::Borrowed(intrinsic::format_intrinsic(*kind)),
             TypeData::Literal(lit) => self.format_literal(lit).into(),
             TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
@@ -1995,23 +1996,5 @@ impl<'a> TypeFormatter<'a> {
     /// display names. TSC omits extensions in `typeof import("mod")` output.
     fn strip_module_extension(module_name: &str) -> &str {
         tsz_common::file_extensions::strip_known_extension(module_name)
-    }
-
-    const fn format_intrinsic(&self, kind: IntrinsicKind) -> &'static str {
-        match kind {
-            IntrinsicKind::Any => "any",
-            IntrinsicKind::Unknown => "unknown",
-            IntrinsicKind::Never => "never",
-            IntrinsicKind::Void => "void",
-            IntrinsicKind::Null => "null",
-            IntrinsicKind::Undefined => "undefined",
-            IntrinsicKind::Boolean => "boolean",
-            IntrinsicKind::Number => "number",
-            IntrinsicKind::String => "string",
-            IntrinsicKind::Bigint => "bigint",
-            IntrinsicKind::Symbol => "symbol",
-            IntrinsicKind::Object => "object",
-            IntrinsicKind::Function => "Function",
-        }
     }
 }

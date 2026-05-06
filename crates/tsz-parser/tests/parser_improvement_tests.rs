@@ -532,6 +532,21 @@ const regexes: RegExp[] = [
 }
 
 #[test]
+fn test_middle_dot_identifier_part_parses_without_ts1127() {
+    let source = "const a·b = 1;\na·b;\n";
+    let mut parser = ParserState::new("middle-dot-identifier.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::INVALID_CHARACTER),
+        "Expected U+00B7 to be accepted as an identifier continuation, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_character_class_range_order_reports_ts1517() {
     let source = r#"
 const regexes: RegExp[] = [
