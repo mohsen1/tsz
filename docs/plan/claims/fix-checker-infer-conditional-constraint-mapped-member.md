@@ -3,7 +3,7 @@
 - **Date**: 2026-05-06
 - **Branch**: `fix/checker-infer-conditional-constraint-mapped-member`
 - **PR**: #3590
-- **Status**: claim
+- **Status**: abandoned
 - **Workstream**: 1 (Diagnostic conformance)
 - **Claimed**: 2026-05-06 02:07:12 UTC
 
@@ -23,6 +23,10 @@ extra `TS2344`.
 ## Verification
 
 - `scripts/session/quick-pick.sh`
-- `./scripts/conformance/conformance.sh run --filter "inferConditionalConstraintMappedMember" --verbose`
-- targeted owning-crate `cargo nextest run` regression test
-- targeted conformance rerun for `inferConditionalConstraintMappedMember`
+- `./.target/dist-fast/tsz-conformance --test-dir /Users/mohsen/code/tsz-main-worktree/TypeScript/tests/cases --cache-file scripts/conformance/tsc-cache-full.json --tsz-binary ./.target/dist-fast/tsz --server-binary ./.target/dist-fast/tsz-server --workers 1 --filter inferConditionalConstraintMappedMember --print-test --verbose --print-fingerprints --print-test-files` (`FINAL RESULTS: 1/1 passed (100.0%)`)
+
+## Abandonment Note
+
+The committed snapshot was stale for this target on current `origin/main`.
+Direct conformance verification shows the picked test already passes, so this
+claim/PR would not increase the pass count.
