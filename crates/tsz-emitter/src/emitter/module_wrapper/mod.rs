@@ -1,5 +1,7 @@
 mod bang_module_reference;
 mod system_emit;
+#[cfg(test)]
+mod tests;
 mod wrapper_entry;
 
 use std::collections::HashMap;
