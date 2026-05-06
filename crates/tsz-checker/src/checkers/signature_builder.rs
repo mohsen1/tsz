@@ -430,7 +430,7 @@ impl<'a> CheckerState<'a> {
     ) -> (Vec<tsz_solver::ParamInfo>, Option<TypeId>) {
         use tsz_solver::ParamInfo;
 
-        let mut params = Vec::new();
+        let mut params = Vec::with_capacity(params_list.nodes.len());
         let mut this_type = None;
         let this_atom = self.ctx.types.intern_string("this");
 

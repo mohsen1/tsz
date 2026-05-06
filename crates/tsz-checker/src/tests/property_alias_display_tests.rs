@@ -73,6 +73,57 @@ const x = bar.c;
     );
 }
 
+#[test]
+fn ts2339_long_merge_receiver_keeps_initial_object_args_before_truncation() {
+    let diags = check_source_diagnostics(
+        r#"
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Exclude<T, U> = T extends U ? never : T;
+type merge<base, props> = Omit<base, keyof props & keyof base> & props;
+type Type<t> = {
+  shape: t;
+  merge: <r>(r: r) => Type<merge<t, r>>;
+};
+
+declare const o1: Type<{ p1: 1 }>;
+const o2 = o1.merge({ p2: 2 });
+const o3 = o2.merge({ p3: 3 });
+const o4 = o3.merge({ p4: 4 });
+const o5 = o4.merge({ p5: 5 });
+const o6 = o5.merge({ p6: 6 });
+const o7 = o6.merge({ p7: 7 });
+const o8 = o7.merge({ p8: 8 });
+const o9 = o8.merge({ p9: 9 });
+const o10 = o9.merge({ p10: 10 });
+const o11 = o10.merge({ p11: 11 });
+const o12 = o11.merge({ p12: 12 });
+const o13 = o12.merge({ p13: 13 });
+const o14 = o13.merge({ p14: 14 });
+const o15 = o14.merge({ p15: 15 });
+const o16 = o15.merge({ p16: 16 });
+
+o16.shape.p17;
+"#,
+    );
+
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(ts2339.len(), 1, "Expected one TS2339, got: {diags:?}");
+    let msg = &ts2339[0].message_text;
+    assert!(
+        msg.contains("{ p1: 1; }, { p2: number; }"),
+        "long merge receiver should preserve initial concrete object args before truncation, got: {msg:?}"
+    );
+    assert!(
+        !msg.contains("merge<{ ...; }, { ...; }"),
+        "long merge receiver must not pre-elide the innermost object args, got: {msg:?}"
+    );
+    assert!(
+        !msg.contains("{ p6: number; }"),
+        "long merge receiver should elide later object args before final truncation, got: {msg:?}"
+    );
+}
+
 /// Negative lock: when the receiver has NO declared annotation, the formatter
 /// falls back to `format_type` — must not crash or emit an alias name.
 #[test]

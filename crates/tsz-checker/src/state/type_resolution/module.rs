@@ -2263,6 +2263,15 @@ impl<'a> CheckerState<'a> {
                 return member_id;
             };
             if (member_symbol.flags
+                & (symbol_flags::CLASS
+                    | symbol_flags::FUNCTION
+                    | symbol_flags::VARIABLE
+                    | symbol_flags::ENUM))
+                != 0
+            {
+                return member_id;
+            }
+            if (member_symbol.flags
                 & (symbol_flags::MODULE
                     | symbol_flags::NAMESPACE_MODULE
                     | symbol_flags::VALUE_MODULE))
@@ -2371,29 +2380,39 @@ impl<'a> CheckerState<'a> {
             None
         };
 
-        for candidate in module_specifier_candidates(module_specifier) {
+        let candidates = module_specifier_candidates(module_specifier);
+        for candidate in &candidates {
             if let Some(exports) = self
                 .ctx
-                .module_exports_for_module(self.ctx.binder, &candidate)
+                .module_exports_for_module(self.ctx.binder, candidate)
                 && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
             {
                 return Some(sym_id);
             }
-            if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-                if let Some(file_indices) = self.ctx.files_for_module_specifier(&candidate) {
+        }
+
+        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            if let Some(module_binder_index) = self.ctx.global_module_binder_index.as_ref() {
+                let mut checked = rustc_hash::FxHashSet::default();
+                for candidate in &candidates {
+                    let Some(file_indices) = module_binder_index.get(candidate) else {
+                        continue;
+                    };
                     for &file_idx in file_indices {
-                        if let Some(binder) = all_binders.get(file_idx)
+                        if checked.insert((file_idx, candidate.as_str()))
+                            && let Some(binder) = all_binders.get(file_idx)
                             && let Some(exports) =
-                                self.ctx.module_exports_for_module(binder, &candidate)
+                                self.ctx.module_exports_for_module(binder, candidate)
                             && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
                         {
                             return Some(sym_id);
                         }
                     }
-                } else {
+                }
+            } else {
+                for candidate in &candidates {
                     for binder in all_binders.iter() {
-                        if let Some(exports) =
-                            self.ctx.module_exports_for_module(binder, &candidate)
+                        if let Some(exports) = self.ctx.module_exports_for_module(binder, candidate)
                             && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
                         {
                             return Some(sym_id);

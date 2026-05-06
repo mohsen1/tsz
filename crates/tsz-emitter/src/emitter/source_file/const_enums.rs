@@ -601,6 +601,11 @@ impl<'a> Printer<'a> {
     }
 
     /// Collect variable names from declarations that HAVE initializers.
+    /// Handles both plain identifier bindings (`const x = ...`) and
+    /// destructuring patterns (`const [a, , b] = ...`, `const { x, y } = ...`)
+    /// — the inline-after-decl path needs every bound name so a later
+    /// `export { a, b };` clause can land its `exports.a = a; exports.b = b;`
+    /// assignments after the destructuring statement.
     fn collect_variable_names_with_initializers(
         &self,
         declarations: &tsz_parser::parser::NodeList,
@@ -613,10 +618,8 @@ impl<'a> Printer<'a> {
                         if let Some(inner_node) = self.arena.get(inner_idx)
                             && let Some(decl) = self.arena.get_variable_declaration(inner_node)
                             && decl.initializer.is_some()
-                            && let Some(name_node) = self.arena.get(decl.name)
-                            && let Some(ident) = self.arena.get_identifier(name_node)
                         {
-                            names.push(ident.escaped_text.clone());
+                            self.collect_binding_names(decl.name, &mut names);
                         }
                     }
                 } else if let Some(decl) = self.arena.get_variable_declaration(decl_node)

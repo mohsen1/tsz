@@ -5540,8 +5540,25 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let ident = self.get_identifier_text(expr_idx)?;
         let binder = self.binder?;
-        let sym_id = self.resolve_identifier_symbol(expr_idx, &ident)?;
+        let no_libs: &[Arc<BinderState>] = &[];
+        let sym_id = binder
+            .get_node_symbol(expr_idx)
+            .filter(|&candidate| self.symbol_is_constructor_value(candidate))
+            .or_else(|| {
+                binder.resolve_name_with_filter(
+                    &ident,
+                    self.arena,
+                    expr_idx,
+                    no_libs,
+                    |candidate| self.symbol_is_constructor_value(candidate),
+                )
+            })
+            .or_else(|| self.resolve_identifier_symbol(expr_idx, &ident))?;
         let symbol = binder.symbols.get(sym_id)?;
+
+        if self.constructor_symbol_requires_global_this(sym_id, &ident, expr_idx) {
+            return Some(format!("globalThis.{ident}"));
+        }
 
         for decl_idx in symbol.declarations.iter().copied() {
             let decl_node = self.arena.get(decl_idx)?;
@@ -5563,6 +5580,43 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some(ident)
+    }
+
+    fn symbol_is_constructor_value(&self, sym_id: SymbolId) -> bool {
+        self.binder
+            .and_then(|binder| binder.symbols.get(sym_id))
+            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::ALIAS))
+    }
+
+    fn constructor_symbol_requires_global_this(
+        &self,
+        sym_id: SymbolId,
+        name: &str,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        if !Self::is_unquoted_property_name(name)
+            || self.resolve_symbol_module_path(sym_id).is_some()
+        {
+            return false;
+        }
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        if symbol.parent != SymbolId::NONE || !symbol.has_any_flags(symbol_flags::CLASS) {
+            return false;
+        }
+        let Some(func) = self.enclosing_function_for_node(expr_idx) else {
+            return false;
+        };
+        let Some(ref type_params) = func.type_parameters else {
+            return false;
+        };
+        self.collect_type_param_names(type_params)
+            .iter()
+            .any(|type_param| type_param == name)
     }
 
     fn require_property_initializer_import_type(&self, decl_node: &Node) -> Option<String> {
