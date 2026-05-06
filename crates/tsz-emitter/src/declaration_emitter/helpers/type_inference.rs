@@ -5360,6 +5360,11 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let body_node = self.arena.get(body_idx)?;
         let block = self.arena.get_block(body_node)?;
+        if let Some(type_text) =
+            self.function_body_numeric_literal_return_union_type_text(&block.statements)
+        {
+            return Some(type_text);
+        }
         let mut preferred = None;
         if self.collect_unique_return_type_text_from_block(&block.statements, &mut preferred) {
             preferred
@@ -5373,6 +5378,12 @@ impl<'a> DeclarationEmitter<'a> {
         source_type_text: &str,
         inferred_return_type: tsz_solver::types::TypeId,
     ) -> bool {
+        if Self::numeric_literal_union_widens_to_number(
+            source_type_text,
+            &self.print_type_id(inferred_return_type),
+        ) {
+            return true;
+        }
         if source_type_text.contains("{\n    new ")
             && source_type_text.contains(" & ")
             && self.print_type_id(inferred_return_type) != source_type_text
@@ -5434,21 +5445,24 @@ impl<'a> DeclarationEmitter<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         source_type_text: &str,
     ) -> String {
+        let source_type_text = self
+            .simplify_uniform_object_keyof_index_access_text(source_type_text)
+            .unwrap_or_else(|| source_type_text.to_string());
         if !source_type_text.contains(": unknown;") {
-            return source_type_text.to_string();
+            return source_type_text;
         }
 
         let Some(class_expr_idx) = self.direct_returned_class_expression(func.body) else {
-            return source_type_text.to_string();
+            return source_type_text;
         };
         let Some(class_node) = self.arena.get(class_expr_idx) else {
-            return source_type_text.to_string();
+            return source_type_text;
         };
         let Some(class) = self.arena.get_class(class_node) else {
-            return source_type_text.to_string();
+            return source_type_text;
         };
 
-        let mut rewritten = source_type_text.to_string();
+        let mut rewritten = source_type_text;
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -5485,6 +5499,57 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         rewritten
+    }
+
+    fn numeric_literal_union_widens_to_number(source_type_text: &str, inferred_text: &str) -> bool {
+        if inferred_text != "number" {
+            return false;
+        }
+
+        let mut count = 0usize;
+        for part in source_type_text.split(" | ") {
+            let part = part.trim();
+            if part.is_empty() || part.parse::<f64>().is_err() {
+                return false;
+            }
+            count += 1;
+        }
+        count > 1
+    }
+
+    fn simplify_uniform_object_keyof_index_access_text(&self, type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        let (object_text, key_text) = trimmed.rsplit_once("}[keyof ")?;
+        let key_alias = key_text.strip_suffix(']')?.trim();
+        if !Self::is_simple_identifier_text(key_alias) {
+            return None;
+        }
+
+        let mut value_type = None;
+        let mut saw_member = false;
+        for line in object_text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed == "{" {
+                continue;
+            }
+            if trimmed.contains("?:") {
+                return None;
+            }
+            let next_value_type = Self::object_literal_property_value_type(trimmed)?;
+            if next_value_type.is_empty() {
+                return None;
+            }
+            if let Some(existing) = value_type {
+                if existing != next_value_type {
+                    return None;
+                }
+            } else {
+                value_type = Some(next_value_type);
+            }
+            saw_member = true;
+        }
+
+        saw_member.then(|| value_type.unwrap_or("never").to_string())
     }
 
     fn direct_returned_class_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
@@ -5699,6 +5764,149 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
                 self.arena.get_case_clause(stmt_node).is_some_and(|clause| {
                     self.collect_unique_return_type_text_from_block(&clause.statements, preferred)
+                })
+            }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                self.arena.get_switch(stmt_node).is_some_and(|switch_data| {
+                    self.arena
+                        .get(switch_data.case_block)
+                        .and_then(|case_block_node| self.arena.get_block(case_block_node))
+                        .is_some_and(|block| {
+                            self.collect_unique_return_type_text_from_block(
+                                &block.statements,
+                                preferred,
+                            )
+                        })
+                })
+            }
+            _ => true,
+        }
+    }
+
+    fn function_body_numeric_literal_return_union_type_text(
+        &self,
+        statements: &NodeList,
+    ) -> Option<String> {
+        let mut literals = Vec::new();
+        if !self.collect_numeric_literal_return_type_text_from_block(statements, &mut literals) {
+            return None;
+        }
+        (literals.len() > 1).then(|| literals.join(" | "))
+    }
+
+    fn collect_numeric_literal_return_type_text_from_block(
+        &self,
+        statements: &NodeList,
+        literals: &mut Vec<String>,
+    ) -> bool {
+        statements.nodes.iter().copied().all(|stmt_idx| {
+            self.collect_numeric_literal_return_type_text_from_statement(stmt_idx, literals)
+        })
+    }
+
+    fn collect_numeric_literal_return_type_text_from_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        literals: &mut Vec<String>,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return true;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+                    return false;
+                };
+                let Some(expr_idx) = self.skip_parenthesized_expression(ret.expression) else {
+                    return false;
+                };
+                let Some(expr_node) = self.arena.get(expr_idx) else {
+                    return false;
+                };
+                if expr_node.kind != SyntaxKind::NumericLiteral as u16 {
+                    return false;
+                }
+                let Some(type_text) = self.js_literal_type_text(expr_idx) else {
+                    return false;
+                };
+                if !literals.contains(&type_text) {
+                    literals.push(type_text);
+                }
+                true
+            }
+            k if k == syntax_kind_ext::BLOCK => {
+                self.arena.get_block(stmt_node).is_some_and(|block| {
+                    self.collect_numeric_literal_return_type_text_from_block(
+                        &block.statements,
+                        literals,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => self
+                .arena
+                .get_if_statement(stmt_node)
+                .is_some_and(|if_data| {
+                    if if_data.else_statement.is_none() {
+                        let mut ignored = literals.clone();
+                        return self.collect_numeric_literal_return_type_text_from_statement(
+                            if_data.then_statement,
+                            &mut ignored,
+                        );
+                    }
+                    self.collect_numeric_literal_return_type_text_from_statement(
+                        if_data.then_statement,
+                        literals,
+                    ) && self.collect_numeric_literal_return_type_text_from_statement(
+                        if_data.else_statement,
+                        literals,
+                    )
+                }),
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                self.arena.get_try(stmt_node).is_some_and(|try_data| {
+                    self.collect_numeric_literal_return_type_text_from_statement(
+                        try_data.try_block,
+                        literals,
+                    ) && try_data.catch_clause.is_some()
+                        && self.collect_numeric_literal_return_type_text_from_statement(
+                            try_data.catch_clause,
+                            literals,
+                        )
+                        && try_data.finally_block.is_some()
+                        && self.collect_numeric_literal_return_type_text_from_statement(
+                            try_data.finally_block,
+                            literals,
+                        )
+                })
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => self
+                .arena
+                .get_catch_clause(stmt_node)
+                .is_some_and(|catch_data| {
+                    self.collect_numeric_literal_return_type_text_from_statement(
+                        catch_data.block,
+                        literals,
+                    )
+                }),
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+                self.arena.get_case_clause(stmt_node).is_some_and(|clause| {
+                    self.collect_numeric_literal_return_type_text_from_block(
+                        &clause.statements,
+                        literals,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                self.arena.get_switch(stmt_node).is_some_and(|switch_data| {
+                    self.arena
+                        .get(switch_data.case_block)
+                        .and_then(|case_block_node| self.arena.get_block(case_block_node))
+                        .is_some_and(|block| {
+                            self.collect_numeric_literal_return_type_text_from_block(
+                                &block.statements,
+                                literals,
+                            )
+                        })
                 })
             }
             _ => true,
