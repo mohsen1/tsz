@@ -19123,6 +19123,75 @@ var r5a = _.map<number, string, Date>(c2, (x, y) => { return x.toFixed() });
 }
 
 #[test]
+fn compile_project_nested_thisless_module_state_avoids_ts18046() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "strictNullChecks": true,
+            "strictFunctionTypes": true,
+            "strictBindCallApply": true,
+            "strictPropertyInitialization": true,
+            "target": "esnext",
+            "noEmit": true
+          },
+          "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
+          "exclude": ["node_modules"]
+        }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"
+export type StateFunction<State> = (s: State, ...args: any[]) => any;
+
+type Options<State, Modules> = {
+  state?: State | (() => State) | { (): State };
+  mutations?: Record<string, StateFunction<State>>;
+  modules?: {
+    [k in keyof Modules]: Options<Modules[k], never>;
+  };
+};
+
+export function create<
+  State extends Record<string, unknown>,
+  Modules extends Record<string, Record<string, unknown>>
+>(options: Options<State, Modules>) {}
+
+create({
+  state() {
+    return { bar2: 1 };
+  },
+  mutations: { inc: (state123) => state123.bar2++ },
+  modules: {
+    foo: {
+      state() {
+        return { bar2: 1 };
+      },
+      mutations: { inc: (state) => state.bar2++ },
+    },
+  },
+});
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::IS_OF_TYPE_UNKNOWN),
+        "Nested module state should be inferred from sibling state() before mutation callbacks are checked, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_vue_query_style_promise_chain_and_const_key_has_no_checker_errors() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
