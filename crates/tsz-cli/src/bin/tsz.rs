@@ -142,6 +142,14 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         std::process::exit(1);
     }
 
+    if let Some(profile_path) = args.generate_cpu_profile.as_ref() {
+        println!(
+            "error: --generateCpuProfile is not supported by tsz; requested profile '{}' was not created. Use --generateTrace for native trace output.",
+            profile_path.display()
+        );
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+    }
+
     // Initialize tracer if --generateTrace is specified
     let tracer = args.generate_trace.is_some().then(|| {
         let mut t = tsz_cli::trace::Tracer::new();
@@ -151,14 +159,6 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         t.metadata("process_name", meta_args);
         t
     });
-
-    // Handle --generateCpuProfile: this is a V8-specific feature not applicable to a native
-    // Rust compiler. The flag is accepted for CLI compatibility with tsc but has no effect.
-    if let Some(ref _profile_path) = args.generate_cpu_profile {
-        tracing::warn!(
-            "The --generateCpuProfile flag is a V8/Node.js feature and is not applicable to tsz (a native Rust compiler). The flag is accepted for compatibility but has no effect."
-        );
-    }
 
     let start_time = std::time::Instant::now();
     let result = match driver::compile(&args, &cwd) {

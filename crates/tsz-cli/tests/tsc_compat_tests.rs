@@ -1598,6 +1598,46 @@ fn unknown_flag_exit_code_is_1_not_2() {
 }
 
 #[test]
+fn generate_cpu_profile_is_visible_unsupported_error() {
+    let temp = TempDir::new("generate_cpu_profile_unsupported").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "const value = 1;\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true},"files":["test.ts"]}"#,
+    );
+
+    let profile_path = temp.path.join("tsz.cpuprofile");
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "-p",
+            "tsconfig.json",
+            "--generateCpuProfile",
+            "tsz.cpuprofile",
+            "--pretty",
+            "false",
+        ],
+    )
+    .expect("tsz binary not found");
+
+    assert_eq!(
+        code, 1,
+        "Expected unsupported --generateCpuProfile to exit 1, got {code}:\n{output}"
+    );
+    assert!(
+        output.contains("--generateCpuProfile")
+            && output.contains("not supported")
+            && output.contains("--generateTrace"),
+        "Expected visible unsupported-option error, got:\n{output}"
+    );
+    assert!(
+        !profile_path.exists(),
+        "Unsupported --generateCpuProfile should not create a fake profile at {}",
+        profile_path.display()
+    );
+}
+
+#[test]
 fn bare_optional_boolean_flags_apply_to_following_input_file() {
     let temp = TempDir::new("bare_optional_boolean_flags").expect("temp dir");
     write_file(
