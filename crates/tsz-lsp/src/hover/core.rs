@@ -920,15 +920,12 @@ impl<'a> HoverProvider<'a> {
             type_string = format::format_hover_variable_type(&type_string);
             let keyword = self.get_variable_keyword(decl_node_idx);
             if self.is_local_variable(decl_node_idx) {
-                return format!("(local {}) {}: {}", keyword, display_name, type_string);
+                return format!("(local {keyword}) {display_name}: {type_string}");
             }
             if let Some(namespace_name) = self.namespace_container_name(decl_node_idx) {
-                return format!(
-                    "{} {}.{}: {}",
-                    keyword, namespace_name, display_name, type_string
-                );
+                return format!("{keyword} {namespace_name}.{display_name}: {type_string}");
             }
-            return format!("{} {}: {}", keyword, display_name, type_string);
+            return format!("{keyword} {display_name}: {type_string}");
         }
         if f & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
             let mut type_string = self
@@ -956,18 +953,18 @@ impl<'a> HoverProvider<'a> {
             type_string = self.rewrite_date_constructor_error_types(decl_node_idx, type_string);
             type_string = format::format_hover_variable_type(&type_string);
             if self.is_parameter_declaration(decl_node_idx) {
-                return format!("(parameter) {}: {}", display_name, type_string);
+                return format!("(parameter) {display_name}: {type_string}");
             }
             if self.is_local_variable(decl_node_idx) {
-                return format!("(local var) {}: {}", display_name, type_string);
+                return format!("(local var) {display_name}: {type_string}");
             }
             if let Some(namespace_name) = self.namespace_container_name(decl_node_idx) {
-                return format!("var {}.{}: {}", namespace_name, display_name, type_string);
+                return format!("var {namespace_name}.{display_name}: {type_string}");
             }
-            return format!("var {}: {}", display_name, type_string);
+            return format!("var {display_name}: {type_string}");
         }
 
-        format!("({}) {}: {}", kind, display_name, type_string)
+        format!("({kind}) {display_name}: {type_string}")
     }
 
     fn declaration_display_name(&self, decl_node_idx: NodeIndex) -> Option<String> {
@@ -975,24 +972,22 @@ impl<'a> HoverProvider<'a> {
             return None;
         }
         let node = self.arena.get(decl_node_idx)?;
-        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-            if let Some(text) = self.source_text_for_node_span(node.pos, node.end)
-                && !text.is_empty()
-            {
-                return Some(text.to_string());
-            }
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(text) = self.source_text_for_node_span(node.pos, node.end)
+            && !text.is_empty()
+        {
+            return Some(text.to_string());
         }
         let name_idx = self
             .arena
             .get_variable_declaration(node)
             .map(|decl| decl.name)
             .or_else(|| self.arena.get_parameter(node).map(|decl| decl.name))?;
-        if let Some(name_node) = self.arena.get(name_idx) {
-            if let Some(text) = self.source_text_for_node_span(name_node.pos, name_node.end)
-                && !text.is_empty()
-            {
-                return Some(text.to_string());
-            }
+        if let Some(name_node) = self.arena.get(name_idx)
+            && let Some(text) = self.source_text_for_node_span(name_node.pos, name_node.end)
+            && !text.is_empty()
+        {
+            return Some(text.to_string());
         }
         self.arena
             .get_identifier_text(name_idx)
