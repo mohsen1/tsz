@@ -357,6 +357,11 @@ pub struct Printer<'a> {
     /// Whether we're inside a namespace IIFE (strip export/default modifiers from classes).
     pub(crate) in_namespace_iife: bool,
 
+    /// Block nesting where parser recovery can leave invalid module syntax.
+    /// tsc preserves most of that syntax verbatim instead of applying normal
+    /// import/export elision or transforms.
+    pub(crate) recovered_module_syntax_block_depth: u32,
+
     /// End position of the current namespace body in source text.
     /// Used to scope reference searches for namespace-scoped import aliases.
     pub(crate) namespace_scope_end: u32,
@@ -910,6 +915,7 @@ impl<'a> Printer<'a> {
             arrow_function_scope_depth: 0,
             first_for_of_emitted: false,
             in_namespace_iife: false,
+            recovered_module_syntax_block_depth: 0,
             namespace_scope_end: u32::MAX,
             enum_namespace_export: None,
             namespace_export_inner: false,
