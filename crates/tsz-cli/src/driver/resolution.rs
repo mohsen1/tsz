@@ -2146,7 +2146,7 @@ impl SemVer {
 const TYPES_VERSIONS_COMPILER_VERSION_FALLBACK: SemVer = SemVer {
     major: 6,
     minor: 0,
-    patch: 0,
+    patch: 3,
 };
 
 fn types_versions_compiler_version(options: &ResolvedCompilerOptions) -> SemVer {
