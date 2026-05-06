@@ -426,6 +426,8 @@ impl<'a> CheckerState<'a> {
 
         if let Some(display) = preferred_target_display
             && !display.contains("children?:")
+            && !display.contains("propTypes: infer")
+            && !display.contains("defaultProps: infer")
         {
             if display.starts_with("IntrinsicClassAttributes<")
                 && let Some(alias_display) =
@@ -450,6 +452,16 @@ impl<'a> CheckerState<'a> {
             {
                 return bare_props.to_string();
             }
+        }
+
+        if let Some(display) = self.jsx_library_managed_structural_props_display(target_type) {
+            return display;
+        }
+        if display_source_type != target_type
+            && let Some(display) =
+                self.jsx_library_managed_structural_props_display(display_source_type)
+        {
+            return display;
         }
 
         let stripped_display_type =
