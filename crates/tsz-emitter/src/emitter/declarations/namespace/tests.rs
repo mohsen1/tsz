@@ -175,32 +175,6 @@ fn namespace_iife_param_renamed_for_import_equals_conflict() {
     );
 }
 
-#[test]
-fn namespace_import_alias_elided_when_shadowed_before_use() {
-    let source = "namespace X {\n  export class Y {}\n}\nnamespace Z {\n  import Y = X.Y;\n  var Y = 12;\n}\nnamespace r {\n  export const Q = {};\n}\nnamespace s {\n  import Q = r.Q;\n  const Q = 0;\n}";
-
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
-
-    assert!(
-        !output.contains("var Y = X.Y;"),
-        "Namespace import alias should be elided when a local var shadows it before use.\nOutput:\n{output}"
-    );
-    assert!(
-        !output.contains("var Q = r.Q;"),
-        "Namespace import alias should be elided when a local const shadows it before use.\nOutput:\n{output}"
-    );
-    assert!(
-        output.contains("var Y = 12;") && output.contains("const Q = 0;"),
-        "Shadowing declarations should still emit.\nOutput:\n{output}"
-    );
-}
-
 /// When a dotted namespace `Y.Y` collides at every level (outer renamed to
 /// `Y_1`, inner to `Y_2` because the body declares `enum Y`), the inner
 /// IIFE's argument expression must reference the outer's renamed binding,

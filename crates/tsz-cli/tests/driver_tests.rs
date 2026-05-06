@@ -369,6 +369,51 @@ export const amdCase = 1;
 }
 
 #[test]
+fn compile_empty_triple_slash_reference_path_reports_ts6231() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("index.ts"),
+        "/// <reference path=\"\" />\nexport {};\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::COULD_NOT_RESOLVE_THE_PATH_WITH_THE_EXTENSIONS)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected TS6231 for empty reference path, got: {:?}",
+                result.diagnostics
+            )
+        });
+
+    assert_eq!(diagnostic.start, 21);
+    assert_eq!(diagnostic.length, 0);
+    assert!(
+        diagnostic
+            .message_text
+            .contains(&base.to_string_lossy().as_ref()),
+        "TS6231 should report the containing directory for an empty path: {}",
+        diagnostic.message_text
+    );
+}
+
+#[test]
 fn compile_source_reference_lib_unknown_name_reports_ts2726() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -15784,6 +15829,63 @@ s;
 }
 
 #[test]
+fn compile_nested_commonjs_exports_make_checked_js_files_module_scoped() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true,
+            "module": "commonjs",
+            "target": "es2020",
+            "types": []
+          },
+          "files": ["a.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("a.js"),
+        r#"// @ts-check
+const URL = 1;
+function publish() {
+  module.exports.value = URL;
+}
+/** @type {number} */
+const force = "x";
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE),
+        "nested CommonJS exporters should be module-scoped, got diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected only the JSDoc assignment error, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_js_static_expando_members_from_assignments_across_files() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -16259,6 +16361,59 @@ function process(image) {
             .iter()
             .all(|d| d.code != diagnostic_codes::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE),
         "Expected JSDoc type reference to ambient value `Image` to remain constructable in project mode, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_jsdoc_nested_object_return_types_are_type_checked() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "target": "es2020",
+            "module": "commonjs",
+            "noEmit": true,
+            "types": []
+          },
+          "files": ["input.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("input.js"),
+        r#"// @ts-check
+/** @returns {{ value: string }} */
+function f() {
+  return { value: 123 };
+}
+
+/**
+ * @callback MakeBox
+ * @returns {{ value: string }}
+ */
+
+/** @type {MakeBox} */
+const g = () => ({ value: 123 });
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322.len() >= 2,
+        "Expected both plain @returns and @callback nested object returns to report TS2322, got diagnostics: {:?}",
         result.diagnostics
     );
 }

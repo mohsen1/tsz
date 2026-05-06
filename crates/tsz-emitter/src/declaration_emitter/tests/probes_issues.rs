@@ -125,6 +125,31 @@ fn probe_dts_issue_as_const() {
 }
 
 #[test]
+fn test_angle_bracket_const_assertion_declarations() {
+    let output = emit_dts(
+        "export let q1 = <const> 10;
+export let q2 = <const> 'abc';
+export let q3 = <const> true;
+export let q4 = <const> [1, 2, 3];
+export let q5 = <const> { x: 10, y: 20 };",
+    );
+    assert!(output.contains("export declare let q1: 10;"), "{output}");
+    assert!(
+        output.contains("export declare let q2: \"abc\";"),
+        "{output}"
+    );
+    assert!(output.contains("export declare let q3: true;"), "{output}");
+    assert!(
+        output.contains("export declare let q4: readonly [1, 2, 3];"),
+        "{output}"
+    );
+    assert!(
+        output.contains("export declare let q5: {\n    readonly x: 10;\n    readonly y: 20;\n};"),
+        "{output}"
+    );
+}
+
+#[test]
 fn probe_dts_issue_void_function_expression_return() {
     // void keyword used as expression operator
     let output = emit_dts("export declare function foo(): void;");
