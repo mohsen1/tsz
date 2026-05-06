@@ -352,6 +352,23 @@ fn react_jsxdev_under_module_detection_legacy_emits_file_name_without_import() {
     );
 }
 
+#[test]
+fn react_jsxdev_preserves_virtual_src_file_name() {
+    let source = "const el = <div />;\n";
+    let opts = PrintOptions {
+        jsx: JsxEmit::ReactJsxDev,
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let output = parse_and_print_named_with_opts("/tmp/tsz-emit/.src/preact.tsx", source, opts);
+
+    assert!(
+        output.contains("const _jsxFileName = \"/.src/preact.tsx\";"),
+        "JSX dev virtual source locations should keep the TypeScript harness path.\nOutput:\n{output}"
+    );
+}
+
 /// Counterpart: with `moduleDetection: "auto"` (default) and the same
 /// non-module-syntax file, the JSX runtime import IS added (which then
 /// makes the file an ES module).

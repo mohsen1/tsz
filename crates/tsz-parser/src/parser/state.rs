@@ -12,6 +12,7 @@
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
 
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::file_extensions::is_ts_declaration_file_name;
 use tsz_common::limits::MAX_PARSER_RECURSION_DEPTH;
 
 use crate::parser::{
@@ -490,20 +491,7 @@ impl ParserState {
 
     /// Check if we're in a declaration file (.d.ts/.d.mts/.d.cts, or .d.<ext>.ts).
     pub(crate) fn is_declaration_file(&self) -> bool {
-        let file_name = self.file_name.to_ascii_lowercase();
-        if file_name.ends_with(".d.ts")
-            || file_name.ends_with(".d.mts")
-            || file_name.ends_with(".d.cts")
-        {
-            return true;
-        }
-        // Arbitrary extension declaration files: .d.<ext>.ts (e.g. .d.html.ts)
-        if file_name.ends_with(".ts") {
-            let basename = file_name.rsplit('/').next().unwrap_or(&file_name);
-            let basename = basename.rsplit('\\').next().unwrap_or(basename);
-            return basename.contains(".d.");
-        }
-        false
+        is_ts_declaration_file_name(&self.file_name)
     }
 
     /// Get current token
@@ -1127,6 +1115,7 @@ impl ParserState {
             SyntaxKind::DotDotDotToken => "...",
             SyntaxKind::Identifier => "identifier",
             SyntaxKind::TryKeyword => "try",
+            SyntaxKind::WhileKeyword => "while",
             SyntaxKind::FromKeyword => "from",
             SyntaxKind::AsKeyword => "as",
             SyntaxKind::OfKeyword => "of",
@@ -1859,12 +1848,10 @@ impl ParserState {
         )
     }
 
-    /// Check if current token is a reserved word that, when encountered at the
-    /// start of a statement, begins a construct whose grammar is `kw ( expr )`.
-    /// These are the keywords whose cascade (`'(' expected.`, `')' expected.`)
-    /// tsc emits when recovery re-parses the token as a statement.
+    /// Check if current token is a reserved word that namespace-import recovery
+    /// should leave for statement parsing.
     #[inline]
-    pub(crate) const fn is_paren_statement_starter_reserved_word(&self) -> bool {
+    pub(crate) const fn is_namespace_import_recovery_statement_starter(&self) -> bool {
         matches!(
             self.current_token,
             SyntaxKind::WhileKeyword
@@ -1872,6 +1859,9 @@ impl ParserState {
                 | SyntaxKind::IfKeyword
                 | SyntaxKind::SwitchKeyword
                 | SyntaxKind::WithKeyword
+                | SyntaxKind::DoKeyword
+                | SyntaxKind::TryKeyword
+                | SyntaxKind::ReturnKeyword
         )
     }
 

@@ -85,7 +85,7 @@ SomeClass.prop = 0;
     let mut offenders = Vec::new();
     for (file_name, codes) in &diagnostics {
         for &code in codes {
-            if code == 2300 || code == 7009 {
+            if code == 2300 || code == 2339 || code == 7009 {
                 offenders.push((file_name.clone(), code));
             }
         }
@@ -93,7 +93,7 @@ SomeClass.prop = 0;
 
     assert!(
         offenders.is_empty(),
-        "Expected no TS2300/TS7009 for checked-JS constructor/class merge, got: {diagnostics:#?}"
+        "Expected no TS2300/TS2339/TS7009 for checked-JS constructor/class merge, got: {diagnostics:#?}"
     );
 }
 
@@ -127,17 +127,17 @@ SomeClass.prop = 0;
         ),
     ]);
 
-    let mut ts18046_errors = Vec::new();
+    let mut offenders = Vec::new();
     for (file_name, codes) in &diagnostics {
         for &code in codes {
-            if code == 18046 {
-                ts18046_errors.push(file_name.clone());
+            if code == 18046 || code == 2339 {
+                offenders.push((file_name.clone(), code));
             }
         }
     }
 
     assert!(
-        ts18046_errors.is_empty(),
-        "Expected no TS18046 for cross-file class/constructor merge, but got TS18046 in: {ts18046_errors:?}\nAll diagnostics: {diagnostics:#?}"
+        offenders.is_empty(),
+        "Expected no TS18046/TS2339 for cross-file class/constructor merge, but got: {offenders:?}\nAll diagnostics: {diagnostics:#?}"
     );
 }

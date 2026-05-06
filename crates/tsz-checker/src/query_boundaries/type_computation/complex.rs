@@ -1,4 +1,4 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::{QueryDatabase, TypeDatabase, TypeId};
 
 pub(crate) use super::super::common::{callable_shape_for_type, intersection_members, lazy_def_id};
 pub(crate) use tsz_solver::type_queries::{
@@ -28,6 +28,13 @@ pub(crate) fn get_application_info(
     type_id: TypeId,
 ) -> Option<(TypeId, Vec<TypeId>)> {
     tsz_solver::type_queries::get_application_info(db, type_id)
+}
+
+pub(crate) fn instantiate_type_params_to_constraints(
+    db: &dyn QueryDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    tsz_solver::instantiate_type_params_to_constraints(db, type_id)
 }
 
 pub(crate) fn get_function_shape(

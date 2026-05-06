@@ -2094,10 +2094,10 @@ declare class MyArray<T> implements Array<T> {
         "Expected TS2416 for 'every' property incompatibility. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        ts2416
-            .iter()
-            .any(|(_, message)| message.contains("base type 'T[]'")),
-        "Expected global Array<T> implements diagnostic to display base type 'T[]'. Actual TS2416 diagnostics: {ts2416:#?}"
+        ts2416.iter().any(|(_, message)| {
+            message.contains("Property 'every'") && message.contains("base type 'T[]'")
+        }),
+        "Expected TS2416 to display the global Array<T> target as 'T[]'. Actual diagnostics: {ts2416:#?}"
     );
     assert!(
         ts2420.is_empty(),
@@ -2221,6 +2221,108 @@ value.length;
             .iter()
             .all(|(_, message)| !message.contains("custom")),
         "Expected value.custom to resolve through the local Array alias. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_module_local_array_alias_shadows_type_literal_member_reference() {
+    let source = r#"
+export {};
+
+type Array<T> = {
+    custom: T;
+};
+
+type ReadonlyArray<T> = {
+    readonlyCustom: T;
+};
+
+type Box = {
+    value: Array<number>;
+    readonlyValue: ReadonlyArray<number>;
+};
+
+declare const box: Box;
+
+box.value.custom.toFixed();
+box.value.length;
+box.readonlyValue.readonlyCustom.toFixed();
+box.readonlyValue.length;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+
+    assert!(
+        ts2339
+            .iter()
+            .any(|(_, message)| message.contains("length")
+                && message.contains("type 'Array<number>'")),
+        "Expected local Array<number> in type literal member to reject box.value.length. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339.len() == 2 && ts2339.iter().all(|(_, message)| message.contains("length")),
+        "Expected local ReadonlyArray<number> in type literal member to reject box.readonlyValue.length. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .all(|(_, message)| !message.contains("custom")),
+        "Expected local Array and ReadonlyArray members to remain visible in type literals. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_module_local_array_alias_shadows_function_type_reference() {
+    let source = r#"
+export {};
+
+type Array<T> = {
+    custom: T;
+};
+
+type ReadonlyArray<T> = {
+    readonlyCustom: T;
+};
+
+type Fn = (value: Array<string>) => Array<string>;
+type ReadonlyFn = (value: ReadonlyArray<string>) => ReadonlyArray<string>;
+declare const fn: Fn;
+declare const readonlyFn: ReadonlyFn;
+
+const result = fn({ custom: "ok" });
+const readonlyResult = readonlyFn({ readonlyCustom: "ok" });
+result.custom.toUpperCase();
+result.length;
+readonlyResult.readonlyCustom.toUpperCase();
+readonlyResult.length;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Expected function parameters to use local Array aliases, not builtin arrays. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|(_, message)| message.contains("length")
+                && message.contains("type 'Array<string>'")),
+        "Expected local Array<string> function return type to reject result.length. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .all(|(_, message)| !message.contains("custom")),
+        "Expected result.custom and readonlyResult.readonlyCustom to resolve through local aliases. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

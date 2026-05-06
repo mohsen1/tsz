@@ -2130,6 +2130,44 @@ impl<'a> CheckerState<'a> {
         type_params: &[tsz_solver::TypeParamInfo],
         current_substitution: &crate::query_boundaries::common::TypeSubstitution,
     ) -> TypeId {
+        // A return-context substitution can bind a callee type parameter to a
+        // contextual callback that mentions an outer type parameter with the
+        // same name. Because substitutions are name-keyed, do not default that
+        // outer parameter to the callee's constraint; use the outer parameter's
+        // own bound instead.
+        for tp in type_params {
+            if current_substitution.get(tp.name) != Some(type_id)
+                || !common::contains_type_parameter_named(self.ctx.types, type_id, tp.name)
+            {
+                continue;
+            }
+
+            let declared_param = self.ctx.types.factory().type_param(*tp);
+            let mut shadow_substitution = crate::query_boundaries::common::TypeSubstitution::new();
+            for referenced in common::collect_referenced_types(self.ctx.types, type_id) {
+                let Some(referenced_info) = common::type_param_info(self.ctx.types, referenced)
+                else {
+                    continue;
+                };
+                if referenced_info.name != tp.name || referenced == declared_param {
+                    continue;
+                }
+                if let Some(replacement) = referenced_info.default.or(referenced_info.constraint) {
+                    shadow_substitution.insert(tp.name, replacement);
+                } else {
+                    return type_id;
+                }
+            }
+
+            if !shadow_substitution.is_empty() {
+                return crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    type_id,
+                    &shadow_substitution,
+                );
+            }
+        }
+
         let mut infer_bindings =
             crate::query_boundaries::inference::collect_infer_bindings(self.ctx.types, type_id);
         for referenced in common::collect_referenced_types(self.ctx.types, type_id) {

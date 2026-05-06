@@ -53,6 +53,62 @@ mod tests {
     }
 
     #[test]
+    fn erased_interface_member_recovery_does_not_leak_to_js() {
+        let source = "interface I {\n  return (value: string): void;\n}\nconst value = 1;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::CommonJS,
+                target: ScriptTarget::ES2020,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("const value = 1;"),
+            "Runtime statement should still emit.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("return (value: string): void;"),
+            "Erased interface member text must not leak into JS output.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn ambient_module_recovery_ignores_comment_text() {
+        let source = "declare module \"outer\" {\n  // module `fake` {\n  export interface Box { value: string; }\n}\nconst value = 1;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::CommonJS,
+                target: ScriptTarget::ES2020,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("const value = 1;"),
+            "Runtime statement should still emit.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("declare;") && !output.contains("module `fake`;"),
+            "Ambient module recovery must not scan module text from comments.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn emit_class_with_accessor_members_preserves_leading_comments_in_ts_output() {
         let source = "// Regular class should still error when targeting ES5\n\
 class RegularClass {\n    accessor shouldError;\n}\n";
