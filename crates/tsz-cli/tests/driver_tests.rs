@@ -66,6 +66,38 @@ fn default_args() -> CliArgs {
     CliArgs::try_parse_from(["tsz"]).expect("default args should parse")
 }
 
+fn parse_args(args: &[&str]) -> CliArgs {
+    CliArgs::try_parse_from(args).expect("test args should parse")
+}
+
+#[test]
+fn cli_rejects_tsconfig_only_options_on_command_line() {
+    for (flag, value) in [("--paths", "@/*=src/*"), ("--plugins", "foo")] {
+        let temp = TempDir::new().expect("temp dir");
+        let base = &temp.path;
+        write_file(&base.join("index.ts"), "export {};\n");
+
+        let args = parse_args(&[
+            "tsz",
+            flag,
+            value,
+            "--noEmit",
+            "--pretty",
+            "false",
+            "--ignoreConfig",
+            "index.ts",
+        ]);
+        let result = compile(&args, base).expect("compile should succeed");
+
+        assert!(
+            result.diagnostics.iter().any(|diag| diag.code
+                == diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN),
+            "expected TS6064 for {flag}, got diagnostics: {:#?}",
+            result.diagnostics
+        );
+    }
+}
+
 #[test]
 fn source_file_test_pragmas_do_not_override_project_options() {
     let temp = TempDir::new().expect("temp dir");
