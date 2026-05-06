@@ -1837,6 +1837,36 @@ fn test_quickinfo_response_always_has_valid_spans() {
 }
 
 #[test]
+fn test_quickinfo_preserves_non_ascii_identifier_display() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "const café = 1;\ncafé;\n".to_string(),
+    );
+    let req = make_request(
+        "quickinfo",
+        serde_json::json!({"file": "/index.ts", "line": 2, "offset": 2}),
+    );
+
+    let resp = server.handle_tsserver_request(req);
+
+    assert!(resp.success);
+    let body = resp.body.expect("quickinfo should return a body");
+    assert_eq!(
+        body.get("displayString"),
+        Some(&serde_json::json!("const café: 1"))
+    );
+    assert_eq!(
+        body.get("start"),
+        Some(&serde_json::json!({ "line": 2, "offset": 1 }))
+    );
+    assert_eq!(
+        body.get("end"),
+        Some(&serde_json::json!({ "line": 2, "offset": 5 }))
+    );
+}
+
+#[test]
 fn test_quickinfo_has_no_body_without_info() {
     let mut server = make_server();
     server
