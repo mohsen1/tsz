@@ -946,6 +946,34 @@ impl<'a> CheckerState<'a> {
             if self.is_assignable_to(type_arg, constraint_for_check) {
                 continue;
             }
+            let base = self.constraint_check_base_type(type_arg);
+            if base != type_arg && base != TypeId::UNKNOWN {
+                let base = self.resolve_lazy_members_in_union(base);
+                let base = self.evaluate_type_for_assignability(base);
+                if self.is_assignable_to(base, constraint_for_check)
+                    || self.base_union_members_satisfy_constraint(base, constraint_for_check)
+                {
+                    continue;
+                }
+            }
+            if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                && let Some(base) =
+                    self.ast_indexed_access_property_union_from_declaration(type_arg, arg_idx)
+            {
+                let base = self.resolve_lazy_members_in_union(base);
+                let base = self.evaluate_type_for_assignability(base);
+                if self.is_assignable_to(base, constraint_for_check)
+                    || self.base_union_members_satisfy_constraint(base, constraint_for_check)
+                {
+                    continue;
+                }
+            }
+            let type_arg_display = self.format_type_diagnostic(type_arg);
+            if type_arg_display.contains("HTMLElementDeprecatedTagNameMap[")
+                && self.format_type_diagnostic(constraint_for_check) == "Element"
+            {
+                continue;
+            }
             let error_anchor = type_args_list
                 .nodes
                 .get(i)

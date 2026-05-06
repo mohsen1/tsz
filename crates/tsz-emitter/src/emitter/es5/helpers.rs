@@ -26,9 +26,9 @@ impl<'a> Printer<'a> {
     /// Emit an array literal with ES5 spread transformation.
     /// Uses TypeScript's __spreadArray helper for exact tsc matching.
     /// Pattern: [...a] -> __spreadArray([], a, true)
-    /// Pattern: [...a, 1] -> __spreadArray(a, [1], false)
-    /// Pattern: [1, ...a] -> __spreadArray([1], a, false)
-    /// Pattern: [1, ...a, 2] -> __spreadArray([1], a, false).concat([2])
+    /// Pattern: [...a, 1] -> __spreadArray(__spreadArray([], a, true), [1], false)
+    /// Pattern: [1, ...a] -> __spreadArray([1], a, true)
+    /// Pattern: [1, ...a, 2] -> __spreadArray(__spreadArray([1], a, true), [2], false)
     pub(in crate::emitter) fn emit_array_literal_es5(&mut self, elements: &[NodeIndex]) {
         if let Some(flattened) = self.flatten_single_spread_array_literal(elements) {
             self.write("[");
@@ -67,7 +67,7 @@ impl<'a> Printer<'a> {
 
         // Emit using __spreadArray for exact tsc matching.
         // tsc uses nested __spreadArray calls for multi-segment arrays:
-        //   [1, ...a, 2, ...b] -> __spreadArray(__spreadArray(__spreadArray([1], a, false), [2], false), b, false)
+        //   [1, ...a, 2, ...b] -> __spreadArray(__spreadArray(__spreadArray([1], a, true), [2], false), b, true)
         if segments.is_empty() {
             self.write("[]");
         } else if segments.len() == 1 {
@@ -110,13 +110,18 @@ impl<'a> Printer<'a> {
                     self.write("]");
                 }
                 ArraySegment::Spread(spread_idx) => {
-                    // First segment is spread: base is __spreadArray([], spread, false)
+                    // First segment is spread: base is __spreadArray([], spread, true)
+                    // unless __read already packed the spread source.
                     self.write_helper("__spreadArray");
                     self.write("([], ");
                     if let Some(spread_node) = self.arena.get(*spread_idx) {
                         self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                     }
-                    self.write(", false)");
+                    if wrap_spread_with_read {
+                        self.write(", false)");
+                    } else {
+                        self.write(", true)");
+                    }
                 }
             }
 
@@ -136,7 +141,11 @@ impl<'a> Printer<'a> {
                                 wrap_spread_with_read,
                             );
                         }
-                        self.write(", false)");
+                        if wrap_spread_with_read {
+                            self.write(", false)");
+                        } else {
+                            self.write(", true)");
+                        }
                     }
                 }
             }

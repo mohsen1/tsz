@@ -180,3 +180,27 @@ fn downlevel_assign_typed_only_field_emits_nothing() {
         "Typed-only field without define-fields must not emit defineProperty.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn duplicate_static_field_modifier_lowers_as_instance_field() {
+    let output = print_with_cli_style_pipeline(
+        "class C {\n    static static foo = 1;\n    public static static bar() { }\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("constructor() {\n        this.foo = 1;\n    }"),
+        "Duplicate static field recovery should lower `foo` as an instance field.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("bar() { }"),
+        "Duplicate static method recovery should emit `bar` as an instance method.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("C.foo = 1"),
+        "Duplicate static field recovery must not emit a static field assignment.\nOutput:\n{output}"
+    );
+}

@@ -746,7 +746,7 @@ impl<'a> CheckerState<'a> {
         } else {
             self.widen_type_for_display(ty)
         };
-        let mut assignability_display = self.format_type_for_assignability_message(ty);
+        let mut assignability_display = self.format_type_for_property_receiver_message(ty);
         if assignability_display.len() > 320 && assignability_display.starts_with("Omit<") {
             assignability_display = self.format_long_property_receiver_type_for_diagnostic(ty);
         }
