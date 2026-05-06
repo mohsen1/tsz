@@ -1096,7 +1096,7 @@ pub fn collect_export_names_with_options(
                                     let Some(spec) = arena.get_specifier_at(spec_idx) else {
                                         continue;
                                     };
-                                    if spec.is_type_only {
+                                    if spec.is_type_only || type_only_nodes.contains(&spec_idx) {
                                         continue;
                                     }
                                     if let Some(name) = specifier_name_text(arena, spec.name) {

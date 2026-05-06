@@ -83,6 +83,50 @@ fn no_module_detection_force_skips_esmodule_marker() {
     );
 }
 
+#[test]
+fn commonjs_type_only_reexport_skips_void_zero_preamble() {
+    let source = r#"export { I, I as II } from "./ambient";"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let source_file = parser
+        .arena
+        .get_source_file(parser.arena.get(root).expect("root node must exist"))
+        .expect("source file must exist");
+
+    let mut type_only_nodes = rustc_hash::FxHashSet::default();
+    for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt) = parser.arena.get(stmt_idx) else {
+            continue;
+        };
+        let Some(export_decl) = parser.arena.get_export_decl(stmt) else {
+            continue;
+        };
+        let Some(clause_node) = parser.arena.get(export_decl.export_clause) else {
+            continue;
+        };
+        let Some(named_exports) = parser.arena.get_named_imports(clause_node) else {
+            continue;
+        };
+        type_only_nodes.extend(named_exports.elements.nodes.iter().copied());
+    }
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        type_only_nodes: std::sync::Arc::new(type_only_nodes),
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("exports.I") && !output.contains("exports.II"),
+        "Type-only re-exports should not be preinitialized.\nOutput:\n{output}"
+    );
+}
+
 /// moduleDetection=force should also cause "use strict" to be emitted
 /// for CJS modules (since the file is now treated as a module).
 #[test]
