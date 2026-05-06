@@ -1,8 +1,8 @@
 use super::super::Printer;
 use crate::transforms::ir::IRNode;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 
 #[path = "namespace_export_destructuring.rs"]
