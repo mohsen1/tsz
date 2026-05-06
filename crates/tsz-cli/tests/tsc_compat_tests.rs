@@ -1698,6 +1698,57 @@ fn tsc_parity_show_config_node16_resolve_json_false() {
     );
 }
 
+#[test]
+fn show_config_includes_supported_direct_and_inherited_options() {
+    let temp = TempDir::new("show_config_supported_options").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "enum E { A }\n");
+    write_file(
+        &temp.path.join("base.json"),
+        r#"{
+  "compilerOptions": {
+    "erasableSyntaxOnly": true
+  }
+}
+"#,
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+  "extends": "./base.json",
+  "compilerOptions": {
+    "strictNullChecks": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "files": ["a.ts"]
+}
+"#,
+    );
+
+    let output = run_tsz(&temp.path, &["--showConfig"]).expect("tsz should run");
+    let json: serde_json::Value = serde_json::from_str(&output)
+        .unwrap_or_else(|_| panic!("invalid showConfig JSON:\n{output}"));
+    let options = json
+        .get("compilerOptions")
+        .and_then(|v| v.as_object())
+        .unwrap_or_else(|| panic!("missing compilerOptions in showConfig output:\n{output}"));
+
+    assert_eq!(
+        options.get("strictNullChecks"),
+        Some(&serde_json::Value::Bool(true)),
+        "control option should still render: {output}"
+    );
+    assert_eq!(
+        options.get("exactOptionalPropertyTypes"),
+        Some(&serde_json::Value::Bool(true)),
+        "direct supported option should render: {output}"
+    );
+    assert_eq!(
+        options.get("erasableSyntaxOnly"),
+        Some(&serde_json::Value::Bool(true)),
+        "inherited supported option should render: {output}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // --init
 // ---------------------------------------------------------------------------
