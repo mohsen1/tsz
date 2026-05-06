@@ -4068,9 +4068,10 @@ impl<'a> DeclarationEmitter<'a> {
             return type_text.to_string();
         };
         if inner.is_empty() || inner.ends_with(';') || inner.contains(';') || !inner.contains(':') {
-            return type_text.to_string();
+            type_text.to_string()
+        } else {
+            format!("{{ {inner}; }}")
         }
-        format!("{{ {inner}; }}")
     }
 
     pub(in crate::declaration_emitter) fn imported_static_method_declared_return_type_text(
