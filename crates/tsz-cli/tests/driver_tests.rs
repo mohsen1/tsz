@@ -118,6 +118,52 @@ const unused = 1;
 }
 
 #[test]
+fn resolve_json_module_not_defaulted_for_node_resolution() {
+    for (module, module_resolution) in [("commonjs", "node10"), ("node16", "node16")] {
+        let temp = TempDir::new().expect("temp dir");
+        let base = &temp.path;
+
+        write_file(
+            &base.join("tsconfig.json"),
+            &format!(
+                r#"{{
+                  "compilerOptions": {{
+                    "noEmit": true,
+                    "module": "{module}",
+                    "moduleResolution": "{module_resolution}",
+                    "ignoreDeprecations": "6.0"
+                  }},
+                  "files": ["index.ts"]
+                }}"#
+            ),
+        );
+        write_file(
+            &base.join("index.ts"),
+            r#"import data from "./data.json";
+const value: number = data.value;
+"#,
+        );
+        write_file(&base.join("data.json"), r#"{"value":"x"}"#);
+
+        let args = default_args();
+        let result = compile(&args, base).expect("compilation should succeed");
+        let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(
+                &diagnostic_codes::CANNOT_FIND_MODULE_CONSIDER_USING_RESOLVEJSONMODULE_TO_IMPORT_MODULE_WITH_JSON_E
+            ),
+            "expected TS2732 for {module_resolution}, got: {:?}",
+            result.diagnostics
+        );
+        assert!(
+            !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "JSON contents should not be type-checked when resolveJsonModule is omitted for {module_resolution}: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn plain_js_suppresses_ts2774_without_check_js() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
