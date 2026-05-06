@@ -573,7 +573,7 @@ export class CliTranspiler {
       let dts: string | null = null;
 
       const normalizeOutputRelPath = (filePath: string): string => {
-        return path.relative(testDir, filePath).split(path.sep).join('/');
+        return path.relative(testDir, filePath).split(path.sep).join('/').replace(/\\/g, '/');
       };
 
       const normalizeRequestedOutputName = (name: string): string => {
