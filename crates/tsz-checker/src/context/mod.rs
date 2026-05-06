@@ -62,6 +62,7 @@ pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
 
 type NestedNamespaceCandidatesCache = FxHashMap<String, Vec<(usize, SymbolId)>>;
+type NamespaceMemberResolutionCache = FxHashMap<String, FxHashMap<String, Option<SymbolId>>>;
 
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
@@ -388,7 +389,7 @@ pub struct CheckerContext<'a> {
     /// Keyed by (`namespace_name`, `member_name`) and stores both hits and misses.
     /// This avoids repeatedly rescanning all binders for hot qualified React lookups
     /// like `React.Component`, `React.ComponentClass`, `React.ReactNode`, etc.
-    pub namespace_member_resolution_cache: RefCell<FxHashMap<(String, String), Option<SymbolId>>>,
+    pub namespace_member_resolution_cache: RefCell<NamespaceMemberResolutionCache>,
 
     /// Per-checker positive cache for named exports resolved through `export=`.
     /// Misses are not cached because alias-cycle state can affect failed walks.

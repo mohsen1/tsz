@@ -641,12 +641,12 @@ impl<'a> CheckerState<'a> {
         namespace_name: &str,
         member_name: &str,
     ) -> Option<SymbolId> {
-        let cache_key = (namespace_name.to_string(), member_name.to_string());
         if let Some(cached) = self
             .ctx
             .namespace_member_resolution_cache
             .borrow()
-            .get(&cache_key)
+            .get(namespace_name)
+            .and_then(|members| members.get(member_name))
             .copied()
         {
             return cached;
@@ -772,14 +772,18 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .namespace_member_resolution_cache
                 .borrow_mut()
-                .insert(cache_key, None);
+                .entry(namespace_name.to_string())
+                .or_default()
+                .insert(member_name.to_string(), None);
             return None;
         };
         self.record_cross_file_member(member_id, member_name, file_idx);
         self.ctx
             .namespace_member_resolution_cache
             .borrow_mut()
-            .insert(cache_key, Some(member_id));
+            .entry(namespace_name.to_string())
+            .or_default()
+            .insert(member_name.to_string(), Some(member_id));
         Some(member_id)
     }
 
