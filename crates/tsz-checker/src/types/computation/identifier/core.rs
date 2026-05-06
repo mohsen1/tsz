@@ -794,6 +794,22 @@ impl<'a> CheckerState<'a> {
             {
                 return self.check_flow_usage(idx, value_type, sym_id);
             }
+            if (flags & tsz_binder::symbol_flags::ALIAS) != 0
+                && !self.is_identifier_in_type_position(idx)
+                && let Some(module_name) = self
+                    .get_cross_file_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                    .and_then(|symbol| {
+                        (symbol.import_name.as_deref() == Some("default"))
+                            .then(|| symbol.import_module.clone())
+                            .flatten()
+                    })
+                    .or_else(|| self.source_file_default_import_module_named(idx, name))
+                && let Some(module_type) =
+                    self.node_esm_cjs_default_import_namespace_type(&module_name)
+            {
+                return self.check_flow_usage(idx, module_type, sym_id);
+            }
 
             // Check for type-only symbols used as values
             // This includes:

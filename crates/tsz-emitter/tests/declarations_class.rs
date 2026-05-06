@@ -202,6 +202,10 @@ fn private_auto_accessors_emit_accessor_helpers_at_es2015() {
         "Private auto-accessors should emit backing storage before extracted accessors.\nOutput:\n{output}"
     );
     assert!(
+        output.contains("_a = C1, _C1_instances = new WeakSet(), _C1_a_accessor_storage = new WeakMap(), _C1_b_accessor_storage = new WeakMap()"),
+        "Private auto-accessor storage should stay in the pre-static private initialization chain.\nOutput:\n{output}"
+    );
+    assert!(
         output.contains("_C1_c_get = function _C1_c_get() { return __classPrivateFieldGet(_a, _a, \"f\", _C1_c_accessor_storage); }, _C1_c_set = function _C1_c_set(value) { __classPrivateFieldSet(_a, _a, value, \"f\", _C1_c_accessor_storage); }"),
         "Static private auto-accessors should use the class alias and storage object.\nOutput:\n{output}"
     );
@@ -699,6 +703,30 @@ fn computed_property_no_side_effect_for_string_literal() {
     );
 }
 
+#[test]
+fn es5_computed_property_temps_stay_inside_class_iife() {
+    let source = r#"var s: string;
+var n: number;
+var a: any;
+class C {
+    [n] = n;
+    static [s + s]: string;
+    [s + n] = 2;
+    static [s + a] = 0
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES5);
+
+    assert!(
+        output.contains("function C() {\n        this[_a] = n;\n        this[_b] = 2;\n    }\n    var _a, _b, _c;\n    _a = n, s + s, _b = s + n, _c = s + a;\n    C[_c] = 0;"),
+        "Computed property temps and side effects should stay inside the class IIFE before static computed assignments.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("}());\n_a = n"),
+        "Computed property side effects should not be deferred after the class IIFE.\nOutput:\n{output}"
+    );
+}
+
 /// Trailing comment on class body opening `{` should be suppressed.
 /// tsc: `class E extends A {` (comment dropped)
 #[test]
@@ -1118,5 +1146,32 @@ fn anonymous_class_expr_with_static_private_field_sets_function_name() {
     assert!(
         output.contains("_C_x = { value: void 0 }"),
         "static private field storage should still initialize in the comma expression.\nOutput:\n{output}"
+    );
+}
+
+/// Counter-regression for `__setFunctionName` over-emission: a class
+/// expression with *only instance-private* members (no static fields, no
+/// static blocks, no static private fields, no decorators) keeps the
+/// engine's automatic assignment-based naming. tsc does not emit the
+/// `__setFunctionName` helper or comma item for this shape, and tsz must
+/// match — neither the helper preamble nor the call should appear.
+#[test]
+fn anonymous_class_expr_instance_private_only_does_not_set_function_name() {
+    let source = r#"const C = class {
+    #field = this.#method();
+    #method() { return 42; }
+    static getInstance() { return new C(); }
+    getField() { return this.#field };
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        !output.contains("__setFunctionName"),
+        "instance-private-only class expression must not emit the `__setFunctionName` helper or call.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C_field = new WeakMap()"),
+        "instance private field WeakMap should still initialize in the comma expression.\nOutput:\n{output}"
     );
 }

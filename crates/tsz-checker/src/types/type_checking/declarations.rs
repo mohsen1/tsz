@@ -407,6 +407,13 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    pub(crate) fn is_nominal_lib_object_type_name(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "Window" | "Document" | "Element" | "HTMLElement" | "Event" | "EventTarget"
+        )
+    }
+
     /// Check if a missing type-position name should emit TS2318/TS2583 instead of TS2304.
     ///
     /// This is intentionally narrower than `is_well_known_lib_type_name`: many

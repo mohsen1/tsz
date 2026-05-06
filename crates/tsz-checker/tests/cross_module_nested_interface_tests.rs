@@ -107,7 +107,7 @@ declare const o: Outer;
 o.inner.bar(42);
 "#;
 
-    let diagnostics = compile_two_module_files("lib.ts", lib, "consumer.ts", consumer);
+    let diagnostics = compile_module_files(&[("consumer.ts", consumer), ("lib.ts", lib)], 0);
     let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
 
     // The checker correctly detects the argument type mismatch. The TS2345
@@ -205,17 +205,49 @@ cfg.workspace.toAbsolutePath(cfg.server);
 "#;
 
     let diagnostics = compile_two_module_files("lib.ts", lib, "consumer.ts", consumer);
-    let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
 
-    // TODO: tsc emits TS2345 because cfg.server is IServer | undefined (optional)
-    // but toAbsolutePath expects IServer. Currently we emit TS2339 instead
-    // because cross-module interface method resolution loses the method
-    // signature for deeply nested interface chains. This is a known bug
-    // tracked by the conformance test visibilityOfCrossModuleTypeUsage.ts.
     assert!(
-        has_error(&diagnostics, 2339) || has_error(&diagnostics, 2345),
-        "Should emit TS2339 or TS2345 for cross-module optional→required \
-         argument mismatch. Got: {codes:?}"
+        has_error(&diagnostics, 2345),
+        "Should emit TS2345 for cross-module optional→required \
+         argument mismatch. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_zod_like_recursive_class_constraints_do_not_emit_ts2313() {
+    let types = r#"
+export interface TypeDef {}
+export type BoxedAny = Boxed<any, any, any>;
+export type Unbox<T extends Boxed<any, any, any>> = T["_output"];
+export abstract class Boxed<Output, Def extends TypeDef = TypeDef, Input = Output> {
+    readonly _output!: Output;
+    readonly _input!: Input;
+    readonly _def!: Def;
+    optional(): OptionalBox<this> {
+        return null as any;
+    }
+    or<T extends BoxedAny>(option: T): UnionBox<[this, T]> {
+        return null as any;
+    }
+}
+export class OptionalBox<T extends BoxedAny> extends Boxed<T["_output"] | undefined> {}
+export class UnionBox<T extends [BoxedAny, ...BoxedAny[]]> extends Boxed<T[number]["_output"]> {}
+"#;
+
+    let consumer = r#"
+import { BoxedAny, Unbox } from "./types";
+declare const value: BoxedAny;
+type Output = Unbox<typeof value>;
+"#;
+
+    let diagnostics = compile_module_files(&[("types.ts", types), ("consumer.ts", consumer)], 0);
+    let ts2313: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2313)
+        .collect();
+    assert!(
+        ts2313.is_empty(),
+        "Zod-like exported recursive class constraints should not emit TS2313. Got: {diagnostics:?}"
     );
 }
 

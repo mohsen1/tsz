@@ -104,26 +104,34 @@ impl<'a> DeclarationEmitter<'a> {
             .get(method.name)
             .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
 
+        let resolved_computed_name = self.resolved_computed_property_name_text(method.name);
+        let is_symbol_computed_name = self.is_symbol_computed_property_name(method.name);
+        let can_emit_computed_method_name =
+            self.computed_method_name_can_preserve_method_syntax(method.name);
+        let computed_name_forces_method_syntax =
+            can_emit_computed_method_name && !method.question_token;
+        let computed_key_type = self
+            .arena
+            .get(method.name)
+            .and_then(|node| self.arena.get_computed_property(node))
+            .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]));
+        let computed_key_requires_property_syntax = computed_key_type.is_none_or(|t| {
+            t == tsz_solver::types::TypeId::ANY
+                || self.type_interner.is_some_and(|interner| {
+                    !tsz_solver::type_queries::is_type_usable_as_property_name(interner, t)
+                })
+        });
         let use_property_syntax = is_computed_name
-            && (method.question_token
-                || self
-                    .arena
-                    .get(method.name)
-                    .and_then(|node| self.arena.get_computed_property(node))
-                    .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
-                    .is_some_and(|t| {
-                        t == tsz_solver::types::TypeId::ANY
-                            || self.type_interner.is_some_and(|interner| {
-                                !tsz_solver::type_queries::is_type_usable_as_property_name(
-                                    interner, t,
-                                )
-                            })
-                    }))
             // If the computed name resolves to a known literal (e.g. const enum member),
-            // keep method syntax — the name is a valid property name in .d.ts
-            && self
-                .resolved_computed_property_name_text(method.name)
-                .is_none();
+            // keep method syntax — the name is a valid property name in .d.ts.
+            && resolved_computed_name.is_none()
+            // Well-known symbol names are valid declaration method names even when
+            // the symbol expression's type is unavailable in the current cache.
+            && !is_symbol_computed_name
+            // Literal/reference computed method names are valid declaration method
+            // names. Keep them as methods unless optional syntax forces a property.
+            && !computed_name_forces_method_syntax
+            && (method.question_token || computed_key_requires_property_syntax);
 
         if use_property_syntax {
             self.write(": ");
@@ -219,6 +227,8 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&return_type_text);
+        } else if !is_private && self.method_body_returns_this(method_body) {
+            self.write(": this");
         } else if !is_private
             && let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache)
         {
@@ -308,6 +318,11 @@ impl<'a> DeclarationEmitter<'a> {
         method: &MethodDeclData,
     ) {
         let method_body = method.body;
+        if self.method_body_returns_this(method_body) {
+            self.write("this");
+            return;
+        }
+
         let method_name = method.name;
         if method.type_annotation.is_some() {
             self.emit_type(method.type_annotation);
@@ -332,9 +347,10 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(type_text) =
                         self.function_body_preferred_return_type_text(method_body)
                 {
-                    self.write(&type_text);
+                    self.write_type_text_with_current_indent(&type_text);
                 } else {
-                    self.write(&self.print_type_id(return_type_id));
+                    let type_text = self.print_type_id(return_type_id);
+                    self.write_type_text_with_current_indent(&type_text);
                 }
             } else if let Some(method_type_id) = method_type_id {
                 if method_type_id == tsz_solver::types::TypeId::ANY
@@ -346,9 +362,10 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(type_text) =
                         self.function_body_preferred_return_type_text(method_body)
                 {
-                    self.write(&type_text);
+                    self.write_type_text_with_current_indent(&type_text);
                 } else {
-                    self.write(&self.print_type_id(method_type_id));
+                    let type_text = self.print_type_id(method_type_id);
+                    self.write_type_text_with_current_indent(&type_text);
                 }
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
@@ -356,7 +373,7 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(type_text) =
                     self.function_body_preferred_return_type_text(method_body)
                 {
-                    self.write(&type_text);
+                    self.write_type_text_with_current_indent(&type_text);
                 } else if !self.source_is_declaration_file {
                     self.write("any");
                 }
@@ -369,12 +386,63 @@ impl<'a> DeclarationEmitter<'a> {
             } else if let Some(type_text) =
                 self.function_body_preferred_return_type_text(method_body)
             {
-                self.write(&type_text);
+                self.write_type_text_with_current_indent(&type_text);
             } else if !self.source_is_declaration_file {
                 self.write("any");
             }
         } else if !self.source_is_declaration_file {
             self.write("any");
+        }
+    }
+
+    fn method_body_returns_this(&self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return false;
+        };
+
+        let mut saw_return_this = false;
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                continue;
+            }
+            let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+                return false;
+            };
+            let Some(expr_idx) = ret.expression.is_some().then_some(ret.expression) else {
+                return false;
+            };
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                return false;
+            };
+            if expr_node.kind != SyntaxKind::ThisKeyword as u16 {
+                return false;
+            }
+            saw_return_this = true;
+        }
+        saw_return_this
+    }
+
+    pub(in crate::declaration_emitter) fn write_type_text_with_current_indent(
+        &mut self,
+        text: &str,
+    ) {
+        let mut lines = text.lines();
+        let Some(first) = lines.next() else {
+            return;
+        };
+
+        self.write(first);
+        let continuation_indent = "    ".repeat(self.indent_level as usize);
+        for line in lines {
+            self.write_line();
+            self.write(&continuation_indent);
+            self.write(line);
         }
     }
 
@@ -387,6 +455,54 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
         self.js_augmented_static_method_nodes.contains(&method_idx)
+    }
+
+    fn is_symbol_computed_property_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        self.get_identifier_text(access.expression).as_deref() == Some("Symbol")
+    }
+
+    fn computed_method_name_can_preserve_method_syntax(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NumericLiteral as u16
+            || expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || expr_node.kind == SyntaxKind::Identifier as u16
+            || expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
     }
 
     pub(in crate::declaration_emitter) fn emit_constructor_declaration(
@@ -1310,6 +1426,17 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(sig.name);
         }
         None
+    }
+
+    pub(in crate::declaration_emitter) fn class_members_have_computed_names(
+        &self,
+        members: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        members.nodes.iter().copied().any(|member_idx| {
+            self.get_member_name_idx(member_idx)
+                .and_then(|name_idx| self.arena.get(name_idx))
+                .is_some_and(|name_node| name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+        })
     }
 
     /// Check if a member has a computed property name that should NOT be emitted in `.d.ts`.

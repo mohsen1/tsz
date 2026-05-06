@@ -236,6 +236,9 @@ pub struct CompilerOptions {
     /// Disable emitting helper declarations.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit_helpers: Option<bool>,
+    /// Emit more compliant iteration lowering for ES5/ES3 targets.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub downlevel_iteration: Option<bool>,
     /// Disable emitting comments.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub remove_comments: Option<bool>,
@@ -416,6 +419,7 @@ pub struct ResolvedCompilerOptions {
     pub allow_arbitrary_extensions: bool,
     pub allow_importing_ts_extensions: bool,
     pub rewrite_relative_import_extensions: bool,
+    pub trace_resolution: bool,
     pub types_versions_compiler_version: Option<String>,
     pub types: Option<Vec<String>>,
     pub type_roots: Option<Vec<PathBuf>>,
@@ -632,6 +636,9 @@ pub fn resolve_compiler_options(
     options: Option<&CompilerOptions>,
 ) -> Result<ResolvedCompilerOptions> {
     let mut resolved = ResolvedCompilerOptions::default();
+    // TypeScript 6 defaults alwaysStrict emit on. An explicit
+    // alwaysStrict=false below can still suppress the prologue.
+    resolved.printer.always_strict = true;
     let Some(options) = options else {
         resolved.checker.target = checker_target_from_emitter(resolved.printer.target);
         resolved.lib_files = resolve_default_lib_files(resolved.printer.target)?;
@@ -700,11 +707,13 @@ pub fn resolve_compiler_options(
                 | ModuleResolutionKind::Bundler
         )
     });
+    // Per tsc 6.0, `resolvePackageJsonImports` defaults to true only for
+    // Node16/NodeNext/Bundler. Legacy `node`/`node10` does NOT resolve
+    // `package.json#imports` unless the option is explicitly enabled.
     resolved.resolve_package_json_imports = options.resolve_package_json_imports.unwrap_or({
         matches!(
             effective_resolution,
-            ModuleResolutionKind::Node
-                | ModuleResolutionKind::Node16
+            ModuleResolutionKind::Node16
                 | ModuleResolutionKind::NodeNext
                 | ModuleResolutionKind::Bundler
         )
@@ -718,12 +727,14 @@ pub fn resolve_compiler_options(
         resolved.resolve_json_module = resolve_json_module;
         resolved.checker.resolve_json_module = resolve_json_module;
     } else {
-        // tsc 6.0 defaults resolveJsonModule to true when not explicitly set.
-        resolved.resolve_json_module = true;
-        resolved.checker.resolve_json_module = true;
+        // tsc 6.0 only implies resolveJsonModule for bundler resolution.
+        let resolve_json_module = matches!(effective_resolution, ModuleResolutionKind::Bundler);
+        resolved.resolve_json_module = resolve_json_module;
+        resolved.checker.resolve_json_module = resolve_json_module;
     }
     if let Some(import_helpers) = options.import_helpers {
         resolved.import_helpers = import_helpers;
+        resolved.printer.import_helpers = import_helpers;
     }
     if let Some(allow_arbitrary_extensions) = options.allow_arbitrary_extensions {
         resolved.allow_arbitrary_extensions = allow_arbitrary_extensions;
@@ -925,6 +936,14 @@ pub fn resolve_compiler_options(
     if let Some(no_emit_helpers) = options.no_emit_helpers {
         resolved.printer.no_emit_helpers = no_emit_helpers;
     }
+    if options.import_helpers == Some(true) {
+        // importHelpers means "import from tslib" - suppress inline helper emission.
+        resolved.printer.no_emit_helpers = true;
+    }
+
+    if let Some(downlevel_iteration) = options.downlevel_iteration {
+        resolved.printer.downlevel_iteration = downlevel_iteration;
+    }
 
     if let Some(remove_comments) = options.remove_comments {
         resolved.printer.remove_comments = remove_comments;
@@ -1091,6 +1110,7 @@ pub fn resolve_compiler_options(
 
     if let Some(preserve) = options.preserve_const_enums {
         resolved.checker.preserve_const_enums = preserve;
+        resolved.printer.preserve_const_enums = preserve;
     }
 
     if let Some(erasable) = options.erasable_syntax_only {
@@ -1173,6 +1193,10 @@ pub fn resolve_compiler_options(
     if let Some(check_js) = options.check_js {
         resolved.check_js = check_js;
         resolved.checker.check_js = check_js;
+        if check_js && options.allow_js.is_none() {
+            resolved.allow_js = true;
+            resolved.checker.allow_js = true;
+        }
         if !check_js {
             // Record that `checkJs: false` was explicit, not just the default.
             // This suppresses even the `plainJSErrors` allowlist (TS2451, etc.).
@@ -1262,6 +1286,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
     {
         let keys: Vec<String> = compiler_opts.keys().cloned().collect();
         let mut renames: Vec<(String, String)> = Vec::new();
+        let mut unknown_keys: Vec<String> = Vec::new();
 
         for key in &keys {
             let key_lower = key.to_lowercase();
@@ -1286,15 +1311,36 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             } else {
                 // Truly unknown option — emit TS5023
                 let start = find_key_offset_in_source(&stripped, key);
-                let msg = format_message(diagnostic_messages::UNKNOWN_COMPILER_OPTION, &[key]);
-                diagnostics.push(Diagnostic::error(
-                    file_path,
-                    start,
-                    key.len() as u32 + 2,
-                    msg,
-                    diagnostic_codes::UNKNOWN_COMPILER_OPTION,
-                ));
+                if let Some(suggestion) = unknown_compiler_option_suggestion(&key_lower) {
+                    let msg = format_message(
+                        diagnostic_messages::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN,
+                        &[key, suggestion],
+                    );
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key.len() as u32 + 2,
+                        msg,
+                        diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN,
+                    ));
+                } else {
+                    let msg = format_message(diagnostic_messages::UNKNOWN_COMPILER_OPTION, &[key]);
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key.len() as u32 + 2,
+                        msg,
+                        diagnostic_codes::UNKNOWN_COMPILER_OPTION,
+                    ));
+                }
+                unknown_keys.push(key.clone());
             }
+        }
+
+        // Remove unknown keys before serde deserialization so tsz-only struct
+        // fields cannot take effect from a tsc-incompatible tsconfig option.
+        for key in unknown_keys {
+            compiler_opts.remove(&key);
         }
 
         // Rename miscased keys to canonical casing so serde can deserialize them
@@ -1404,7 +1450,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 "boolean" => value.is_boolean(),
                 "string" => value.is_string(),
                 "number" => value.is_number(),
-                "list" => value.is_array(),
+                "Array" => value.is_array(),
                 "string or Array" => value.is_string() || value.is_array(),
                 "object" => value.is_object(),
                 _ => true,
@@ -1642,13 +1688,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // `moduleResolution: "bundler"` requires `module` to be "preserve" or ES2015+.
         if let Some(serde_json::Value::String(mr_value)) = compiler_opts.get("moduleResolution") {
             let mr_normalized =
-                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+                normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value));
             if mr_normalized == "bundler" {
                 let module_ok = if let Some(serde_json::Value::String(mod_value)) =
                     compiler_opts.get("module")
                 {
-                    let mod_normalized =
-                        normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    let mod_normalized = normalize_enum_option_value(
+                        mod_value.split(',').next().unwrap_or(mod_value),
+                    );
                     // tsc message: "can only be used when 'module' is set to 'preserve',
                     // 'commonjs', or 'es2015' or later" — commonjs IS valid.
                     // AMD, UMD, System, None are the invalid values.
@@ -1691,7 +1738,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // When moduleResolution is node16/nodenext, module must also be node16/nodenext.
         if let Some(serde_json::Value::String(mr_value)) = compiler_opts.get("moduleResolution") {
             let mr_normalized =
-                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+                normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value));
             let is_node_mr = matches!(
                 mr_normalized.as_str(),
                 "node16" | "node18" | "node20" | "nodenext"
@@ -1700,8 +1747,9 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 let module_ok = if let Some(serde_json::Value::String(mod_value)) =
                     compiler_opts.get("module")
                 {
-                    let mod_normalized =
-                        normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    let mod_normalized = normalize_enum_option_value(
+                        mod_value.split(',').next().unwrap_or(mod_value),
+                    );
                     matches!(
                         mod_normalized.as_str(),
                         "node16" | "node18" | "node20" | "nodenext"
@@ -1754,7 +1802,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // When module is node16/nodenext, moduleResolution must be the same (or left unspecified).
         if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
             let mod_normalized =
-                normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
             let is_node_module = matches!(
                 mod_normalized.as_str(),
                 "node16" | "node18" | "node20" | "nodenext"
@@ -1764,7 +1812,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     compiler_opts.get("moduleResolution")
             {
                 let mr_normalized =
-                    normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+                    normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value));
                 let mr_ok = matches!(
                     mr_normalized.as_str(),
                     "node16" | "node18" | "node20" | "nodenext"
@@ -1798,13 +1846,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // preserve, commonjs, or es2015+.
         if let Some(serde_json::Value::String(mr_value)) = compiler_opts.get("moduleResolution") {
             let mr_normalized =
-                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+                normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value));
             if mr_normalized == "bundler" {
                 let module_ok = if let Some(serde_json::Value::String(mod_value)) =
                     compiler_opts.get("module")
                 {
-                    let mod_normalized =
-                        normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    let mod_normalized = normalize_enum_option_value(
+                        mod_value.split(',').next().unwrap_or(mod_value),
+                    );
                     // bundler is incompatible with node16/nodenext module kinds
                     !matches!(
                         mod_normalized.as_str(),
@@ -1839,7 +1888,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             && let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module")
         {
             let mod_normalized =
-                normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
             // `module=none` means no module system; tsc does not report TS6082 for it.
             if !matches!(mod_normalized.as_str(), "amd" | "system" | "none") {
                 let msg = format_message(
@@ -1871,14 +1920,15 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
 
         // TS5105: Option 'verbatimModuleSyntax' cannot be used when 'module' is set to 'UMD', 'AMD', or 'System'.
         if option_is_effectively_enabled(compiler_opts, &ts5024_keys, "verbatimModuleSyntax") {
-            let module_bad =
-                if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
-                    let mod_normalized =
-                        normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
-                    matches!(mod_normalized.as_str(), "umd" | "amd" | "system")
-                } else {
-                    false
-                };
+            let module_bad = if let Some(serde_json::Value::String(mod_value)) =
+                compiler_opts.get("module")
+            {
+                let mod_normalized =
+                    normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
+                matches!(mod_normalized.as_str(), "umd" | "amd" | "system")
+            } else {
+                false
+            };
             if module_bad {
                 let start = find_key_offset_in_source(&stripped, "verbatimModuleSyntax");
                 let key_len = "verbatimModuleSyntax".len() as u32 + 2;
@@ -1933,6 +1983,31 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     ));
                 }
             }
+        }
+
+        // TS5096: allowImportingTsExtensions is only valid in no-emit modes
+        // or when imports are rewritten before emit.
+        if option_is_effectively_enabled(compiler_opts, &ts5024_keys, "allowImportingTsExtensions")
+            && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "noEmit")
+            && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "emitDeclarationOnly")
+            && !option_is_effectively_enabled(
+                compiler_opts,
+                &ts5024_keys,
+                "rewriteRelativeImportExtensions",
+            )
+        {
+            let start = find_value_offset_in_source(&stripped, "allowImportingTsExtensions");
+            let value_len = compiler_opts
+                .get("allowImportingTsExtensions")
+                .map_or(4, estimate_json_value_len);
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                value_len,
+                diagnostic_messages::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR
+                    .to_string(),
+                diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR,
+            ));
         }
 
         // Group 2: mapRoot requires 'sourceMap' or 'declarationMap'
@@ -2036,9 +2111,10 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         }
 
         // TS5052: Option '{0}' cannot be specified without specifying option '{1}'.
-        // `checkJs` requires `allowJs` to be explicitly enabled.
+        // `checkJs` implies `allowJs` unless `allowJs` is explicitly disabled.
         if option_is_truthy(compiler_opts.get("checkJs"))
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "allowJs")
+            && option_key_present_or_invalidated(compiler_opts, &ts5024_keys, "allowJs")
         {
             let msg = format_message(
                 diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
@@ -2182,13 +2258,13 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             let effective_mr = if let Some(serde_json::Value::String(mr_value)) =
                 compiler_opts.get("moduleResolution")
             {
-                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim())
+                normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value))
             } else {
                 // Default moduleResolution based on module setting
                 let effective_module = if let Some(serde_json::Value::String(mod_value)) =
                     compiler_opts.get("module")
                 {
-                    normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim())
+                    normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value))
                 } else {
                     String::new() // no module set
                 };
@@ -2223,7 +2299,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 && let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module")
             {
                 let mod_normalized =
-                    normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
                 if matches!(mod_normalized.as_str(), "none" | "system" | "umd") {
                     let emit_ts5071 = |diagnostics: &mut Vec<Diagnostic>,
                                        error_key: &str,
@@ -2262,7 +2338,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             compiler_opts.get("moduleResolution")
         {
             let mr_normalized =
-                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+                normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value));
             matches!(mr_normalized.as_str(), "node16" | "nodenext" | "bundler")
         } else {
             // When moduleResolution is not set, the default depends on module.
@@ -2270,7 +2346,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             // For classic module settings (none, amd, umd, system, commonjs), default is classic/node → NOT OK.
             if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
                 let mod_normalized =
-                    normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
                 !matches!(
                     mod_normalized.as_str(),
                     "none" | "amd" | "umd" | "system" | "commonjs"
@@ -2299,7 +2375,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
-        // TS6046: Validate option values for target, module, moduleResolution, jsx, lib.
+        // TS6046: Validate option values for target, module, moduleResolution, jsx,
+        // moduleDetection, newLine, and lib.
         // If a value is invalid, emit TS6046 and null it out so resolve_compiler_options
         // doesn't see it and bail.
         validate_option_value(
@@ -2340,6 +2417,26 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             VALID_JSX_VALUES,
             "--jsx",
             VALID_JSX_DISPLAY,
+            &mut diagnostics,
+        );
+        validate_option_value(
+            compiler_opts,
+            "moduleDetection",
+            &stripped,
+            file_path,
+            VALID_MODULE_DETECTION_VALUES,
+            "--moduleDetection",
+            VALID_MODULE_DETECTION_DISPLAY,
+            &mut diagnostics,
+        );
+        validate_option_value(
+            compiler_opts,
+            "newLine",
+            &stripped,
+            file_path,
+            VALID_NEW_LINE_VALUES,
+            "--newLine",
+            VALID_NEW_LINE_DISPLAY,
             &mut diagnostics,
         );
         validate_lib_values(compiler_opts, &stripped, file_path, &mut diagnostics);
@@ -2504,39 +2601,13 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         ts5024_keys_outer = ts5024_keys;
     }
 
-    // TS5024 for top-level tsconfig properties with wrong types.
-    // `files` must be an array — if it's a string or other non-array value,
-    // emit TS5024 and null it out so serde deserialization succeeds.
-    if let Some(obj) = raw.as_object_mut()
-        && let Some(files_val) = obj.get("files")
-        && !files_val.is_null()
-        && !files_val.is_array()
-    {
-        let search = "\"files\"";
-        let start = stripped.find(search).map_or(0, |p| p as u32);
-        let value_len = estimate_json_value_len(files_val);
-        let msg = format_message(
-            diagnostic_messages::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
-            &["files", "Array"],
-        );
-        let value_start = {
-            if let Some(colon_pos) = stripped[start as usize..].find(':') {
-                let after_colon = &stripped[(start as usize + colon_pos + 1)..];
-                let whitespace_len = after_colon.len() - after_colon.trim_start().len();
-                (start as usize + colon_pos + 1 + whitespace_len) as u32
-            } else {
-                start
-            }
-        };
-        diagnostics.push(Diagnostic::error(
-            file_path,
-            value_start,
-            value_len,
-            msg,
-            diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
-        ));
-        // Null it out so serde can deserialize the rest of the config
-        obj.insert("files".to_string(), serde_json::Value::Null);
+    // TS5024 for top-level tsconfig properties with wrong types. These
+    // represented root selectors must be arrays; null invalidates the selector
+    // without a diagnostic, matching serde's Option<T> representation.
+    if let Some(obj) = raw.as_object_mut() {
+        for key in ["include", "exclude", "files", "references"] {
+            validate_top_level_array_option(obj, &mut diagnostics, &stripped, file_path, key);
+        }
     }
 
     let mut config: TsConfig =
@@ -2650,6 +2721,55 @@ fn find_value_offset_in_source(source: &str, key: &str) -> u32 {
     0
 }
 
+fn find_top_level_value_offset_in_source(source: &str, key: &str) -> u32 {
+    let search = format!("\"{key}\"");
+    let Some(key_pos) = source.find(&search) else {
+        return 0;
+    };
+
+    let after_key = key_pos + search.len();
+    let rest = &source[after_key..];
+    if let Some(colon_pos) = rest.find(':') {
+        let after_colon = after_key + colon_pos + 1;
+        let value_rest = &source[after_colon..];
+        let whitespace_len = value_rest.len() - value_rest.trim_start().len();
+        (after_colon + whitespace_len) as u32
+    } else {
+        key_pos as u32
+    }
+}
+
+fn validate_top_level_array_option(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+    source: &str,
+    file_path: &str,
+    key: &str,
+) {
+    let Some(value) = obj.get(key) else {
+        return;
+    };
+    if value.is_null() || value.is_array() {
+        return;
+    }
+
+    let value_start = find_top_level_value_offset_in_source(source, key);
+    let value_len = estimate_json_value_len(value);
+    let msg = format_message(
+        diagnostic_messages::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+        &[key, "Array"],
+    );
+    diagnostics.push(Diagnostic::error(
+        file_path,
+        value_start,
+        value_len,
+        msg,
+        diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+    ));
+
+    obj.insert(key.to_string(), serde_json::Value::Null);
+}
+
 /// Estimate the display length of a JSON value for diagnostic span.
 fn estimate_json_value_len(value: &serde_json::Value) -> u32 {
     match value {
@@ -2745,7 +2865,6 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "skipLibCheck"
         | "sourceMap"
         | "strict"
-        | "sound"
         | "strictBindCallApply"
         | "strictBuiltinIteratorReturn"
         | "strictFunctionTypes"
@@ -2754,6 +2873,7 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "stripInternal"
         | "suppressExcessPropertyErrors"
         | "suppressImplicitAnyIndexErrors"
+        | "traceResolution"
         | "useDefineForClassFields"
         | "useUnknownInCatchVariables"
         | "verbatimModuleSyntax" => "boolean",
@@ -2762,10 +2882,11 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "jsxImportSource" | "mapRoot" | "module" | "moduleDetection" | "moduleResolution"
         | "newLine" | "out" | "outDir" | "outFile" | "reactNamespace" | "rootDir"
         | "sourceRoot" | "target" | "tsBuildInfoFile" | "ignoreDeprecations" => "string",
+        // Number options
+        "maxNodeModuleJsDepth" => "number",
         // List options (arrays)
-        "lib" | "types" | "typeRoots" | "rootDirs" | "moduleSuffixes" | "customConditions" => {
-            "list"
-        }
+        "lib" | "types" | "typeRoots" | "rootDirs" | "moduleSuffixes" | "customConditions"
+        | "plugins" => "Array",
         // Object options
         "paths" => "object",
         _ => "",
@@ -2785,6 +2906,15 @@ fn removed_compiler_option(key: &str) -> Option<&'static str> {
         | "charset" => Some(""),
         "importsNotUsedAsValues" | "preserveValueImports" => Some("verbatimModuleSyntax"),
         "out" => Some("outFile"),
+        _ => None,
+    }
+}
+
+fn unknown_compiler_option_suggestion(key_lower: &str) -> Option<&'static str> {
+    match key_lower {
+        "disablesolutioncaching" | "disablesolutiontypechecking" => {
+            Some("disableSolutionSearching")
+        }
         _ => None,
     }
 }
@@ -2814,9 +2944,6 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         // Keep the historical typo alias for compatibility, but accept the real key too.
         "disablesizelimit" | "disablesizelimt" => Some("disableSizeLimit"),
         "disablesolutionsearching" => Some("disableSolutionSearching"),
-        "disablesolutiontypecheck" => Some("disableSolutionTypeCheck"),
-        "disablesolutioncaching" => Some("disableSolutionCaching"),
-        "disablesolutiontypechecking" => Some("disableSolutionTypeChecking"),
         "disablesourceofprojectreferenceredirect" => {
             Some("disableSourceOfProjectReferenceRedirect")
         }
@@ -2839,7 +2966,6 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "importhelpers" => Some("importHelpers"),
         "importsnotusedasvalues" => Some("importsNotUsedAsValues"),
         "incremental" => Some("incremental"),
-        "inlineconstants" => Some("inlineConstants"),
         "inlinesourcemap" => Some("inlineSourceMap"),
         "inlinesources" => Some("inlineSources"),
         "isolateddeclarations" => Some("isolatedDeclarations"),
@@ -2905,7 +3031,6 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "sourcemap" => Some("sourceMap"),
         "sourceroot" => Some("sourceRoot"),
         "strict" => Some("strict"),
-        "sound" => Some("sound"),
         "strictbindcallapply" => Some("strictBindCallApply"),
         "strictbuiltiniteratorreturn" => Some("strictBuiltinIteratorReturn"),
         "strictfunctiontypes" => Some("strictFunctionTypes"),
@@ -2929,16 +3054,20 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
 
 pub fn load_tsconfig(path: &Path) -> Result<TsConfig> {
     let mut visited = FxHashSet::default();
-    load_tsconfig_inner(path, &mut visited)
+    load_tsconfig_inner(path, &mut visited, false)
 }
 
 /// Load tsconfig.json and collect config-level diagnostics.
 pub fn load_tsconfig_with_diagnostics(path: &Path) -> Result<ParsedTsConfig> {
     let mut visited = FxHashSet::default();
-    load_tsconfig_inner_with_diagnostics(path, &mut visited)
+    load_tsconfig_inner_with_diagnostics(path, &mut visited, false)
 }
 
-fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<TsConfig> {
+fn load_tsconfig_inner(
+    path: &Path,
+    visited: &mut FxHashSet<PathBuf>,
+    inherited: bool,
+) -> Result<TsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
         bail!("tsconfig extends cycle detected at {}", canonical.display());
@@ -2949,6 +3078,9 @@ fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<
     let mut config = parse_tsconfig(&source)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
     anchor_inherited_path_options(&mut config, path);
+    if inherited {
+        anchor_inherited_root_selectors(&mut config, path);
+    }
 
     let extends = config.extends.take();
     if let Some(extends_value) = extends {
@@ -2961,7 +3093,7 @@ fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<
         let mut accumulated: Option<TsConfig> = None;
         for extends_path_str in &extends_paths {
             let base_path = resolve_extends_path(path, extends_path_str)?;
-            let base_config = load_tsconfig_inner(&base_path, visited)?;
+            let base_config = load_tsconfig_inner(&base_path, visited, true)?;
             accumulated = Some(match accumulated {
                 Some(acc) => merge_configs(acc, base_config),
                 None => base_config,
@@ -2979,6 +3111,7 @@ fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<
 fn load_tsconfig_inner_with_diagnostics(
     path: &Path,
     visited: &mut FxHashSet<PathBuf>,
+    inherited: bool,
 ) -> Result<ParsedTsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
@@ -2991,6 +3124,9 @@ fn load_tsconfig_inner_with_diagnostics(
     let mut parsed = parse_tsconfig_with_diagnostics(&source, &file_display)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
     anchor_inherited_path_options(&mut parsed.config, path);
+    if inherited {
+        anchor_inherited_root_selectors(&mut parsed.config, path);
+    }
 
     let extends = parsed.config.extends.take();
     if let Some(extends_value) = extends {
@@ -3006,7 +3142,7 @@ fn load_tsconfig_inner_with_diagnostics(
             // TSC checks the merged result and emits TS5102 at the child's key position
             // when removed options come from base configs via extends.
             collect_removed_options_from_config(&base_path, &mut base_removed_options);
-            let base_config = load_tsconfig_inner(&base_path, visited)?;
+            let base_config = load_tsconfig_inner(&base_path, visited, true)?;
             accumulated = Some(match accumulated {
                 Some(acc) => merge_configs(acc, base_config),
                 None => base_config,
@@ -3372,6 +3508,41 @@ fn anchor_inherited_path_options(config: &mut TsConfig, config_path: &Path) {
     }
 }
 
+fn anchor_inherited_root_selectors(config: &mut TsConfig, config_path: &Path) {
+    let Some(parent) = config_path.parent() else {
+        return;
+    };
+    let parent_abs = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+
+    if let Some(files) = config.files.as_mut() {
+        for file in files {
+            anchor_relative_selector(file, &parent_abs);
+        }
+    }
+    if let Some(include) = config.include.as_mut() {
+        for pattern in include {
+            anchor_relative_selector(pattern, &parent_abs);
+        }
+    }
+    if let Some(exclude) = config.exclude.as_mut() {
+        for pattern in exclude {
+            anchor_relative_selector(pattern, &parent_abs);
+        }
+    }
+}
+
+fn anchor_relative_selector(selector: &mut String, base_dir: &Path) {
+    let trimmed = selector.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let candidate = std::path::Path::new(trimmed);
+    if candidate.is_absolute() {
+        return;
+    }
+    *selector = base_dir.join(candidate).to_string_lossy().into_owned();
+}
+
 fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {
     let merged_compiler_options = match (base.compiler_options, child.compiler_options.take()) {
         (Some(base_opts), Some(child_opts)) => Some(merge_compiler_options(base_opts, child_opts)),
@@ -3438,6 +3609,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             out_file,
             composite,
             declaration,
+            emit_declaration_only,
             declaration_dir,
             source_map,
             inline_source_map,
@@ -3447,7 +3619,9 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             strict,
             sound,
             no_emit,
+            emit_bom,
             no_check,
+            preserve_symlinks,
             no_emit_on_error,
             isolated_modules,
             isolated_declarations,
@@ -3459,11 +3633,13 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             emit_decorator_metadata,
             import_helpers,
             no_emit_helpers,
+            downlevel_iteration,
             remove_comments,
             new_line,
             allow_js,
             check_js,
             skip_lib_check,
+            skip_default_lib_check,
             strip_internal,
             always_strict,
             use_define_for_class_fields,
@@ -3475,6 +3651,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_implicit_this,
             use_unknown_in_catch_variables,
             strict_bind_call_apply,
+            strict_builtin_iterator_return,
             exact_optional_property_types,
             no_unchecked_indexed_access,
             no_property_access_from_index_signature,
@@ -3482,6 +3659,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_unused_parameters,
             allow_unreachable_code,
             allow_unused_labels,
+            no_fallthrough_cases_in_switch,
             no_resolve,
             no_unchecked_side_effect_imports,
             no_implicit_override,
@@ -3489,6 +3667,8 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             ignore_deprecations,
             allow_umd_global_access,
             preserve_const_enums,
+            erasable_syntax_only,
+            max_node_module_js_depth,
         }
     );
     merged.invalidated_options = invalidated;
@@ -4322,6 +4502,10 @@ fn normalize_option(value: &str) -> String {
     normalized
 }
 
+fn normalize_enum_option_value(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
 pub fn strip_jsonc(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
@@ -4441,10 +4625,10 @@ fn remove_trailing_commas(input: &str) -> String {
     out
 }
 
-// TS6046: Valid option value lists (normalized lowercase, matching tsc 6.0)
+// TS6046: Valid option value lists (lowercase canonical spellings, matching tsc 6.0)
 // These must match the values tsc accepts and lists in its TS6046 messages.
 
-/// Valid `--target` values (normalized). The display list uses tsc's canonical casing.
+/// Valid `--target` values. The display list uses tsc's canonical casing.
 const VALID_TARGET_VALUES: &[&str] = &[
     "es3", "es5", "es6", "es2015", "es2016", "es2017", "es2018", "es2019", "es2020", "es2021",
     "es2022", "es2023", "es2024", "es2025", "esnext",
@@ -4453,7 +4637,7 @@ const VALID_TARGET_VALUES: &[&str] = &[
 // and added es2025. Match TSC's display.
 const VALID_TARGET_DISPLAY: &str = "'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'es2025', 'esnext'";
 
-/// Valid `--module` values (normalized).
+/// Valid `--module` values.
 const VALID_MODULE_VALUES: &[&str] = &[
     "none", "commonjs", "amd", "system", "umd", "es6", "es2015", "es2020", "es2022", "esnext",
     "node16", "node18", "node20", "nodenext", "preserve",
@@ -4462,23 +4646,31 @@ const VALID_MODULE_VALUES: &[&str] = &[
 // message, though they are still accepted. Match TSC's display.
 const VALID_MODULE_DISPLAY: &str = "'commonjs', 'es6', 'es2015', 'es2020', 'es2022', 'esnext', 'node16', 'node18', 'node20', 'nodenext', 'preserve'";
 
-/// Valid `--moduleResolution` values (normalized).
+/// Valid `--moduleResolution` values.
 const VALID_MODULE_RESOLUTION_VALUES: &[&str] =
     &["classic", "node", "node10", "node16", "nodenext", "bundler"];
 const VALID_MODULE_RESOLUTION_DISPLAY: &str =
     "'classic', 'node', 'node10', 'node16', 'nodenext', 'bundler'";
 
-/// Valid `--jsx` values (normalized).
+/// Valid `--jsx` values.
 const VALID_JSX_VALUES: &[&str] = &[
     "preserve",
     "react",
-    "reactnative",
-    "reactjsx",
-    "reactjsxdev",
+    "react-native",
+    "react-jsx",
+    "react-jsxdev",
 ];
 const VALID_JSX_DISPLAY: &str = "'preserve', 'react', 'react-native', 'react-jsx', 'react-jsxdev'";
 
-/// Valid `--lib` values (normalized). This list matches tsc 6.0's accepted lib names.
+/// Valid `--moduleDetection` values.
+const VALID_MODULE_DETECTION_VALUES: &[&str] = &["auto", "legacy", "force"];
+const VALID_MODULE_DETECTION_DISPLAY: &str = "'auto', 'legacy', 'force'";
+
+/// Valid `--newLine` values.
+const VALID_NEW_LINE_VALUES: &[&str] = &["crlf", "lf"];
+const VALID_NEW_LINE_DISPLAY: &str = "'crlf', 'lf'";
+
+/// Valid `--lib` values. This list matches tsc 6.0's accepted lib names.
 const VALID_LIB_VALUES: &[&str] = &[
     "es5",
     "es6",
@@ -4603,7 +4795,7 @@ fn validate_option_value(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     if let Some(serde_json::Value::String(value)) = compiler_opts.get(key) {
-        let normalized = normalize_option(value.trim());
+        let normalized = normalize_enum_option_value(value);
         if !normalized.is_empty() && !valid_values.contains(&normalized.as_str()) {
             let start = find_value_offset_in_source(source, key);
             let value_len = value.len() as u32 + 2; // include quotes
@@ -4640,7 +4832,7 @@ fn validate_lib_values(
     let mut invalid_indices = Vec::new();
     for (i, entry) in lib_array.iter().enumerate() {
         if let serde_json::Value::String(lib_name) = entry {
-            let normalized = normalize_option(lib_name);
+            let normalized = normalize_enum_option_value(lib_name);
             if !normalized.is_empty() && !VALID_LIB_VALUES.contains(&normalized.as_str()) {
                 // Find position of this lib entry in source
                 let start = find_lib_entry_offset(source, lib_name);
@@ -4748,6 +4940,43 @@ mod tests {
     }
 
     #[test]
+    fn test_ts5024_emitted_for_recognized_options_with_invalid_value_types() {
+        for (option, value, expected_type) in [
+            ("plugins", r#""not-an-array""#, "Array"),
+            ("maxNodeModuleJsDepth", r#""not-a-number""#, "number"),
+            ("traceResolution", r#""yes""#, "boolean"),
+        ] {
+            let source = format!(
+                r#"{{
+  "compilerOptions": {{
+    "noEmit": true,
+    "{option}": {value}
+  }},
+  "files": ["index.ts"]
+}}"#
+            );
+            let parsed =
+                parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap_or_else(|err| {
+                    panic!("{option} should report TS5024, not fail parse: {err}")
+                });
+            let diagnostic = parsed
+                .diagnostics
+                .iter()
+                .find(|d| d.code == 5024 && d.message_text.contains(option))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Expected TS5024 for invalid {option}, got: {:?}",
+                        parsed.diagnostics
+                    )
+                });
+            assert!(
+                diagnostic.message_text.contains(expected_type),
+                "Expected {option} TS5024 to mention {expected_type}, got: {diagnostic:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_ts5059_emitted_for_invalid_react_namespace_value() {
         let source = r#"{
   "compilerOptions": {
@@ -4816,6 +5045,59 @@ mod tests {
     }
 
     #[test]
+    fn test_tsz_only_compiler_options_report_unknown_from_tsconfig() {
+        let source = r#"{
+  "compilerOptions": {
+    "sound": true,
+    "inlineConstants": true,
+    "disableSolutionTypeCheck": true,
+    "disableSolutionCaching": true,
+    "disableSolutionTypeChecking": true
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(
+            codes.len(),
+            5,
+            "tsz-only options should be rejected with tsc-compatible diagnostics, got: {:?}",
+            parsed.diagnostics
+        );
+        assert_eq!(
+            codes
+                .iter()
+                .filter(|&&code| code == diagnostic_codes::UNKNOWN_COMPILER_OPTION)
+                .count(),
+            3,
+            "expected three TS5023 diagnostics, got: {:?}",
+            parsed.diagnostics
+        );
+        assert_eq!(
+            codes
+                .iter()
+                .filter(|&&code| code == diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN)
+                .count(),
+            2,
+            "expected two TS5025 diagnostics, got: {:?}",
+            parsed.diagnostics
+        );
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .filter(|diag| diag.code == diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN)
+                .all(|diag| diag.message_text.contains("disableSolutionSearching")),
+            "disableSolution typo diagnostics should suggest disableSolutionSearching, got: {:?}",
+            parsed.diagnostics
+        );
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+        assert!(
+            !resolved.checker.sound_mode,
+            "unknown `sound` in tsconfig should not enable sound mode"
+        );
+    }
+
+    #[test]
     fn test_disable_size_limit_miscase_reports_did_you_mean() {
         let source = r#"{
   "compilerOptions": {
@@ -4854,6 +5136,20 @@ mod tests {
     }
 
     #[test]
+    fn test_tsconfig_emit_flags_reach_printer_options() {
+        let json = r#"{"compilerOptions":{"importHelpers":true,"preserveConstEnums":true,"downlevelIteration":true}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.import_helpers);
+        assert!(resolved.printer.import_helpers);
+        assert!(resolved.printer.no_emit_helpers);
+        assert!(resolved.checker.preserve_const_enums);
+        assert!(resolved.printer.preserve_const_enums);
+        assert!(resolved.printer.downlevel_iteration);
+    }
+
+    #[test]
     fn test_parse_module_resolution_rejects_comma_separated_value() {
         let json =
             r#"{"compilerOptions":{"moduleResolution":"node16,nodenext","module":"commonjs"}} "#;
@@ -4872,6 +5168,8 @@ mod tests {
             ("target", "es2020,esnext", "--target"),
             ("module", "commonjs,esnext", "--module"),
             ("moduleResolution", "node,bundler", "--moduleResolution"),
+            ("moduleDetection", "auto,force", "--moduleDetection"),
+            ("newLine", "lf,crlf", "--newLine"),
         ] {
             let source = format!(r#"{{"compilerOptions":{{"{option}":"{value}"}}}}"#);
             let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
@@ -4895,6 +5193,95 @@ mod tests {
                 diagnostic.start,
                 source.find(&format!(r#""{value}""#)).unwrap() as u32
             );
+        }
+    }
+
+    #[test]
+    fn test_ts6046_emitted_for_separator_mutated_enum_options() {
+        for (option, value, flag) in [
+            ("target", "es_2020", "--target"),
+            ("target", "es-2020", "--target"),
+            ("target", "es 2020", "--target"),
+            ("module", "node_next", "--module"),
+            ("jsx", "react_jsx", "--jsx"),
+            ("moduleResolution", "node_16", "--moduleResolution"),
+        ] {
+            let source = format!(
+                r#"{{"compilerOptions":{{"{option}":"{value}","noEmit":true}},"files":["a.ts"]}}"#
+            );
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            let codes: Vec<u32> = parsed.diagnostics.iter().map(|diag| diag.code).collect();
+            let diagnostic = parsed
+                .diagnostics
+                .iter()
+                .find(|diag| diag.code == diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Expected TS6046 for compilerOptions.{option}={value:?}, got: {:?}",
+                        parsed.diagnostics
+                    )
+                });
+
+            assert!(
+                diagnostic.message_text.contains(flag),
+                "Unexpected TS6046 message for compilerOptions.{option}: {}",
+                diagnostic.message_text
+            );
+            assert!(
+                !codes.contains(
+                    &diagnostic_codes::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO
+                ),
+                "separator-mutated moduleResolution should not produce follow-on TS5110, got: {:?}",
+                parsed.diagnostics
+            );
+            assert_eq!(
+                diagnostic.start,
+                source.find(&format!(r#""{value}""#)).unwrap() as u32
+            );
+        }
+    }
+
+    #[test]
+    fn test_ts6046_emitted_for_invalid_module_detection_and_new_line() {
+        for (option, value, flag, expected_values) in [
+            (
+                "moduleDetection",
+                "bogus",
+                "--moduleDetection",
+                "'auto', 'legacy', 'force'",
+            ),
+            ("newLine", "bogus", "--newLine", "'crlf', 'lf'"),
+        ] {
+            let source = format!(r#"{{"compilerOptions":{{"{option}":"{value}"}}}}"#);
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            let diagnostic = parsed
+                .diagnostics
+                .iter()
+                .find(|diag| diag.code == diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Expected TS6046 for compilerOptions.{option}, got: {:?}",
+                        parsed.diagnostics
+                    )
+                });
+
+            assert!(
+                diagnostic.message_text.contains(flag)
+                    && diagnostic.message_text.contains(expected_values),
+                "Unexpected TS6046 message for compilerOptions.{option}: {}",
+                diagnostic.message_text
+            );
+            assert_eq!(
+                diagnostic.start,
+                source.find(&format!(r#""{value}""#)).unwrap() as u32
+            );
+
+            let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref())
+                .expect("invalid enum value should be nulled before resolution");
+            if option == "moduleDetection" {
+                assert!(!resolved.printer.module_detection_force);
+                assert!(!resolved.printer.module_detection_legacy);
+            }
         }
     }
 
@@ -4996,6 +5383,10 @@ mod tests {
         // When no options at all, module_explicitly_set should be false.
         let resolved = resolve_compiler_options(None).unwrap();
         assert!(!resolved.checker.module_explicitly_set);
+        assert!(
+            resolved.printer.always_strict,
+            "printer alwaysStrict should default to true with no compiler options"
+        );
     }
 
     #[test]
@@ -5225,8 +5616,8 @@ mod tests {
         let base_url = opts.base_url.expect("inherited baseUrl present");
 
         // Canonicalize to handle macOS `/var` → `/private/var` symlinks.
-        let canonical_base_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir.clone());
-        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir.clone());
+        let canonical_base_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir);
+        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir);
         let canonical_base_url = std::path::Path::new(&base_url)
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(&base_url));
@@ -5329,7 +5720,7 @@ mod tests {
 
         // Canonicalize both sides so symlink-bearing temp paths on macOS
         // (`/var/folders/...` → `/private/var/folders/...`) compare equal.
-        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir.clone());
+        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir);
         let canonical_base_url = std::path::Path::new(&base_url)
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(&base_url));
@@ -5803,13 +6194,13 @@ mod tests {
     }
 
     #[test]
-    fn test_ts5052_check_js_requires_allow_js() {
+    fn test_ts5052_not_emitted_when_check_js_implies_allow_js() {
         let source = r#"{"compilerOptions":{"checkJs":true}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-        let count = parsed.diagnostics.iter().filter(|d| d.code == 5052).count();
-        assert_eq!(
-            count, 1,
-            "Expected one TS5052 diagnostic when allowJs is missing, got: {:?}",
+        let has_5052 = parsed.diagnostics.iter().any(|d| d.code == 5052);
+        assert!(
+            !has_5052,
+            "Should not emit TS5052 when checkJs implies allowJs, got: {:?}",
             parsed.diagnostics
         );
     }
@@ -5849,6 +6240,18 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_compiler_options_check_js_implies_allow_js() {
+        let source = r#"{"compilerOptions":{"checkJs":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.check_js);
+        assert!(resolved.checker.check_js);
+        assert!(resolved.allow_js);
+        assert!(resolved.checker.allow_js);
+    }
+
+    #[test]
     fn test_ts5070_resolve_json_module_with_classic_module_resolution() {
         let source =
             r#"{"compilerOptions":{"resolveJsonModule":true,"moduleResolution":"classic"}}"#;
@@ -5858,6 +6261,37 @@ mod tests {
             codes.contains(&5070),
             "Expected TS5070 for resolveJsonModule with classic moduleResolution, got: {codes:?}"
         );
+    }
+
+    #[test]
+    fn test_resolve_json_module_not_implied_by_node_resolution() {
+        for source in [
+            r#"{"compilerOptions":{"module":"commonjs","moduleResolution":"node10"}}"#,
+            r#"{"compilerOptions":{"module":"node16","moduleResolution":"node16"}}"#,
+        ] {
+            let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+            let resolved =
+                resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+
+            assert!(
+                !resolved.resolve_json_module,
+                "resolveJsonModule should not be implied for {source}"
+            );
+            assert!(
+                !resolved.checker.resolve_json_module,
+                "checker resolveJsonModule should not be implied for {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_resolve_json_module_implied_by_bundler_resolution() {
+        let source = r#"{"compilerOptions":{"moduleResolution":"bundler"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.resolve_json_module);
+        assert!(resolved.checker.resolve_json_module);
     }
 
     #[test]
@@ -6401,6 +6835,10 @@ mod tests {
             resolved.checker.always_strict,
             "alwaysStrict should remain true by default when strict: false"
         );
+        assert!(
+            resolved.printer.always_strict,
+            "printer alwaysStrict should remain true by default when strict: false"
+        );
     }
 
     #[test]
@@ -6445,6 +6883,10 @@ mod tests {
             resolved.checker.always_strict,
             "alwaysStrict should fall back to the TS 6.0 default when provided as a string-typed boolean"
         );
+        assert!(
+            resolved.printer.always_strict,
+            "printer alwaysStrict should fall back to the TS 6.0 default when provided as a string-typed boolean"
+        );
     }
 
     #[test]
@@ -6461,6 +6903,10 @@ mod tests {
         assert!(
             !resolved.checker.always_strict,
             "explicit alwaysStrict=false should still disable alwaysStrict"
+        );
+        assert!(
+            !resolved.printer.always_strict,
+            "explicit alwaysStrict=false should still disable printer alwaysStrict"
         );
     }
 
@@ -6506,6 +6952,32 @@ mod tests {
             !resolved.allow_importing_ts_extensions,
             "allowImportingTsExtensions should not be applied from a string-typed boolean value"
         );
+    }
+
+    #[test]
+    fn test_ts5096_allow_importing_ts_extensions_requires_emit_guard() {
+        let invalid = r#"{"compilerOptions":{"allowImportingTsExtensions":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(invalid, "tsconfig.json").unwrap();
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.code
+                == diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR),
+            "Expected TS5096 for allowImportingTsExtensions without an emit guard, got: {:?}",
+            parsed.diagnostics
+        );
+
+        for valid in [
+            r#"{"compilerOptions":{"allowImportingTsExtensions":true,"noEmit":true}}"#,
+            r#"{"compilerOptions":{"allowImportingTsExtensions":true,"declaration":true,"emitDeclarationOnly":true}}"#,
+            r#"{"compilerOptions":{"allowImportingTsExtensions":true,"rewriteRelativeImportExtensions":true}}"#,
+        ] {
+            let parsed = parse_tsconfig_with_diagnostics(valid, "tsconfig.json").unwrap();
+            assert!(
+                parsed.diagnostics.iter().all(|d| d.code
+                    != diagnostic_codes::OPTION_ALLOWIMPORTINGTSEXTENSIONS_CAN_ONLY_BE_USED_WHEN_ONE_OF_NOEMIT_EMITDECLAR),
+                "Did not expect TS5096 for guarded allowImportingTsExtensions in {valid}, got: {:?}",
+                parsed.diagnostics
+            );
+        }
     }
 
     #[test]
@@ -6586,41 +7058,46 @@ mod tests {
     }
 
     #[test]
-    fn test_sound_resolves_from_tsconfig() {
-        let source = r#"{
-            "compilerOptions": {
-                "sound": true
-            }
-        }"#;
-        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-        assert!(
-            parsed
+    fn test_ts5024_top_level_selector_type_mismatches_are_recovered() {
+        for (key, value) in [
+            ("include", r#""*.ts""#),
+            ("exclude", r#""dist""#),
+            ("references", r#""./lib""#),
+        ] {
+            let source = format!(
+                r#"{{
+  "{key}": {value},
+  "compilerOptions": {{ "noEmit": true }},
+  "files": ["a.ts"]
+}}"#
+            );
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            let ts5024 = parsed
                 .diagnostics
                 .iter()
-                .all(|diag| diag.code != diagnostic_codes::UNKNOWN_COMPILER_OPTION),
-            "sound should be recognized as a compiler option, got diagnostics: {:?}",
-            parsed.diagnostics
-        );
-        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
-        assert!(resolved.checker.sound_mode);
-    }
+                .find(|d| {
+                    d.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE
+                        && d.message_text.contains(key)
+                        && d.message_text.contains("Array")
+                })
+                .unwrap_or_else(|| {
+                    panic!("Expected TS5024 for {key}, got: {:?}", parsed.diagnostics)
+                });
 
-    #[test]
-    fn test_sound_mis_cased_option_reports_did_you_mean() {
-        let source = r#"{
-            "compilerOptions": {
-                "Sound": true
+            assert_eq!(
+                ts5024.start,
+                source.find(value).expect("test value") as u32,
+                "TS5024 for {key} should point at the invalid value"
+            );
+
+            match key {
+                "include" => assert!(parsed.config.include.is_none()),
+                "exclude" => assert!(parsed.config.exclude.is_none()),
+                "references" => assert!(parsed.config.references.is_none()),
+                _ => unreachable!(),
             }
-        }"#;
-        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-        assert!(
-            parsed
-                .diagnostics
-                .iter()
-                .any(|diag| diag.code == diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN),
-            "Expected TS5025-style diagnostic for miscased sound option, got: {:?}",
-            parsed.diagnostics
-        );
+            assert_eq!(parsed.config.files, Some(vec!["a.ts".to_string()]));
+        }
     }
 
     #[test]

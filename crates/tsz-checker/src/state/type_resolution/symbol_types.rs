@@ -1006,6 +1006,10 @@ impl<'a> CheckerState<'a> {
 
         let merged = self.merge_interface_heritage_types(&declarations, interface_type);
         self.ctx.symbol_instance_types.insert(sym_id, merged);
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        self.ctx
+            .definition_store
+            .register_type_to_def(merged, def_id);
         merged
     }
 

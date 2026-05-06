@@ -71,10 +71,14 @@ impl<'a> CheckerState<'a> {
             source_str = self.rewrite_source_display_for_non_literal_target_assignability(
                 source, target, source_str,
             );
-            let has_declared_target_annotation = self
-                .assignment_target_expression(idx)
-                .and_then(|expr| self.declared_type_annotation_text_for_expression(expr))
-                .is_some();
+            let has_declared_target_annotation =
+                self.assignment_target_expression(idx).is_some_and(|expr| {
+                    self.declared_type_annotation_text_for_expression(expr)
+                        .is_some()
+                        || self
+                            .declared_intersection_annotation_display_for_expression(expr)
+                            .is_some()
+                });
             if !has_declared_target_annotation {
                 target_str =
                     self.rewrite_target_display_for_non_literal_assignability(target, target_str);
@@ -87,6 +91,13 @@ impl<'a> CheckerState<'a> {
             ) {
                 source_str = widened;
             }
+        }
+        if let Some(display) = self.object_literal_property_literal_union_alias_target_display(
+            target,
+            &target_str,
+            idx,
+        ) {
+            target_str = display;
         }
         source_str = self.normalize_template_placeholder_spacing_for_display(&source_str);
         target_str = self.normalize_template_placeholder_spacing_for_display(&target_str);
@@ -174,7 +185,7 @@ impl<'a> CheckerState<'a> {
             && let Some(property_name) = self.missing_single_required_property(source, target)
         {
             let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-            if prop_name.starts_with("__private_brand") {
+            if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                 let (source_display, target_display) = self
                     .finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
                 let message = self

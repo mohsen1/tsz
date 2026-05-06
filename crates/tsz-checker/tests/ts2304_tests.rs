@@ -672,3 +672,150 @@ fn test_ts2304_emitted_for_nested_new_expression_arguments_when_target_unresolve
         "Expected 2 TS2304 for 'StringHashTable' inside the nested `new` arguments, got: {ts2304_errors:?}"
     );
 }
+
+// =============================================================================
+// JSDoc unresolved-name diagnostics inside compound types (issue #3408)
+//
+// Each test exercises a different compound type wrapper around an unresolved
+// simple name `Missing`. tsc emits TS2304 in every case; tsz must too. The
+// helpers walk the JSDoc type expression to find the leaf, so each case uses
+// a distinct iteration variable / parameter name to ensure the fix does not
+// hardcode any user-chosen identifier.
+// =============================================================================
+
+#[test]
+fn test_ts2304_emitted_for_jsdoc_param_simple_unresolved_name() {
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @param {Missing} value
+ */
+function fn0(value) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'Missing'"))
+        .collect();
+    assert!(
+        !ts2304.is_empty(),
+        "Expected TS2304 for unresolved JSDoc @param simple name, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2304_emitted_for_jsdoc_param_arrow_return_unresolved_name() {
+    // `() => Missing` — the unresolved name is the return type of an arrow
+    // type appearing inside an `@param` annotation.
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @param {() => Missing} cb
+ */
+function fn1(cb) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'Missing'"))
+        .collect();
+    assert!(
+        !ts2304.is_empty(),
+        "Expected TS2304 for unresolved JSDoc arrow-return name, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2304_emitted_for_jsdoc_param_arrow_param_type_unresolved_name() {
+    // `(p: Missing) => void` — unresolved name in an arrow parameter type.
+    // Use a parameter name that is not the conformance default `x` to make
+    // sure the walker descends structurally rather than matching a literal.
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @param {(arg: Missing) => void} cb
+ */
+function fn2(cb) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'Missing'"))
+        .collect();
+    assert!(
+        !ts2304.is_empty(),
+        "Expected TS2304 for unresolved JSDoc arrow-param type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2304_emitted_for_jsdoc_type_object_property_unresolved_name() {
+    // `{ a: Missing }` wrapped in `@type {{ ... }}`. The brace balancer
+    // must keep the inner object literal intact instead of truncating at
+    // the first `}`.
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/** @type {{ field: Missing }} */
+let value;
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'Missing'"))
+        .collect();
+    assert!(
+        !ts2304.is_empty(),
+        "Expected TS2304 for unresolved JSDoc object property type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2304_emitted_for_jsdoc_param_object_property_unresolved_name() {
+    // Object-literal property type appearing inside `@param`.
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @param {{ field: Missing }} obj
+ */
+function fn3(obj) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'Missing'"))
+        .collect();
+    assert!(
+        !ts2304.is_empty(),
+        "Expected TS2304 for unresolved JSDoc @param object property, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_compound_type_unresolved_walker_skips_in_scope_template() {
+    // `@template T` declares an in-scope type parameter. References to it
+    // inside a compound type must NOT be flagged TS2304, even though the
+    // walker descends into the arrow return position.
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @template T
+ * @param {() => T} cb
+ */
+function fn4(cb) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'T'"))
+        .collect();
+    assert!(
+        ts2304.is_empty(),
+        "@template T should be in scope for arrow-return position, got: {diagnostics:?}"
+    );
+}

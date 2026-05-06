@@ -740,7 +740,8 @@ impl<'a> Printer<'a> {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
-            if self.statement_is_top_level_using(stmt_node) {
+            let stmt_is_top_level_using = self.statement_is_top_level_using(stmt_node);
+            if stmt_is_top_level_using {
                 seen_top_level_using = true;
             }
             if let Some(dep_var) = system_plan.import_vars.get(&stmt_node.pos)
@@ -757,6 +758,7 @@ impl<'a> Printer<'a> {
                         names.push(class_name);
                     }
                     if has_top_level_using
+                        && seen_top_level_using
                         && self
                             .arena
                             .has_modifier(&class_decl.modifiers, SyntaxKind::ExportKeyword)
@@ -766,6 +768,12 @@ impl<'a> Printer<'a> {
                         && class_decl.name.is_some()
                         && seen.insert("_default".to_string())
                     {
+                        // Only hoist `_default` when the default-exported
+                        // class lives AFTER the top-level `using` in source
+                        // and so is reached from inside the synthesized
+                        // try/catch. When the class precedes the using,
+                        // the class name itself is the live binding and
+                        // tsc emits no `_default`.
                         names.push("_default".to_string());
                     }
                 }
@@ -843,9 +851,16 @@ impl<'a> Printer<'a> {
                                 names.push(name);
                             }
                             if has_top_level_using
-                                && ((class_decl.name.is_some()) || seen_top_level_using)
+                                && seen_top_level_using
                                 && seen.insert("_default".to_string())
                             {
+                                // Only hoist `_default` when this default-
+                                // exported class lives AFTER the top-level
+                                // `using` in source (so it's reached from
+                                // within the synthesized try/catch).
+                                // Named classes that PRECEDE the using don't
+                                // need the tracker — the class identifier
+                                // is already the live binding.
                                 names.push("_default".to_string());
                             }
                         }
@@ -862,10 +877,20 @@ impl<'a> Printer<'a> {
                         continue;
                     }
                     if has_top_level_using
+                        && seen_top_level_using
                         && export_decl.is_default_export
                         && (clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                             || clause_node.kind == syntax_kind_ext::CLASS_DECLARATION)
                     {
+                        // Only hoist `_default` when this default-export
+                        // sits AFTER the top-level `using` in source — that
+                        // means the class/function is reached from inside
+                        // the synthesized try/catch and needs the tracker
+                        // for the export call. When the default-export
+                        // comes BEFORE the using, the class name (or
+                        // `default_1` placeholder) is the live binding
+                        // and no separate tracker is needed; tsc does not
+                        // hoist `_default` in that case.
                         let has_local_name =
                             if clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
                                 self.arena
@@ -991,9 +1016,25 @@ impl<'a> Printer<'a> {
                         &mut seen,
                     );
                 }
+                let names_before_nested = names.len();
                 self.collect_system_nested_top_level_var_hoisted_names(
                     stmt_idx, &mut names, &mut seen,
                 );
+                // tsc places `env_1` IMMEDIATELY before the first
+                // nested-hoisted var (a `var` declared inside an `if` /
+                // `for` / `try` / etc. that gets hoisted to the System
+                // closure scope). Without this insertion the helper
+                // sits at the end of the var list, which produces
+                // `var z, y, env_1;` instead of tsc's
+                // `var z, env_1, y;` for sources like
+                // `using z = ...; if (false) { var y = 1; }`.
+                if has_top_level_using
+                    && seen_top_level_using
+                    && names.len() > names_before_nested
+                    && seen.insert("env_1".to_string())
+                {
+                    names.insert(names_before_nested, "env_1".to_string());
+                }
                 if has_top_level_using {
                     let needs_default_temp = (stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                         && self
@@ -1020,6 +1061,9 @@ impl<'a> Printer<'a> {
                         let insert_at = names.len().saturating_sub(1);
                         names.insert(insert_at, "_default".to_string());
                     }
+                }
+                if stmt_is_top_level_using {
+                    Self::push_system_top_level_using_env_name(&mut names, &mut seen);
                 }
                 continue;
             }
@@ -1082,10 +1126,9 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
-        }
-
-        if has_top_level_using && seen.insert("env_1".to_string()) {
-            names.push("env_1".to_string());
+            if stmt_is_top_level_using {
+                Self::push_system_top_level_using_env_name(&mut names, &mut seen);
+            }
         }
 
         for name in deferred_named_export_names {
@@ -1095,6 +1138,12 @@ impl<'a> Printer<'a> {
         }
 
         names
+    }
+
+    fn push_system_top_level_using_env_name(names: &mut Vec<String>, seen: &mut HashSet<String>) {
+        if seen.insert("env_1".to_string()) {
+            names.push("env_1".to_string());
+        }
     }
 
     fn collect_system_empty_binding_temps_from_variable_statement(

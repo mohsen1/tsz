@@ -4,7 +4,9 @@ mod top_level_using;
 
 #[cfg(test)]
 mod tests {
+    use crate::context::emit::EmitContext;
     use crate::emitter::{ModuleKind, Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_common::ScriptTarget;
     use tsz_parser::ParserState;
@@ -109,6 +111,40 @@ mod tests {
     }
 
     #[test]
+    fn for_await_temps_do_not_leak_to_source_scope() {
+        let source =
+            "async function f() {\n    let y: any;\n    for await (const x of y) {\n    }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        let function_start = output
+            .find("async function f()")
+            .expect("function should emit");
+        let source_scope = &output[..function_start];
+
+        assert!(
+            !source_scope.contains("var _a, e_1, _b, _c;"),
+            "for-await temps should not be hoisted outside the function.\nOutput:\n{output}"
+        );
+        assert!(
+            output[function_start..].contains("var _a, e_1, _b, _c;"),
+            "for-await temps should still be declared in the function body.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn emit_class_with_accessor_members_preserves_leading_comments_in_ts_output() {
         let source = "// Regular class should still error when targeting ES5\n\
 class RegularClass {\n    accessor shouldError;\n}\n";
@@ -142,6 +178,28 @@ class RegularClass {\n    accessor shouldError;\n}\n";
         assert!(
             output.contains("class RegularClass") || output.contains("var RegularClass"),
             "Class output should still be emitted for accessor-containing class in ES5 path.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_class_duplicate_accessors_keep_first_descriptor_body() {
+        let source =
+            "class C {\n    get x() { return 1; }\n    get x() { return 2; } // error\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("get: function () { return 1; },"),
+            "Duplicate ES5 accessor descriptor should use the first getter body.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("return 2;") && !output.contains("// error"),
+            "Duplicate ES5 accessor descriptor should not inherit the later error accessor body or comment.\nOutput:\n{output}"
         );
     }
 
@@ -271,6 +329,29 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn es5_object_literal_setter_downlevels_destructured_parameter() {
+        let source = "const foo = {\n    set foo([start, end]: [any, any]) {\n        void start;\n        void end;\n    },\n};\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("set foo(_a) {\n        var start = _a[0], end = _a[1];"),
+            "ES5 object literal setters should lower destructured parameters.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn decorator_metadata_conditional_type_uses_common_branch_runtime_type() {
         let source = "declare function d(): PropertyDecorator;\nabstract class BaseEntity<T> {\n    @d()\n    public attributes: T extends { attributes: infer A } ? A : undefined;\n}\nclass C {\n    @d()\n    x: number extends string ? false : true;\n}\n";
 
@@ -297,6 +378,37 @@ class RegularClass {\n    accessor shouldError;\n}\n";
             output
                 .contains("__metadata(\"design:type\", Boolean)\n], C.prototype, \"x\", void 0);"),
             "Conditional metadata with boolean literal branches should emit Boolean.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn decorator_metadata_nolib_isolated_global_type_uses_typeof_guard() {
+        let source = "declare var Decorate: PropertyDecorator;\nexport class B {\n    @Decorate\n    member: Map<string, number>;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                no_lib: true,
+                isolated_modules: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a;"),
+            "Metadata guard should hoist its temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("__metadata(\"design:type\", typeof (_a = typeof Map !== \"undefined\" && Map) === \"function\" ? _a : Object)"),
+            "No-lib isolated metadata should guard unresolved global constructors.\nOutput:\n{output}"
         );
     }
 
@@ -331,6 +443,64 @@ class RegularClass {\n    accessor shouldError;\n}\n";
         assert!(
             !output.contains("};\nexports.C = C;\n    exports.C = C = __decorate(["),
             "CommonJS top-level using should not insert a redundant trailing export between the class and __decorate.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn commonjs_deferred_class_export_alias_emits_after_declaration() {
+        let source = "export { J as JJ };\nexport class J {}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::CommonJS,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        let class_pos = output
+            .find("class J")
+            .expect("class declaration should emit");
+        let direct_export_pos = output
+            .find("exports.J = J;")
+            .expect("direct class export should emit after the class");
+        let alias_export_pos = output
+            .find("exports.JJ = J;")
+            .expect("deferred export alias should emit after the class");
+
+        assert!(
+            class_pos < direct_export_pos && direct_export_pos < alias_export_pos,
+            "CommonJS class export aliases should be emitted after the class in tsc order.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn legacy_decorated_declare_computed_property_emits_decorator_target() {
+        let source = "declare function decorator(target: any, key: any): any;\nconst b = Symbol('b');\nclass Foo {\n    @decorator declare [b]: number;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                target: ScriptTarget::ESNext,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("], Foo.prototype, b, void 0);"),
+            "Legacy decorators on computed declare fields should emit the computed target expression.\nOutput:\n{output}"
         );
     }
 

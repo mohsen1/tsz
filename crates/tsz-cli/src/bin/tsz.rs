@@ -18,6 +18,7 @@ use tsz_cli::{driver, locale, reporter::Reporter, watch};
 const EXIT_SUCCESS: i32 = 0;
 const EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED: i32 = 1;
 const EXIT_DIAGNOSTICS_OUTPUTS_GENERATED: i32 = 2;
+const TS5112_COMMAND_LINE_FILES_MESSAGE: &str = "tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error.";
 
 fn main() -> Result<()> {
     // Initialize tracing if TSZ_LOG or RUST_LOG is set (zero cost otherwise).
@@ -75,9 +76,16 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         return handle_init(&args, &cwd);
     }
 
+    reject_tsconfig_only_cli_options(&args);
+
     // Handle --showConfig: print resolved configuration
     if args.show_config {
         return handle_show_config(&args, &cwd);
+    }
+
+    if should_report_ts5112_for_command_line_files(&args, &cwd) {
+        println!("error TS5112: {TS5112_COMMAND_LINE_FILES_MESSAGE}");
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
     }
 
     // Handle --listFilesOnly: print file list and exit
@@ -279,6 +287,14 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     std::process::exit(EXIT_SUCCESS);
 }
 
+fn should_report_ts5112_for_command_line_files(args: &CliArgs, cwd: &std::path::Path) -> bool {
+    !args.ignore_config
+        && !args.build
+        && args.project.is_none()
+        && !args.files.is_empty()
+        && cwd.join("tsconfig.json").exists()
+}
+
 const fn should_use_large_stack_thread(args: &CliArgs) -> bool {
     args.project.is_some() || args.build || args.watch || args.batch || args.files.len() != 1
 }
@@ -383,6 +399,7 @@ fn run_batch_mode() -> Result<()> {
 ///   `-v` maps to `--build-verbose`, `-d` maps to `--dry`, `-f` maps to `--force`
 /// - Case-insensitive flag names: `--NoEmit` → `--noEmit` (tsc v6 compat)
 /// - Boolean flag values: `--strict false` → strip the flag (tsc v6 compat)
+/// - Optional boolean flags: `--strictNullChecks file.ts` → `--strictNullChecks=true file.ts`
 /// - Duplicate flags: `--strict --strict` → deduplicated (tsc v6 compat)
 fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
     let flag_lookup = build_flag_lookup();
@@ -595,15 +612,13 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 let next_lower = next_str.to_lowercase();
                 if next_lower == "false" {
                     if option_bool_flags.contains(flag_name.as_str()) {
-                        // Option<bool> flag: emit --flag=false so clap gets the value
-                        let combined = format!("{flag_name}=false");
-                        if let Some(&prev_idx) = flag_positions.get(&flag_name) {
-                            skip_positions[prev_idx] = true;
-                        }
-                        let current_idx = final_result.len();
-                        flag_positions.insert(flag_name, current_idx);
-                        final_result.push(OsString::from(combined));
-                        skip_positions.push(false);
+                        push_option_bool_arg(
+                            &mut final_result,
+                            &mut skip_positions,
+                            &mut flag_positions,
+                            &flag_name,
+                            false,
+                        );
                         i += 2;
                         continue;
                     }
@@ -616,21 +631,34 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                     continue;
                 } else if next_lower == "true" {
                     if option_bool_flags.contains(flag_name.as_str()) {
-                        // Option<bool> flag: emit --flag=true so clap gets the value
-                        let combined = format!("{flag_name}=true");
-                        if let Some(&prev_idx) = flag_positions.get(&flag_name) {
-                            skip_positions[prev_idx] = true;
-                        }
-                        let current_idx = final_result.len();
-                        flag_positions.insert(flag_name, current_idx);
-                        final_result.push(OsString::from(combined));
-                        skip_positions.push(false);
+                        push_option_bool_arg(
+                            &mut final_result,
+                            &mut skip_positions,
+                            &mut flag_positions,
+                            &flag_name,
+                            true,
+                        );
                         i += 2;
                         continue;
                     }
                     // Plain bool flag: keep the flag, skip the "true" token
                     i += 1;
                 }
+            }
+
+            if is_boolean
+                && !arg_str.contains('=')
+                && option_bool_flags.contains(flag_name.as_str())
+            {
+                push_option_bool_arg(
+                    &mut final_result,
+                    &mut skip_positions,
+                    &mut flag_positions,
+                    &flag_name,
+                    true,
+                );
+                i += 1;
+                continue;
             }
 
             // Deduplicate: if we've seen this flag before, mark old position for skip
@@ -669,6 +697,23 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
         .zip(skip_positions)
         .filter_map(|(arg, skip)| if skip { None } else { Some(arg) })
         .collect()
+}
+
+fn push_option_bool_arg(
+    final_result: &mut Vec<OsString>,
+    skip_positions: &mut Vec<bool>,
+    flag_positions: &mut FxHashMap<String, usize>,
+    flag_name: &str,
+    value: bool,
+) {
+    if let Some(&prev_idx) = flag_positions.get(flag_name) {
+        skip_positions[prev_idx] = true;
+    }
+
+    let current_idx = final_result.len();
+    flag_positions.insert(flag_name.to_string(), current_idx);
+    final_result.push(OsString::from(format!("{flag_name}={value}")));
+    skip_positions.push(false);
 }
 
 /// Build a lookup table from lowercase flag names (without `--`) to their canonical
@@ -1604,6 +1649,22 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
     }
 }
 
+fn reject_tsconfig_only_cli_options(args: &CliArgs) {
+    for (name, values) in [
+        ("paths", args.paths.as_ref()),
+        ("plugins", args.plugins.as_ref()),
+    ] {
+        let provided_non_null = values
+            .is_some_and(|values| !(values.len() == 1 && values[0].eq_ignore_ascii_case("null")));
+        if provided_non_null {
+            println!(
+                "error TS6064: Option '{name}' can only be specified in 'tsconfig.json' file or set to 'null' on command line."
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Get peak memory usage (max RSS) in KB.
 ///
 /// Supported platforms:
@@ -2086,6 +2147,12 @@ fn show_config_compiler_options_to_json(
     if let Some(ref v) = opts.root_dir {
         map.insert("rootDir".into(), Value::String(v.clone()));
     }
+    if let Some(ref v) = opts.root_dirs {
+        map.insert(
+            "rootDirs".into(),
+            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
     if let Some(ref v) = opts.out_dir {
         map.insert("outDir".into(), Value::String(v.clone()));
     }
@@ -2117,11 +2184,14 @@ fn show_config_compiler_options_to_json(
     set_bool!(no_check, "noCheck");
     set_bool!(no_emit_on_error, "noEmitOnError");
     set_bool!(declaration, "declaration");
+    set_bool!(emit_declaration_only, "emitDeclarationOnly");
     set_bool!(source_map, "sourceMap");
+    set_bool!(inline_source_map, "inlineSourceMap");
     set_bool!(declaration_map, "declarationMap");
     set_bool!(composite, "composite");
     set_bool!(incremental, "incremental");
     set_bool!(isolated_modules, "isolatedModules");
+    set_bool!(isolated_declarations, "isolatedDeclarations");
     set_bool!(verbatim_module_syntax, "verbatimModuleSyntax");
     set_bool!(es_module_interop, "esModuleInterop");
     set_bool!(
@@ -2131,9 +2201,15 @@ fn show_config_compiler_options_to_json(
     set_bool!(allow_js, "allowJs");
     set_bool!(check_js, "checkJs");
     set_bool!(skip_lib_check, "skipLibCheck");
+    set_bool!(skip_default_lib_check, "skipDefaultLibCheck");
     set_bool!(strip_internal, "stripInternal");
     set_bool!(no_lib, "noLib");
+    set_bool!(lib_replacement, "libReplacement");
+    set_bool!(no_types_and_symbols, "noTypesAndSymbols");
     set_bool!(import_helpers, "importHelpers");
+    set_bool!(no_emit_helpers, "noEmitHelpers");
+    set_bool!(remove_comments, "removeComments");
+    set_bool!(emit_bom, "emitBOM");
     set_bool!(no_implicit_any, "noImplicitAny");
     set_bool!(no_implicit_returns, "noImplicitReturns");
     set_bool!(strict_null_checks, "strictNullChecks");
@@ -2144,11 +2220,22 @@ fn show_config_compiler_options_to_json(
     );
     set_bool!(no_implicit_this, "noImplicitThis");
     set_bool!(use_unknown_in_catch_variables, "useUnknownInCatchVariables");
+    set_bool!(exact_optional_property_types, "exactOptionalPropertyTypes");
     set_bool!(strict_bind_call_apply, "strictBindCallApply");
+    set_bool!(
+        strict_builtin_iterator_return,
+        "strictBuiltinIteratorReturn"
+    );
     set_bool!(no_unchecked_indexed_access, "noUncheckedIndexedAccess");
+    set_bool!(
+        no_property_access_from_index_signature,
+        "noPropertyAccessFromIndexSignature"
+    );
     set_bool!(no_unused_locals, "noUnusedLocals");
     set_bool!(no_unused_parameters, "noUnusedParameters");
     set_bool!(allow_unreachable_code, "allowUnreachableCode");
+    set_bool!(allow_unused_labels, "allowUnusedLabels");
+    set_bool!(no_fallthrough_cases_in_switch, "noFallthroughCasesInSwitch");
     set_bool!(no_resolve, "noResolve");
     set_bool!(
         no_unchecked_side_effect_imports,
@@ -2160,6 +2247,7 @@ fn show_config_compiler_options_to_json(
     set_bool!(use_define_for_class_fields, "useDefineForClassFields");
     set_bool!(experimental_decorators, "experimentalDecorators");
     set_bool!(emit_decorator_metadata, "emitDecoratorMetadata");
+    set_bool!(allow_umd_global_access, "allowUmdGlobalAccess");
     set_bool!(resolve_package_json_exports, "resolvePackageJsonExports");
     set_bool!(resolve_package_json_imports, "resolvePackageJsonImports");
     set_bool!(resolve_json_module, "resolveJsonModule");
@@ -2169,6 +2257,19 @@ fn show_config_compiler_options_to_json(
         rewrite_relative_import_extensions,
         "rewriteRelativeImportExtensions"
     );
+    set_bool!(preserve_const_enums, "preserveConstEnums");
+    set_bool!(erasable_syntax_only, "erasableSyntaxOnly");
+    set_bool!(sound, "sound");
+
+    if let Some(ref v) = opts.new_line {
+        map.insert("newLine".into(), Value::String(v.to_lowercase()));
+    }
+    if let Some(v) = opts.max_node_module_js_depth {
+        map.insert(
+            "maxNodeModuleJsDepth".into(),
+            Value::Number(serde_json::Number::from(v)),
+        );
+    }
 
     if let Some(ref v) = opts.lib {
         map.insert(
@@ -2872,10 +2973,15 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         args.project
             .as_ref()
             .map(|p| {
-                if p.is_dir() {
-                    p.join("tsconfig.json")
+                let resolved = if p.is_relative() {
+                    cwd.join(p)
                 } else {
                     p.clone()
+                };
+                if resolved.is_dir() {
+                    resolved.join("tsconfig.json")
+                } else {
+                    resolved
                 }
             })
             .or_else(|| {

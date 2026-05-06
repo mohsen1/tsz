@@ -208,6 +208,39 @@ fn fix_template_literal_backtick_in_template() {
 }
 
 #[test]
+fn fix_template_literal_escaped_dollar_brace_preserved() {
+    // The scanner cooks `\${` to a literal `${`, so the declaration
+    // emitter must re-escape `$` followed by `{` to keep it as text
+    // instead of turning it into a template substitution. (Issue #3412)
+    let prefix_output =
+        emit_dts(r#"export type EscapedSubstitution = `prefix-\${notAType}-suffix`;"#);
+    println!("template escaped $ prefix:\n{prefix_output}");
+    assert!(
+        prefix_output.contains(r"`prefix-\${notAType}-suffix`"),
+        "escaped ${{ should be preserved as \\${{: {prefix_output}"
+    );
+    assert!(
+        !prefix_output.contains("`prefix-${notAType}-suffix`"),
+        "escaped ${{ must not collapse to a real interpolation: {prefix_output}"
+    );
+
+    let only_output = emit_dts(r#"export type EscapedOnly = `\${}`;"#);
+    println!("template escaped $ only:\n{only_output}");
+    assert!(
+        only_output.contains(r"`\${}`"),
+        "lone escaped ${{ should be preserved: {only_output}"
+    );
+
+    // A bare `$` (not followed by `{`) must stay unescaped.
+    let bare_output = emit_dts(r"export type Bare = `cost: $5`;");
+    println!("template bare $:\n{bare_output}");
+    assert!(
+        bare_output.contains("`cost: $5`"),
+        "bare $ should remain unescaped: {bare_output}"
+    );
+}
+
+#[test]
 fn fix_enum_self_ref_still_works() {
     // Self-referencing enum should still work
     let output = emit_dts("export enum E { A = 1, B = A + 1, C = A | B }");
@@ -1500,6 +1533,45 @@ export const b = id(a);
         !output.is_empty(),
         "emitter should produce output: {output}"
     );
+}
+
+#[test]
+fn fix_exported_generic_call_literals_preserve_inferred_literal_types() {
+    let output = emit_dts(
+        r#"
+export function generic<T>(value: T) {
+  return value;
+}
+
+export const viaGeneric = generic("ok" as const);
+
+export const genericArrow = <T>(value: T) => value;
+export const viaGenericArrow = genericArrow("ok" as const);
+
+function localGeneric<T>(value: T) {
+  return value;
+}
+export const viaLocalGeneric = localGeneric("ok" as const);
+
+const localGenericArrow = <T>(value: T) => value;
+export const viaLocalGenericArrow = localGenericArrow("ok" as const);
+
+export const viaInlineArrow = (<T>(value: T) => value)("ok" as const);
+"#,
+    );
+
+    for name in [
+        "viaGeneric",
+        "viaGenericArrow",
+        "viaLocalGeneric",
+        "viaLocalGenericArrow",
+        "viaInlineArrow",
+    ] {
+        assert!(
+            output.contains(&format!("export declare const {name}: \"ok\";")),
+            "expected {name} to preserve the literal call result: {output}"
+        );
+    }
 }
 
 #[test]

@@ -230,7 +230,7 @@ foo({ bar: 1, baz: '' });
 }
 
 #[test]
-fn test_generic_literal_argument_error_reports_widened_direct_mismatch() {
+fn test_generic_literal_argument_error_preserves_direct_inference_literal() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
 function someGenerics9<T>(a: T, b: T, c: T): T {
@@ -244,11 +244,10 @@ someGenerics9('', 0, []);
     assert!(
         diagnostics.iter().any(|(code, message)| {
             *code == 2345
-                && message.contains(
-                    "Argument of type 'number' is not assignable to parameter of type 'string'",
-                )
+                && message
+                    .contains("Argument of type '0' is not assignable to parameter of type '\"\"'")
         }),
-        "Expected TS2345 to report the widened direct primitive mismatch. Actual: {diagnostics:#?}"
+        "Expected TS2345 to preserve the first direct literal inference candidate. Actual: {diagnostics:#?}"
     );
 }
 

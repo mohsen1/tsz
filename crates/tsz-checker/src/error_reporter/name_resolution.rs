@@ -1205,7 +1205,12 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    /// Report TS2591: Cannot find name 'X' - suggest installing @types/node.
+    /// Report TS2580/TS2591: Cannot find name 'X' - suggest installing @types/node.
+    ///
+    /// In the missing-global name-resolution path, tsc emits TS2591 ("install
+    /// @types/node and add 'node' to the types field"). TS2580 is still used by
+    /// separate module-resolution paths where the unresolved name is a module
+    /// specifier rather than a global identifier.
     pub fn error_cannot_find_name_install_node_types(&mut self, name: &str, idx: NodeIndex) {
         self.error_at_node_msg(
             idx,
@@ -1214,7 +1219,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    /// Report TS2592: Cannot find name 'X' - suggest installing @types/jquery.
+    /// Report TS2581/TS2592: Cannot find name 'X' - suggest installing @types/jquery.
     pub fn error_cannot_find_name_install_jquery_types(&mut self, name: &str, idx: NodeIndex) {
         self.error_at_node_msg(
             idx,
@@ -1223,7 +1228,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    /// Report TS2593: Cannot find name 'X' - suggest installing test runner types.
+    /// Report TS2582/TS2593: Cannot find name 'X' - suggest installing test runner types.
     pub fn error_cannot_find_name_install_test_types(&mut self, name: &str, idx: NodeIndex) {
         self.error_at_node_msg(
             idx,

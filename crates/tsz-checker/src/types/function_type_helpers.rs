@@ -632,7 +632,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
         let trimmed = ret_type_str.trim();
-        if Self::jsdoc_return_type_is_exact_promise_reference(trimmed) {
+        if Self::jsdoc_return_type_is_exact_promise_reference(trimmed)
+            && self.jsdoc_promise_name_resolves_to_global(func_idx)
+        {
             return;
         }
 
@@ -706,6 +708,55 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
             );
         }
+    }
+
+    fn jsdoc_promise_name_resolves_to_global(&self, func_idx: NodeIndex) -> bool {
+        if self.jsdoc_has_prior_promise_typedef(func_idx) {
+            return false;
+        }
+
+        for sym_id in self
+            .ctx
+            .binder
+            .current_scope
+            .get("Promise")
+            .into_iter()
+            .chain(self.ctx.binder.file_locals.get("Promise"))
+        {
+            if self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                !self.symbol_has_standard_lib_origin(sym_id)
+                    && symbol.escaped_name.as_str() == "Promise"
+            }) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn jsdoc_has_prior_promise_typedef(&self, func_idx: NodeIndex) -> bool {
+        let Some(sf) = self.source_file_data_for_node(func_idx) else {
+            return false;
+        };
+        let Some(func_node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+
+        sf.comments.iter().any(|comment| {
+            comment.end <= func_node.pos
+                && tsz_common::comments::is_jsdoc_comment(comment, &sf.text)
+                && Self::jsdoc_comment_declares_promise_typedef(
+                    &sf.text[comment.pos as usize..comment.end as usize],
+                )
+        })
+    }
+
+    fn jsdoc_comment_declares_promise_typedef(comment: &str) -> bool {
+        comment.contains("@typedef")
+            && comment.split_whitespace().any(|token| {
+                token.trim_matches(|c: char| {
+                    matches!(c, '*' | '/' | '{' | '}' | '(' | ')' | '[' | ']' | ',')
+                }) == "Promise"
+            })
     }
 
     fn jsdoc_return_type_is_exact_promise_reference(trimmed: &str) -> bool {

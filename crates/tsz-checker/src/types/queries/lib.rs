@@ -22,6 +22,14 @@ use tsz_solver::TypeParamInfo;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn lib_name_has_local_augmentation(&self, name: &str) -> bool {
+        self.ctx
+            .binder
+            .global_augmentations
+            .get(name)
+            .is_some_and(|v| !v.is_empty())
+    }
+
     /// True when callers must skip `shared_lib_type_cache` for `name`:
     /// either this checker locally augments `name`, or `name` is multi-lib
     /// merged where property-listing order in printed diagnostic messages
@@ -33,11 +41,7 @@ impl<'a> CheckerState<'a> {
         if name == "Array" {
             return true;
         }
-        self.ctx
-            .binder
-            .global_augmentations
-            .get(name)
-            .is_some_and(|v| !v.is_empty())
+        self.lib_name_has_local_augmentation(name)
     }
 
     /// Resolve a lib type by name and also return its type parameters.
@@ -337,6 +341,13 @@ impl<'a> CheckerState<'a> {
                 .import_name
                 .as_deref()
                 .unwrap_or(&symbol.escaped_name);
+            if export_name == "default"
+                && self.ctx.compiler_options.module.is_node_module()
+                && self.ctx.file_is_esm == Some(true)
+                && !self.module_is_esm(module_name)
+            {
+                return Some(sym_id);
+            }
             let source_file_idx = self
                 .ctx
                 .resolve_symbol_file_index(sym_id)
@@ -722,6 +733,18 @@ impl<'a> CheckerState<'a> {
             } else {
                 return None;
             }
+        }
+
+        if let Some(member_symbol) = self
+            .get_cross_file_symbol(member_id)
+            .or_else(|| self.ctx.binder.get_symbol(member_id))
+            && member_symbol.has_any_flags(symbol_flags::ALIAS)
+            && member_symbol.import_name.as_deref() == Some("default")
+            && let Some(module_specifier) = member_symbol.import_module.clone()
+            && let Some(namespace_type) =
+                self.node_esm_cjs_default_import_namespace_type(&module_specifier)
+        {
+            return Some(namespace_type);
         }
 
         let resolved_member_id = if let Some(member_symbol) = self.get_cross_file_symbol(member_id)

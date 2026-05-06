@@ -591,6 +591,22 @@ pub fn is_literal_or_primitive_or_compound_of_those(
     }
 }
 
+/// Returns true when `type_id` is a literal type or a union whose members are
+/// all literal types.
+pub fn is_literal_or_literal_union_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(_)) => true,
+        Some(TypeData::Union(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .all(|&member| is_literal_or_literal_union_type(db, member)),
+        _ => false,
+    }
+}
+
 /// Get the members of an intersection type.
 ///
 /// Returns None if the type is not an intersection.
@@ -704,6 +720,35 @@ pub fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
                 .flatten()
         }
         _ => None,
+    }
+}
+
+/// Return true when a constraint admits a mutable array or tuple candidate.
+///
+/// Const type parameters preserve literal types, but when their declared
+/// constraint is mutable-array-like (`T extends unknown[]`, or a union with a
+/// mutable array member), array literal candidates must not be converted to
+/// readonly tuples.
+pub fn constraint_allows_mutable_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Array(_)) => true,
+        Some(TypeData::Tuple(list_id)) => !db.tuple_list(list_id).is_empty(),
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
+            .constraint
+            .is_some_and(|constraint| constraint_allows_mutable_array_like(db, constraint)),
+        Some(TypeData::Union(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| constraint_allows_mutable_array_like(db, member)),
+        Some(TypeData::Application(_) | TypeData::Lazy(_)) => {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+            evaluated != type_id && constraint_allows_mutable_array_like(db, evaluated)
+        }
+        _ => false,
     }
 }
 

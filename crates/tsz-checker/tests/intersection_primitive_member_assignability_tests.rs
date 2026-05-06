@@ -27,7 +27,11 @@ use tsz_solver::TypeInterner;
 
 fn load_lib_file(name: &str) -> Option<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let candidates = [
+    let mut candidates = Vec::new();
+    if let Ok(lib_dir) = std::env::var("TSZ_TYPESCRIPT_LIB_DIR") {
+        candidates.push(Path::new(&lib_dir).join(name));
+    }
+    candidates.extend([
         manifest_dir.join(format!("../../TypeScript/lib/{name}")),
         manifest_dir.join(format!(
             "scripts/conformance/node_modules/typescript/lib/{name}"
@@ -38,7 +42,7 @@ fn load_lib_file(name: &str) -> Option<Arc<LibFile>> {
         manifest_dir.join(format!(
             "../../scripts/conformance/node_modules/typescript/lib/{name}"
         )),
-    ];
+    ]);
     for candidate in &candidates {
         if candidate.exists()
             && let Ok(content) = std::fs::read_to_string(candidate)
@@ -153,6 +157,14 @@ fn count_code(diagnostics: &[Diagnostic], code: u32) -> usize {
     diagnostics.iter().filter(|d| d.code == code).count()
 }
 
+fn messages_for_code(diagnostics: &[Diagnostic], code: u32) -> Vec<&str> {
+    diagnostics
+        .iter()
+        .filter(|diag| diag.code == code)
+        .map(|diag| diag.message_text.as_str())
+        .collect()
+}
+
 #[test]
 fn branded_primitive_application_source_displays_structural_intersection_in_ts2739() {
     let source = r#"
@@ -259,12 +271,37 @@ fn conformance_common_type_intersection_emits_two_ts2322() {
         declare let x2: { __typename?: 'TypeTwo' } & string;
         let y2: { __typename?: 'TypeOne' } & string = x2;
     "#;
-    let diags = check_with_lib(source);
+    let diags = check_with_lib_strict(source, true);
+    let ts2322_messages = messages_for_code(&diags, 2322);
     assert!(
-        count_code(&diags, 2322) >= 2,
+        ts2322_messages.len() >= 2,
         "commonTypeIntersection.ts ({} lib files loaded): both assignments must \
          emit TS2322. Diagnostics ({} of code 2322): {diags:?}",
         lib_files.len(),
-        count_code(&diags, 2322)
+        ts2322_messages.len()
+    );
+    let expected_object_intersection = "Type '{ __typename?: \"TypeTwo\" | undefined; } & { a: boolean; }' is not assignable to type '{ __typename?: \"TypeOne\" | undefined; } & { a: boolean; }'.";
+    let expected_primitive_intersection = "Type '{ __typename?: \"TypeTwo\" | undefined; } & string' is not assignable to type '{ __typename?: \"TypeOne\" | undefined; } & string'.";
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains(expected_object_intersection)),
+        "object-intersection TS2322 should use semantic declared-intersection display. \
+         TS2322 messages: {ts2322_messages:?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains(expected_primitive_intersection)),
+        "primitive-intersection TS2322 should preserve declared member order while \
+         formatting members semantically. TS2322 messages: {ts2322_messages:?}"
+    );
+    assert!(
+        ts2322_messages.iter().all(|message| {
+            !message.contains("{ __typename?: 'TypeTwo'; }")
+                && !message.contains("string & { __typename?: string | undefined; }")
+        }),
+        "commonTypeIntersection.ts should not leak raw single-quoted annotations or \
+         widened primitive-first target displays. TS2322 messages: {ts2322_messages:?}"
     );
 }

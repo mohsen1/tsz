@@ -1,9 +1,11 @@
 // This module was split from a single core.rs file. Each submodule contains
 // methods on `DeclarationEmitter` grouped by concern.
 
+mod emit_declaration_class_helpers;
 mod emit_declarations;
 mod emit_members;
 mod js_emit;
+mod preamble;
 mod setup;
 
 use super::helpers::JsNamespaceExportAlias;
@@ -230,6 +232,7 @@ pub struct DeclarationEmitter<'a> {
 pub(super) struct SourceMapState {
     pub(super) output_name: String,
     pub(super) source_name: String,
+    pub(super) include_sources_content: bool,
 }
 
 #[derive(Clone, Debug)]

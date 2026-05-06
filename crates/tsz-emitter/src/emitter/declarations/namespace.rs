@@ -580,7 +580,16 @@ impl<'a> Printer<'a> {
     /// name as the namespace. TSC renames the IIFE parameter when this happens
     /// (e.g., `M` → `M_1`). Checks declarations, function parameters, and local
     /// variables at all depths — not just top-level.
-    fn namespace_body_has_name_conflict(
+    /// Variant of `namespace_body_has_name_conflict` for the dotted-name
+    /// recursion path: walk through nested `MODULE_DECLARATIONs` and run a
+    /// text scan over the innermost block. The text scan catches function
+    /// parameters and any-depth bindings (function/class/enum/var/etc.).
+    /// Crucially, it EXCLUDES `namespace`/`module` keywords — tsc
+    /// deliberately doesn't rename an outer namespace IIFE param when
+    /// the conflict comes from a nested sub-namespace (the sub-namespace
+    /// has its own IIFE scope and doesn't shadow the outer param at
+    /// call sites).
+    fn dotted_namespace_innermost_block_conflicts_iife_param(
         &self,
         module: &tsz_parser::parser::node::ModuleData,
         ns_name: &str,
@@ -591,7 +600,129 @@ impl<'a> Printer<'a> {
         if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
             if let Some(inner) = self.arena.get_module(body_node) {
                 let inner_name = self.get_identifier_text_idx(inner.name);
-                return inner_name == ns_name;
+                if inner_name == ns_name {
+                    return true;
+                }
+                return self.dotted_namespace_innermost_block_conflicts_iife_param(inner, ns_name);
+            }
+            return false;
+        }
+        if let Some(text) = self.source_text {
+            let declare_ranges = self.collect_declare_statement_ranges(body_node);
+            return match crate::safe_slice::slice(
+                text,
+                body_node.pos as usize,
+                body_node.end as usize,
+            ) {
+                Ok(body_text) => {
+                    let body_pos = body_node.pos as usize;
+                    let masked = Self::mask_ranges_static(body_text, body_pos, &declare_ranges);
+                    Self::text_has_non_namespace_binding_named(&masked, ns_name)
+                }
+                Err(_) => false,
+            };
+        }
+        false
+    }
+
+    /// Like `text_has_binding_named` but skips `namespace`/`module`
+    /// declarations. Used for dotted-namespace conflict detection where
+    /// a nested sub-namespace shouldn't be treated as shadowing the
+    /// enclosing namespace's IIFE param.
+    fn text_has_non_namespace_binding_named(text: &str, name: &str) -> bool {
+        let stripped = Self::strip_comments(text);
+        let text = &stripped;
+        let name_bytes = name.as_bytes();
+        let text_bytes = text.as_bytes();
+        let name_len = name_bytes.len();
+
+        let mut i = 0;
+        while i + name_len <= text_bytes.len() {
+            if let Some(pos) = text[i..].find(name) {
+                let abs = i + pos;
+                let before_ok = abs == 0
+                    || (!text_bytes[abs - 1].is_ascii_alphanumeric()
+                        && text_bytes[abs - 1] != b'_'
+                        && text_bytes[abs - 1] != b'$');
+                let after_end = abs + name_len;
+                let after_ok = after_end >= text_bytes.len()
+                    || (!text_bytes[after_end].is_ascii_alphanumeric()
+                        && text_bytes[after_end] != b'_'
+                        && text_bytes[after_end] != b'$');
+
+                if before_ok && after_ok {
+                    let mut p = abs;
+                    while p > 0 && text_bytes[p - 1].is_ascii_whitespace() {
+                        p -= 1;
+                    }
+                    if p > 0 {
+                        let prev_char = text_bytes[p - 1];
+                        if prev_char == b'(' || prev_char == b',' {
+                            return true;
+                        }
+                        let preceding = &text[..p];
+                        let keywords: &[&str] = &[
+                            "var",
+                            "let",
+                            "const",
+                            "function",
+                            "class",
+                            "import",
+                            "private",
+                            "public",
+                            "protected",
+                            "readonly",
+                            "override",
+                        ];
+                        for &kw in keywords {
+                            if preceding.ends_with(kw) {
+                                let kw_start = p - kw.len();
+                                let kw_before_ok = kw_start == 0
+                                    || (!text_bytes[kw_start - 1].is_ascii_alphanumeric()
+                                        && text_bytes[kw_start - 1] != b'_'
+                                        && text_bytes[kw_start - 1] != b'$');
+                                if kw_before_ok {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+                i = abs + 1;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    fn namespace_body_has_name_conflict(
+        &self,
+        module: &tsz_parser::parser::node::ModuleData,
+        ns_name: &str,
+    ) -> bool {
+        let Some(body_node) = self.arena.get(module.body) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            // Dotted namespace (e.g. `namespace M.buz.plop`): the immediate
+            // body is the next nested MODULE_DECLARATION, not a block. Check
+            // the direct child's name against `ns_name` first; if it doesn't
+            // match, recurse into the dotted chain and check ONLY the
+            // innermost block's top-level statements via
+            // `declaration_conflicts_iife_param` (function/class/enum/var/
+            // import-equals). Crucially, we don't fall back to the text scan
+            // there, because the text scan also matches `namespace A {}`
+            // declarations as bindings, and tsc deliberately doesn't rename
+            // an outer namespace IIFE param when the conflict comes from a
+            // nested sub-namespace (the sub-namespace has its own IIFE
+            // scope and doesn't shadow the outer param at call sites).
+            if let Some(inner) = self.arena.get_module(body_node) {
+                let inner_name = self.get_identifier_text_idx(inner.name);
+                if inner_name == ns_name {
+                    return true;
+                }
+                return self.dotted_namespace_innermost_block_conflicts_iife_param(inner, ns_name);
             }
             return false;
         }
@@ -971,6 +1102,20 @@ impl<'a> Printer<'a> {
                 || inner_kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             {
                 let export_names = self.get_export_names_from_clause(export.export_clause);
+                for name in export_names {
+                    names.insert(name);
+                }
+            }
+        }
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if (stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                || stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+                && self.statement_has_export_modifier(stmt_node)
+            {
+                let export_names = self.get_export_names_from_clause(stmt_idx);
                 for name in export_names {
                     names.insert(name);
                 }
@@ -1740,231 +1885,5 @@ impl<'a> Printer<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::emitter::ModuleKind;
-    use crate::output::printer::{PrintOptions, Printer};
-    use tsz_parser::ParserState;
-
-    /// Regression test: type-only import-equals inside a namespace must not
-    /// leave a phantom blank line. The import `import T = M1.I;` produces no
-    /// JS output (type-only alias), but `emit_namespace_body_statements` used
-    /// to call `write_line()` unconditionally, inserting an empty line between
-    /// the IIFE opening brace and the first real statement.
-    #[test]
-    fn no_blank_line_for_type_only_import_alias_in_namespace() {
-        let source = "namespace M1 {\n    export interface I {\n        foo();\n    }\n}\n\nnamespace M2 {\n    import T = M1.I;\n    class C implements T {\n        foo() {}\n    }\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        // The IIFE body should NOT have a blank line after the opening brace.
-        assert!(
-            !output.contains("(function (M2) {\n\n"),
-            "Should not have blank line after IIFE opening brace.\nOutput:\n{output}"
-        );
-
-        // The class should still be emitted correctly inside M2's IIFE
-        assert!(
-            output.contains("class C {"),
-            "Class C should be emitted inside namespace M2.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn namespace_exported_destructuring_uses_temp_in_esnext_path() {
-        let source = "namespace M {\n    export var [a, b] = [1, 2];\n}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("var _a;\n    _a = [1, 2], M.a = _a[0], M.b = _a[1];"),
-            "Exported namespace destructuring should use one temp.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("M.a = [1, 2]"),
-            "Exported namespace destructuring should not repeat the initializer.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn namespace_exported_destructuring_temp_hoists_before_class() {
-        let source =
-            "namespace m {\n    export class c {}\n    export var [x, y] = [10, new c()];\n}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        let temp_pos = output.find("var _a;").expect("expected temp hoist");
-        let class_pos = output.find("class c").expect("expected class emit");
-        assert!(
-            temp_pos < class_pos,
-            "Namespace destructuring temp should hoist before class declarations.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("_a = [10, new c()], m.x = _a[0], m.y = _a[1];"),
-            "Exported namespace destructuring should use the hoisted temp.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn top_level_import_alias_to_ambient_namespace_value_emits_runtime_alias() {
-        let source = "declare namespace foo { const await: any; }\n\n// await allowed in import=namespace when not a module\nimport await = foo.await;\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(
-            &parser.arena,
-            PrintOptions {
-                module: ModuleKind::ESNext,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("var await = foo.await;"),
-            "Ambient namespace value aliases should be preserved in JS emit.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn top_level_import_alias_to_ambient_namespace_value_is_erased_in_modules() {
-        let source = "export {};\ndeclare namespace foo { const await: any; }\n\n// await disallowed in import=namespace when in a module\nimport await = foo.await;\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(
-            &parser.arena,
-            PrintOptions {
-                module: ModuleKind::ESNext,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            !output.contains("var await = foo.await;"),
-            "Module-scoped ambient namespace aliases should still be erased when unused.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("export {};"),
-            "Module marker should be preserved when the alias is erased.\nOutput:\n{output}"
-        );
-    }
-
-    /// When a namespace body has a variable with the same name as the namespace,
-    /// the IIFE parameter must be renamed to avoid collision.
-    /// E.g., `namespace m { export var m = ''; }` should emit `(function (m_1) { m_1.m = ''; })`.
-    #[test]
-    fn namespace_iife_param_renamed_for_variable_conflict() {
-        let source = "namespace m {\n  export var m = '';\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("(function (m_1)"),
-            "Namespace IIFE parameter should be renamed to m_1 when body has 'var m'.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("m_1.m = '';"),
-            "Exported variable should use renamed parameter m_1.\nOutput:\n{output}"
-        );
-    }
-
-    /// When a namespace body has an import-equals with the same name as the namespace,
-    /// the IIFE parameter must be renamed.
-    /// E.g., `namespace A.M { import M = Z.M; ... }` should emit `(function (M_1) { ... })`.
-    #[test]
-    fn namespace_iife_param_renamed_for_import_equals_conflict() {
-        let source = "namespace Z {\n  export namespace M {\n    export function bar() { return ''; }\n  }\n}\nnamespace A {\n  export namespace M {\n    import M = Z.M;\n    export function bar() {}\n    M.bar();\n  }\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        // The inner M namespace IIFE should have parameter renamed to M_1
-        assert!(
-            output.contains("(function (M_1)"),
-            "Namespace IIFE parameter should be renamed to M_1 when body has 'import M = ...'.\nOutput:\n{output}"
-        );
-    }
-
-    /// When a dotted namespace `Y.Y` collides at every level (outer renamed to
-    /// `Y_1`, inner to `Y_2` because the body declares `enum Y`), the inner
-    /// IIFE's argument expression must reference the outer's renamed binding,
-    /// not the original name. The original name is shadowed inside the outer's
-    /// body by the `var Y;` we emit for the inner namespace.
-    #[test]
-    fn dotted_namespace_inner_iife_uses_outer_renamed_param_in_argument() {
-        let source = "namespace Y.Y {\n  export enum Y { Red, Blue }\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("})(Y = Y_1.Y || (Y_1.Y = {}));"),
-            "Inner IIFE argument should reference the outer's renamed param Y_1.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("})(Y = Y.Y || (Y.Y = {}));"),
-            "Inner IIFE argument must not reference the shadowed original Y.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn dotted_namespace_reference_to_sibling_qualifies_parent_namespace() {
-        let source = "function foo(title: string) {}\nnamespace foo.Bar {\n  export function f() {}\n}\nnamespace foo.Baz {\n  export function g() {\n    Bar.f();\n  }\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("foo.Bar.f();"),
-            "Sibling namespace reference should be qualified through the parent namespace.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("    Bar.f();"),
-            "Sibling namespace reference should not be emitted as a bare identifier.\nOutput:\n{output}"
-        );
-    }
-}
+#[path = "namespace/tests.rs"]
+mod tests;
