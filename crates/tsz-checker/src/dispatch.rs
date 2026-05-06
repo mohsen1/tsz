@@ -1853,33 +1853,47 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
                 };
 
-                let invalid_context = match self.checker.find_enclosing_non_arrow_function(idx) {
-                    Some(owner_idx) => self.checker.ctx.arena.get(owner_idx).is_none_or(|owner| {
-                        !matches!(
-                            owner.kind,
-                            CONSTRUCTOR | FUNCTION_DECLARATION | FUNCTION_EXPRESSION
-                        )
-                    }),
-                    None => true,
-                };
+                let owner_idx = self.checker.find_enclosing_non_arrow_function(idx);
+                let owner_kind = owner_idx.and_then(|owner_idx| {
+                    self.checker
+                        .ctx
+                        .arena
+                        .get(owner_idx)
+                        .map(|owner| owner.kind)
+                });
+                let invalid_context = owner_kind.is_none_or(|kind| {
+                    !matches!(
+                        kind,
+                        CONSTRUCTOR | FUNCTION_DECLARATION | FUNCTION_EXPRESSION
+                    )
+                });
                 if invalid_context {
                     self.checker.error_at_node(
                         idx,
                         diagnostic_messages::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP,
                         diagnostic_codes::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP,
                     );
+                    return TypeId::ANY;
                 }
-                // new.target returns the constructor function or undefined.
-                // Return any as a safe fallback.
-                //
-                // Robustness audit (PR #J, item 10): emit a structured trace
-                // so the rate of `new.target` ANY fallbacks is visible.
-                tracing::debug!(
-                    site = "dispatch::new_target_meta_property",
-                    idx = idx.0,
-                    "TypeId::ANY fallback (new.target meta-property)"
-                );
-                TypeId::ANY
+                match (owner_idx, owner_kind) {
+                    (Some(owner_idx), Some(kind))
+                        if kind == FUNCTION_DECLARATION || kind == FUNCTION_EXPRESSION =>
+                    {
+                        self.checker.get_type_of_function(owner_idx)
+                    }
+                    (Some(owner_idx), Some(CONSTRUCTOR)) => {
+                        if let Some(class_idx) = self.checker.nearest_enclosing_class(owner_idx)
+                            && let Some(class_node) = self.checker.ctx.arena.get(class_idx)
+                            && let Some(class_data) = self.checker.ctx.arena.get_class(class_node)
+                        {
+                            self.checker
+                                .get_class_constructor_type(class_idx, class_data)
+                        } else {
+                            TypeId::ANY
+                        }
+                    }
+                    _ => TypeId::ANY,
+                }
             }
             // Structural statement/export nodes can be reached by broad
             // expression walks in real projects. They do not have a value type,
