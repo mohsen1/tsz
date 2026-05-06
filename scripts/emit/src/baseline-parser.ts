@@ -159,6 +159,10 @@ export function parseBaseline(content: string): BaselineContent {
       ?? segments[i + 1].markerStart;
   }
 
+  const trimSegmentBoundaryNewlines = (text: string): string => {
+    return text.replace(/^(?:\r?\n)+/, '').replace(/(?:\r?\n)+$/, '');
+  };
+
   const isTsSourceLike = (name: string): boolean => {
     return /\.(ts|tsx|mts|cts)$/.test(name) && !name.endsWith('.d.ts');
   };
@@ -323,7 +327,7 @@ export function parseBaseline(content: string): BaselineContent {
   for (let segIndex = 0; segIndex < segments.length; segIndex++) {
     const seg = segments[segIndex];
     const name = seg.name.trim();
-    const fileContent = content.slice(seg.start, seg.end).trim();
+    const fileContent = trimSegmentBoundaryNewlines(content.slice(seg.start, seg.end));
 
     if (name.startsWith('tests/cases/')) {
       continue;
@@ -370,7 +374,7 @@ export function parseBaseline(content: string): BaselineContent {
   for (let segIndex = 0; segIndex < segments.length; segIndex++) {
     const seg = segments[segIndex];
     const name = seg.name.trim();
-    const fileContent = content.slice(seg.start, seg.end).trim();
+    const fileContent = trimSegmentBoundaryNewlines(content.slice(seg.start, seg.end));
 
     if (seg.differsFromOriginalEmit) {
       continue;

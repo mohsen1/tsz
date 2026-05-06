@@ -391,6 +391,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     // Named tuple element (e.g., `[x: number, y?: string, ...rest: boolean[]]`)
                     if let Some(data) = self.ctx.arena.get_named_tuple_member(elem_node) {
                         let elem_type = self.check(data.type_node);
+                        let misplaced_optional_marker =
+                            !data.question_token
+                                && self.ctx.arena.get(data.type_node).is_some_and(|node| {
+                                    node.kind == syntax_kind_ext::OPTIONAL_TYPE
+                                });
                         let name = self
                             .ctx
                             .arena
@@ -424,7 +429,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                     elem_node.end,
                                 );
                             }
-                        } else if data.question_token {
+                        } else if data.question_token || misplaced_optional_marker {
+                            if misplaced_optional_marker {
+                                self.ctx.error(
+                                    elem_node.pos,
+                                    elem_node.end - elem_node.pos,
+                                    crate::diagnostics::diagnostic_messages::A_LABELED_TUPLE_ELEMENT_IS_DECLARED_AS_OPTIONAL_WITH_A_QUESTION_MARK_AFTER_THE_N.to_string(),
+                                    crate::diagnostics::diagnostic_codes::A_LABELED_TUPLE_ELEMENT_IS_DECLARED_AS_OPTIONAL_WITH_A_QUESTION_MARK_AFTER_THE_N,
+                                );
+                            }
                             // TS1266: An optional element cannot follow a rest element
                             if seen_rest {
                                 self.ctx.error(
@@ -447,7 +460,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         elements.push(TupleElement {
                             type_id: elem_type,
                             name,
-                            optional: data.question_token,
+                            optional: data.question_token || misplaced_optional_marker,
                             rest: data.dot_dot_dot_token,
                         });
                     }

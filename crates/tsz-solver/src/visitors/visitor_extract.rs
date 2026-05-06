@@ -667,7 +667,7 @@ fn collect_infer_bindings_inner(
     result: &mut Vec<(Atom, TypeId)>,
     visited: &mut FxHashSet<TypeId>,
 ) {
-    if !visited.insert(type_id) {
+    if type_id.is_intrinsic() || visited.contains(&type_id) {
         return;
     }
 
@@ -675,6 +675,12 @@ fn collect_infer_bindings_inner(
         Some(key) => key,
         None => return,
     };
+
+    if is_infer_binding_leaf(&key) {
+        return;
+    }
+
+    visited.insert(type_id);
 
     match key {
         TypeData::Infer(info) => {
@@ -817,6 +823,24 @@ fn collect_infer_bindings_inner(
         | TypeData::UnresolvedTypeName(_)
         | TypeData::Error => {}
     }
+}
+
+#[inline]
+const fn is_infer_binding_leaf(key: &TypeData) -> bool {
+    matches!(
+        key,
+        TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ThisType
+            | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_)
+            | TypeData::Error
+    )
 }
 
 /// Helper to collect infer bindings from a call signature's params, return type,

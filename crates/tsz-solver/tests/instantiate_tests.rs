@@ -205,6 +205,44 @@ fn test_instantiate_function() {
 }
 
 #[test]
+fn test_instantiate_composite_noop_preserves_type_id() {
+    let interner = TypeInterner::new();
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(interner.intern_string("Unused"), TypeId::STRING);
+
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
+    assert_eq!(instantiate_type(&interner, object, &subst), object);
+
+    let function = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    assert_eq!(instantiate_type(&interner, function, &subst), function);
+
+    let callable = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature::new(
+            vec![ParamInfo::unnamed(TypeId::NUMBER)],
+            TypeId::STRING,
+        )],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("tag"),
+            TypeId::BOOLEAN,
+        )],
+        ..CallableShape::default()
+    });
+    assert_eq!(instantiate_type(&interner, callable, &subst), callable);
+}
+
+#[test]
 fn test_instantiate_function_shadowed_type_params() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");

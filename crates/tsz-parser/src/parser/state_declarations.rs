@@ -12,6 +12,24 @@ use crate::parser::{
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
+fn is_reserved_interface_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "any"
+            | "unknown"
+            | "never"
+            | "string"
+            | "number"
+            | "boolean"
+            | "symbol"
+            | "bigint"
+            | "void"
+            | "undefined"
+            | "null"
+            | "object"
+    )
+}
+
 enum TypeMemberPropertyOrMethodName {
     Property(NodeIndex),
     IndexSignature(NodeIndex),
@@ -32,6 +50,7 @@ impl ParserState {
     ) -> NodeIndex {
         self.parse_expected(SyntaxKind::InterfaceKeyword);
         let mut has_invalid_numeric_name = false;
+        let mut has_invalid_hard_keyword_name = false;
 
         // Parse interface name - keywords like 'string', 'abstract' can be used as interface names
         // Type keywords like 'void' are parsed as names and rejected by the checker (TS2427)
@@ -54,6 +73,22 @@ impl ParserState {
                 self.next_token();
                 NodeIndex::NONE
             } else {
+                has_invalid_hard_keyword_name = matches!(
+                    self.current_token,
+                    SyntaxKind::VoidKeyword | SyntaxKind::NullKeyword
+                );
+                let name_text = self.scanner.get_token_value();
+                if is_reserved_interface_type_name(name_text.as_str()) {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    let name_start = self.token_pos();
+                    let name_end = self.token_end();
+                    self.parse_error_at(
+                        name_start,
+                        name_end - name_start,
+                        &format!("Interface name cannot be '{name_text}'."),
+                        diagnostic_codes::INTERFACE_NAME_CANNOT_BE,
+                    );
+                }
                 self.parse_identifier_name()
             }
         } else if self.is_token(SyntaxKind::OpenBraceToken) {
@@ -211,6 +246,17 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             let brace_pos = self.token_pos();
             self.parse_error_at(brace_pos, 1, "';' expected.", diagnostic_codes::EXPECTED);
+        }
+        if has_invalid_hard_keyword_name && self.is_token(SyntaxKind::OpenBraceToken) {
+            use tsz_common::diagnostics::diagnostic_codes;
+            let is_null_name = self
+                .arena
+                .get(name)
+                .and_then(|name_node| self.arena.get_identifier(name_node))
+                .is_some_and(|ident| ident.escaped_text == "null");
+            if is_null_name {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            }
         }
 
         // Parse interface body

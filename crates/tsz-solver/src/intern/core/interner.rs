@@ -1404,6 +1404,23 @@ impl TypeInterner {
             .or_insert_with(|| Arc::new(origin_members));
     }
 
+    /// Replace the display origin for a union whose diagnostic context has a
+    /// more specific tsc-compatible member order than the source union.
+    pub fn replace_union_origin_for_display(
+        &self,
+        union_type_id: TypeId,
+        origin_members: Vec<TypeId>,
+    ) {
+        if origin_members.len() < 2 {
+            return;
+        }
+        let Some(TypeData::Union(_)) = self.lookup(union_type_id) else {
+            return;
+        };
+        self.display_union_origin
+            .insert(union_type_id, Arc::new(origin_members));
+    }
+
     /// Decide whether storing the as-written origin is needed even when no
     /// flattening occurred — i.e. the union contains anonymous Object members
     /// and our canonical sort reordered them relative to the input.
