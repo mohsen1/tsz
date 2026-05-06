@@ -2878,10 +2878,28 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "useUnknownInCatchVariables"
         | "verbatimModuleSyntax" => "boolean",
         // String options
-        "baseUrl" | "charset" | "declarationDir" | "jsx" | "jsxFactory" | "jsxFragmentFactory"
-        | "jsxImportSource" | "mapRoot" | "module" | "moduleDetection" | "moduleResolution"
-        | "newLine" | "out" | "outDir" | "outFile" | "reactNamespace" | "rootDir"
-        | "sourceRoot" | "target" | "tsBuildInfoFile" | "ignoreDeprecations" => "string",
+        "baseUrl"
+        | "charset"
+        | "declarationDir"
+        | "jsx"
+        | "jsxFactory"
+        | "jsxFragmentFactory"
+        | "jsxImportSource"
+        | "mapRoot"
+        | "module"
+        | "moduleDetection"
+        | "moduleResolution"
+        | "newLine"
+        | "out"
+        | "outDir"
+        | "outFile"
+        | "reactNamespace"
+        | "rootDir"
+        | "sourceRoot"
+        | "target"
+        | "tsBuildInfoFile"
+        | "ignoreDeprecations"
+        | "typesVersionsCompilerVersion" => "string",
         // Number options
         "maxNodeModuleJsDepth" => "number",
         // List options (arrays)
@@ -3043,6 +3061,7 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "target" => Some("target"),
         "traceresolution" => Some("traceResolution"),
         "tsbuildinfofile" => Some("tsBuildInfoFile"),
+        "typesversionscompilerversion" => Some("typesVersionsCompilerVersion"),
         "typeroots" => Some("typeRoots"),
         "types" => Some("types"),
         "usedefineforclassfields" => Some("useDefineForClassFields"),

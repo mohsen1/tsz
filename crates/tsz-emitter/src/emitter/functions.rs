@@ -538,9 +538,12 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let forward_parameter_names = self
-            .async_arrow_needs_parameter_forwarding(&func.parameters.nodes)
-            .then(|| self.async_arrow_forwarded_parameter_names(&func.parameters.nodes));
+        let has_object_rest_param = self.ctx.needs_es2018_lowering
+            && !self.ctx.target_es5
+            && self.any_param_has_object_rest(&func.parameters.nodes);
+        let forward_parameter_names = (!has_object_rest_param
+            && self.async_arrow_needs_parameter_forwarding(&func.parameters.nodes))
+        .then(|| self.async_arrow_forwarded_parameter_names(&func.parameters.nodes));
 
         // TSC always wraps parameters in parens when lowering async arrows,
         // even if the original source had `async x => ...` without parens.
@@ -2005,6 +2008,36 @@ mod tests {
                 "(dispatch_1, _a) => __awaiter(void 0, [dispatch_1, _a], void 0, function* (dispatch, { foo }) { return foo; })"
             ),
             "Async arrow with a binding pattern should forward temp parameters into the generator.\nOutput:\n{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn async_arrow_object_rest_param_uses_generator_prologue() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "async ({ foo, bar, ...rest }) => bar(await foo);";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
+
+        assert!(
+            result
+                .code
+                .contains("__awaiter(void 0, void 0, void 0, function* () {"),
+            "Async arrow with object rest should not forward the rest temp as generator args.\nOutput:\n{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("var { foo, bar } = _a, rest = __rest(_a, [\"foo\", \"bar\"]);"),
+            "Async arrow with object rest should emit a generator prologue.\nOutput:\n{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("return bar(yield foo);"),
+            "Async arrow body should still lower await to yield.\nOutput:\n{}",
             result.code
         );
     }
