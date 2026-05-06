@@ -328,15 +328,15 @@ impl ParserState {
                 let mut value = 0u32;
                 let mut overflow = false;
                 while *pos < end && body[*pos] != b'}' {
-                    if let Some(digit) = (body[*pos] as char).to_digit(16) {
-                        if !overflow {
-                            if let Some(next) =
-                                value.checked_mul(16).and_then(|v| v.checked_add(digit))
-                            {
-                                value = next;
-                            } else {
-                                overflow = true;
-                            }
+                    if let Some(digit) = (body[*pos] as char).to_digit(16)
+                        && !overflow
+                    {
+                        if let Some(next) =
+                            value.checked_mul(16).and_then(|v| v.checked_add(digit))
+                        {
+                            value = next;
+                        } else {
+                            overflow = true;
                         }
                     }
                     *pos += 1;
