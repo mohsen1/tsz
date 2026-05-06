@@ -77,6 +77,7 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     }
 
     reject_tsconfig_only_cli_options(&args);
+    reject_build_only_cli_options(&args);
 
     // Handle --showConfig: print resolved configuration
     if args.show_config {
@@ -102,9 +103,10 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         return watch::run(&args, &cwd);
     }
 
-    // No-input behavior: if no files given, no --project, and no tsconfig.json in cwd,
-    // print version + help and exit 1 (matching tsc v6 behavior).
-    if args.files.is_empty() && args.project.is_none() && !cwd.join("tsconfig.json").exists() {
+    // No-input behavior: if no files given, no --project, and no tsconfig.json
+    // can be discovered from cwd or an ancestor, print version + help and exit
+    // 1 (matching tsc v6 behavior).
+    if args.files.is_empty() && args.project.is_none() && driver::find_tsconfig(&cwd).is_none() {
         println!("Version {TSC_VERSION}");
         println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
         std::process::exit(1);
@@ -422,7 +424,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 Ok(content) => {
                     for line in content.lines() {
                         let trimmed = line.trim();
-                        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                        if !trimmed.is_empty() {
                             for part in split_response_line(trimmed) {
                                 expanded.push(OsString::from(part));
                             }
@@ -1674,6 +1676,39 @@ fn reject_tsconfig_only_cli_options(args: &CliArgs) {
     }
 }
 
+fn reject_build_only_cli_options(args: &CliArgs) {
+    if args.build {
+        return;
+    }
+
+    let explicitly_disabled = |name: &str| {
+        args.explicitly_disabled_bool_flags
+            .iter()
+            .any(|flag| flag == name)
+    };
+
+    for (name, provided) in [
+        (
+            "verbose",
+            args.build_verbose
+                || explicitly_disabled("build-verbose")
+                || explicitly_disabled("verbose"),
+        ),
+        ("dry", args.dry || explicitly_disabled("dry")),
+        ("force", args.force || explicitly_disabled("force")),
+        ("clean", args.clean || explicitly_disabled("clean")),
+        (
+            "stopBuildOnErrors",
+            args.stop_build_on_errors || explicitly_disabled("stopBuildOnErrors"),
+        ),
+    ] {
+        if provided {
+            println!("error TS5093: Compiler option '--{name}' may only be used with '--build'.");
+            std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+        }
+    }
+}
+
 /// Get peak memory usage (max RSS) in KB.
 ///
 /// Supported platforms:
@@ -1799,7 +1834,14 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use tsz_cli::config::{load_tsconfig, resolve_compiler_options};
     use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
-    // --ignoreConfig: skip tsconfig loading
+    if args.ignore_config && args.files.is_empty() {
+        println!(
+            "error TS5081: Cannot find a tsconfig.json file at the current directory: {}.",
+            cwd.display()
+        );
+        std::process::exit(1);
+    }
+
     let tsconfig_path = if args.ignore_config {
         None
     } else {
@@ -1819,7 +1861,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
                     resolved
                 }
             })
-            .or_else(|| Some(cwd.join("tsconfig.json")))
+            .or_else(|| driver::find_tsconfig(cwd))
     };
 
     // When no tsconfig.json is found (and --ignoreConfig is not set), emit the
@@ -1897,7 +1939,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     // We need resolved options for file discovery (allow_js, out_dir).
     let resolved = resolve_compiler_options(raw_opts).ok();
-    let allow_js = raw_opts.and_then(|o| o.allow_js).unwrap_or(false) || args.allow_js;
+    let allow_js = resolved.as_ref().is_some_and(|r| r.allow_js) || args.allow_js || args.check_js;
     let out_dir = args
         .out_dir
         .clone()
@@ -2988,7 +3030,12 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use tsz_cli::driver::apply_cli_overrides;
     use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
-    // --ignoreConfig: skip tsconfig loading
+    if args.ignore_config && args.files.is_empty() {
+        println!("Version {TSC_VERSION}");
+        println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
+        std::process::exit(1);
+    }
+
     let tsconfig_path = if args.ignore_config {
         None
     } else {
@@ -3006,10 +3053,7 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
                     resolved
                 }
             })
-            .or_else(|| {
-                let default_path = cwd.join("tsconfig.json");
-                default_path.exists().then_some(default_path)
-            })
+            .or_else(|| driver::find_tsconfig(cwd))
     };
 
     let config = if let Some(path) = tsconfig_path.as_ref() {

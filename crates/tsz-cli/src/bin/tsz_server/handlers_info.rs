@@ -692,6 +692,8 @@ impl Server {
                 return Some(serde_json::json!({
                     "refs": refs,
                     "symbolName": quoted_symbol_name,
+                    "symbolStartOffset": offset,
+                    "symbolDisplayString": quoted_symbol_name,
                 }));
             }
             if let Some(mut project) = self.build_project_for_file(&file)
@@ -741,24 +743,46 @@ impl Server {
                 return Some(serde_json::json!({
                     "refs": refs,
                     "symbolName": "",
+                    "symbolStartOffset": offset,
+                    "symbolDisplayString": "",
                 }));
             }
-            let provider = FindReferences::new(&arena, &binder, &line_map, file, &source_text);
+            let provider =
+                FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
             let (_symbol_id, ref_infos) = provider.find_references_with_symbol(root, position)?;
 
-            // Try to get symbol name from the position
-            let symbol_name = {
+            let (symbol_name, symbol_start_offset) = {
                 let ref_offset = line_map.position_to_offset(position, &source_text)?;
                 let node_idx = tsz::lsp::utils::find_node_at_offset(&arena, ref_offset);
-                if node_idx.is_some() {
+                let symbol_name = if node_idx.is_some() {
                     arena
                         .get_identifier_text(node_idx)
                         .map(std::string::ToString::to_string)
                 } else {
                     None
-                }
+                };
+                let symbol_start_offset = node_idx
+                    .into_option()
+                    .and_then(|idx| arena.get(idx))
+                    .map(|node| {
+                        line_map
+                            .offset_to_position(node.pos, &source_text)
+                            .character
+                            + 1
+                    })
+                    .unwrap_or(offset);
+                Some((symbol_name.unwrap_or_default(), symbol_start_offset))
             }
             .unwrap_or_default();
+
+            let interner = TypeInterner::new();
+            let hover_provider =
+                HoverProvider::new(&arena, &binder, &line_map, &interner, &source_text, file);
+            let mut type_cache = None;
+            let symbol_display_string = hover_provider
+                .get_hover(root, position, &mut type_cache)
+                .map(|info| info.display_string)
+                .unwrap_or_default();
 
             let refs: Vec<serde_json::Value> = ref_infos
                 .iter()
@@ -776,12 +800,19 @@ impl Server {
             Some(serde_json::json!({
                 "refs": refs,
                 "symbolName": symbol_name,
+                "symbolStartOffset": symbol_start_offset,
+                "symbolDisplayString": symbol_display_string,
             }))
         })();
         self.stub_response(
             seq,
             request,
-            Some(result.unwrap_or(serde_json::json!({"refs": [], "symbolName": ""}))),
+            Some(result.unwrap_or(serde_json::json!({
+                "refs": [],
+                "symbolName": "",
+                "symbolStartOffset": 0,
+                "symbolDisplayString": "",
+            }))),
         )
     }
 
