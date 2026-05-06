@@ -467,10 +467,38 @@ fn template_substitution_type_is_valid(db: &dyn TypeDatabase, part: TypeId, dept
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
             info.constraint.is_some_and(|constraint| {
                 template_substitution_type_is_valid(db, constraint, depth + 1)
+                    || template_substitution_constraint_is_dependent(db, constraint, depth + 1)
             })
         }
         Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
             template_substitution_type_is_valid(db, inner, depth + 1)
+        }
+        _ => false,
+    }
+}
+
+fn template_substitution_constraint_is_dependent(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: u32,
+) -> bool {
+    if depth > 10 || type_id.is_intrinsic() {
+        return false;
+    }
+
+    match db.lookup(type_id) {
+        Some(
+            TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::KeyOf(_)
+            | TypeData::IndexAccess(_, _),
+        ) => true,
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| template_substitution_constraint_is_dependent(db, member, depth + 1)),
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            template_substitution_constraint_is_dependent(db, inner, depth + 1)
         }
         _ => false,
     }
