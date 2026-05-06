@@ -781,5 +781,9 @@ path = "tests/intersection_index_signature_fingerprint_tests.rs"
 name = "shadowed_symbol_global_tests"
 path = "tests/shadowed_symbol_global_tests.rs"
 
+[[test]]
+name = "ts2855_static_super_field_tests"
+path = "tests/ts2855_static_super_field_tests.rs"
+
 [lints]
 workspace = true
