@@ -163,6 +163,8 @@ pub struct CompilerOptions {
     #[serde(default)]
     pub root_dir: Option<String>,
     #[serde(default)]
+    pub root_dirs: Option<Vec<String>>,
+    #[serde(default)]
     pub out_dir: Option<String>,
     #[serde(default)]
     pub out_file: Option<String>,
@@ -176,6 +178,8 @@ pub struct CompilerOptions {
     pub declaration_dir: Option<String>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub source_map: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub inline_source_map: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub declaration_map: Option<bool>,
     #[serde(default)]
@@ -418,6 +422,7 @@ pub struct ResolvedCompilerOptions {
     pub base_url: Option<PathBuf>,
     pub paths: Option<Vec<PathMapping>>,
     pub root_dir: Option<PathBuf>,
+    pub root_dirs: Vec<PathBuf>,
     pub out_dir: Option<PathBuf>,
     pub out_file: Option<PathBuf>,
     pub declaration_dir: Option<PathBuf>,
@@ -425,6 +430,7 @@ pub struct ResolvedCompilerOptions {
     pub emit_declarations: bool,
     pub emit_declaration_only: bool,
     pub source_map: bool,
+    pub inline_source_map: bool,
     pub declaration_map: bool,
     pub ts_build_info_file: Option<PathBuf>,
     pub incremental: bool,
@@ -852,6 +858,20 @@ pub fn resolve_compiler_options(
         resolved.root_dir = Some(PathBuf::from(root_dir));
     }
 
+    if let Some(root_dirs) = options.root_dirs.as_ref() {
+        resolved.root_dirs = root_dirs
+            .iter()
+            .filter_map(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(PathBuf::from(trimmed))
+                }
+            })
+            .collect();
+    }
+
     if let Some(out_dir) = options.out_dir.as_deref()
         && !out_dir.is_empty()
     {
@@ -892,6 +912,10 @@ pub fn resolve_compiler_options(
 
     if let Some(source_map) = options.source_map {
         resolved.source_map = source_map;
+    }
+
+    if let Some(inline_source_map) = options.inline_source_map {
+        resolved.inline_source_map = inline_source_map;
     }
 
     if let Some(declaration_map) = options.declaration_map {
@@ -3329,6 +3353,23 @@ fn anchor_inherited_path_options(config: &mut TsConfig, config_path: &Path) {
             }
         }
     }
+
+    if let Some(root_dirs) = opts.root_dirs.as_mut() {
+        let parent_abs = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+        for root_dir in root_dirs {
+            let trimmed = root_dir.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let candidate = std::path::Path::new(trimmed);
+            if candidate.is_absolute() {
+                continue;
+            }
+            let joined = parent_abs.join(candidate);
+            let normalized = std::fs::canonicalize(&joined).unwrap_or(joined);
+            *root_dir = normalized.to_string_lossy().into_owned();
+        }
+    }
 }
 
 fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {
@@ -3392,12 +3433,14 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             base_url,
             paths,
             root_dir,
+            root_dirs,
             out_dir,
             out_file,
             composite,
             declaration,
             declaration_dir,
             source_map,
+            inline_source_map,
             declaration_map,
             ts_build_info_file,
             incremental,
@@ -4115,40 +4158,83 @@ const fn legacy_lib_aliases() -> &'static [(&'static str, &'static str)] {
 /// Extract /// <reference lib="..." /> directives from a source file.
 /// Returns a list of normalized referenced lib names.
 pub fn extract_lib_references(source: &str) -> Vec<String> {
+    extract_lib_references_with_positions(source)
+        .into_iter()
+        .map(|reference| normalize_lib_name(&reference.raw))
+        .collect()
+}
+
+/// A `/// <reference lib="..." />` directive captured from a source file,
+/// with the byte position of the `lib` attribute value. The raw value is
+/// returned exactly as it appeared between the quotes (including empty),
+/// so callers can render `tsc`-compatible diagnostics like
+/// `Cannot find lib definition for '<value>'.`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibReference {
+    /// Raw, un-normalized lib attribute value.
+    pub raw: String,
+    /// Byte offset within the source where the value starts (immediately
+    /// after the opening quote).
+    pub start: u32,
+    /// Byte length of the raw value (zero for an empty `lib=""`).
+    pub length: u32,
+}
+
+/// Like [`extract_lib_references`], but returns the original (un-normalized)
+/// lib values together with their byte position in the source. Used by the
+/// driver to report `TS2726` for invalid user-authored source-file
+/// directives while still feeding the transitive lib resolver.
+pub fn extract_lib_references_with_positions(source: &str) -> Vec<LibReference> {
     let mut refs = Vec::new();
     let mut in_block_comment = false;
-    for line in source.lines() {
-        let line = line.trim_start();
+    let bytes = source.as_bytes();
+    let mut line_start: usize = 0;
+    loop {
+        let line_end = bytes[line_start..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(bytes.len(), |idx| line_start + idx);
+        let line_with_cr = &source[line_start..line_end];
+        let line = line_with_cr.strip_suffix('\r').unwrap_or(line_with_cr);
+        let trimmed = line.trim_start();
+        let trim_offset = line.len() - trimmed.len();
+        let trimmed_abs = line_start + trim_offset;
+
         if in_block_comment {
-            if line.contains("*/") {
+            if trimmed.contains("*/") {
                 in_block_comment = false;
             }
-            continue;
-        }
-        if line.starts_with("/*") {
-            if !line.contains("*/") {
+        } else if trimmed.starts_with("/*") {
+            if !trimmed.contains("*/") {
                 in_block_comment = true;
             }
-            continue;
-        }
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with("///") {
-            if let Some(value) = parse_reference_lib_value(line) {
-                refs.push(normalize_lib_name(value));
+        } else if trimmed.is_empty() {
+            // skip blank line
+        } else if trimmed.starts_with("///") {
+            if let Some((value, value_offset_in_trimmed)) =
+                parse_reference_lib_value_with_offset(trimmed)
+            {
+                refs.push(LibReference {
+                    raw: value.to_string(),
+                    start: (trimmed_abs + value_offset_in_trimmed) as u32,
+                    length: value.len() as u32,
+                });
             }
-            continue;
+        } else if trimmed.starts_with("//") {
+            // skip non-triple-slash comment
+        } else {
+            break;
         }
-        if line.starts_with("//") {
-            continue;
+
+        if line_end >= bytes.len() {
+            break;
         }
-        break;
+        line_start = line_end + 1;
     }
     refs
 }
 
-fn parse_reference_lib_value(line: &str) -> Option<&str> {
+fn parse_reference_lib_value_with_offset(line: &str) -> Option<(&str, usize)> {
     let mut offset = 0;
     let bytes = line.as_bytes();
     while let Some(idx) = line[offset..].find("lib=") {
@@ -4165,11 +4251,31 @@ fn parse_reference_lib_value(line: &str) -> Option<&str> {
             offset = start + 4;
             continue;
         }
-        let rest = &line[start + 5..];
+        let value_start = start + 5;
+        let rest = &line[value_start..];
         let end = rest.find(quote as char)?;
-        return Some(&rest[..end]);
+        return Some((&rest[..end], value_start));
     }
     None
+}
+
+/// Returns whether `lib_name` resolves to a known TypeScript library file.
+///
+/// Mirrors the resolution order used by `resolve_lib_files_with_options`:
+/// the on-disk lib directory (when discoverable) takes precedence over the
+/// embedded fallback. Empty inputs always return `false`. Only intended for
+/// validation paths that need a yes/no answer without loading the file.
+pub fn is_known_lib_name(lib_name: &str) -> bool {
+    let normalized = normalize_lib_name(lib_name);
+    if normalized.is_empty() {
+        return false;
+    }
+    if let Ok(lib_dir) = default_lib_dir()
+        && let Ok(map) = build_lib_map(&lib_dir)
+    {
+        return map.contains_key(&normalized);
+    }
+    build_lib_map_from_embedded().contains_key(normalized.as_str())
 }
 
 fn normalize_lib_name(value: &str) -> String {
@@ -5118,16 +5224,79 @@ mod tests {
         let opts = merged.compiler_options.expect("compiler options merged");
         let base_url = opts.base_url.expect("inherited baseUrl present");
 
-        let expected = base_dir.to_string_lossy();
+        // Canonicalize to handle macOS `/var` → `/private/var` symlinks.
+        let canonical_base_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir.clone());
+        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir.clone());
+        let canonical_base_url = std::path::Path::new(&base_url)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(&base_url));
+        let expected = canonical_base_dir.to_string_lossy();
+        let actual = canonical_base_url.to_string_lossy();
         assert!(
-            base_url.starts_with(expected.as_ref()),
+            actual.starts_with(expected.as_ref()),
             "Inherited baseUrl must anchor at the base config's directory \
-             (expected prefix {expected:?}, got {base_url:?})"
+             (expected prefix {expected:?}, got {actual:?})"
         );
         assert!(
-            !base_url.starts_with(app_dir.to_string_lossy().as_ref()),
-            "Inherited baseUrl must not anchor at the child's directory: {base_url:?}"
+            !actual.starts_with(canonical_app_dir.to_string_lossy().as_ref()),
+            "Inherited baseUrl must not anchor at the child's directory: {actual:?}"
         );
+    }
+
+    #[test]
+    fn test_inherited_root_dirs_anchor_at_declaring_config_dir() {
+        let temp = tempdir().expect("create temp dir");
+        let base_dir = temp.path().join("base");
+        let app_dir = temp.path().join("app");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        std::fs::create_dir_all(&app_dir).expect("create app dir");
+
+        let base_path = base_dir.join("tsconfig.base.json");
+        std::fs::write(
+            &base_path,
+            r#"{
+    "compilerOptions": {
+        "rootDirs": ["src", "generated"]
+    }
+}"#,
+        )
+        .expect("write base");
+
+        let child_path = app_dir.join("tsconfig.json");
+        std::fs::write(
+            &child_path,
+            r#"{
+    "extends": "../base/tsconfig.base.json",
+    "files": ["src/index.ts"]
+}"#,
+        )
+        .expect("write child");
+
+        let merged = load_tsconfig(&child_path).expect("load child");
+        let opts = merged.compiler_options.expect("compiler options merged");
+        let root_dirs = opts.root_dirs.expect("inherited rootDirs present");
+        let expected_base = base_dir
+            .canonicalize()
+            .expect("canonicalize base")
+            .to_string_lossy()
+            .into_owned();
+        let unexpected_app = app_dir
+            .canonicalize()
+            .expect("canonicalize app")
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(root_dirs.len(), 2);
+        for root_dir in &root_dirs {
+            assert!(
+                root_dir.starts_with(&expected_base),
+                "Inherited rootDirs must anchor at the base config's directory, got {root_dir:?}"
+            );
+            assert!(
+                !root_dir.starts_with(&unexpected_app),
+                "Inherited rootDirs must not anchor at the child's directory: {root_dir:?}"
+            );
+        }
     }
 
     #[test]
@@ -5158,11 +5327,18 @@ mod tests {
         let opts = merged.compiler_options.expect("compiler options merged");
         let base_url = opts.base_url.expect("baseUrl present");
 
-        let expected_prefix = app_dir.to_string_lossy();
+        // Canonicalize both sides so symlink-bearing temp paths on macOS
+        // (`/var/folders/...` → `/private/var/folders/...`) compare equal.
+        let canonical_app_dir = std::fs::canonicalize(&app_dir).unwrap_or(app_dir.clone());
+        let canonical_base_url = std::path::Path::new(&base_url)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(&base_url));
+        let expected_prefix = canonical_app_dir.to_string_lossy();
+        let actual = canonical_base_url.to_string_lossy();
         assert!(
-            base_url.starts_with(expected_prefix.as_ref()),
+            actual.starts_with(expected_prefix.as_ref()),
             "Child-declared baseUrl must anchor at the child's directory \
-             (expected prefix {expected_prefix:?}, got {base_url:?})"
+             (expected prefix {expected_prefix:?}, got {actual:?})"
         );
     }
 
@@ -6493,6 +6669,56 @@ mod tests {
         "#;
 
         assert_eq!(extract_lib_references(source), vec!["es2020".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_lib_references_with_positions_anchors_at_value_start() {
+        // `/// <reference lib="notalib" />` — `notalib` starts at byte 20,
+        // matching tsc's TS2726 anchor (column 21 in 1-indexed terms).
+        let source = "/// <reference lib=\"notalib\" />\nlet x = 1;\n";
+        let refs = extract_lib_references_with_positions(source);
+        assert_eq!(refs.len(), 1, "should capture exactly one reference");
+        assert_eq!(refs[0].raw, "notalib");
+        assert_eq!(refs[0].start, 20);
+        assert_eq!(refs[0].length, 7);
+    }
+
+    #[test]
+    fn test_extract_lib_references_with_positions_handles_empty_value() {
+        let source = "/// <reference lib=\"\" />\n";
+        let refs = extract_lib_references_with_positions(source);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].raw, "");
+        assert_eq!(refs[0].start, 20);
+        assert_eq!(refs[0].length, 0);
+    }
+
+    #[test]
+    fn test_extract_lib_references_with_positions_tracks_offset_across_lines() {
+        let source = "// header\n\n/// <reference lib=\"dom\" />\n";
+        let refs = extract_lib_references_with_positions(source);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].raw, "dom");
+        // "// header\n" = 10 bytes, blank line "\n" = 1 byte, then 11 + 20 = 31.
+        assert_eq!(refs[0].start, 31);
+        assert_eq!(refs[0].length, 3);
+    }
+
+    #[test]
+    fn test_is_known_lib_name_accepts_canonical_and_normalized_forms() {
+        // Canonical names from the TS lib catalog.
+        assert!(is_known_lib_name("es2015"));
+        assert!(is_known_lib_name("dom"));
+        // Normalization: leading `lib.` prefix and case-insensitive match.
+        assert!(is_known_lib_name("lib.es2015"));
+        assert!(is_known_lib_name("ES2015"));
+    }
+
+    #[test]
+    fn test_is_known_lib_name_rejects_empty_and_unknown() {
+        assert!(!is_known_lib_name(""));
+        assert!(!is_known_lib_name("   "));
+        assert!(!is_known_lib_name("notalib"));
     }
 
     #[test]

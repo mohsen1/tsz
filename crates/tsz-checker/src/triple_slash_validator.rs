@@ -346,6 +346,10 @@ const fn is_directive_attr_name_char(ch: char) -> bool {
 /// 1. Try exact path first
 /// 2. If no extension or not found, try .ts, .tsx, .d.ts extensions
 pub fn validate_reference_path(source_file: &Path, reference_path: &str) -> bool {
+    if reference_path.is_empty() {
+        return false;
+    }
+
     if let Some(parent) = source_file.parent() {
         let base_path = parent.join(reference_path);
 

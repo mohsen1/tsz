@@ -7,6 +7,9 @@ use tsz_scanner::SyntaxKind;
 
 #[path = "namespace_export_destructuring.rs"]
 mod namespace_export_destructuring;
+#[cfg(test)]
+#[path = "namespace_import_alias_tests.rs"]
+mod namespace_import_alias_tests;
 
 /// Rewrite enum IIFE IR from `E || (E = {})` to `E = NS.E || (NS.E = {})`
 /// for exported enums in namespaces.
@@ -76,6 +79,76 @@ fn find_unescaped_template_end(source: &str, template_start: usize) -> Option<us
             return Some(pos);
         }
         pos += 1;
+    }
+    None
+}
+
+fn skip_quoted_source_text(source: &str, quote_start: usize) -> usize {
+    let bytes = source.as_bytes();
+    let quote = bytes[quote_start];
+    if quote == b'`' {
+        return find_unescaped_template_end(source, quote_start)
+            .map(|end| end + 1)
+            .unwrap_or(source.len());
+    }
+
+    let mut pos = quote_start + 1;
+    while pos < bytes.len() {
+        if bytes[pos] == b'\\' {
+            pos += 2;
+            continue;
+        }
+        if bytes[pos] == quote {
+            return pos + 1;
+        }
+        pos += 1;
+    }
+    source.len()
+}
+
+fn find_next_code_module_keyword(source: &str, mut cursor: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'/' if bytes.get(cursor + 1) == Some(&b'/') => {
+                cursor += 2;
+                while cursor < bytes.len() && !matches!(bytes[cursor], b'\n' | b'\r') {
+                    cursor += 1;
+                }
+            }
+            b'/' if bytes.get(cursor + 1) == Some(&b'*') => {
+                cursor += 2;
+                while cursor + 1 < bytes.len()
+                    && !(bytes[cursor] == b'*' && bytes[cursor + 1] == b'/')
+                {
+                    cursor += 1;
+                }
+                cursor = (cursor + 2).min(bytes.len());
+            }
+            b'\'' | b'"' | b'`' => {
+                cursor = skip_quoted_source_text(source, cursor);
+            }
+            b'm' if source[cursor..].starts_with("module")
+                && cursor
+                    .checked_sub(1)
+                    .and_then(|prev| bytes.get(prev))
+                    .is_none_or(|byte| {
+                        !byte.is_ascii_alphanumeric() && *byte != b'_' && *byte != b'$'
+                    })
+                && bytes.get(cursor + "module".len()).is_none_or(|byte| {
+                    !byte.is_ascii_alphanumeric() && *byte != b'_' && *byte != b'$'
+                }) =>
+            {
+                return Some(cursor);
+            }
+            _ => {
+                cursor += source[cursor..]
+                    .chars()
+                    .next()
+                    .map(char::len_utf8)
+                    .unwrap_or(1);
+            }
+        }
     }
     None
 }
@@ -216,15 +289,16 @@ impl<'a> Printer<'a> {
 
         let mut cursor = 0;
         let mut wrote = false;
-        while let Some(relative_module_pos) = source[cursor..].find("module") {
-            let module_pos = cursor + relative_module_pos;
+        while let Some(module_pos) = find_next_code_module_keyword(source, cursor) {
             let after_module = module_pos + "module".len();
             let rest = &source[after_module..];
-            let Some(template_start_in_rest) = rest.find('`') else {
+            let rest_trimmed = rest.trim_start_matches(|ch: char| ch.is_whitespace());
+            let skipped = rest.len() - rest_trimmed.len();
+            if !rest_trimmed.starts_with('`') {
                 cursor = after_module;
                 continue;
             };
-            let template_start = after_module + template_start_in_rest;
+            let template_start = after_module + skipped;
             let Some(template_end) = find_unescaped_template_end(source, template_start) else {
                 break;
             };
@@ -1842,32 +1916,6 @@ mod tests {
         assert!(
             output.contains("(function (M_1)"),
             "Namespace IIFE parameter should be renamed to M_1 when body has 'import M = ...'.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn namespace_import_alias_elided_when_shadowed_before_use() {
-        let source = "namespace X {\n  export class Y {}\n}\nnamespace Z {\n  import Y = X.Y;\n  var Y = 12;\n}\nnamespace r {\n  export const Q = {};\n}\nnamespace s {\n  import Q = r.Q;\n  const Q = 0;\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            !output.contains("var Y = X.Y;"),
-            "Namespace import alias should be elided when a local var shadows it before use.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("var Q = r.Q;"),
-            "Namespace import alias should be elided when a local const shadows it before use.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("var Y = 12;") && output.contains("const Q = 0;"),
-            "Shadowing declarations should still emit.\nOutput:\n{output}"
         );
     }
 

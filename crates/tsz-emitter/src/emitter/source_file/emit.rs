@@ -60,13 +60,7 @@ impl<'a> Printer<'a> {
 
         // Store file name for jsx=react-jsxdev source location emission
         if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
-            // Extract just the basename from the full file path
-            let base_name = source
-                .file_name
-                .rsplit('/')
-                .next()
-                .unwrap_or(&source.file_name);
-            self.jsx_dev_file_name = Some(base_name.to_string());
+            self.jsx_dev_file_name = Some(jsx_dev_file_name(&source.file_name));
         } else {
             self.jsx_dev_file_name = None;
         }
@@ -1742,7 +1736,12 @@ impl<'a> Printer<'a> {
                 .map(|next_node| next_node.pos);
 
             let before_len = self.writer.len();
-            if let Some(recovered_yield_call) = self.recovered_yield_call_statement_text(stmt_node)
+            if let Some(recovered_jsx_closing) =
+                self.recovered_invalid_jsx_closing_fragment_statement_text(stmt_node)
+            {
+                self.write(&recovered_jsx_closing);
+            } else if let Some(recovered_yield_call) =
+                self.recovered_yield_call_statement_text(stmt_node)
             {
                 self.write(&recovered_yield_call);
                 skip_recovered_yield_operand_statement = true;
@@ -2137,6 +2136,17 @@ impl<'a> Printer<'a> {
         Some(format!("{recovered};"))
     }
 
+    fn recovered_invalid_jsx_closing_fragment_statement_text(&self, node: &Node) -> Option<String> {
+        if node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+
+        let text = self.source_text?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let tail = text.get(start..)?;
+        tail.starts_with("</>").then(|| " > ;".to_string())
+    }
+
     fn recovered_ambient_class_parenthesized_tail_text(&self, node: &Node) -> Option<String> {
         if node.kind != syntax_kind_ext::CLASS_DECLARATION {
             return None;
@@ -2326,4 +2336,19 @@ impl<'a> Printer<'a> {
             .map(|comment_start| line[comment_start..].trim());
         Some((line_end as u32, trailing_comment))
     }
+}
+
+fn jsx_dev_file_name(file_name: &str) -> String {
+    let normalized = file_name.replace('\\', "/");
+    if let Some(src_start) = normalized.find("/.src/") {
+        return normalized[src_start..].to_string();
+    }
+    if let Some(stripped) = normalized.strip_prefix(".src/") {
+        return format!("/.src/{stripped}");
+    }
+    normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or(&normalized)
+        .to_string()
 }

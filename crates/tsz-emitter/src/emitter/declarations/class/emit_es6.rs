@@ -521,10 +521,6 @@ impl<'a> Printer<'a> {
                     contains_this_reference(self.arena, *init_idx)
                         || contains_async_arrow_function(self.arena, *init_idx)
                 });
-        let static_initializer_needs_class_alias = !class_name.is_empty()
-            && static_initializer_alias_source_nodes
-                .iter()
-                .any(|idx| self.node_text_contains_identifier(*idx, &class_name));
         let private_member_def_needs_class_alias = !class_name.is_empty()
             && (private_methods.iter().any(|method| {
                 method
@@ -539,11 +535,20 @@ impl<'a> Printer<'a> {
                         .is_some_and(|body| self.node_text_contains_identifier(body, &class_name))
             }));
 
-        // Determine if we need a class alias for static private fields
         let has_static_privates = private_fields.iter().any(|f| f.is_static)
             || private_methods.iter().any(|m| m.is_static)
             || private_accessors.iter().any(|a| a.is_static)
             || private_auto_accessors.iter().any(|a| a.is_static);
+        let static_initializer_contains_class_name = !class_name.is_empty()
+            && static_initializer_alias_source_nodes
+                .iter()
+                .any(|idx| self.node_text_contains_identifier(*idx, &class_name));
+        let static_initializer_needs_class_alias = static_initializer_contains_class_name
+            && (static_initializer_needs_this_alias
+                || has_static_privates
+                || private_member_def_needs_class_alias);
+
+        // Determine if we need a class alias for static private fields.
         let class_value_alias = if has_static_privates
             || static_initializer_needs_this_alias
             || static_initializer_needs_class_alias

@@ -1291,6 +1291,7 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or(0);
 
         let mut first = true;
+        let mut previous_param_end = 0;
         for (i, &param_idx) in params.nodes.iter().enumerate() {
             if !first {
                 self.write(", ");
@@ -1330,7 +1331,19 @@ impl<'a> DeclarationEmitter<'a> {
                     });
 
                 // Inline JSDoc comment before parameter (e.g. /** comment */ a: string)
-                self.emit_inline_parameter_comment(param_node.pos);
+                let comment_pos = self
+                    .arena
+                    .get(param.name)
+                    .map_or(param_node.pos, |name_node| name_node.pos);
+                if self.strip_internal && self.in_constructor_params {
+                    self.emit_strip_internal_constructor_parameter_comment(
+                        comment_pos,
+                        previous_param_end,
+                        params.nodes.len() == 1,
+                    );
+                } else {
+                    self.emit_inline_parameter_comment(comment_pos);
+                }
 
                 // Modifiers (public, private, etc for constructor parameters)
                 self.emit_member_modifiers(&param.modifiers);
@@ -1469,6 +1482,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(" | undefined");
                     }
                 }
+                previous_param_end = param_node.end;
             }
         }
 

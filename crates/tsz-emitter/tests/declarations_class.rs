@@ -1010,6 +1010,27 @@ class ElementsArray extends Array {
 }
 
 #[test]
+fn lowered_static_block_class_name_reference_does_not_create_alias() {
+    let source = r#"export class C {
+    static x: number;
+    static {
+        C.x = 1;
+    }
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("export class C {\n}\n(() => {\n    C.x = 1;\n})();"),
+        "Plain class-name references in lowered static blocks should stay on the class value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a;") && !output.contains("_a = C"),
+        "Lowered static blocks should not create a class-value alias unless `this`, `super`, or private state needs one.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn type_only_class_name_in_static_initializer_does_not_create_alias() {
     let source = r#"class Bug {
     private static func: Function[] = [
