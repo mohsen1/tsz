@@ -174,6 +174,7 @@ impl<'a> NamespaceES5Emitter<'a> {
 
     /// Emit a namespace declaration
     pub fn emit_namespace(&mut self, ns_idx: NodeIndex) -> String {
+        let ast_qualification = self.transformer.collect_namespace_rewrite_var_names(ns_idx);
         let ir = self
             .transformer
             .transform_namespace_with_var_flag(ns_idx, self.should_declare_var);
@@ -190,6 +191,9 @@ impl<'a> NamespaceES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_target_es5(self.target_es5);
         printer.set_remove_comments(self.remove_comments);
+        if let Some((namespace, names)) = ast_qualification {
+            printer.set_namespace_ast_qualification(namespace, names);
+        }
         if let Some(ref transforms) = self.transforms {
             printer.set_transforms(transforms.clone());
         }
@@ -198,6 +202,7 @@ impl<'a> NamespaceES5Emitter<'a> {
 
     /// Emit an exported namespace declaration (`CommonJS` attach-to-exports form).
     pub fn emit_exported_namespace(&mut self, ns_idx: NodeIndex) -> String {
+        let ast_qualification = self.transformer.collect_namespace_rewrite_var_names(ns_idx);
         let ir = self
             .transformer
             .transform_exported_namespace_with_var_flag(ns_idx, self.should_declare_var);
@@ -214,6 +219,9 @@ impl<'a> NamespaceES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_target_es5(self.target_es5);
         printer.set_remove_comments(self.remove_comments);
+        if let Some((namespace, names)) = ast_qualification {
+            printer.set_namespace_ast_qualification(namespace, names);
+        }
         if let Some(ref transforms) = self.transforms {
             printer.set_transforms(transforms.clone());
         }

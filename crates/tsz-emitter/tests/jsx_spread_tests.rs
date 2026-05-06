@@ -251,6 +251,29 @@ fn classic_spread_child_unwraps_plain_parentheses() {
     );
 }
 
+#[test]
+fn preserve_jsx_reopened_namespace_qualifies_exported_var_tags() {
+    let source = r#"namespace M {
+    export var X: any;
+}
+namespace M {
+    var y = <X></X>;
+}
+"#;
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: ModuleKind::AMD,
+        jsx: JsxEmit::Preserve,
+        ..Default::default()
+    };
+    let output = emit_jsx_with_printer_options(source, opts);
+
+    assert!(
+        output.contains("var y = <M.X></M.X>;"),
+        "Reopened namespace JSX tags must qualify exported values.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // moduleDetection=legacy + JSX automatic runtime
 // =============================================================================
@@ -326,6 +349,23 @@ fn react_jsxdev_under_module_detection_legacy_emits_file_name_without_import() {
     assert!(
         output.contains("_jsxDEV(\"div\", {"),
         "System legacy JSX dev calls should stay as bare _jsxDEV references.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn react_jsxdev_preserves_virtual_src_file_name() {
+    let source = "const el = <div />;\n";
+    let opts = PrintOptions {
+        jsx: JsxEmit::ReactJsxDev,
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let output = parse_and_print_named_with_opts("/tmp/tsz-emit/.src/preact.tsx", source, opts);
+
+    assert!(
+        output.contains("const _jsxFileName = \"/.src/preact.tsx\";"),
+        "JSX dev virtual source locations should keep the TypeScript harness path.\nOutput:\n{output}"
     );
 }
 
