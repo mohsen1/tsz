@@ -78,6 +78,96 @@ fn make_request(command: &str, arguments: serde_json::Value) -> TsServerRequest 
 }
 
 #[test]
+fn status_returns_typescript_version_not_tsz_crate_version() {
+    let mut server = make_server();
+    let response = server.handle_tsserver_request(make_request("status", serde_json::json!({})));
+    assert!(response.success);
+    let body = response.body.expect("status should return a body");
+    let version = body
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .expect("status body should include a string version");
+    assert_eq!(
+        version,
+        tsz_cli::help::TSC_VERSION,
+        "status should report the embedded TypeScript version, not the tsz crate version"
+    );
+    assert_ne!(
+        version,
+        env!("CARGO_PKG_VERSION"),
+        "status must not report the local tsz-cli crate version"
+    );
+}
+
+#[test]
+fn test_provide_inlay_hints_respects_protocol_start_length_span() {
+    let mut server = make_server();
+    let source = "function f(value: number) {}\nf(1);\n";
+    server
+        .open_files
+        .insert("/a.ts".to_string(), source.to_string());
+
+    let empty_response = server.handle_tsserver_request(make_request(
+        "provideInlayHints",
+        serde_json::json!({
+            "file": "/a.ts",
+            "start": 0,
+            "length": 0,
+        }),
+    ));
+    assert!(empty_response.success);
+    let empty_body = empty_response
+        .body
+        .expect("provideInlayHints should return a body")
+        .as_array()
+        .cloned()
+        .expect("provideInlayHints body should be an array");
+    assert!(
+        empty_body.is_empty(),
+        "zero-length protocol span should not include hints: {empty_body:?}"
+    );
+
+    let full_response = server.handle_tsserver_request(make_request(
+        "provideInlayHints",
+        serde_json::json!({
+            "file": "/a.ts",
+            "start": 0,
+            "length": source.len(),
+        }),
+    ));
+    assert!(full_response.success);
+    let full_body = full_response
+        .body
+        .expect("provideInlayHints should return a body")
+        .as_array()
+        .cloned()
+        .expect("provideInlayHints body should be an array");
+    assert_eq!(
+        full_body.len(),
+        1,
+        "full protocol span should include the parameter hint: {full_body:?}"
+    );
+    assert_eq!(
+        full_body[0].get("kind").and_then(serde_json::Value::as_str),
+        Some("Parameter")
+    );
+    assert_eq!(
+        full_body[0]
+            .get("position")
+            .and_then(|position| position.get("line"))
+            .and_then(serde_json::Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        full_body[0]
+            .get("position")
+            .and_then(|position| position.get("offset"))
+            .and_then(serde_json::Value::as_u64),
+        Some(3)
+    );
+}
+
+#[test]
 fn emit_output_preserves_type_only_module_marker() {
     let mut server = make_server();
     let response = server.handle_tsserver_request(make_request(
@@ -98,6 +188,87 @@ fn emit_output_preserves_type_only_module_marker() {
     assert_eq!(body["emitSkipped"], false);
     assert_eq!(body["outputFiles"][0]["name"], "/index.js");
     assert_eq!(body["outputFiles"][0]["text"], "export {};\n");
+}
+
+#[test]
+fn save_to_writes_open_file_snapshot_to_tmpfile_by_ref() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let file = temp.path().join("a.ts");
+    let tmpfile = temp.path().join("copy.ts");
+    let file = file.to_string_lossy().to_string();
+    let tmpfile = tmpfile.to_string_lossy().to_string();
+
+    let mut server = make_server();
+    let open = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": &file,
+            "fileContent": "const value = 123;\n",
+        }),
+    ));
+    assert!(open.success);
+
+    let response = server.handle_tsserver_request(make_request(
+        "saveto",
+        serde_json::json!({
+            "file": &file,
+            "tmpfile": &tmpfile,
+        }),
+    ));
+    assert!(response.success);
+    assert_eq!(
+        std::fs::read_to_string(&tmpfile).expect("tmpfile should be written"),
+        "const value = 123;\n"
+    );
+}
+
+#[test]
+fn compile_on_save_reports_affected_files_and_emits_file() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let root = temp.path();
+    let config = root.join("tsconfig.json");
+    let a = root.join("a.ts");
+    let b = root.join("b.ts");
+    std::fs::write(
+        &config,
+        r#"{"compileOnSave":true,"compilerOptions":{"target":"es2015","module":"commonjs","outDir":"dist"},"files":["a.ts","b.ts"]}"#,
+    )
+    .expect("write config");
+    std::fs::write(&a, "export const a = 1;\n").expect("write a");
+    std::fs::write(&b, "import { a } from \"./a\";\nexport const b = a + 1;\n").expect("write b");
+
+    let mut server = make_server();
+    let a_str = a.to_string_lossy().to_string();
+    let b_str = b.to_string_lossy().to_string();
+    let config_str = config.to_string_lossy().to_string();
+
+    let affected = server.handle_tsserver_request(make_request(
+        "compileOnSaveAffectedFileList",
+        serde_json::json!({ "file": &a_str }),
+    ));
+    assert!(affected.success);
+    let body = affected.body.expect("affected files body");
+    assert_eq!(body[0]["projectFileName"], config_str);
+    assert_eq!(body[0]["fileNames"], serde_json::json!([a_str, b_str]));
+    assert_eq!(body[0]["projectUsesOutFile"], false);
+
+    let emit = server.handle_tsserver_request(make_request(
+        "compileOnSaveEmitFile",
+        serde_json::json!({ "file": a_str, "richResponse": true, "includeLinePosition": true }),
+    ));
+    assert!(emit.success);
+    assert_eq!(emit.body.as_ref().unwrap()["emitSkipped"], false);
+    assert!(
+        emit.body.as_ref().unwrap()["diagnostics"]
+            .as_array()
+            .is_some()
+    );
+    let emitted = root.join("dist").join("a.js");
+    assert!(
+        emitted.exists(),
+        "compile-on-save should write {}",
+        emitted.display()
+    );
 }
 
 #[test]
@@ -169,6 +340,116 @@ fn prepare_paste_edits_accepts_protocol_copied_text_span() {
 }
 
 #[test]
+fn implementation_finds_cross_file_class_implementation() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/a.ts",
+                    "fileContent": "export interface Service { run(): void }\n",
+                }),
+            ))
+            .success
+    );
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/b.ts",
+                    "fileContent": "import { Service } from \"./a\";\nexport class Impl implements Service { run() {} }\n",
+                }),
+            ))
+            .success
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "implementation",
+        serde_json::json!({
+            "file": "/src/a.ts",
+            "line": 1,
+            "offset": 18,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("implementation should return a body");
+    assert_eq!(body[0]["file"], "/src/b.ts");
+    assert_eq!(
+        body[0]["start"],
+        serde_json::json!({ "line": 2, "offset": 14 })
+    );
+}
+
+#[test]
+fn get_paste_edits_uses_locations_and_sibling_import_path() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/source.ts",
+                    "fileContent": "export function helper() {\n  return 1;\n}\nhelper();\n",
+                }),
+            ))
+            .success
+    );
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/target.ts",
+                    "fileContent": "export function run() {\n}\n",
+                }),
+            ))
+            .success
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "getPasteEdits",
+        serde_json::json!({
+            "file": "/src/target.ts",
+            "pastedText": ["helper();"],
+            "pasteLocations": [{
+                "start": { "line": 2, "offset": 1 },
+                "end": { "line": 2, "offset": 1 },
+            }],
+            "copiedFrom": {
+                "file": "/src/source.ts",
+                "spans": [{
+                    "start": { "line": 4, "offset": 1 },
+                    "end": { "line": 4, "offset": 10 },
+                }],
+            },
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("paste edits should return a body");
+    assert_eq!(body["fixId"], "providePostPasteEdits");
+    let changes = body["edits"][0]["textChanges"]
+        .as_array()
+        .expect("textChanges should be an array");
+    assert_eq!(
+        changes[0]["span"],
+        serde_json::json!({ "start": 0, "length": 0 })
+    );
+    assert_eq!(
+        changes[0]["newText"],
+        "import { helper } from \"./source\";\n\n"
+    );
+    assert_eq!(
+        changes[1]["span"],
+        serde_json::json!({ "start": 24, "length": 0 })
+    );
+    assert_eq!(changes[1]["newText"], "helper();");
+}
+
+#[test]
 fn reset_clears_session_state_but_keeps_server_alive() {
     let mut server = make_server();
     server
@@ -217,6 +498,66 @@ fn reset_clears_session_state_but_keeps_server_alive() {
     assert!(server.auto_imports_allowed_for_inferred_projects);
     assert!(!server.inferred_module_is_none_for_projects);
     assert!(server.plugin_configs.is_empty());
+}
+
+#[test]
+fn test_synchronize_project_list_returns_empty_list() {
+    let mut server = make_server();
+    let response = server.handle_tsserver_request(make_request(
+        "synchronizeProjectList",
+        serde_json::json!({
+            "knownProjects": [],
+            "includeProjectReferenceRedirectInfo": false,
+        }),
+    ));
+
+    assert!(response.success);
+    assert_eq!(response.body, Some(serde_json::json!([])));
+}
+
+#[test]
+fn test_synchronize_project_list_reports_external_project_files() {
+    let mut server = make_server();
+    let open_response = server.handle_tsserver_request(make_request(
+        "openExternalProject",
+        serde_json::json!({
+            "projectFileName": "/project.csproj",
+            "rootFiles": [
+                {
+                    "fileName": "/src/a.ts",
+                    "content": "export const a = 1;\n",
+                },
+            ],
+        }),
+    ));
+    assert!(open_response.success);
+
+    let response = server.handle_tsserver_request(make_request(
+        "synchronizeProjectList",
+        serde_json::json!({
+            "knownProjects": [],
+            "includeProjectReferenceRedirectInfo": true,
+        }),
+    ));
+
+    assert!(response.success);
+    assert_eq!(
+        response.body,
+        Some(serde_json::json!([{
+            "info": {
+                "projectName": "/project.csproj",
+                "isInferred": false,
+                "version": 1,
+                "options": {},
+                "languageServiceDisabled": false,
+            },
+            "files": [{
+                "fileName": "/src/a.ts",
+                "isSourceOfProjectReferenceRedirect": false,
+            }],
+            "projectErrors": [],
+        }]))
+    );
 }
 
 fn apply_tsserver_text_edits(mut source: String, edits: &[serde_json::Value]) -> String {
@@ -395,6 +736,81 @@ fn test_handle_change_updates_file() {
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
     assert_eq!(server.open_files["/test.ts"], "const x = 2;");
+}
+
+#[test]
+fn test_reload_uses_tmpfile_for_requested_open_file() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let file_path = dir.path().join("a.ts");
+    let tmpfile_path = dir.path().join("tmp.ts");
+    std::fs::write(&file_path, "const value = \"disk\";\n").expect("write disk file");
+    std::fs::write(&tmpfile_path, "const value = 42;\n").expect("write tmpfile");
+
+    let file = file_path.to_string_lossy().to_string();
+    let tmpfile = tmpfile_path.to_string_lossy().to_string();
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": file,
+                    "fileContent": "const value = \"open\";\n",
+                }),
+            ))
+            .success
+    );
+
+    let reload_response = server.handle_tsserver_request(make_request(
+        "reload",
+        serde_json::json!({
+            "file": file,
+            "tmpfile": tmpfile,
+        }),
+    ));
+
+    assert!(reload_response.success);
+    assert_eq!(
+        reload_response.body,
+        Some(serde_json::json!({ "reloadFinished": true }))
+    );
+    assert_eq!(server.open_files[&file], "const value = 42;\n");
+
+    let quickinfo_response = server.handle_tsserver_request(make_request(
+        "quickinfo",
+        serde_json::json!({
+            "file": file,
+            "line": 1,
+            "offset": 7,
+        }),
+    ));
+    assert!(quickinfo_response.success);
+    assert_eq!(
+        quickinfo_response
+            .body
+            .and_then(|body| body.get("displayString").cloned()),
+        Some(serde_json::json!("const value: 42"))
+    );
+}
+
+#[test]
+fn test_reload_projects_returns_no_body() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let file_path = dir.path().join("a.ts");
+    std::fs::write(&file_path, "const value = 2;\n").expect("write disk file");
+
+    let file = file_path.to_string_lossy().to_string();
+    let mut server = make_server();
+    server
+        .open_files
+        .insert(file.clone(), "const value = 1;\n".to_string());
+
+    let response =
+        server.handle_tsserver_request(make_request("reloadProjects", serde_json::json!({})));
+
+    assert!(response.success);
+    assert_eq!(response.body, None);
+    assert_eq!(server.open_files[&file], "const value = 2;\n");
 }
 
 #[test]
@@ -624,6 +1040,55 @@ fn test_semantic_diagnostics_skip_inferred_module_none_when_target_supports_impo
     assert!(
         !has_module_none_diag,
         "did not expect TS1148-style diagnostic when inferred target supports imports"
+    );
+}
+
+#[test]
+fn test_semantic_diagnostics_preserve_options_with_numeric_inferred_target() {
+    let mut server = make_server();
+
+    let options_resp = server.handle_tsserver_request(make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({
+            "options": {
+                "noImplicitAny": true,
+                "target": 2
+            }
+        }),
+    ));
+    assert!(options_resp.success);
+
+    let open_resp = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": "/index.ts",
+            "fileContent": "function f(x) { return x; }\n"
+        }),
+    ));
+    assert!(open_resp.success);
+
+    let diagnostics_resp = server.handle_tsserver_request(make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts"
+        }),
+    ));
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.get("code").and_then(serde_json::Value::as_u64)
+                == Some(
+                    tsz_checker::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                        as u64,
+                )
+        }),
+        "expected noImplicitAny to survive numeric target payload, got: {diagnostics:?}"
     );
 }
 
@@ -1115,6 +1580,24 @@ fn test_new_commands_are_recognized() {
 }
 
 #[test]
+fn test_signature_help_has_no_body_without_signature() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/test.ts".to_string(), "const x = 1;\n".to_string());
+    let req = make_request(
+        "signatureHelp",
+        serde_json::json!({"file": "/test.ts", "line": 1, "offset": 1}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    assert!(
+        resp.body.is_none(),
+        "signatureHelp should omit body when no signature exists"
+    );
+}
+
+#[test]
 fn test_unrecognized_command() {
     let mut server = make_server();
     let req = make_request("nonExistentCommand", serde_json::json!({}));
@@ -1124,6 +1607,28 @@ fn test_unrecognized_command() {
         resp.message
             .unwrap()
             .contains("Unrecognized command: nonExistentCommand")
+    );
+}
+
+#[test]
+fn test_watch_change_is_unrecognized() {
+    let mut server = make_server();
+    let req = make_request(
+        "watchChange",
+        serde_json::json!({
+            "id": 1,
+            "created": ["/tmp/x.ts"],
+            "changed": [],
+            "deleted": [],
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+
+    assert!(!resp.success);
+    assert!(
+        resp.message
+            .unwrap()
+            .contains("Unrecognized command: watchChange")
     );
 }
 
@@ -1184,10 +1689,7 @@ fn test_quickinfo_response_always_has_valid_spans() {
 }
 
 #[test]
-fn test_quickinfo_fallback_has_valid_spans() {
-    // When quickinfo is called on whitespace or a position where no symbol
-    // is found, the response body must still have start/end spans to avoid
-    // "Cannot read properties of undefined (reading 'line')" in the harness.
+fn test_quickinfo_has_no_body_without_info() {
     let mut server = make_server();
     server
         .open_files
@@ -1198,8 +1700,10 @@ fn test_quickinfo_fallback_has_valid_spans() {
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp.body.expect("quickinfo fallback should return a body");
-    assert_valid_span(&body, "quickinfo fallback on whitespace");
+    assert!(
+        resp.body.is_none(),
+        "quickinfo should omit body when no quickinfo exists"
+    );
 }
 
 #[test]
@@ -1262,10 +1766,7 @@ fn test_quickinfo_member_call_property_at_member_start() {
         body["displayString"].as_str().unwrap_or(""),
         "(property) I.m: () => void"
     );
-    assert_eq!(
-        body["documentation"],
-        serde_json::json!([{"kind": "text", "text": "Doc"}])
-    );
+    assert_eq!(body["documentation"], serde_json::json!("Doc"));
 
     let req_at_member = make_request(
         "quickinfo",
@@ -1280,10 +1781,36 @@ fn test_quickinfo_member_call_property_at_member_start() {
         body_at_member["displayString"].as_str().unwrap_or(""),
         "(property) I.m: () => void"
     );
-    assert_eq!(
-        body_at_member["documentation"],
-        serde_json::json!([{"kind": "text", "text": "Doc"}])
+    assert_eq!(body_at_member["documentation"], serde_json::json!("Doc"));
+}
+
+#[test]
+fn test_quickinfo_documentation_is_protocol_string() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/test.ts".to_string(),
+        "/** Adds one. */\nfunction f(a: number): string { return String(a + 1); }\nf(1);\nconst n = 1;\nn;\n"
+            .to_string(),
     );
+
+    let documented = server.handle_tsserver_request(make_request(
+        "quickinfo",
+        serde_json::json!({"file": "/test.ts", "line": 3, "offset": 1}),
+    ));
+    assert!(documented.success);
+    let documented_body = documented.body.expect("quickinfo should return a body");
+    assert_eq!(
+        documented_body["documentation"],
+        serde_json::json!("Adds one.")
+    );
+
+    let undocumented = server.handle_tsserver_request(make_request(
+        "quickinfo",
+        serde_json::json!({"file": "/test.ts", "line": 5, "offset": 1}),
+    ));
+    assert!(undocumented.success);
+    let undocumented_body = undocumented.body.expect("quickinfo should return a body");
+    assert_eq!(undocumented_body["documentation"], serde_json::json!(""));
 }
 
 #[test]
@@ -1911,9 +2438,7 @@ fn test_format_document_does_not_invalidate_fourslash_markers() {
 }
 
 #[test]
-fn test_quickinfo_on_nonexistent_file_has_valid_spans() {
-    // Even when the file is not open, the quickinfo fallback must return
-    // valid span data.
+fn test_quickinfo_on_nonexistent_file_has_no_body() {
     let mut server = make_server();
     let req = make_request(
         "quickinfo",
@@ -1921,8 +2446,10 @@ fn test_quickinfo_on_nonexistent_file_has_valid_spans() {
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp.body.expect("quickinfo fallback should return a body");
-    assert_valid_span(&body, "quickinfo on nonexistent file");
+    assert!(
+        resp.body.is_none(),
+        "quickinfo should omit body when the file cannot be resolved"
+    );
 }
 
 #[test]
@@ -2010,9 +2537,7 @@ fn test_definition_empty_response_is_valid_array() {
 }
 
 #[test]
-fn test_definition_and_bound_span_has_valid_text_span() {
-    // The definitionAndBoundSpan response must always have a textSpan with
-    // valid start/end, even when no definitions are found.
+fn test_definition_and_bound_span_has_no_body_without_definition() {
     let mut server = make_server();
     server
         .open_files
@@ -2023,16 +2548,9 @@ fn test_definition_and_bound_span_has_valid_text_span() {
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp
-        .body
-        .expect("definitionAndBoundSpan should return a body");
-    let text_span = body
-        .get("textSpan")
-        .expect("definitionAndBoundSpan must have textSpan");
-    assert_valid_span(text_span, "definitionAndBoundSpan textSpan");
     assert!(
-        body.get("definitions").is_some(),
-        "definitionAndBoundSpan must have definitions array"
+        resp.body.is_none(),
+        "definitionAndBoundSpan should omit body when no definition exists"
     );
 }
 
@@ -3114,6 +3632,28 @@ fn test_check_options_experimental_decorators_default_false() {
     );
 }
 
+#[test]
+fn test_check_options_deserializes_numeric_tsserver_enums() {
+    let options: CheckOptions = serde_json::from_value(serde_json::json!({
+        "noImplicitAny": true,
+        "target": 2,
+        "module": 1
+    }))
+    .unwrap();
+
+    assert_eq!(options.target.as_deref(), Some("es2015"));
+    assert_eq!(options.module.as_deref(), Some("commonjs"));
+    assert_eq!(options.no_implicit_any, Some(true));
+    assert_eq!(
+        Server::parse_target(&Some("2".to_string())),
+        tsz::emitter::ScriptTarget::ES2015
+    );
+    assert_eq!(
+        Server::parse_module(&Some("1".to_string())),
+        tsz::ModuleKind::CommonJS
+    );
+}
+
 // =============================================================================
 // handle_project_info / compute_project_info tests
 // =============================================================================
@@ -3220,6 +3760,45 @@ fn test_project_info_configured_project_lists_files_and_config_last() {
             "/tests/cases/fourslash/server/tsconfig.json",
         ],
         "expected tsconfig files in declared order with config file last"
+    );
+}
+
+#[test]
+fn test_project_info_configured_project_expands_include_files() {
+    let mut server = make_server_with_real_libs();
+    let tsconfig_path = "/tests/cases/fourslash/server/tsconfig.json".to_string();
+    server.open_files.insert(
+        tsconfig_path.clone(),
+        r#"{ "include": ["src/**/*.ts"], "compilerOptions": { "lib": ["es5"] } }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/src/a.ts".to_string(),
+        "export const a = 1;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/src/b.ts".to_string(),
+        "export const b = 2;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/tests/cases/fourslash/server/other.ts".to_string(),
+        "export const other = 3;\n".to_string(),
+    );
+
+    let (config, files) = server.compute_project_info("/tests/cases/fourslash/server/src/a.ts");
+    assert_eq!(config, tsconfig_path);
+    let non_lib: Vec<&str> = files
+        .iter()
+        .filter(|p| !p.starts_with("/home/src/tslibs/TS/Lib/"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        non_lib,
+        vec![
+            "/tests/cases/fourslash/server/src/a.ts",
+            "/tests/cases/fourslash/server/src/b.ts",
+            "/tests/cases/fourslash/server/tsconfig.json",
+        ],
+        "include glob should add matching project files before the config"
     );
 }
 

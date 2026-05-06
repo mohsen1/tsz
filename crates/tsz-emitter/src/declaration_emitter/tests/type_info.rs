@@ -218,6 +218,22 @@ var prop3: Y< <Tany>() => Tany, <Tany>() => Tany>;
 }
 
 #[test]
+fn test_declared_generic_call_return_preserves_wrapper_for_generic_function_argument() {
+    let output = emit_dts_with_binding(
+        r#"
+interface Modifier<T> {}
+declare function fn<T>(x: T): Modifier<T>;
+export const value = fn(<T>(x: T): T => x);
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const value: Modifier<(<T>(x: T) => T)>;"),
+        "Expected declared generic call return wrapper to survive generic function substitution: {output}"
+    );
+}
+
+#[test]
 fn test_named_class_expression_constructor_type_is_inlined() {
     let source = r#"
 export function wrapClass(param: any) {

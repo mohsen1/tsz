@@ -311,9 +311,21 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         } else {
                             clause_idx
                         };
-                        if let Some((from_path, type_name)) = object_assign_reference
-                            .or_else(|| self.first_non_portable_type_reference(expr_type))
-                            .or_else(|| self.first_non_portable_type_reference(resolved_type))
+                        let clause_is_call = self
+                            .ctx
+                            .arena
+                            .get(clause_idx)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION);
+                        let inferred_reference = (!clause_is_call)
+                            .then(|| {
+                                self.first_non_portable_type_reference(expr_type)
+                                    .or_else(|| {
+                                        self.first_non_portable_type_reference(resolved_type)
+                                    })
+                            })
+                            .flatten();
+                        if let Some((from_path, type_name)) =
+                            object_assign_reference.or(inferred_reference)
                         {
                             self.error_at_node_msg(
                                 diagnostic_node,

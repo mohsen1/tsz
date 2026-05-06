@@ -886,3 +886,79 @@ f("ok");
         "Expected TS7012 for a real @overload tag without return type. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+/// Regression for issue #3377.
+///
+/// When a JSDoc `@satisfies` tag is malformed because the first non-whitespace
+/// token after the tag is not `{`, the checker must NOT scan forward to a later
+/// braced type and apply that type to the next expression. tsc reports the
+/// malformed tag at the offending token and does not type the following
+/// initializer, so the bogus excess-property diagnostic (TS2353) must not fire.
+#[test]
+fn checked_js_jsdoc_satisfies_malformed_does_not_apply_later_braced_type() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"// @ts-check
+/** @satisfies nope {{ a: number }} */
+const value = { b: 1 };
+"#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 1005),
+        "Expected TS1005 for malformed @satisfies tag. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2304),
+        "Expected TS2304 (Cannot find name 'nope') for the unexpected token after @satisfies. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2353),
+        "Malformed @satisfies must not type the following expression and emit TS2353 against `{{ a: number; }}`. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// Control test paired with `checked_js_jsdoc_satisfies_malformed_does_not_apply_later_braced_type`.
+///
+/// A well-formed `@satisfies {Type}` annotation that the variable initializer
+/// satisfies should produce no diagnostics. This guards against regressing the
+/// malformed fix into rejecting valid `@satisfies` tags too.
+#[test]
+fn checked_js_jsdoc_satisfies_valid_tag_applies_type_without_errors() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"// @ts-check
+/** @satisfies {{ a: number }} */
+const value = { a: 1 };
+"#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 1005),
+        "Did not expect TS1005 for a well-formed @satisfies tag. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Did not expect TS2304 for a well-formed @satisfies tag. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2353),
+        "Did not expect TS2353 when the initializer satisfies the @satisfies type. Actual diagnostics: {diagnostics:#?}"
+    );
+}

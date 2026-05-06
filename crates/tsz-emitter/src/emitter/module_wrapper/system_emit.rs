@@ -144,7 +144,10 @@ impl<'a> Printer<'a> {
                             self.write(export_name);
                             self.write("\": ");
                             let setter_arg = format!("{dep_var}_1");
-                            self.write_module_property_access(&setter_arg, import_name);
+                            self.write(&setter_arg);
+                            self.write("[\"");
+                            self.write(import_name);
+                            self.write("\"]");
                             if export_idx + 1 != exports.len() {
                                 self.write(",");
                             }
@@ -1819,6 +1822,31 @@ export const y = x;
         assert!(
             !output.contains("});\n                exports_1(\"C\", C);"),
             "System top-level using should not split direct legacy class exports into a trailing export statement.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn system_top_level_using_env_hoists_before_later_nested_var() {
+        let source = "export { y };\nusing z = null;\nif (false) {\n    var y = 1;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::System,
+                target: ScriptTarget::ES2022,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var z, env_1, y;"),
+            "System top-level using should place the disposable environment before later nested var hoists.\nOutput:\n{output}"
         );
     }
 

@@ -91,10 +91,26 @@ fn test_plain_js_binder_errors_use_module_and_cross_function_diagnostics() {
         "plainJSBinderErrors.js",
         r#"
 export default 12
+const yield = 2
+async function f() {
+    const await = 3
+}
 function* g() {
     const yield = 4
 }
 class C {
+    deleted() {
+        function container(f) {
+            delete f
+        }
+        var g = 6
+        delete g
+        delete container
+    }
+    evalArguments() {
+        const eval = 7
+        const arguments = 8
+    }
     label() {
         for(;;) {
             label: var x = 1
@@ -115,6 +131,14 @@ const arguments = 10
     assert!(
         has_error(&diagnostics, 1215),
         "Expected top-level `eval`/`arguments` bindings in a JS module to use TS1215.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 1210),
+        "Expected class-local `eval`/`arguments` bindings in JS to use TS1210.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 1102),
+        "Expected delete-on-identifier in JS class/module strict context to use TS1102.\nGot: {diagnostics:?}"
     );
     assert!(
         has_error(&diagnostics, 1107),
@@ -1108,6 +1132,125 @@ type T = Shape[any];
 }
 
 #[test]
+fn test_indexed_access_type_anchors_ts2538_at_any_index() {
+    let source = r#"
+class Shape {
+    name: string;
+}
+
+type T = Shape[any];
+"#;
+    let diagnostics =
+        compile_and_get_raw_diagnostics_named("test.ts", source, CheckerOptions::default());
+
+    let ts2538 = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == 2538
+                && diagnostic
+                    .message_text
+                    .contains("Type 'any' cannot be used as an index type")
+        })
+        .expect("expected TS2538 for `Shape[any]`");
+    assert_eq!(ts2538.start, source.find("any];").unwrap() as u32);
+    assert_eq!(ts2538.length, 3);
+}
+
+#[test]
+fn test_indexed_access_union_boolean_reports_literal_members() {
+    let source = r#"
+class Shape {
+    name: string;
+}
+
+type T = Shape[string | boolean];
+"#;
+    let diagnostics =
+        compile_and_get_raw_diagnostics_named("test.ts", source, CheckerOptions::default());
+
+    let ts2538: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2538)
+        .collect();
+    assert!(
+        ts2538.iter().any(|diagnostic| {
+            diagnostic
+                .message_text
+                .contains("Type 'false' cannot be used as an index type")
+        }),
+        "Expected TS2538 for the false member.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2538.iter().any(|diagnostic| {
+            diagnostic
+                .message_text
+                .contains("Type 'true' cannot be used as an index type")
+        }),
+        "Expected TS2538 for the true member.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2538.iter().all(|diagnostic| {
+            !diagnostic
+                .message_text
+                .contains("Type 'boolean' cannot be used as an index type")
+        }),
+        "Expected boolean union diagnostics to expand to literal members.\nActual diagnostics: {diagnostics:#?}"
+    );
+
+    let expected_start = source.find("string | boolean").unwrap() as u32;
+    let expected_len = "string | boolean".len() as u32;
+    assert!(
+        ts2538.iter().all(|diagnostic| {
+            diagnostic.start == expected_start && diagnostic.length == expected_len
+        }),
+        "Expected TS2538 diagnostics to anchor at the full index type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_indexed_access_string_number_union_reports_both_index_signatures() {
+    let source = r#"
+class Shape {
+    name: string;
+}
+
+type T = Shape[string | number];
+"#;
+    let diagnostics =
+        compile_and_get_raw_diagnostics_named("test.ts", source, CheckerOptions::default());
+
+    let ts2537: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2537)
+        .collect();
+    assert!(
+        ts2537.iter().any(|diagnostic| {
+            diagnostic
+                .message_text
+                .contains("Type 'Shape' has no matching index signature for type 'string'")
+        }),
+        "Expected TS2537 for the string member.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2537.iter().any(|diagnostic| {
+            diagnostic
+                .message_text
+                .contains("Type 'Shape' has no matching index signature for type 'number'")
+        }),
+        "Expected TS2537 for the number member.\nActual diagnostics: {diagnostics:#?}"
+    );
+
+    let expected_start = source.find("string | number").unwrap() as u32;
+    let expected_len = "string | number".len() as u32;
+    assert!(
+        ts2537.iter().all(|diagnostic| {
+            diagnostic.start == expected_start && diagnostic.length == expected_len
+        }),
+        "Expected TS2537 diagnostics to anchor at the full index type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_type_reports_ts2537_for_array_string_index() {
     if !lib_files_available() {
         return;
@@ -1130,6 +1273,34 @@ type T = string[][string];
         !diagnostics.iter().any(|(code, _)| *code == 2536),
         "Did not expect TS2536 for `string[][string]` once concrete classifier applies.\nActual diagnostics: {diagnostics:#?}"
     );
+}
+
+#[test]
+fn test_nested_indexed_access_diagnostic_uses_last_bracket_span() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let source = r#"
+type T = string[][boolean];
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        source,
+        CheckerOptions::default(),
+    );
+
+    let ts2538 = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == 2538
+                && diagnostic
+                    .message_text
+                    .contains("Type 'boolean' cannot be used as an index type")
+        })
+        .expect("expected TS2538 for `string[][boolean]`");
+    assert_eq!(ts2538.start, source.rfind("boolean").unwrap() as u32);
+    assert_eq!(ts2538.length, "boolean".len() as u32);
 }
 
 #[test]

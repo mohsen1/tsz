@@ -103,6 +103,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.retain_export_default_expression_type_dependencies_in_statements(
                 &source_file.statements,
             );
+            self.retain_synthetic_function_return_dependencies_in_statements(
+                &source_file.statements,
+            );
         }
 
         // Prepare aliases and build the import plan before emitting anything
@@ -875,10 +878,17 @@ impl<'a> DeclarationEmitter<'a> {
                             preferred_return.as_deref().unwrap_or(type_text),
                             effective_return_type_id,
                         )
+                        || self.source_return_type_is_function_type_param(func, type_text)
                         || (*substituted_parameter_type_query && !type_text.contains("typeof ")))
                 {
                     self.write(": ");
                     self.write(type_text);
+                } else if self.emit_single_nameable_new_return_type_if_solver_any(
+                    func,
+                    func_body,
+                    func_name,
+                    effective_return_type_id,
+                ) {
                 } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
                     && let Some(type_text) = preferred_return
                 {
