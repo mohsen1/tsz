@@ -286,3 +286,86 @@ export type RemoveIdxSgn<T> = Pick<T, KeysWithoutStringIndex<T>>;
         "Mapped key infer result should be accepted as a keyof subset. Got: {ts2344_errors:?}"
     );
 }
+
+#[test]
+fn test_react_component_props_with_ref_accepts_conditional_element_type() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+namespace JSX {
+    export interface IntrinsicElements { div: any; }
+}
+
+namespace React {
+    export type ComponentType<P = any> = (props: P) => any;
+    export type ElementType<P = any> = keyof JSX.IntrinsicElements | ComponentType<P>;
+    export type ComponentPropsWithRef<T extends ElementType> = any;
+}
+
+type IntrinsicElementsKeys = keyof JSX.IntrinsicElements;
+type Props<C extends string | React.ComponentType<any>> =
+    React.ComponentPropsWithRef<
+        C extends IntrinsicElementsKeys | React.ComponentType<any> ? C : never
+    >;
+"#,
+    );
+
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344_errors.is_empty(),
+        "Conditional intrinsic/component element types should satisfy ComponentPropsWithRef. Got: {ts2344_errors:?}"
+    );
+}
+
+#[test]
+fn test_styled_component_inner_component_constraint_errors_at_declaration_time() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+namespace JSX {
+    export interface IntrinsicElements { div: any; }
+}
+
+namespace React {
+    export type ComponentType<P = any> = (props: P) => any;
+    export type ElementType<P = any> = keyof JSX.IntrinsicElements | ComponentType<P>;
+    export type ComponentPropsWithRef<T extends ElementType> = any;
+}
+
+type StyledComponent<C extends keyof JSX.IntrinsicElements | React.ComponentType<any>> =
+    string & React.ComponentType<any>;
+type AnyStyledComponent = StyledComponent<any>;
+
+interface StyledComponentBase {
+    withComponent<WithC extends AnyStyledComponent>(): StyledComponent<
+        StyledComponentInnerComponent<WithC>
+    >;
+}
+
+type StyledComponentInnerComponent<C extends React.ComponentType<any>> =
+    C extends StyledComponent<infer I> ? I : C;
+type StyledComponentPropsWithRef<C extends keyof JSX.IntrinsicElements | React.ComponentType<any>> =
+    C extends AnyStyledComponent
+        ? React.ComponentPropsWithRef<StyledComponentInnerComponent<C>>
+        : React.ComponentPropsWithRef<C>;
+"#,
+    );
+
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344_errors
+            .iter()
+            .any(|(_, msg)| msg.contains("Type 'WithC' does not satisfy")),
+        "Expected TS2344 for WithC not satisfying ComponentType<any>. Got: {ts2344_errors:?}"
+    );
+    assert!(
+        ts2344_errors
+            .iter()
+            .any(|(_, msg)| msg.contains("Type 'AnyStyledComponent & C' does not satisfy")),
+        "Expected TS2344 for narrowed C not satisfying ComponentType<any>. Got: {ts2344_errors:?}"
+    );
+}

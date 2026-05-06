@@ -114,6 +114,59 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn is_require_call_callee_without_node_global(
+        &self,
+        name: &str,
+        idx: NodeIndex,
+    ) -> bool {
+        if name != "require" {
+            return false;
+        }
+
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+        if parent_node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(parent_node) else {
+            return false;
+        };
+        if call.expression != idx {
+            return false;
+        }
+        let Some(module_specifier) = self.get_require_module_specifier(parent) else {
+            return false;
+        };
+
+        let is_import_equals_module_reference = self
+            .ctx
+            .arena
+            .get_extended(parent)
+            .and_then(|parent_ext| self.ctx.arena.get(parent_ext.parent))
+            .is_some_and(|grandparent| {
+                grandparent.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            });
+        if is_import_equals_module_reference {
+            return true;
+        }
+
+        self.is_js_file()
+            && self
+                .ctx
+                .resolve_import_target_from_file_for_request(
+                    self.ctx.current_file_idx,
+                    &module_specifier,
+                    Some(crate::context::ResolutionModeOverride::Require),
+                    crate::context::ResolutionRequestKind::CjsRequire,
+                )
+                .is_some()
+    }
+
     /// Check if a node is in a type-annotation context (type reference, implements, extends, etc.).
     /// Used to determine which symbol meaning to use for spelling suggestions.
     fn is_in_type_context(&self, idx: NodeIndex) -> bool {
@@ -667,6 +720,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if self.is_require_call_callee_without_node_global(name, idx) {
+            return;
+        }
+
         // Suppress TS2304 for `intrinsic` when it is the bare, unparenthesized direct body
         // of a type alias. TS2795 is emitted separately; TSC never also emits TS2304 in this
         // position. However, when parenthesized like `type TE1 = (intrinsic)`, TSC treats it
@@ -1205,48 +1262,36 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    const fn use_types_field_missing_global_diagnostics(&self) -> bool {
-        self.ctx.capabilities.types_explicitly_set || self.ctx.compiler_options.no_types_and_symbols
-    }
-
     /// Report TS2580/TS2591: Cannot find name 'X' - suggest installing @types/node.
     ///
-    /// tsc's rule, mirrored here:
-    /// - TS2580 ("Try `npm i --save-dev @types/node`.") when the user has an
-    ///   explicit `types` field — they already manage type roots, so the only
-    ///   missing piece is the install. Conformance tests opt in via
-    ///   `// @types: *`.
-    /// - TS2591 ("...and then add 'node' to the types field in your tsconfig.")
-    ///   otherwise — the user must both install and add `node` to the types
-    ///   field. This is the default fingerprint for tests with no `// @types`
-    ///   directive.
+    /// In the missing-global name-resolution path, tsc emits TS2591 ("install
+    /// @types/node and add 'node' to the types field"). TS2580 is still used by
+    /// separate module-resolution paths where the unresolved name is a module
+    /// specifier rather than a global identifier.
     pub fn error_cannot_find_name_install_node_types(&mut self, name: &str, idx: NodeIndex) {
-        let code = if self.use_types_field_missing_global_diagnostics() {
-            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE
-        } else {
-            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2
-        };
-        self.error_at_node_msg(idx, code, &[name]);
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+            &[name],
+        );
     }
 
     /// Report TS2581/TS2592: Cannot find name 'X' - suggest installing @types/jquery.
     pub fn error_cannot_find_name_install_jquery_types(&mut self, name: &str, idx: NodeIndex) {
-        let code = if self.use_types_field_missing_global_diagnostics() {
-            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2
-        } else {
-            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA
-        };
-        self.error_at_node_msg(idx, code, &[name]);
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
+            &[name],
+        );
     }
 
     /// Report TS2582/TS2593: Cannot find name 'X' - suggest installing test runner types.
     pub fn error_cannot_find_name_install_test_types(&mut self, name: &str, idx: NodeIndex) {
-        let code = if self.use_types_field_missing_global_diagnostics() {
-            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2
-        } else {
-            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N
-        };
-        self.error_at_node_msg(idx, code, &[name]);
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2,
+            &[name],
+        );
     }
 
     /// Report TS2868: Cannot find name 'Bun' - suggest installing @types/bun

@@ -1497,7 +1497,9 @@ impl<'a> Printer<'a> {
             let leftmost_needs_parens = leftmost == syntax_kind_ext::FUNCTION_EXPRESSION
                 || leftmost == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || (self.ctx.target_es5 && expr_node.kind == syntax_kind_ext::ARROW_FUNCTION);
-            leftmost_needs_parens && !self.outer_paren_will_survive_emit(expr_stmt.expression)
+            leftmost_needs_parens
+                && !self.outer_paren_will_survive_emit(expr_stmt.expression)
+                && !self.is_erased_object_literal_access_call_expression(expr_stmt.expression)
         } else {
             false
         };

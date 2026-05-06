@@ -259,18 +259,28 @@ impl<'a> Printer<'a> {
         self.write("(");
         // Emit inline comments between `(` and inner expression
         // (e.g., `( /* Preserve */j = f())`)
-        // When the comment has a trailing newline (line comment `// ...`),
-        // emit a newline after `(` so that the output matches tsc:
-        //   `yield (\n// comment\na)` instead of `yield ( // comment\na)`
+        // Preserve whether the first inner comment started on the `(` line.
+        // A same-line `//` comment keeps a separating space after `(`, while a
+        // comment already on the following source line gets a printed newline.
         if let Some(inner_node) = self.arena.get(paren.expression)
             && self.has_pending_comment_before(inner_node.pos)
         {
             let actual_inner_start =
                 self.skip_trivia_forward(inner_node.pos, inner_node.pos + 2048);
-            let inserted_same_line_separator = if self
-                .has_newline_comment_in_range(node.pos, inner_node.pos)
-                || self.source_range_has_newline(node.pos, actual_inner_start)
-            {
+            let pending_line_comment_on_open_paren_line =
+                open_paren_source_pos.is_some_and(|open_paren_pos| {
+                    self.all_comments
+                        .get(self.comment_emit_idx)
+                        .is_some_and(|comment| {
+                            comment.pos < inner_node.pos
+                                && !comment.is_multi_line
+                                && !self.source_range_has_newline(open_paren_pos + 1, comment.pos)
+                        })
+                });
+            let should_break_after_open_paren = !pending_line_comment_on_open_paren_line
+                && (self.has_newline_comment_in_range(node.pos, inner_node.pos)
+                    || self.source_range_has_newline(node.pos, actual_inner_start));
+            let inserted_same_line_separator = if should_break_after_open_paren {
                 self.write_line();
                 false
             } else {

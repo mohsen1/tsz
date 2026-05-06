@@ -949,7 +949,8 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write("void");
                 } else if let Some(type_text) = preferred_return_type_text.as_ref()
-                    && self.should_prefer_source_return_type_text(type_text, return_type_id)
+                    && (self.should_prefer_source_return_type_text(type_text, return_type_id)
+                        || self.source_return_type_is_function_type_param(func, type_text))
                 {
                     let (type_text, _) =
                         self.function_return_type_text_for_declaration_scope(func, type_text);

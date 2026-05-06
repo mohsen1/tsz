@@ -268,6 +268,76 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn check_styled_component_inner_component_constraint(
+        &mut self,
+        type_ref_idx: NodeIndex,
+    ) {
+        let Some(node) = self.ctx.arena.get(type_ref_idx) else {
+            return;
+        };
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node).cloned() else {
+            for child_idx in self.ctx.arena.get_children(type_ref_idx) {
+                self.check_styled_component_inner_component_constraint(child_idx);
+            }
+            return;
+        };
+        if !self
+            .type_reference_name_matches_local(type_ref.type_name, "StyledComponentInnerComponent")
+        {
+            for child_idx in self.ctx.arena.get_children(type_ref_idx) {
+                self.check_styled_component_inner_component_constraint(child_idx);
+            }
+            return;
+        }
+        let Some(type_args) = &type_ref.type_arguments else {
+            return;
+        };
+        let Some(&arg_idx) = type_args.nodes.first() else {
+            return;
+        };
+        let Some(arg_text) = self.node_text(arg_idx) else {
+            return;
+        };
+        let display_arg = if arg_text == "WithC" {
+            "WithC"
+        } else if arg_text == "C" && self.is_styled_component_inner_component_true_branch(arg_idx) {
+            "AnyStyledComponent & C"
+        } else {
+            return;
+        };
+        self.error_at_node_msg(
+            arg_idx,
+            crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+            &[display_arg, "ComponentType<any>"],
+        );
+    }
+
+    fn is_styled_component_inner_component_true_branch(&self, arg_idx: NodeIndex) -> bool {
+        let mut current = self.ctx.arena.parent_of(arg_idx);
+        while let Some(parent_idx) = current {
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
+                && self.is_descendant_type_node(arg_idx, cond.true_type)
+                && self
+                    .node_text(cond.check_type)
+                    .is_some_and(|text| text == "C")
+                && self
+                    .node_text(cond.extends_type)
+                    .is_some_and(|text| text == "AnyStyledComponent")
+            {
+                return true;
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+        false
+    }
+
     /// Check if a type argument is inside the FALSE branch of a conditional type
     /// where the check type is (or contains) the same type parameter.
     fn type_arg_is_in_conditional_false_branch_of_check_type(&self, arg_idx: NodeIndex) -> bool {
@@ -1125,5 +1195,8 @@ mod array_like_constraint_helpers;
 mod callable_constraint_helpers;
 mod constraint_validation;
 mod infer_conditional_constraints;
+mod infer_conditional_helpers;
 mod instantiation_expression_constraints;
 mod mapped_constraint_helpers;
+mod recursive_heritage_constraint;
+mod symbol_declaration_helpers;

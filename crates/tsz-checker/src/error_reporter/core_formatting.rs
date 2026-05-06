@@ -576,7 +576,8 @@ impl<'a> CheckerState<'a> {
                                     .filter(|prop| predicate(prop))
                                     .filter_map(|prop| {
                                         let name = types.resolve_atom_ref(prop.name).to_string();
-                                        if name.starts_with("__private_brand_") {
+                                        if tsz_solver::utils::is_synthetic_private_brand_name(&name)
+                                        {
                                             None
                                         } else {
                                             Some((name, resolve_candidate_type(prop)))

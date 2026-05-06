@@ -22,6 +22,14 @@ use tsz_solver::TypeParamInfo;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn lib_name_has_local_augmentation(&self, name: &str) -> bool {
+        self.ctx
+            .binder
+            .global_augmentations
+            .get(name)
+            .is_some_and(|v| !v.is_empty())
+    }
+
     /// True when callers must skip `shared_lib_type_cache` for `name`:
     /// either this checker locally augments `name`, or `name` is multi-lib
     /// merged where property-listing order in printed diagnostic messages
@@ -33,11 +41,7 @@ impl<'a> CheckerState<'a> {
         if name == "Array" {
             return true;
         }
-        self.ctx
-            .binder
-            .global_augmentations
-            .get(name)
-            .is_some_and(|v| !v.is_empty())
+        self.lib_name_has_local_augmentation(name)
     }
 
     /// Resolve a lib type by name and also return its type parameters.
