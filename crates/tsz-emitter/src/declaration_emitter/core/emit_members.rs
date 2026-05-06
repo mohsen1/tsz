@@ -105,6 +105,7 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
 
         let resolved_computed_name = self.resolved_computed_property_name_text(method.name);
+        let is_symbol_computed_name = self.is_symbol_computed_property_name(method.name);
         let computed_key_type = self
             .arena
             .get(method.name)
@@ -120,6 +121,9 @@ impl<'a> DeclarationEmitter<'a> {
             // If the computed name resolves to a known literal (e.g. const enum member),
             // keep method syntax — the name is a valid property name in .d.ts.
             && resolved_computed_name.is_none()
+            // Well-known symbol names are valid declaration method names even when
+            // the symbol expression's type is unavailable in the current cache.
+            && !is_symbol_computed_name
             && (method.question_token || computed_key_requires_property_syntax);
 
         if use_property_syntax {
@@ -404,6 +408,31 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
         self.js_augmented_static_method_nodes.contains(&method_idx)
+    }
+
+    fn is_symbol_computed_property_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        self.get_identifier_text(access.expression).as_deref() == Some("Symbol")
     }
 
     pub(in crate::declaration_emitter) fn emit_constructor_declaration(
