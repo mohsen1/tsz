@@ -1247,15 +1247,15 @@ vs1 = vs12;
         .collect();
 
     assert!(
-        ts2322
-            .iter()
-            .any(|message| message.contains("Type '2 | 1' is not assignable to type '1'.")),
-        "Expected direct alias assignment to display evaluated literal union, got: {diagnostics:?}"
+        ts2322.iter().any(|message| message.contains(
+            "Type 'NumericConstraint<1 | 2>' is not assignable to type 'NumericConstraint<1>'."
+        )),
+        "Expected direct alias assignment to preserve the alias surface, got: {diagnostics:?}"
     );
     assert!(
         ts2322.iter().any(|message| message
-            .contains("Type 'VarianceShape<2 | 1>' is not assignable to type 'VarianceShape<1>'.")),
-        "Expected object alias assignment to preserve alias with tsc numeric union order, got: {diagnostics:?}"
+            .contains("Type 'Shape<1 | 2>' is not assignable to type 'Shape<1>'.")),
+        "Expected object alias assignment to preserve the object alias surface, got: {diagnostics:?}"
     );
 }
 

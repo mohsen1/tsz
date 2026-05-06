@@ -79,10 +79,7 @@ impl<'a> CheckerState<'a> {
         if def.kind != tsz_solver::def::DefKind::TypeAlias {
             return None;
         }
-        let body = def.body?;
-        let Some(tsz_solver::TypeData::TypeParameter(param)) = self.ctx.types.lookup(body) else {
-            return None;
-        };
+        let param = crate::query_boundaries::common::type_param_info(self.ctx.types, def.body?)?;
         let arg_idx = def
             .type_params
             .iter()

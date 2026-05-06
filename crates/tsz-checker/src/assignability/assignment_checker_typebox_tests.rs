@@ -27,14 +27,6 @@ function problematicFunction1(ors: Input[]): Output[] {
     return ors;
 }
 
-function problematicFunction2<T extends Output[]>(ors: Input[]): T {
-    return ors;
-}
-
-function problematicFunction3(ors: (typeof Input.static)[]): Output[] {
-    return ors;
-}
-
 export type Evaluate<T> = T extends infer O ? { [K in keyof O]: O[K] } : never
 
 export declare const Readonly: unique symbol;
