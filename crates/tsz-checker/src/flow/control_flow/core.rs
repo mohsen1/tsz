@@ -1662,6 +1662,9 @@ impl<'a> FlowAnalyzer<'a> {
                                             })
                                         });
                                     let narrowing_base = declared_type.unwrap_or(initial_type);
+                                    if assigned_type == narrowing_base {
+                                        return assigned_type;
+                                    }
                                     // For const declarations with enum types: if the assigned
                                     // type is a member of the enum, narrow directly to the
                                     // member type. This enables flow narrowing for patterns like

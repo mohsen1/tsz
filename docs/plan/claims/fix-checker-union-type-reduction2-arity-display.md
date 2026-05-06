@@ -1,9 +1,9 @@
 # fix(checker): align union type reduction2 arity display
 
 - **Date**: 2026-05-06
-- **Branch**: `fix/checker-union-type-reduction2-arity-display`
-- **PR**: https://github.com/mohsen1/tsz/pull/3553
-- **Status**: claim
+- **Branch**: `fix/checker-union-type-reduction2-callable-arity`
+- **PR**: Pending
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
@@ -23,8 +23,18 @@ submodule attempt.
 
 ## Files Touched
 
-- TBD
+- `crates/tsz-checker/src/types/computation/helpers.rs`
+- `crates/tsz-checker/src/types/computation/binary.rs`
+- `crates/tsz-checker/src/flow/control_flow/assignment.rs`
+- `crates/tsz-checker/src/flow/control_flow/core.rs`
+- `crates/tsz-checker/src/error_reporter/call_errors_tests.rs`
+- `crates/tsz-solver/src/operations/core/call_resolution.rs`
 
 ## Verification
 
-- Pending
+- `cargo fmt --check`
+- `CARGO_TARGET_DIR=.target-pr3553 CARGO_INCREMENTAL=0 cargo build --target-dir .target-pr3553 --profile dist-fast -p tsz-cli --bin tsz -p tsz-conformance --bin tsz-conformance`
+- `./.target-pr3553/dist-fast/tsz-conformance --test-dir TypeScript/tests/cases --cache-file scripts/conformance/tsc-cache-full.json --tsz-binary ./.target-pr3553/dist-fast/tsz --filter 'unionTypeReduction2' --verbose --print-fingerprints --write-diff-artifacts --diff-artifacts-dir artifacts/conformance/union-type-reduction2 --workers 2 --max-worker-rss-mb 1024 --max-compilations-per-worker 10`
+  - Result: `FINAL RESULTS: 1/1 passed (100.0%)`
+- `CARGO_TARGET_DIR=.target-pr3553 CARGO_INCREMENTAL=0 cargo nextest run --target-dir .target-pr3553 -p tsz-checker union_type_reduction2_preserves_tsc_callable_arity`
+  - Result: 1 test passed

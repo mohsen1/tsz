@@ -337,6 +337,18 @@ impl<'a> FlowAnalyzer<'a> {
                 );
             }
 
+            if !self.is_var_decl_with_type_annotation(assignment_node)
+                && let Some(node_types) = self.node_types
+                && let Some(&decl_type) = node_types.get(&assignment_node.0)
+                && decl_type != TypeId::ERROR
+            {
+                return self.assigned_type_respecting_access_read_surface(
+                    assignment_node,
+                    target,
+                    decl_type,
+                );
+            }
+
             // For flow narrowing, prefer literal types from AST nodes over the type checker's widened types
             // This ensures that `x = 42` narrows to literal 42.0, not just NUMBER
             // This matches TypeScript's behavior where control flow analysis preserves literal types

@@ -414,7 +414,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         for i in 0..max_param_count {
             let mut param_types_at_pos = Vec::new();
-            let mut any_required = false;
+            let mut required_param_types_at_pos = Vec::new();
+            let mut optional_param_types_at_pos = Vec::new();
+            let mut saw_absent = false;
 
             for (params, _, has_rest) in &all_signatures {
                 if i < params.len() {
@@ -432,10 +434,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             return None;
                         }
                     } else {
-                        param_types_at_pos.push(param.type_id);
-                    }
-                    if param.is_required() {
-                        any_required = true;
+                        let type_id =
+                            crate::narrowing::utils::remove_undefined(self.interner, param.type_id);
+                        param_types_at_pos.push(type_id);
+                        if param.is_required() {
+                            required_param_types_at_pos.push(param.type_id);
+                        } else {
+                            optional_param_types_at_pos.push(param.type_id);
+                        }
                     }
                 } else if *has_rest {
                     // Position i is beyond this member's positional params, but the
@@ -453,6 +459,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // If a member doesn't have a param at this position and has no rest,
                 // it doesn't constrain the type (absent). But if ANY member requires
                 // it, the combined signature requires it.
+                else {
+                    saw_absent = true;
+                }
             }
 
             // Intersect all param types at this position
@@ -462,12 +471,38 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Shouldn't happen since we iterate up to max_param_count
                 continue;
             } else {
-                self.intersect_union_call_param_types(&param_types_at_pos)
+                let mut result = param_types_at_pos[0];
+                for &param_type in &param_types_at_pos[1..] {
+                    if self.checker.is_assignable_to(result, param_type) {
+                        continue;
+                    }
+                    if self.checker.is_assignable_to(param_type, result) {
+                        result = param_type;
+                        continue;
+                    }
+                    result = self
+                        .checker
+                        .evaluate_type(self.interner.intersection2(result, param_type));
+                }
+                result
             };
 
             combined_params.push(combined_type);
 
-            if any_required {
+            let requires_argument = !required_param_types_at_pos.is_empty()
+                && (optional_param_types_at_pos.iter().any(|&optional_type| {
+                    required_param_types_at_pos.iter().any(|&required_type| {
+                        !self.checker.is_assignable_to(optional_type, required_type)
+                    })
+                }) || (saw_absent
+                    && required_param_types_at_pos.iter().any(|&required_type| {
+                        !self
+                            .checker
+                            .is_assignable_to(TypeId::UNDEFINED, required_type)
+                    }))
+                    || (optional_param_types_at_pos.is_empty() && !saw_absent));
+
+            if requires_argument {
                 min_required = i + 1;
             }
         }
