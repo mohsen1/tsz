@@ -348,38 +348,29 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.emit_type_node_text_from_arena(source_arena, type_annotation))
         }?;
         let type_text = if std::ptr::eq(source_arena, self.arena) {
-            // Note: the inner `if let Some(raw_type_text) = ... && ...` was
-            // originally written as a `match` guard, which requires the
-            // unstable `if_let_guard` feature (rust-lang/rust#51114). The
-            // three `Some(printed) if printed != "any" && ...` arms all
-            // share the same precondition, so this collapses them into a
-            // single arm and expresses the per-arm checks as a stable
-            // `let-chain` cascade in the body.
+            let raw_string_intrinsic_type_text = self
+                .local_type_annotation_text(type_annotation)
+                .filter(|raw_type_text| {
+                    Self::type_text_starts_with_string_intrinsic(raw_type_text)
+                });
             match printed {
-                Some(printed) if printed != "any" => {
-                    if let Some(raw_type_text) = self.local_type_annotation_text(type_annotation) {
-                        if Self::type_text_starts_with_string_intrinsic(&raw_type_text) {
-                            raw_type_text
-                        } else if (!printed.contains("any") || type_text.contains("any"))
-                            && printed.contains("typeof ")
-                            && !type_text.contains("typeof ")
-                        {
-                            printed.replace("typeof ", "")
-                        } else if !printed.contains("any") || type_text.contains("any") {
-                            printed
-                        } else {
-                            type_text
-                        }
-                    } else if (!printed.contains("any") || type_text.contains("any"))
+                Some(printed) if printed != "any" && raw_string_intrinsic_type_text.is_some() => {
+                    raw_string_intrinsic_type_text
+                        .expect("string intrinsic type text was checked above")
+                }
+                Some(printed)
+                    if printed != "any"
+                        && (!printed.contains("any") || type_text.contains("any"))
                         && printed.contains("typeof ")
-                        && !type_text.contains("typeof ")
-                    {
-                        printed.replace("typeof ", "")
-                    } else if !printed.contains("any") || type_text.contains("any") {
-                        printed
-                    } else {
-                        type_text
-                    }
+                        && !type_text.contains("typeof ") =>
+                {
+                    printed.replace("typeof ", "")
+                }
+                Some(printed)
+                    if printed != "any"
+                        && (!printed.contains("any") || type_text.contains("any")) =>
+                {
+                    printed
                 }
                 _ => type_text,
             }
@@ -6827,10 +6818,8 @@ impl<'a> DeclarationEmitter<'a> {
 
             let value_idx = if let Some(data) = self.arena.get_shorthand_property(member_node) {
                 data.name
-            } else if let Some(data) = self.arena.get_property_assignment(member_node) {
-                data.initializer
             } else {
-                return None;
+                self.arena.get_property_assignment(member_node)?.initializer
             };
 
             let type_text = self

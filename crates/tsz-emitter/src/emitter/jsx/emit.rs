@@ -249,6 +249,7 @@ impl<'a> Printer<'a> {
         } else {
             self.emit_jsx_attrs_as_object(&attrs_info.attrs);
         }
+        self.skip_jsx_attribute_line_comments(attributes);
 
         // Children -- tsc formats children on separate indented lines when there are
         // multiple children OR when any child is itself a JSX element (nested createElement).
@@ -951,6 +952,23 @@ impl<'a> Printer<'a> {
             {
                 self.skip_comments_for_empty_jsx_expr(node);
             }
+        }
+    }
+
+    fn skip_jsx_attribute_line_comments(&mut self, attributes: NodeIndex) {
+        let Some(attrs_node) = self.arena.get(attributes) else {
+            return;
+        };
+
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.pos >= attrs_node.pos && comment.end <= attrs_node.end {
+                if !comment.is_multi_line {
+                    self.comment_emit_idx += 1;
+                    continue;
+                }
+            }
+            break;
         }
     }
 

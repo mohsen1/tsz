@@ -18,6 +18,22 @@ fn transform_and_print(source: &str) -> String {
     }
 }
 
+fn transform_generator_and_print(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+    {
+        let mut transformer = AsyncES5Transformer::new(&parser.arena);
+        let ir = transformer.transform_generator_function(func_idx);
+        IRPrinter::emit_to_string(&ir)
+    } else {
+        String::new()
+    }
+}
+
 #[test]
 fn test_simple_async_function() {
     let output = transform_and_print("async function foo() { }");
@@ -29,6 +45,20 @@ fn test_simple_async_function() {
     assert!(
         output.contains("__generator"),
         "Should have generator wrapper"
+    );
+}
+
+#[test]
+fn test_generator_var_hoist_preserves_declaration_list_group() {
+    let output = transform_generator_and_print("function * f() { var x = 1, y; }");
+
+    assert!(
+        output.contains("function f() {\n    var x, y;\n    return __generator"),
+        "Downlevel generator var hoists should preserve declaration-list grouping: {output}"
+    );
+    assert!(
+        !output.contains("var x;\n    var y;"),
+        "The grouped source declaration should not split into separate hoists: {output}"
     );
 }
 

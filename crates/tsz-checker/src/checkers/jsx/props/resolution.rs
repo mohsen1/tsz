@@ -1003,15 +1003,27 @@ impl<'a> CheckerState<'a> {
                         && !attr_has_unresolved_type_params
                     {
                         let assignable = if is_function_attr {
-                            // For function-valued JSX props, tsc anchors at the attribute
-                            // name and displays an intersection of the inferred and expected
-                            // function types in the error message.
-                            self.check_assignable_or_report_jsx_callback_prop_at(
-                                actual_type,
-                                expected_type,
-                                value_node_idx,
-                                attr_data.name,
-                            )
+                            if attr_name == self.get_jsx_children_prop_name() {
+                                // JSX `children={p => "y"}` uses the same return
+                                // elaboration as JSX body children: tsc points at the
+                                // returned expression, not the `children` attribute name.
+                                self.check_assignable_or_report_at_exact_anchor(
+                                    actual_type,
+                                    expected_type,
+                                    value_node_idx,
+                                    value_node_idx,
+                                )
+                            } else {
+                                // For other function-valued JSX props, tsc anchors at
+                                // the attribute name and displays an intersection of the
+                                // inferred and expected function types in the error message.
+                                self.check_assignable_or_report_jsx_callback_prop_at(
+                                    actual_type,
+                                    expected_type,
+                                    value_node_idx,
+                                    attr_data.name,
+                                )
+                            }
                         } else if let Some(result) = self
                             .try_emit_jsx_bare_string_attr_undefined_target(
                                 actual_type,
