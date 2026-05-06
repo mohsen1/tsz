@@ -261,7 +261,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// True when `expr_idx` is a bare `globalThis` identifier. Used by variable
     /// declaration emit to render `const x = globalThis` as `: typeof globalThis`
     /// - without this check, the solver's fallback gives the emit path only
-    /// `any`, dropping the `globalThis` information tsc preserves in .d.ts.
+    ///   `any`, dropping the `globalThis` information tsc preserves in .d.ts.
     pub(in crate::declaration_emitter) fn initializer_is_global_this_identifier(
         &self,
         expr_idx: NodeIndex,
