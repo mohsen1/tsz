@@ -163,6 +163,8 @@ pub struct CompilerOptions {
     #[serde(default)]
     pub root_dir: Option<String>,
     #[serde(default)]
+    pub root_dirs: Option<Vec<String>>,
+    #[serde(default)]
     pub out_dir: Option<String>,
     #[serde(default)]
     pub out_file: Option<String>,
@@ -418,6 +420,7 @@ pub struct ResolvedCompilerOptions {
     pub base_url: Option<PathBuf>,
     pub paths: Option<Vec<PathMapping>>,
     pub root_dir: Option<PathBuf>,
+    pub root_dirs: Vec<PathBuf>,
     pub out_dir: Option<PathBuf>,
     pub out_file: Option<PathBuf>,
     pub declaration_dir: Option<PathBuf>,
@@ -850,6 +853,20 @@ pub fn resolve_compiler_options(
         && !root_dir.is_empty()
     {
         resolved.root_dir = Some(PathBuf::from(root_dir));
+    }
+
+    if let Some(root_dirs) = options.root_dirs.as_ref() {
+        resolved.root_dirs = root_dirs
+            .iter()
+            .filter_map(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(PathBuf::from(trimmed))
+                }
+            })
+            .collect();
     }
 
     if let Some(out_dir) = options.out_dir.as_deref()
@@ -3329,6 +3346,23 @@ fn anchor_inherited_path_options(config: &mut TsConfig, config_path: &Path) {
             }
         }
     }
+
+    if let Some(root_dirs) = opts.root_dirs.as_mut() {
+        let parent_abs = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+        for root_dir in root_dirs {
+            let trimmed = root_dir.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let candidate = std::path::Path::new(trimmed);
+            if candidate.is_absolute() {
+                continue;
+            }
+            let joined = parent_abs.join(candidate);
+            let normalized = std::fs::canonicalize(&joined).unwrap_or(joined);
+            *root_dir = normalized.to_string_lossy().into_owned();
+        }
+    }
 }
 
 fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {
@@ -3392,6 +3426,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             base_url,
             paths,
             root_dir,
+            root_dirs,
             out_dir,
             out_file,
             composite,
@@ -5128,6 +5163,62 @@ mod tests {
             !base_url.starts_with(app_dir.to_string_lossy().as_ref()),
             "Inherited baseUrl must not anchor at the child's directory: {base_url:?}"
         );
+    }
+
+    #[test]
+    fn test_inherited_root_dirs_anchor_at_declaring_config_dir() {
+        let temp = tempdir().expect("create temp dir");
+        let base_dir = temp.path().join("base");
+        let app_dir = temp.path().join("app");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        std::fs::create_dir_all(&app_dir).expect("create app dir");
+
+        let base_path = base_dir.join("tsconfig.base.json");
+        std::fs::write(
+            &base_path,
+            r#"{
+    "compilerOptions": {
+        "rootDirs": ["src", "generated"]
+    }
+}"#,
+        )
+        .expect("write base");
+
+        let child_path = app_dir.join("tsconfig.json");
+        std::fs::write(
+            &child_path,
+            r#"{
+    "extends": "../base/tsconfig.base.json",
+    "files": ["src/index.ts"]
+}"#,
+        )
+        .expect("write child");
+
+        let merged = load_tsconfig(&child_path).expect("load child");
+        let opts = merged.compiler_options.expect("compiler options merged");
+        let root_dirs = opts.root_dirs.expect("inherited rootDirs present");
+        let expected_base = base_dir
+            .canonicalize()
+            .expect("canonicalize base")
+            .to_string_lossy()
+            .into_owned();
+        let unexpected_app = app_dir
+            .canonicalize()
+            .expect("canonicalize app")
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(root_dirs.len(), 2);
+        for root_dir in &root_dirs {
+            assert!(
+                root_dir.starts_with(&expected_base),
+                "Inherited rootDirs must anchor at the base config's directory, got {root_dir:?}"
+            );
+            assert!(
+                !root_dir.starts_with(&unexpected_app),
+                "Inherited rootDirs must not anchor at the child's directory: {root_dir:?}"
+            );
+        }
     }
 
     #[test]
