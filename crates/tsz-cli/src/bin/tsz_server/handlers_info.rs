@@ -7,7 +7,6 @@ use tsz::binder::SymbolId;
 use tsz::lsp::definition::GoToDefinition;
 use tsz::lsp::highlighting::DocumentHighlightProvider;
 use tsz::lsp::hover::HoverProvider;
-use tsz::lsp::implementation::GoToImplementationProvider;
 use tsz::lsp::position::LineMap;
 use tsz::lsp::project::Project;
 use tsz::lsp::references::FindReferences;
@@ -2451,12 +2450,9 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
-            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
-            let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
-            let provider =
-                GoToImplementationProvider::new(&arena, &binder, &line_map, file, &source_text);
-            let locations = provider.get_implementations(root, position)?;
+            let mut project = self.build_project_for_file(&file)?;
+            let locations = project.get_implementations(&file, position)?;
             let body: Vec<serde_json::Value> = locations
                 .iter()
                 .map(|loc| {
