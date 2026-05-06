@@ -227,6 +227,11 @@ impl<'a> Printer<'a> {
                 return Some(format_js_number(value));
             }
 
+            if had_separators && !self.ctx.options.target.supports_es2021() && text.starts_with('.')
+            {
+                return Some(format!("0{text}"));
+            }
+
             // Convert numeric literals that need downleveling:
             // - Binary (0b/0B) and ES2015 octal (0o/0O): only for pre-ES2015 targets
             // - Legacy octal (01, 076): for ALL targets (TSC always converts these)
@@ -1056,6 +1061,32 @@ mod tests {
                 "Decimal numeric separator exponent should contain {expected}\nGot: {output}"
             );
         }
+    }
+
+    #[test]
+    fn numeric_separator_leading_decimal_fraction_gets_zero_prefix_below_es2021() {
+        use tsz_common::ScriptTarget;
+        let source = "00.5_5;\n01.5_5;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert_eq!(
+            output.matches("0.55;").count(),
+            2,
+            "Separator downlevel for leading decimal fractions should emit 0.55.\nGot: {output}"
+        );
+        assert!(
+            !output.lines().any(|line| line.trim() == ".55;"),
+            "Separator downlevel should not leave bare .55 fractions.\nGot: {output}"
+        );
     }
 
     /// Octal literals with separators converted to decimal at < ES2021
