@@ -6,6 +6,43 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn emit_recovered_class_keyword_variable_statement_tail(
+        &mut self,
+        node: &Node,
+    ) {
+        if !self.is_recovered_class_keyword_variable_statement(node) {
+            return;
+        }
+
+        self.write_line();
+        self.write("class {");
+        self.write_line();
+        self.write("}");
+        self.write_line();
+        self.write(";");
+    }
+
+    fn is_recovered_class_keyword_variable_statement(&self, node: &Node) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(source) = text.get(node.pos as usize..node.end as usize) else {
+            return false;
+        };
+        let trimmed = source.trim_start();
+        let Some(rest) = trimmed.strip_prefix("var") else {
+            return false;
+        };
+        let rest = rest.trim_start();
+        if !rest.starts_with("class") {
+            return false;
+        }
+        rest["class".len()..]
+            .chars()
+            .next()
+            .is_none_or(|ch| ch.is_whitespace() || ch == ';')
+    }
+
     /// Lower `using`/`await using` declarations for non-ES5 targets (ES2015+).
     /// Transforms:
     ///   `using d = expr;`
