@@ -419,6 +419,7 @@ pub struct ResolvedCompilerOptions {
     pub allow_arbitrary_extensions: bool,
     pub allow_importing_ts_extensions: bool,
     pub rewrite_relative_import_extensions: bool,
+    pub trace_resolution: bool,
     pub types_versions_compiler_version: Option<String>,
     pub types: Option<Vec<String>>,
     pub type_roots: Option<Vec<PathBuf>>,
