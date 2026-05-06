@@ -83,6 +83,10 @@ SomeClass.prop = 0"#,
         !codes.contains(&18046),
         "Expected no TS18046 for cross-file class+constructor merge, got codes: {codes:?}"
     );
+    assert!(
+        !codes.contains(&2339),
+        "Expected no TS2339 for cross-file class+constructor static expando write, got codes: {codes:?}"
+    );
 }
 
 #[test]

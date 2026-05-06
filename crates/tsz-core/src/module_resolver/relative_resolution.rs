@@ -153,7 +153,7 @@ impl ModuleResolver {
                 // extension (TS2834) because adding .js to the specifier won't work.
                 let resolved_ext = ModuleExtension::from_path(&resolved);
                 let resolved_via_index =
-                    self.resolved_via_directory_index(Path::new(&resolved), &candidate);
+                    self.resolved_via_directory_index(Path::new(&resolved), candidate);
                 // Bare `.`, `./`, `..`, `../` specifiers (no path component to
                 // add an extension to) resolve via directory index but should
                 // emit TS2307 (Cannot find module), not TS2834, because there

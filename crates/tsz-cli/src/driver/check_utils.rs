@@ -3,6 +3,7 @@
 //! parse diagnostic conversion, and pragma detection.
 
 use super::*;
+use tsz_common::file_extensions::is_ts_declaration_file;
 
 #[derive(Clone, Copy)]
 struct TslibHelperRequirement {
@@ -156,7 +157,7 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
     // tslib truly not found → TS2354 for each file needing helpers
     let mut result = Vec::new();
     for file in &program.files {
-        if file.file_name.ends_with(".d.ts") {
+        if is_ts_declaration_file(Path::new(&file.file_name)) {
             continue;
         }
         let is_esm = file_is_esm_map
@@ -197,7 +198,7 @@ fn emit_tslib_helper_diagnostics(
     let mut result = Vec::new();
     let tslib_exports = program.module_exports.get(tslib_key);
     for file in &program.files {
-        if file.file_name == tslib_key || file.file_name.ends_with(".d.ts") {
+        if file.file_name == tslib_key || is_ts_declaration_file(Path::new(&file.file_name)) {
             continue;
         }
 
@@ -284,7 +285,7 @@ fn emit_tslib_helper_diagnostics_from_counts(
 ) -> Vec<Diagnostic> {
     let mut result = Vec::new();
     for file in &program.files {
-        if file.file_name.ends_with(".d.ts") {
+        if is_ts_declaration_file(Path::new(&file.file_name)) {
             continue;
         }
 
@@ -2931,6 +2932,37 @@ texts.push(100);
                         == "This syntax requires an imported helper but module 'tslib' cannot be found."
             }),
             "Expected TS2354 for virtual program without tslib. Got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn declaration_extension_variants_do_not_require_imported_tslib_helpers() {
+        let program = merged_program(&[
+            (
+                "__virtual__/index.d.mts",
+                "declare class Base {}\ndeclare class Derived extends Base {}",
+            ),
+            (
+                "__virtual__/index.d.cts",
+                "declare class CjsBase {}\ndeclare class CjsDerived extends CjsBase {}",
+            ),
+        ]);
+        let mut options = ResolvedCompilerOptions {
+            import_helpers: true,
+            ..Default::default()
+        };
+        options.checker.target = tsz_common::ScriptTarget::ES5;
+
+        let diagnostics = detect_missing_tslib_helper_diagnostics(
+            &program,
+            &options,
+            Path::new("/__virtual__"),
+            &rustc_hash::FxHashMap::default(),
+        );
+
+        assert!(
+            diagnostics.iter().all(|diag| diag.code != 2354),
+            "Did not expect TS2354 for declaration-file variants. Got: {diagnostics:#?}"
         );
     }
 
