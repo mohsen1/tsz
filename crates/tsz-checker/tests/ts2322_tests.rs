@@ -4174,6 +4174,33 @@ fn test_index_signature_target_missing_prop_emits_ts2322_not_ts2741() {
 }
 
 #[test]
+fn test_named_generic_interface_requires_declared_number_index_signature() {
+    let source = r#"
+namespace __test1__ {
+    export interface Box<T, U> {
+        one: T;
+        two?: U;
+    }
+    var obj4: Box<number, string> = { one: 1 };
+    export var __val__obj4 = obj4;
+}
+namespace __test2__ {
+    export declare var aa: { [index: number]: number };
+    export var __val__aa = aa;
+}
+__test2__.__val__aa = __test1__.__val__obj4;
+"#;
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2322 = diagnostics
+        .iter()
+        .any(|(code, message)| *code == 2322 && message.contains("{ [index: number]: number; }"));
+    assert!(
+        has_ts2322,
+        "Expected TS2322 for named generic interface assigned to numeric index target. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_union_index_signature_object_literal_value_mismatches_emit_ts2322() {
     let source = r#"
 interface IValue {
