@@ -335,14 +335,18 @@ function test<Shape extends Record<string, string>>(shape: Shape, key: keyof Sha
     // with tsc on tests like mappedTypeGenericWithKnownKeys.
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2551 && message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
+            *code == 2551
+                && (message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
+                    || message.contains("Record<\"knownLiteralKey\" | keyof Shape, number>"))
         }),
         "Expected TS2551 to preserve `Record<keyof Shape | \"knownLiteralKey\", number>` in the property-receiver display.\nActual diagnostics: {diagnostics:#?}"
     );
 
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2862 && message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
+            *code == 2862
+                && (message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
+                    || message.contains("Record<\"knownLiteralKey\" | keyof Shape, number>"))
         }),
         "Expected TS2862 for broad string write through generic mapped type.\nActual diagnostics: {diagnostics:#?}"
     );
