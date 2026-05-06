@@ -645,8 +645,12 @@ impl ParserState {
         }
 
         // When `new:` consumed the return type already, ignore any further
-        // `: T` suffix (it would be a stray annotation).
+        // `: T` suffix (it would be a stray annotation), but still consume it
+        // so it cannot cascade into the outer parser.
         let type_annotation = if is_constructor {
+            if self.parse_optional(SyntaxKind::ColonToken) {
+                let _ = self.parse_type();
+            }
             constructor_return_type
         } else if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
