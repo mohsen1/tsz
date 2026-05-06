@@ -58,6 +58,9 @@ pub type ExportEqualsNamedCache = FxHashMap<(usize, String, String), Option<Symb
 /// Per-checker cache: nested namespace name → candidate `(file_idx, SymbolId)` entries.
 pub type NestedNamespaceCandidatesCache = FxHashMap<String, Vec<(usize, SymbolId)>>;
 
+/// Per-checker cache: namespace name → member name → resolved cross-binder symbol.
+pub type NamespaceMemberResolutionCache = FxHashMap<String, FxHashMap<String, Option<SymbolId>>>;
+
 /// Global cross-binder index: module specifier → list of `(file_idx, augmentation)`
 /// entries that contribute to that module's merged type.
 pub type GlobalModuleAugmentationsIndex = Arc<FxHashMap<String, Vec<(usize, ModuleAugmentation)>>>;
