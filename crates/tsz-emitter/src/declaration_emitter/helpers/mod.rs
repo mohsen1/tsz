@@ -190,6 +190,7 @@ mod emit_node;
 mod function_analysis;
 mod js_exports;
 mod jsdoc;
+mod late_bound_function_analysis;
 mod portability_check;
 mod portability_resolve;
 mod returned_function_initializer;
