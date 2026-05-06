@@ -349,27 +349,30 @@ impl<'a> DeclarationEmitter<'a> {
         }?;
         let type_text = if std::ptr::eq(source_arena, self.arena) {
             match printed {
-                Some(printed)
-                    if printed != "any"
-                        && let Some(raw_type_text) =
-                            self.local_type_annotation_text(type_annotation)
-                        && Self::type_text_starts_with_string_intrinsic(&raw_type_text) =>
-                {
-                    raw_type_text
-                }
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any"))
+                Some(printed) if printed != "any" => {
+                    if let Some(raw_type_text) = self.local_type_annotation_text(type_annotation) {
+                        if Self::type_text_starts_with_string_intrinsic(&raw_type_text) {
+                            raw_type_text
+                        } else if (!printed.contains("any") || type_text.contains("any"))
+                            && printed.contains("typeof ")
+                            && !type_text.contains("typeof ")
+                        {
+                            printed.replace("typeof ", "")
+                        } else if !printed.contains("any") || type_text.contains("any") {
+                            printed
+                        } else {
+                            type_text
+                        }
+                    } else if (!printed.contains("any") || type_text.contains("any"))
                         && printed.contains("typeof ")
-                        && !type_text.contains("typeof ") =>
-                {
-                    printed.replace("typeof ", "")
-                }
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any")) =>
-                {
-                    printed
+                        && !type_text.contains("typeof ")
+                    {
+                        printed.replace("typeof ", "")
+                    } else if !printed.contains("any") || type_text.contains("any") {
+                        printed
+                    } else {
+                        type_text
+                    }
                 }
                 _ => type_text,
             }
@@ -2471,13 +2474,13 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(type_text) =
                 self.rewrite_object_literal_computed_member_type_text(initializer, type_id)
         {
-            return type_text;
+            return self.rewrite_exported_import_equals_type_text(type_text);
         }
 
         if let Some(typeof_text) =
             self.typeof_prefix_for_value_entity(initializer, true, Some(type_id))
         {
-            return typeof_text;
+            return self.rewrite_exported_import_equals_type_text(typeof_text);
         }
 
         if (type_id == tsz_solver::types::TypeId::ANY
@@ -2488,7 +2491,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
             && let Some(type_text) = self.preferred_expression_type_text(initializer)
         {
-            return type_text;
+            return self.rewrite_exported_import_equals_type_text(type_text);
         }
 
         if type_id != tsz_solver::types::TypeId::ANY
@@ -2503,13 +2506,17 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_text = self
                     .expand_portable_mapped_object_text_in_current_context(&type_text)
                     .unwrap_or(type_text);
-                return self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
+                let type_text =
+                    self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
+                return self.rewrite_exported_import_equals_type_text(type_text);
             }
             let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
             let type_text = self
                 .expand_portable_mapped_object_text_in_current_context(&type_text)
                 .unwrap_or(type_text);
-            return self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
+            let type_text =
+                self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
+            return self.rewrite_exported_import_equals_type_text(type_text);
         }
 
         if (type_id != tsz_solver::types::TypeId::ANY
@@ -2520,21 +2527,240 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(expanded) =
                 self.expand_portable_mapped_object_text_in_current_context(&type_text)
             {
-                return expanded;
+                return self.rewrite_exported_import_equals_type_text(expanded);
             }
-            return self
+            let type_text = self
                 .enum_value_index_access_alias_type_text(&type_text)
                 .unwrap_or(type_text);
+            return self.rewrite_exported_import_equals_type_text(type_text);
         }
 
         let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
         if let Some(expanded) =
             self.expand_portable_mapped_object_text_in_current_context(&type_text)
         {
-            return expanded;
+            return self.rewrite_exported_import_equals_type_text(expanded);
         }
-        self.enum_value_index_access_alias_type_text(&type_text)
-            .unwrap_or(type_text)
+        let type_text = self
+            .enum_value_index_access_alias_type_text(&type_text)
+            .unwrap_or(type_text);
+        self.rewrite_exported_import_equals_type_text(type_text)
+    }
+
+    fn rewrite_exported_import_equals_type_text(&self, type_text: String) -> String {
+        let aliases = self.exported_import_equals_type_alias_rewrites();
+        if aliases.is_empty() {
+            return type_text;
+        }
+
+        aliases
+            .into_iter()
+            .fold(type_text, |text, (alias, target)| {
+                Self::replace_qualified_type_reference_text(&text, &alias, &target)
+            })
+    }
+
+    fn exported_import_equals_type_alias_rewrites(&self) -> Vec<(String, String)> {
+        let Some(source_file_idx) = self.current_source_file_idx else {
+            return Vec::new();
+        };
+        let Some(source_file_node) = self.arena.get(source_file_idx) else {
+            return Vec::new();
+        };
+        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
+            return Vec::new();
+        };
+
+        let mut aliases = Vec::new();
+        self.collect_exported_import_equals_type_aliases(
+            &source_file.statements,
+            &mut Vec::new(),
+            &mut aliases,
+        );
+        aliases.sort_by_key(|(alias, _)| std::cmp::Reverse(alias.len()));
+        aliases.dedup();
+        aliases
+    }
+
+    fn collect_exported_import_equals_type_aliases(
+        &self,
+        statements: &NodeList,
+        namespace_path: &mut Vec<String>,
+        aliases: &mut Vec<(String, String)>,
+    ) {
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                self.collect_exported_import_equals_type_aliases_in_module(
+                    stmt_node,
+                    namespace_path,
+                    aliases,
+                );
+                continue;
+            }
+
+            if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                self.collect_exported_import_equals_type_alias(
+                    stmt_idx,
+                    namespace_path,
+                    aliases,
+                    false,
+                );
+                continue;
+            }
+
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export_decl) = self.arena.get_export_decl(stmt_node)
+                && let Some(clause_node) = self.arena.get(export_decl.export_clause)
+            {
+                if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    self.collect_exported_import_equals_type_aliases_in_module(
+                        clause_node,
+                        namespace_path,
+                        aliases,
+                    );
+                } else if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                    self.collect_exported_import_equals_type_alias(
+                        export_decl.export_clause,
+                        namespace_path,
+                        aliases,
+                        true,
+                    );
+                }
+            }
+        }
+    }
+
+    fn collect_exported_import_equals_type_aliases_in_module(
+        &self,
+        module_node: &Node,
+        namespace_path: &mut Vec<String>,
+        aliases: &mut Vec<(String, String)>,
+    ) {
+        let Some(module) = self.arena.get_module(module_node) else {
+            return;
+        };
+        let Some(module_name) = self.entity_name_text(module.name) else {
+            return;
+        };
+
+        let old_len = namespace_path.len();
+        namespace_path.extend(module_name.split('.').map(ToString::to_string));
+
+        if let Some(body_node) = self.arena.get(module.body) {
+            if self.arena.get_module(body_node).is_some() {
+                self.collect_exported_import_equals_type_aliases_in_module(
+                    body_node,
+                    namespace_path,
+                    aliases,
+                );
+            } else if let Some(block) = self.arena.get_module_block(body_node)
+                && let Some(statements) = block.statements.as_ref()
+            {
+                self.collect_exported_import_equals_type_aliases(
+                    statements,
+                    namespace_path,
+                    aliases,
+                );
+            }
+        }
+
+        namespace_path.truncate(old_len);
+    }
+
+    fn collect_exported_import_equals_type_alias(
+        &self,
+        import_idx: NodeIndex,
+        namespace_path: &[String],
+        aliases: &mut Vec<(String, String)>,
+        already_exported: bool,
+    ) {
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return;
+        };
+        let Some(import_decl) = self.arena.get_import_decl(import_node) else {
+            return;
+        };
+        if !already_exported
+            && !self
+                .arena
+                .has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword)
+        {
+            return;
+        }
+        let Some(alias_name) = self.get_identifier_text(import_decl.import_clause) else {
+            return;
+        };
+        let Some(target_text) = self.entity_name_text(import_decl.module_specifier) else {
+            return;
+        };
+        if target_text == alias_name
+            || self
+                .arena
+                .get(import_decl.module_specifier)
+                .is_some_and(|node| node.kind == SyntaxKind::StringLiteral as u16)
+        {
+            return;
+        }
+
+        let alias_text = if namespace_path.is_empty() {
+            alias_name
+        } else {
+            format!("{}.{}", namespace_path.join("."), alias_name)
+        };
+        aliases.push((alias_text, target_text));
+    }
+
+    fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.get_identifier_text(idx);
+        }
+        if let Some(qualified) = self.arena.get_qualified_name(node) {
+            let left = self.entity_name_text(qualified.left)?;
+            let right = self.entity_name_text(qualified.right)?;
+            return Some(format!("{left}.{right}"));
+        }
+        if let Some(access) = self.arena.get_access_expr(node) {
+            let left = self.entity_name_text(access.expression)?;
+            let right = self.entity_name_text(access.name_or_argument)?;
+            return Some(format!("{left}.{right}"));
+        }
+        None
+    }
+
+    fn replace_qualified_type_reference_text(type_text: &str, from: &str, to: &str) -> String {
+        let mut out = String::with_capacity(type_text.len());
+        let mut search_start = 0;
+
+        while let Some(relative_idx) = type_text[search_start..].find(from) {
+            let start = search_start + relative_idx;
+            let end = start + from.len();
+            out.push_str(&type_text[search_start..start]);
+            if Self::is_qualified_type_reference_boundary(type_text, start, end) {
+                out.push_str(to);
+            } else {
+                out.push_str(from);
+            }
+            search_start = end;
+        }
+
+        out.push_str(&type_text[search_start..]);
+        out
+    }
+
+    fn is_qualified_type_reference_boundary(type_text: &str, start: usize, end: usize) -> bool {
+        let before = type_text[..start].chars().next_back();
+        let after = type_text[end..].chars().next();
+        !before.is_some_and(Self::is_qualified_type_reference_part)
+            && !after.is_some_and(Self::is_qualified_type_reference_part)
+    }
+
+    const fn is_qualified_type_reference_part(ch: char) -> bool {
+        ch == '.' || ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 
     pub(in crate::declaration_emitter) fn strip_synthetic_anonymous_object_members(
@@ -3721,6 +3947,529 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    pub(in crate::declaration_emitter) fn imported_static_method_declared_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(expr_node)?;
+        let callee_node = self.arena.get(call.expression)?;
+        let access = self.arena.get_access_expr(callee_node)?;
+        let receiver_name = self.get_identifier_text(access.expression)?;
+        let method_name = self.get_identifier_text(access.name_or_argument)?;
+        let imported_module =
+            self.imported_value_module_specifier_from_syntax(access.expression)?;
+        if imported_module.starts_with('.') || imported_module.starts_with('/') {
+            return None;
+        }
+
+        let binder = self.binder?;
+        let imported_name = self
+            .imported_value_export_name_from_syntax(access.expression, &imported_module)
+            .unwrap_or(receiver_name);
+        let class_sym = self
+            .export_symbol_from_module_specifier(binder, &imported_module, &imported_name)
+            .or_else(|| {
+                self.imported_value_export_symbol_from_syntax(
+                    access.expression,
+                    &imported_module,
+                    binder,
+                )
+            })
+            .or_else(|| {
+                let raw_sym_id = self.value_reference_symbol(access.expression)?;
+                self.resolve_portability_import_alias(raw_sym_id, binder)
+                    .or_else(|| Some(self.resolve_portability_symbol(raw_sym_id, binder)))
+            })?;
+        let class_sym = self.resolve_portability_symbol(class_sym, binder);
+        let explicit_type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
+
+        let from_symbol = self.with_symbol_declarations(class_sym, |source_arena, decl_idx| {
+            let class_decl = Self::class_decl_from_symbol_decl(source_arena, decl_idx)?;
+            self.imported_static_method_return_type_from_class_decl(
+                binder,
+                source_arena,
+                class_decl,
+                &imported_module,
+                &imported_name,
+                &method_name,
+                call,
+                &explicit_type_args,
+            )
+        });
+        from_symbol.or_else(|| {
+            self.imported_static_method_return_type_from_named_classes(
+                binder,
+                &imported_module,
+                &imported_name,
+                &method_name,
+                call,
+                &explicit_type_args,
+            )
+        })
+    }
+
+    fn imported_static_method_return_type_from_named_classes(
+        &self,
+        binder: &BinderState,
+        imported_module: &str,
+        imported_name: &str,
+        method_name: &str,
+        call: &tsz_parser::parser::node::CallExprData,
+        explicit_type_args: &[String],
+    ) -> Option<String> {
+        for symbol in binder.symbols.iter() {
+            if symbol.escaped_name != imported_name {
+                continue;
+            }
+            let Some(source_arena) = binder
+                .symbol_arenas
+                .get(&symbol.id)
+                .or_else(|| self.global_symbol_arenas.get(&symbol.id))
+                .map(|arena| arena.as_ref())
+            else {
+                continue;
+            };
+            for decl_idx in symbol.declarations.iter().copied() {
+                let Some(class_decl) = Self::class_decl_from_symbol_decl(source_arena, decl_idx)
+                else {
+                    continue;
+                };
+                if let Some(type_text) = self.imported_static_method_return_type_from_class_decl(
+                    binder,
+                    source_arena,
+                    class_decl,
+                    imported_module,
+                    imported_name,
+                    method_name,
+                    call,
+                    explicit_type_args,
+                ) {
+                    return Some(type_text);
+                }
+            }
+        }
+
+        None
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn imported_static_method_return_type_from_class_decl(
+        &self,
+        binder: &BinderState,
+        source_arena: &NodeArena,
+        class_decl: &tsz_parser::parser::node::ClassData,
+        imported_module: &str,
+        imported_name: &str,
+        method_name: &str,
+        call: &tsz_parser::parser::node::CallExprData,
+        explicit_type_args: &[String],
+    ) -> Option<String> {
+        for &member_idx in &class_decl.members.nodes {
+            let Some(member_node) = source_arena.get(member_idx) else {
+                continue;
+            };
+            let Some(func) = source_arena.get_method_decl(member_node) else {
+                continue;
+            };
+            if !source_arena.is_static(&func.modifiers) {
+                continue;
+            }
+            if self
+                .identifier_text_from_arena(source_arena, func.name)
+                .as_deref()
+                != Some(method_name)
+            {
+                continue;
+            }
+            if func.type_annotation.is_none()
+                || !self.function_signature_accepts_call_arguments(
+                    source_arena,
+                    &func.parameters,
+                    call,
+                )
+            {
+                continue;
+            }
+
+            let mut type_text = self
+                .emit_type_node_text_from_arena(source_arena, func.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, func.type_annotation))?
+                .trim_end()
+                .trim_end_matches(';')
+                .trim_end()
+                .to_string();
+            let mut type_param_names = Vec::new();
+            let mut type_param_substitutions = Vec::new();
+            let mut type_param_fallbacks = Vec::new();
+            if let Some(type_params) = func.type_parameters.as_ref() {
+                for &param_idx in &type_params.nodes {
+                    let Some(param_node) = source_arena.get(param_idx) else {
+                        continue;
+                    };
+                    let Some(param) = source_arena.get_type_parameter(param_node) else {
+                        continue;
+                    };
+                    let Some(name_text) = self.identifier_text_from_arena(source_arena, param.name)
+                    else {
+                        continue;
+                    };
+                    let fallback = if param.default.is_some() {
+                        self.emit_type_node_text_from_arena(source_arena, param.default)
+                            .or_else(|| self.source_slice_from_arena(source_arena, param.default))
+                    } else if param.constraint.is_some() {
+                        self.emit_type_node_text_from_arena(source_arena, param.constraint)
+                            .or_else(|| {
+                                self.source_slice_from_arena(source_arena, param.constraint)
+                            })
+                    } else {
+                        None
+                    };
+                    if let Some(fallback) = fallback {
+                        type_param_fallbacks.push((name_text.clone(), fallback));
+                    }
+                    type_param_names.push(name_text);
+                }
+            }
+            for (name_text, arg_text) in type_param_names.iter().zip(explicit_type_args.iter()) {
+                type_param_substitutions.push((name_text.clone(), arg_text.clone()));
+            }
+            for (name_text, fallback_text) in &type_param_fallbacks {
+                if type_param_substitutions
+                    .iter()
+                    .any(|(substituted, _)| substituted == name_text)
+                    || !Self::contains_whole_word_in_text(&type_text, name_text)
+                {
+                    continue;
+                }
+                let fallback_text =
+                    Self::replace_whole_words_in_text(fallback_text, &type_param_substitutions);
+                type_param_substitutions.push((name_text.clone(), fallback_text));
+            }
+            type_text = Self::replace_whole_words_in_text(&type_text, &type_param_substitutions);
+            if type_param_names
+                .iter()
+                .any(|name| Self::contains_whole_word_in_text(&type_text, name))
+            {
+                continue;
+            }
+
+            let excluded_names = [imported_name.to_string()];
+            return Some(self.qualify_public_package_names_in_text(
+                binder,
+                imported_module,
+                &type_text,
+                &excluded_names,
+            ));
+        }
+
+        None
+    }
+
+    fn class_decl_from_symbol_decl(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<&tsz_parser::parser::node::ClassData> {
+        let mut current = decl_idx;
+        for _ in 0..8 {
+            let node = arena.get(current)?;
+            if let Some(class_decl) = arena.get_class(node) {
+                return Some(class_decl);
+            }
+            current = arena.parent_of(current)?;
+        }
+
+        None
+    }
+
+    fn qualify_public_package_names_in_text(
+        &self,
+        binder: &BinderState,
+        base_module: &str,
+        text: &str,
+        excluded_names: &[String],
+    ) -> String {
+        let base_package = Self::bare_package_specifier(base_module);
+        let mut replacements = Vec::new();
+        for export_name in Self::type_reference_names_in_text(text) {
+            if excluded_names.iter().any(|name| name == &export_name)
+                || !Self::contains_whole_word_in_text(text, &export_name)
+            {
+                continue;
+            }
+            let Some(module_specifier) = self.public_module_specifier_exporting_name(
+                binder,
+                base_package,
+                base_module,
+                &export_name,
+            ) else {
+                continue;
+            };
+            replacements.push((
+                export_name.clone(),
+                format!("import(\"{module_specifier}\").{export_name}"),
+            ));
+        }
+
+        Self::replace_whole_words_in_text(text, &replacements)
+    }
+
+    fn public_module_specifier_exporting_name(
+        &self,
+        binder: &BinderState,
+        base_package: &str,
+        base_module: &str,
+        export_name: &str,
+    ) -> Option<String> {
+        if self.imported_module_exports_name(binder, base_module, export_name) {
+            return Some(base_module.to_string());
+        }
+
+        let current_path = self.current_file_path.as_deref()?;
+        let mut candidates = binder
+            .module_exports
+            .iter()
+            .filter_map(|(module_path, exports)| {
+                exports.get(export_name)?;
+                let specifier =
+                    self.package_specifier_for_node_modules_path(current_path, module_path)?;
+                (Self::bare_package_specifier(&specifier) == base_package).then_some(specifier)
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|specifier| (specifier.len(), specifier.clone()));
+        candidates.into_iter().next().or_else(|| {
+            self.public_module_specifier_from_package_files(base_package, base_module, export_name)
+        })
+    }
+
+    fn public_module_specifier_from_package_files(
+        &self,
+        base_package: &str,
+        base_module: &str,
+        export_name: &str,
+    ) -> Option<String> {
+        use std::path::Path;
+
+        let current_path = Path::new(self.current_file_path.as_deref()?);
+        let mut ancestor = current_path.parent();
+        let package_parts = base_package.split('/').collect::<Vec<_>>();
+        while let Some(dir) = ancestor {
+            let mut package_root = dir.join("node_modules");
+            for part in &package_parts {
+                package_root.push(part);
+            }
+            if package_root.exists() {
+                if let Some(specifier) = self.explicit_package_dts_export_specifier(
+                    &package_root,
+                    base_package,
+                    export_name,
+                ) {
+                    return Some(specifier);
+                }
+                if self.package_root_has_export_star(&package_root) {
+                    return Some(base_module.to_string());
+                }
+                return None;
+            }
+            ancestor = dir.parent();
+        }
+
+        None
+    }
+
+    fn explicit_package_dts_export_specifier(
+        &self,
+        package_root: &std::path::Path,
+        base_package: &str,
+        export_name: &str,
+    ) -> Option<String> {
+        let mut stack = vec![package_root.to_path_buf()];
+        let mut dts_files = Vec::new();
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "ts")
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.ends_with(".d.ts"))
+                {
+                    dts_files.push(path);
+                }
+            }
+        }
+        dts_files.sort();
+        for file in dts_files {
+            let Ok(text) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            if !Self::dts_text_explicitly_exports_name(&text, export_name) {
+                continue;
+            }
+            let rel = file.strip_prefix(package_root).ok()?;
+            let mut subpath = self.strip_ts_extensions(&rel.to_string_lossy().replace('\\', "/"));
+            if subpath.ends_with("/index") {
+                subpath.truncate(subpath.len() - "/index".len());
+            }
+            return if subpath.is_empty() {
+                Some(base_package.to_string())
+            } else {
+                Some(format!("{base_package}/{subpath}"))
+            };
+        }
+
+        None
+    }
+
+    fn package_root_has_export_star(&self, package_root: &std::path::Path) -> bool {
+        let package_json = package_root.join("package.json");
+        let root_dts = std::fs::read_to_string(&package_json)
+            .ok()
+            .and_then(|text| {
+                let typings = text
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once("\"typings\"")
+                            .or_else(|| line.split_once("\"types\""))
+                    })?
+                    .1;
+                let value = typings.split('"').nth(1)?;
+                Some(package_root.join(value))
+            })
+            .unwrap_or_else(|| package_root.join("index.d.ts"));
+        std::fs::read_to_string(root_dts)
+            .ok()
+            .is_some_and(|text| text.contains("export * from"))
+    }
+
+    fn dts_text_explicitly_exports_name(text: &str, export_name: &str) -> bool {
+        text.lines().any(|line| {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("export ") || !trimmed.contains('{') {
+                return false;
+            }
+            let Some(named) = trimmed
+                .split_once('{')
+                .and_then(|(_, rest)| rest.split_once('}'))
+            else {
+                return false;
+            };
+            named.0.split(',').any(|part| {
+                let name = part
+                    .trim()
+                    .split_once(" as ")
+                    .map_or_else(|| part.trim(), |(name, _)| name.trim());
+                name == export_name
+            })
+        })
+    }
+
+    fn export_symbol_from_module_specifier(
+        &self,
+        binder: &BinderState,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> Option<SymbolId> {
+        if let Some(sym_id) = binder
+            .module_exports
+            .get(module_specifier)
+            .and_then(|exports| exports.get(export_name))
+        {
+            return Some(sym_id);
+        }
+
+        if let Some(current_path) = self.current_file_path.as_deref() {
+            for module_path in
+                self.matching_module_export_paths(binder, current_path, module_specifier)
+            {
+                if let Some(sym_id) = binder
+                    .module_exports
+                    .get(module_path)
+                    .and_then(|exports| exports.get(export_name))
+                {
+                    return Some(sym_id);
+                }
+            }
+        }
+
+        if !module_specifier.starts_with('.') && !module_specifier.starts_with('/') {
+            let mut matches = binder
+                .module_exports
+                .iter()
+                .filter_map(|(module_path, exports)| {
+                    if !(self
+                        .node_modules_path_matches_import_specifier(module_path, module_specifier)
+                        || self.node_modules_package_path_matches_import_specifier(
+                            module_path,
+                            module_specifier,
+                        ))
+                    {
+                        return None;
+                    }
+                    exports
+                        .get(export_name)
+                        .map(|sym_id| (module_path.len(), sym_id))
+                })
+                .collect::<Vec<_>>();
+            matches.sort_by_key(|(path_len, _)| *path_len);
+            return matches.into_iter().map(|(_, sym_id)| sym_id).next();
+        }
+
+        None
+    }
+
+    fn type_reference_names_in_text(text: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut chars = text.char_indices().peekable();
+        while let Some((start, ch)) = chars.next() {
+            if !Self::is_type_reference_identifier_start(ch) {
+                continue;
+            }
+            let mut end = start + ch.len_utf8();
+            while let Some(&(next_idx, next_ch)) = chars.peek() {
+                if !Self::is_type_reference_identifier_continue(next_ch) {
+                    break;
+                }
+                end = next_idx + next_ch.len_utf8();
+                chars.next();
+            }
+            let name = &text[start..end];
+            if !matches!(
+                name,
+                "import"
+                    | "typeof"
+                    | "keyof"
+                    | "readonly"
+                    | "string"
+                    | "number"
+                    | "boolean"
+                    | "bigint"
+                    | "symbol"
+                    | "undefined"
+                    | "null"
+                    | "true"
+                    | "false"
+                    | "any"
+                    | "unknown"
+                    | "never"
+                    | "void"
+            ) && !names.iter().any(|existing| existing == name)
+            {
+                names.push(name.to_string());
+            }
+        }
+        names
+    }
+
     fn is_builtin_conditional_utility_type_name(name: &str) -> bool {
         matches!(name, "Exclude" | "Extract" | "NonNullable")
     }
@@ -3807,7 +4556,10 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| binder.symbols.get(sym_id)?.import_module.clone())
     }
 
-    fn imported_value_module_specifier_from_syntax(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn imported_value_module_specifier_from_syntax(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let local_name = self.get_identifier_text(expr_idx)?;
         let source_file = self
             .current_source_file_idx
@@ -4105,7 +4857,9 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
-    fn leading_type_reference_name(type_text: &str) -> Option<&str> {
+    pub(in crate::declaration_emitter) fn leading_type_reference_name(
+        type_text: &str,
+    ) -> Option<&str> {
         let trimmed = type_text.trim_start();
         if Self::type_text_starts_with_import_type(trimmed) || trimmed.starts_with("typeof ") {
             return None;
@@ -4595,6 +5349,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let new_expr = self.arena.get_call_expr(expr_node)?;
         let base_text = self.declaration_constructor_expression_text(new_expr.expression)?;
+        let base_text = self.rewrite_exported_import_equals_type_text(base_text);
         let type_args = self.type_argument_list_source_text(new_expr.type_arguments.as_ref());
         if type_args.is_empty() {
             Some(base_text)
@@ -5964,7 +6719,7 @@ impl<'a> DeclarationEmitter<'a> {
         let computed_key_requires_property_syntax = self
             .arena
             .get_computed_property(name_node)
-            .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
+            .and_then(|computed| self.get_node_type_or_names(&[computed.expression, method.name]))
             .is_none_or(|type_id| {
                 type_id == tsz_solver::types::TypeId::ANY
                     || self.type_interner.is_some_and(|interner| {
@@ -6104,13 +6859,15 @@ impl<'a> DeclarationEmitter<'a> {
                         trimmed.starts_with(&prefix)
                             || trimmed.starts_with(&format!("readonly {prefix}"))
                     })
-                    || trimmed.starts_with(&format!("{name_text}("))
+                    || Self::object_literal_method_line_matches_name(trimmed, &name_text)
             }) else {
                 continue;
             };
             if line_idx > 0 && lines[line_idx - 1].trim_start().starts_with("/**") {
                 continue;
             }
+            lines[line_idx] =
+                Self::returned_object_method_signature_to_property_text(&lines[line_idx]);
             let indent_len = lines[line_idx].len() - lines[line_idx].trim_start().len();
             let indent = " ".repeat(indent_len);
             let mut comment_lines = Vec::new();
@@ -6127,6 +6884,82 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             lines.join("\n")
         }
+    }
+
+    fn returned_object_method_signature_to_property_text(line: &str) -> String {
+        let trimmed = line.trim_start();
+        let indent_len = line.len() - trimmed.len();
+        let Some(open_paren) = trimmed.find('(') else {
+            return line.to_string();
+        };
+        let before_paren = trimmed[..open_paren].trim();
+        let optional = before_paren.ends_with('?');
+        let method_head = before_paren.trim_end_matches('?').trim();
+        let (name, type_params) = method_head
+            .find('<')
+            .map(|type_param_start| {
+                (
+                    method_head[..type_param_start].trim(),
+                    method_head[type_param_start..].trim(),
+                )
+            })
+            .unwrap_or((method_head, ""));
+        if name.is_empty()
+            || name == "new"
+            || name.contains(' ')
+            || name.starts_with('[')
+            || before_paren.contains(':')
+        {
+            return line.to_string();
+        }
+        let Some(close_paren) = Self::matching_top_level_paren(trimmed, open_paren) else {
+            return line.to_string();
+        };
+        let rest = trimmed[close_paren + 1..].trim_start();
+        let Some(return_text) = rest.strip_prefix(':') else {
+            return line.to_string();
+        };
+        let return_text = return_text.trim_start().trim_end_matches(';');
+        let optional_text = if optional { "?" } else { "" };
+        format!(
+            "{}{}{}: {}({}) => {};",
+            &line[..indent_len],
+            name,
+            optional_text,
+            type_params,
+            &trimmed[open_paren + 1..close_paren],
+            return_text
+        )
+    }
+
+    fn matching_top_level_paren(text: &str, open_paren: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        let mut quote: Option<u8> = None;
+        let mut escaped = false;
+        for (idx, byte) in text.bytes().enumerate().skip(open_paren) {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+            match byte {
+                b'\'' | b'"' => quote = Some(byte),
+                b'(' => depth += 1,
+                b')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(idx);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     fn function_initializer_unique_returned_object_literal(
