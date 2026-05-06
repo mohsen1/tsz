@@ -1289,14 +1289,13 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn with_symbol_declarations<T>(
+    pub(in crate::declaration_emitter) fn with_symbol_declarations<T>(
         &self,
         sym_id: SymbolId,
         mut f: impl FnMut(&NodeArena, NodeIndex) -> Option<T>,
     ) -> Option<T> {
         let binder = self.binder?;
         let symbol = binder.symbols.get(sym_id)?;
-
         for decl_idx in symbol.declarations.iter().copied() {
             if let Some(result) = self
                 .arena
@@ -2043,22 +2042,7 @@ impl<'a> DeclarationEmitter<'a> {
                 type_text
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                let reused_type_text = self
-                    .call_expression_returned_local_class_constructor_text(expr_idx, false)
-                    .or_else(|| {
-                        self.super_method_call_return_type_text(expr_idx)
-                            .or_else(|| self.call_expression_source_return_type_text(expr_idx))
-                            .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
-                    });
-                if self.call_expression_has_generic_callee(expr_idx)
-                    && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
-                    && type_id != tsz_solver::types::TypeId::ANY
-                    && type_id != tsz_solver::types::TypeId::ERROR
-                    && let Some(interner) = self.type_interner
-                    && tsz_solver::type_queries::is_literal_type(interner, type_id)
-                {
-                    return Some(self.print_type_id_for_inferred_declaration(type_id));
-                }
+                let reused_type_text = self.call_expression_reused_type_text(expr_idx);
                 if reused_type_text.is_some()
                     && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
                     && type_id != tsz_solver::types::TypeId::ANY
@@ -2105,55 +2089,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn call_expression_has_generic_callee(&self, expr_idx: NodeIndex) -> bool {
-        let Some(expr_node) = self.arena.get(expr_idx) else {
-            return false;
-        };
-        let Some(call) = self.arena.get_call_expr(expr_node) else {
-            return false;
-        };
-        if self.function_expression_has_type_parameters(call.expression) {
-            return true;
-        }
-
-        let Some(sym_id) = self.value_reference_symbol(call.expression) else {
-            return false;
-        };
-        let Some(binder) = self.binder else {
-            return false;
-        };
-        let sym_id = self
-            .resolve_portability_import_alias(sym_id, binder)
-            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
-        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
-            let func = self.callable_function_from_symbol_decl(source_arena, decl_idx)?;
-            func.type_parameters
-                .as_ref()
-                .is_some_and(|params| !params.nodes.is_empty())
-                .then_some(())
-        })
-        .is_some()
-    }
-
-    fn function_expression_has_type_parameters(&self, expr_idx: NodeIndex) -> bool {
-        let Some(expr_idx) = self.skip_parenthesized_expression(expr_idx) else {
-            return false;
-        };
-        let Some(expr_node) = self.arena.get(expr_idx) else {
-            return false;
-        };
-        if expr_node.kind != syntax_kind_ext::ARROW_FUNCTION
-            && expr_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-        {
-            return false;
-        }
-        self.arena
-            .get_function(expr_node)
-            .and_then(|func| func.type_parameters.as_ref())
-            .is_some_and(|params| !params.nodes.is_empty())
-    }
-
-    fn super_method_call_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn super_method_call_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
             return None;

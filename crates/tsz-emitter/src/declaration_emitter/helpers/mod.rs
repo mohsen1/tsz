@@ -187,6 +187,7 @@ impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
 mod comments_source;
 mod emit_node;
 mod function_analysis;
+mod generic_call_literal;
 mod js_exports;
 mod jsdoc;
 mod portability_check;
