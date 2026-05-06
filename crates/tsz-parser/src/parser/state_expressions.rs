@@ -2437,7 +2437,23 @@ impl ParserState {
                         // through to the property-access path, which would call
                         // parse_identifier_name() and emit the spurious TS1003.
                         self.parse_expected(SyntaxKind::OpenParenToken);
-                        break;
+                        let call_expr = self.arena.add_call_expr(
+                            syntax_kind_ext::CALL_EXPRESSION,
+                            start_pos,
+                            self.token_pos(),
+                            CallExprData {
+                                expression: expr,
+                                type_arguments: Some(type_args),
+                                arguments: Some(self.make_node_list(Vec::new())),
+                            },
+                        );
+                        let optional_chain_flag =
+                            self.u16_from_node_flags(node_flags::OPTIONAL_CHAIN);
+                        if let Some(call_node) = self.arena.get_mut(call_expr) {
+                            call_node.flags |= optional_chain_flag;
+                        }
+                        expr = call_expr;
+                        continue;
                     }
                     if self.is_token(SyntaxKind::OpenBracketToken) {
                         // expr?.[index]
@@ -2589,6 +2605,28 @@ impl ParserState {
                                     expression: expr,
                                     type_arguments: Some(type_args),
                                     arguments: Some(arguments),
+                                },
+                            );
+                        } else if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
+                            || self.is_token(SyntaxKind::TemplateHead)
+                        {
+                            self.parse_error_at_current_token(
+                                tsz_common::diagnostics::diagnostic_messages::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+                                tsz_common::diagnostics::diagnostic_codes::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+                            );
+                            self.in_tagged_template = true;
+                            let template = self.parse_template_literal();
+                            self.in_tagged_template = false;
+                            let end_pos = self.token_end();
+
+                            expr = self.arena.add_tagged_template(
+                                syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION,
+                                start_pos,
+                                end_pos,
+                                TaggedTemplateData {
+                                    tag: expr,
+                                    type_arguments: Some(type_args),
+                                    template,
                                 },
                             );
                         } else if !self.is_token(SyntaxKind::DotToken)

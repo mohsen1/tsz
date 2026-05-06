@@ -552,6 +552,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Emit parameter properties
+        let mut previous_param_end = ctor_node.pos;
         for &param_idx in &ctor.parameters.nodes {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
@@ -560,6 +561,19 @@ impl<'a> DeclarationEmitter<'a> {
                 let has_modifier = self.parameter_has_property_modifier(&param.modifiers);
 
                 if has_modifier {
+                    if self.strip_internal
+                        && self.nearest_leading_comment_contains(
+                            self.arena
+                                .get(param.name)
+                                .map_or(param_node.pos, |name_node| name_node.pos),
+                            previous_param_end,
+                            "@internal",
+                        )
+                    {
+                        previous_param_end = param_node.end;
+                        continue;
+                    }
+
                     let is_destructuring = self.arena.get(param.name).is_some_and(|name_node| {
                         name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                             || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
@@ -637,6 +651,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(";");
                     self.write_line();
                 }
+                previous_param_end = param_node.end;
             }
         }
     }

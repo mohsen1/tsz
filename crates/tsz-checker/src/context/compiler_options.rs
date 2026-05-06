@@ -4,32 +4,18 @@
 //! and derive solver configuration (`JudgeConfig`, `CompatChecker`) from them.
 
 use crate::query_boundaries::common::JudgeConfig;
+use tsz_common::file_extensions::is_ts_declaration_file_name;
 use tsz_parser::parser::NodeIndex;
 
 use super::CheckerContext;
 
-/// Check if a file name represents a declaration file (.d.ts, .d.tsx, .d.mts, .d.cts,
+/// Check if a file name represents a declaration file (.d.ts, .d.mts, .d.cts,
 /// or arbitrary extension declaration files like .d.html.ts).
 ///
 /// Use this for checking file names other than the current file.
 /// For the current file, prefer `CheckerContext::is_declaration_file()`.
 pub(crate) fn is_declaration_file_name(file_name: &str) -> bool {
-    // Standard declaration extensions
-    if file_name.ends_with(".d.ts")
-        || file_name.ends_with(".d.tsx")
-        || file_name.ends_with(".d.mts")
-        || file_name.ends_with(".d.cts")
-    {
-        return true;
-    }
-    // Arbitrary extension declaration files: .d.<ext>.ts (e.g. .d.html.ts)
-    // Per TypeScript: if file ends with .ts and the basename contains ".d."
-    if file_name.ends_with(".ts") {
-        let basename = file_name.rsplit('/').next().unwrap_or(file_name);
-        let basename = basename.rsplit('\\').next().unwrap_or(basename);
-        return basename.contains(".d.");
-    }
-    false
+    is_ts_declaration_file_name(file_name)
 }
 
 /// Check if a file name represents a JavaScript file (.js, .jsx, .mjs, .cjs).
@@ -75,7 +61,7 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.strict
     }
 
-    /// Check if the current file is a declaration file (.d.ts, .d.tsx, .d.mts, .d.cts).
+    /// Check if the current file is a declaration file (.d.ts, .d.mts, .d.cts).
     pub fn is_declaration_file(&self) -> bool {
         is_declaration_file_name(&self.file_name)
     }
@@ -307,5 +293,37 @@ impl<'a> CheckerContext<'a> {
     pub const fn allow_synthetic_default_imports(&self) -> bool {
         self.compiler_options.allow_synthetic_default_imports
             || self.compiler_options.es_module_interop
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_declaration_file_name;
+    use crate::context::CheckerOptions;
+    use crate::test_utils::check_source;
+
+    #[test]
+    fn d_tsx_is_source_file_not_declaration_file() {
+        assert!(!is_declaration_file_name("index.d.tsx"));
+        assert!(is_declaration_file_name("index.d.ts"));
+        assert!(is_declaration_file_name("index.d.mts"));
+        assert!(is_declaration_file_name("index.d.cts"));
+    }
+
+    #[test]
+    fn d_tsx_does_not_emit_declaration_file_ambient_diagnostics() {
+        let diagnostics = check_source(
+            "let x: number;\nx = \"bad\";\n",
+            "index.d.tsx",
+            CheckerOptions {
+                strict: true,
+                ..CheckerOptions::default()
+            },
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+
+        assert!(codes.contains(&2322), "{diagnostics:?}");
+        assert!(!codes.contains(&1036), "{diagnostics:?}");
+        assert!(!codes.contains(&1046), "{diagnostics:?}");
     }
 }

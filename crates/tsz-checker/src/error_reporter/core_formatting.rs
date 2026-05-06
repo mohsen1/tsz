@@ -38,6 +38,10 @@ impl<'a> CheckerState<'a> {
         if display.len() <= MAX_PROPERTY_RECEIVER_DISPLAY_CHARS || !should_truncate {
             return display;
         }
+        let display =
+            super::property_receiver_formatting::elide_long_property_receiver_object_literals(
+                display,
+            );
         if display.starts_with("merge<") {
             let mut truncated: String = display
                 .chars()

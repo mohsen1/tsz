@@ -287,6 +287,46 @@ class C {
     );
 }
 
+#[test]
+fn jsdoc_return_after_constructor_typedef_still_emits_ts1093() {
+    let source = r#"
+// @ts-check
+class C {
+  /**
+   * @typedef {number} N
+   * @return {string}
+   */
+  constructor() {}
+}
+"#;
+    let diagnostics = check_strict_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1093),
+        "Expected TS1093 for constructor @return after @typedef, got: {codes:?}",
+    );
+}
+
+#[test]
+fn jsdoc_callback_return_on_constructor_does_not_emit_ts1093() {
+    let source = r#"
+// @ts-check
+class C {
+  /**
+   * @callback Getter
+   * @returns {string}
+   */
+  constructor() {}
+}
+"#;
+    let diagnostics = check_strict_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1093),
+        "Expected nested callback @returns not to emit TS1093, got: {codes:?}",
+    );
+}
+
 /// @typedef with type → no TS8021
 #[test]
 fn test_jsdoc_typedef_with_type_no_ts8021() {

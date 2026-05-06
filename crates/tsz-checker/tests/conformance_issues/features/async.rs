@@ -820,6 +820,95 @@ if (x === NaN) {}
 }
 
 #[test]
+fn test_nan_equality_conformance_fixture_emits_all_ts2845_lines() {
+    // Mirrors `TypeScript/tests/cases/compiler/nanEquality.ts` line-for-line so
+    // the conformance fingerprints for every direct global-`NaN` comparison are
+    // locked into a checker regression. The fixture exercises:
+    //   * `===`, `==`, `!==`, `!=` against the global `NaN`
+    //   * left-hand and right-hand placement of `NaN`
+    //   * parenthesised `((NaN))` (the inner identifier still resolves to lib)
+    //   * `NaN <op> NaN` (the result is independent of which side is named)
+    //   * `NaN === y[0][1]` where the other operand is `any`
+    //   * three negative cases: function-parameter shadows named `NaN` whose
+    //     comparisons are ordinary number equalities and must NOT emit TS2845
+    //
+    // tsc 6.0.3 emits exactly 17 TS2845 fingerprints at lines
+    // 3,4,6,7,9,10,12,13,15,16,18,19,21,22,24,25,29 of the fixture; the
+    // shadowed-parameter functions (t1/t2/t3) emit none. tsz must match both
+    // sides.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"declare const x: number;
+
+if (x === NaN) {}
+if (NaN === x) {}
+
+if (x == NaN) {}
+if (NaN == x) {}
+
+if (x !== NaN) {}
+if (NaN !== x) {}
+
+if (x != NaN) {}
+if (NaN != x) {}
+
+if (x === ((NaN))) {}
+if (((NaN)) === x) {}
+
+if (x !== ((NaN))) {}
+if (((NaN)) !== x) {}
+
+if (NaN === NaN) {}
+if (NaN !== NaN) {}
+
+if (NaN == NaN) {}
+if (NaN != NaN) {}
+
+declare let y: any;
+if (NaN === y[0][1]) {}
+
+function t1(value: number, NaN: number) {
+    return value === NaN; // ok
+}
+
+function t2(value: number, NaN: number) {
+    return NaN == value; // ok
+}
+
+function t3(NaN: number) {
+    return NaN === NaN; // ok
+}
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert_eq!(
+        ts2845.len(),
+        17,
+        "Expected 17 TS2845 diagnostics matching nanEquality.ts conformance fingerprints, got: {diagnostics:#?}",
+    );
+
+    let always_false = ts2845
+        .iter()
+        .filter(|(_, message)| message.contains("'false'"))
+        .count();
+    let always_true = ts2845
+        .iter()
+        .filter(|(_, message)| message.contains("'true'"))
+        .count();
+    assert_eq!(
+        always_false, 9,
+        "Expected nine always-false TS2845 messages (matches tsc), got: {ts2845:#?}",
+    );
+    assert_eq!(
+        always_true, 8,
+        "Expected eight always-true TS2845 messages (matches tsc), got: {ts2845:#?}",
+    );
+}
+
+#[test]
 fn test_union_partial_numeric_and_symbol_index_writes_report_ts7053() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"

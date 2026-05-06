@@ -175,11 +175,10 @@ impl<'a> CheckerState<'a> {
                     template_is_invalid_here = true;
                     continue;
                 }
-                if (content.starts_with("@property")
-                    || content.starts_with("@prop ")
-                    || content.starts_with("@prop{")
-                    || content.starts_with("@member")
-                    || content.starts_with("@param"))
+                if (Self::jsdoc_line_starts_with_tag(content, "property")
+                    || Self::jsdoc_line_starts_with_tag(content, "prop")
+                    || Self::jsdoc_line_starts_with_tag(content, "member")
+                    || Self::jsdoc_line_starts_with_tag(content, "param"))
                     && saw_typedef
                 {
                     template_is_invalid_here = true;
@@ -224,9 +223,7 @@ impl<'a> CheckerState<'a> {
                             later_base += later_line.len() + 1;
                             continue;
                         }
-                        if later_content.starts_with("@returns")
-                            || later_content.starts_with("@return")
-                        {
+                        if Self::strip_jsdoc_return_tag_prefix(later_content).is_some() {
                             break;
                         }
                         if (later_content.starts_with("@param")

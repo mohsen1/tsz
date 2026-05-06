@@ -946,6 +946,15 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
+                } else if let Some(type_text) = func_body
+                    .is_some()
+                    .then(|| {
+                        self.async_returned_function_initializer_promise_type_text(func, func_body)
+                    })
+                    .flatten()
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if let Some((type_text, substituted_parameter_type_query)) =
                     scoped_preferred_return.as_ref()
                     && (self.should_prefer_source_return_type_text(
@@ -1068,6 +1077,11 @@ impl<'a> DeclarationEmitter<'a> {
             } else if func_body.is_some() {
                 if self.body_returns_void(func_body) {
                     self.write(": void");
+                } else if let Some(type_text) =
+                    self.async_returned_function_initializer_promise_type_text(func, func_body)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if let Some(return_text) =
                     self.function_body_preferred_return_type_text(func_body)
                 {
@@ -1105,6 +1119,11 @@ impl<'a> DeclarationEmitter<'a> {
             // No type cache available, but we can infer from the body
             if self.body_returns_void(func_body) {
                 self.write(": void");
+            } else if let Some(type_text) =
+                self.async_returned_function_initializer_promise_type_text(func, func_body)
+            {
+                self.write(": ");
+                self.write(&type_text);
             } else if let Some(return_text) =
                 self.function_body_preferred_return_type_text(func_body)
             {
