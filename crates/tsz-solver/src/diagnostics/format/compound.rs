@@ -556,9 +556,7 @@ impl<'a> TypeFormatter<'a> {
         //   tsc's output for some `{} | { a: number }`-style unions but reordered
         //   legitimate discriminated-union displays (e.g. TS2353/TS2322 messages)
         //   where tsc preserves declaration order of the anonymous members.
-        if sort_by_source_position
-            && let Some(def_store) = self.def_store
-        {
+        if sort_by_source_position && let Some(def_store) = self.def_store {
             let positions: Vec<_> = ordered
                 .iter()
                 .map(|&m| self.get_source_position_for_type(m, def_store))
