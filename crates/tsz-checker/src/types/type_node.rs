@@ -1,14 +1,13 @@
 //! Type Node Checking
 //!
-//! This module handles type resolution from AST type nodes (type annotations,
-//! type references, union types, intersection types, etc.).
-//!
+//! This module handles type resolution from AST type nodes.
 //! It follows the "Check Fast, Explain Slow" pattern where we first
 //! resolve types, then use the solver to explain any failures.
 use super::queries::lib_resolution::keyword_syntax_to_type_id;
 use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
 };
+use super::unique_symbol_arena::{is_symbol_call_initializer, is_unique_symbol_type_annotation};
 use crate::context::CheckerContext;
 use crate::symbols_domain::name_text::expression_name_text_in_arena;
 use tsz_binder::SymbolId;
@@ -1881,8 +1880,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return false;
             };
             (var_decl.type_annotation.is_some()
-                && self.is_unique_symbol_type_annotation_in_arena(arena, var_decl.type_annotation))
-                || self.is_symbol_call_initializer_in_arena(arena, var_decl.initializer)
+                && is_unique_symbol_type_annotation(arena, var_decl.type_annotation))
+                || is_symbol_call_initializer(arena, var_decl.initializer)
         })
     }
 

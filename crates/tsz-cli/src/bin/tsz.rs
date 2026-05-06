@@ -3118,7 +3118,7 @@ fn handle_build_clean(
     verbose: bool,
 ) -> Result<()> {
     use std::fs;
-    use tsz_cli::incremental::default_build_info_path;
+    use tsz_cli::build::get_build_info_path;
 
     let mut deleted_count = 0;
 
@@ -3127,8 +3127,9 @@ fn handle_build_clean(
         // `--clean` removes the file the build actually wrote. Previously this
         // always wrote next to the tsconfig, which missed the case where
         // `outDir` relocates the .tsbuildinfo file.
-        let buildinfo_path =
-            default_build_info_path(&project.config_path, project.out_dir.as_deref());
+        let Some(buildinfo_path) = get_build_info_path(project) else {
+            continue;
+        };
         if buildinfo_path.exists() {
             fs::remove_file(&buildinfo_path)?;
             if verbose {
