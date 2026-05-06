@@ -4,7 +4,6 @@ use super::super::DeclarationEmitter;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{FunctionData, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::types::{TypeData, TypeId};
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn call_expression_reused_type_text(
@@ -36,7 +35,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let interner = self.type_interner?;
-        generic_call_type_is_literal_like(interner, type_id)
+        tsz_solver::type_queries::is_literal_or_literal_union_type(interner, type_id)
             .then(|| self.print_type_id_for_inferred_declaration(type_id))
     }
 
@@ -86,20 +85,6 @@ impl<'a> DeclarationEmitter<'a> {
             .get_function(expr_node)
             .and_then(|func| func.type_parameters.as_ref())
             .is_some_and(|params| !params.nodes.is_empty())
-    }
-}
-
-fn generic_call_type_is_literal_like(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
-    if type_id.is_intrinsic() {
-        return false;
-    }
-    match db.lookup(type_id) {
-        Some(TypeData::Literal(_)) => true,
-        Some(TypeData::Union(list_id)) => db
-            .type_list(list_id)
-            .iter()
-            .all(|&member| generic_call_type_is_literal_like(db, member)),
-        _ => false,
     }
 }
 

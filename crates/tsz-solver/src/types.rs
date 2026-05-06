@@ -1335,6 +1335,11 @@ impl ObjectShape {
         self.flags |= ObjectFlags::FRESH_LITERAL;
     }
 
+    /// Return true if this shape is a fresh object literal.
+    pub fn is_fresh_literal(&self) -> bool {
+        self.flags.contains(ObjectFlags::FRESH_LITERAL)
+    }
+
     /// Mark this shape as having late-bound (computed) members.
     ///
     /// Use this instead of importing `ObjectFlags::HAS_LATE_BOUND_MEMBERS` directly.
