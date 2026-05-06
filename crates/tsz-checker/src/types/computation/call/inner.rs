@@ -400,12 +400,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // When the type argument count is wrong (TS2558 already emitted), don't proceed
-        // with argument type checking against the incorrectly-instantiated signature.
-        // tsc skips argument checking in this case. Without this guard, the checker
-        // would run generic inference on an uninstantiated signature and emit spurious
-        // TS2345 errors for arguments that are actually valid.
-        if type_arg_validation.count_mismatch {
+        // When explicit type arguments are invalid, don't proceed with argument
+        // type checking against the incorrectly-instantiated signature. tsc
+        // reports the type-argument problem and suppresses cascading TS2345
+        // argument diagnostics for that call.
+        if type_arg_validation.count_mismatch || type_arg_validation.constraint_violation {
             // Still evaluate argument expressions for side-effect errors
             // (definite assignment, etc.) but don't type-check them against
             // the function signature.
