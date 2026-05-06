@@ -15127,6 +15127,48 @@ export const vec = new Vec(1);
 }
 
 #[test]
+fn jsdoc_property_typedef_declaration_emit_quotes_non_identifier_names() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist"
+  },
+  "include": ["index.js"]
+}"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"/**
+ * @typedef {Object} Options
+ * @property {string} data-id
+ */
+exports.value = {};
+"#,
+    );
+
+    let args = default_args();
+    compile(&args, base).expect("compile should succeed");
+
+    let dts = std::fs::read_to_string(base.join("dist/index.d.ts"))
+        .expect("index declaration should be emitted");
+    assert!(
+        dts.contains("\"data-id\": string;"),
+        "expected JSDoc property name requiring quotes to emit a valid string-literal property: {dts}"
+    );
+    assert!(
+        !dts.contains("data-id: string;"),
+        "expected invalid unquoted hyphenated property name to be absent: {dts}"
+    );
+}
+
+#[test]
 fn bare_import_type_export_equals_class_does_not_report_ts1340() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
