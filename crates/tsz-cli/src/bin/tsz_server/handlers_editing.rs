@@ -55,15 +55,7 @@ impl Server {
                     .count();
             let content_end = line_end;
 
-            let start_pos = line_map.offset_to_position(content_start as u32, source_text);
-            let end_pos = line_map.offset_to_position(content_end as u32, source_text);
-
-            Some(serde_json::json!({
-                "textSpan": {
-                    "start": Self::lsp_to_tsserver_position(start_pos),
-                    "end": Self::lsp_to_tsserver_position(end_pos)
-                }
-            }))
+            Some(Self::text_span_body(content_start, content_end))
         })();
 
         self.stub_response(seq, request, result)
@@ -350,16 +342,7 @@ impl Server {
                         let comment_start = i;
                         let comment_end = source_text[i..].find('\n').map_or(len, |j| i + j);
                         if byte_offset >= comment_start && byte_offset <= comment_end {
-                            let start_pos =
-                                line_map.offset_to_position(comment_start as u32, source_text);
-                            let end_pos =
-                                line_map.offset_to_position(comment_end as u32, source_text);
-                            return Some(serde_json::json!({
-                                "textSpan": {
-                                    "start": Self::lsp_to_tsserver_position(start_pos),
-                                    "end": Self::lsp_to_tsserver_position(end_pos)
-                                }
-                            }));
+                            return Some(Self::text_span_body(comment_start, comment_end));
                         }
                         i = comment_end;
                         continue;
@@ -376,16 +359,7 @@ impl Server {
                         }
                         let comment_end = i;
                         if byte_offset >= comment_start && byte_offset <= comment_end {
-                            let start_pos =
-                                line_map.offset_to_position(comment_start as u32, source_text);
-                            let end_pos =
-                                line_map.offset_to_position(comment_end as u32, source_text);
-                            return Some(serde_json::json!({
-                                "textSpan": {
-                                    "start": Self::lsp_to_tsserver_position(start_pos),
-                                    "end": Self::lsp_to_tsserver_position(end_pos)
-                                }
-                            }));
+                            return Some(Self::text_span_body(comment_start, comment_end));
                         }
                         continue;
                     }
@@ -397,6 +371,13 @@ impl Server {
         })();
 
         self.stub_response(seq, request, result)
+    }
+
+    fn text_span_body(start: usize, end: usize) -> serde_json::Value {
+        serde_json::json!({
+            "start": start,
+            "length": end.saturating_sub(start),
+        })
     }
 
     pub(crate) fn handle_todo_comments(
