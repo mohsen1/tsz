@@ -15829,6 +15829,63 @@ s;
 }
 
 #[test]
+fn compile_nested_commonjs_exports_make_checked_js_files_module_scoped() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true,
+            "module": "commonjs",
+            "target": "es2020",
+            "types": []
+          },
+          "files": ["a.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("a.js"),
+        r#"// @ts-check
+const URL = 1;
+function publish() {
+  module.exports.value = URL;
+}
+/** @type {number} */
+const force = "x";
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE),
+        "nested CommonJS exporters should be module-scoped, got diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected only the JSDoc assignment error, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_js_static_expando_members_from_assignments_across_files() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
