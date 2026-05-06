@@ -109,6 +109,30 @@ fn test_optional_parameter_property_emits_undefined_in_constructor_and_property(
 }
 
 #[test]
+fn test_optional_parenthesized_parameter_property_preserves_explicit_undefined() {
+    let output = emit_dts(
+        r#"
+    export class C {
+        constructor(public x?: (string | undefined)) {}
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("x?: (string | undefined);"),
+        "Expected optional parameter property to preserve parenthesized undefined union: {output}"
+    );
+    assert!(
+        output.contains("constructor(x?: (string | undefined));"),
+        "Expected constructor parameter to preserve parenthesized undefined union: {output}"
+    );
+    assert!(
+        !output.contains("(string | undefined) | undefined"),
+        "Expected no duplicate undefined branch for parenthesized type: {output}"
+    );
+}
+
+#[test]
 fn test_optional_function_type_preserves_explicit_undefined() {
     let output = emit_dts(
         r#"
