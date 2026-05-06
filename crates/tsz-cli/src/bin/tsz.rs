@@ -2086,6 +2086,12 @@ fn show_config_compiler_options_to_json(
     if let Some(ref v) = opts.root_dir {
         map.insert("rootDir".into(), Value::String(v.clone()));
     }
+    if let Some(ref v) = opts.root_dirs {
+        map.insert(
+            "rootDirs".into(),
+            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
     if let Some(ref v) = opts.out_dir {
         map.insert("outDir".into(), Value::String(v.clone()));
     }
@@ -2117,11 +2123,14 @@ fn show_config_compiler_options_to_json(
     set_bool!(no_check, "noCheck");
     set_bool!(no_emit_on_error, "noEmitOnError");
     set_bool!(declaration, "declaration");
+    set_bool!(emit_declaration_only, "emitDeclarationOnly");
     set_bool!(source_map, "sourceMap");
+    set_bool!(inline_source_map, "inlineSourceMap");
     set_bool!(declaration_map, "declarationMap");
     set_bool!(composite, "composite");
     set_bool!(incremental, "incremental");
     set_bool!(isolated_modules, "isolatedModules");
+    set_bool!(isolated_declarations, "isolatedDeclarations");
     set_bool!(verbatim_module_syntax, "verbatimModuleSyntax");
     set_bool!(es_module_interop, "esModuleInterop");
     set_bool!(
@@ -2131,9 +2140,15 @@ fn show_config_compiler_options_to_json(
     set_bool!(allow_js, "allowJs");
     set_bool!(check_js, "checkJs");
     set_bool!(skip_lib_check, "skipLibCheck");
+    set_bool!(skip_default_lib_check, "skipDefaultLibCheck");
     set_bool!(strip_internal, "stripInternal");
     set_bool!(no_lib, "noLib");
+    set_bool!(lib_replacement, "libReplacement");
+    set_bool!(no_types_and_symbols, "noTypesAndSymbols");
     set_bool!(import_helpers, "importHelpers");
+    set_bool!(no_emit_helpers, "noEmitHelpers");
+    set_bool!(remove_comments, "removeComments");
+    set_bool!(emit_bom, "emitBOM");
     set_bool!(no_implicit_any, "noImplicitAny");
     set_bool!(no_implicit_returns, "noImplicitReturns");
     set_bool!(strict_null_checks, "strictNullChecks");
@@ -2144,11 +2159,22 @@ fn show_config_compiler_options_to_json(
     );
     set_bool!(no_implicit_this, "noImplicitThis");
     set_bool!(use_unknown_in_catch_variables, "useUnknownInCatchVariables");
+    set_bool!(exact_optional_property_types, "exactOptionalPropertyTypes");
     set_bool!(strict_bind_call_apply, "strictBindCallApply");
+    set_bool!(
+        strict_builtin_iterator_return,
+        "strictBuiltinIteratorReturn"
+    );
     set_bool!(no_unchecked_indexed_access, "noUncheckedIndexedAccess");
+    set_bool!(
+        no_property_access_from_index_signature,
+        "noPropertyAccessFromIndexSignature"
+    );
     set_bool!(no_unused_locals, "noUnusedLocals");
     set_bool!(no_unused_parameters, "noUnusedParameters");
     set_bool!(allow_unreachable_code, "allowUnreachableCode");
+    set_bool!(allow_unused_labels, "allowUnusedLabels");
+    set_bool!(no_fallthrough_cases_in_switch, "noFallthroughCasesInSwitch");
     set_bool!(no_resolve, "noResolve");
     set_bool!(
         no_unchecked_side_effect_imports,
@@ -2160,6 +2186,7 @@ fn show_config_compiler_options_to_json(
     set_bool!(use_define_for_class_fields, "useDefineForClassFields");
     set_bool!(experimental_decorators, "experimentalDecorators");
     set_bool!(emit_decorator_metadata, "emitDecoratorMetadata");
+    set_bool!(allow_umd_global_access, "allowUmdGlobalAccess");
     set_bool!(resolve_package_json_exports, "resolvePackageJsonExports");
     set_bool!(resolve_package_json_imports, "resolvePackageJsonImports");
     set_bool!(resolve_json_module, "resolveJsonModule");
@@ -2169,6 +2196,19 @@ fn show_config_compiler_options_to_json(
         rewrite_relative_import_extensions,
         "rewriteRelativeImportExtensions"
     );
+    set_bool!(preserve_const_enums, "preserveConstEnums");
+    set_bool!(erasable_syntax_only, "erasableSyntaxOnly");
+    set_bool!(sound, "sound");
+
+    if let Some(ref v) = opts.new_line {
+        map.insert("newLine".into(), Value::String(v.to_lowercase()));
+    }
+    if let Some(v) = opts.max_node_module_js_depth {
+        map.insert(
+            "maxNodeModuleJsDepth".into(),
+            Value::Number(serde_json::Number::from(v)),
+        );
+    }
 
     if let Some(ref v) = opts.lib {
         map.insert(
