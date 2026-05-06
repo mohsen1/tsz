@@ -1450,7 +1450,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 "boolean" => value.is_boolean(),
                 "string" => value.is_string(),
                 "number" => value.is_number(),
-                "list" => value.is_array(),
+                "Array" => value.is_array(),
                 "string or Array" => value.is_string() || value.is_array(),
                 "object" => value.is_object(),
                 _ => true,
@@ -2873,6 +2873,7 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "stripInternal"
         | "suppressExcessPropertyErrors"
         | "suppressImplicitAnyIndexErrors"
+        | "traceResolution"
         | "useDefineForClassFields"
         | "useUnknownInCatchVariables"
         | "verbatimModuleSyntax" => "boolean",
@@ -2881,10 +2882,11 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "jsxImportSource" | "mapRoot" | "module" | "moduleDetection" | "moduleResolution"
         | "newLine" | "out" | "outDir" | "outFile" | "reactNamespace" | "rootDir"
         | "sourceRoot" | "target" | "tsBuildInfoFile" | "ignoreDeprecations" => "string",
+        // Number options
+        "maxNodeModuleJsDepth" => "number",
         // List options (arrays)
-        "lib" | "types" | "typeRoots" | "rootDirs" | "moduleSuffixes" | "customConditions" => {
-            "list"
-        }
+        "lib" | "types" | "typeRoots" | "rootDirs" | "moduleSuffixes" | "customConditions"
+        | "plugins" => "Array",
         // Object options
         "paths" => "object",
         _ => "",
@@ -4935,6 +4937,43 @@ mod tests {
             codes.contains(&5024),
             "Expected TS5024 for libReplacement string value, got: {codes:?}"
         );
+    }
+
+    #[test]
+    fn test_ts5024_emitted_for_recognized_options_with_invalid_value_types() {
+        for (option, value, expected_type) in [
+            ("plugins", r#""not-an-array""#, "Array"),
+            ("maxNodeModuleJsDepth", r#""not-a-number""#, "number"),
+            ("traceResolution", r#""yes""#, "boolean"),
+        ] {
+            let source = format!(
+                r#"{{
+  "compilerOptions": {{
+    "noEmit": true,
+    "{option}": {value}
+  }},
+  "files": ["index.ts"]
+}}"#
+            );
+            let parsed =
+                parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap_or_else(|err| {
+                    panic!("{option} should report TS5024, not fail parse: {err}")
+                });
+            let diagnostic = parsed
+                .diagnostics
+                .iter()
+                .find(|d| d.code == 5024 && d.message_text.contains(option))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Expected TS5024 for invalid {option}, got: {:?}",
+                        parsed.diagnostics
+                    )
+                });
+            assert!(
+                diagnostic.message_text.contains(expected_type),
+                "Expected {option} TS5024 to mention {expected_type}, got: {diagnostic:?}"
+            );
+        }
     }
 
     #[test]
