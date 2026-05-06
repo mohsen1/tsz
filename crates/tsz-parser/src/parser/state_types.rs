@@ -1272,7 +1272,11 @@ impl ParserState {
 
         let type_node = if self.is_token(SyntaxKind::DotDotDotToken) {
             self.next_token();
+            let saved_flags = self.context_flags;
+            self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT;
+            self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
             let element_type = self.parse_type();
+            self.context_flags = saved_flags;
             let rest_end = self.token_end();
             self.arena.add_wrapped_type(
                 syntax_kind_ext::REST_TYPE,
@@ -1283,7 +1287,12 @@ impl ParserState {
                 },
             )
         } else {
-            self.parse_type()
+            let saved_flags = self.context_flags;
+            self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT;
+            self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
+            let type_node = self.parse_type();
+            self.context_flags = saved_flags;
+            type_node
         };
 
         if self.parse_optional(SyntaxKind::QuestionToken) {
@@ -1313,6 +1322,13 @@ impl ParserState {
             elements.push(element);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                if self.can_token_start_type() || self.is_token(SyntaxKind::DotDotDotToken) {
+                    self.parse_error_at_current_token(
+                        "',' expected.",
+                        tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                    );
+                    continue;
+                }
                 break;
             }
         }
