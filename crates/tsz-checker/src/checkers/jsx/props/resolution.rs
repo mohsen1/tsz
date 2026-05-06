@@ -1034,9 +1034,11 @@ impl<'a> CheckerState<'a> {
                         {
                             result
                         } else {
-                            self.check_assignable_or_report_at(
+                            self.check_assignable_or_report_at_with_display_types(
                                 actual_type,
                                 expected_type,
+                                actual_type,
+                                original_property_type,
                                 value_node_idx,
                                 attr_data.name,
                             )
@@ -1163,16 +1165,31 @@ impl<'a> CheckerState<'a> {
 
                 // Defer TS2322 spread checking until after attribute override tracking.
                 if !skip_prop_checks {
-                    spread_entries.push((spread_type, raw_spread_type, spread_expr_idx, attr_i));
+                    let display_spread_type =
+                        if crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            raw_spread_type,
+                        ) {
+                            raw_spread_type
+                        } else if self.ctx.arena.get(spread_expr_idx).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        }) {
+                            spread_type
+                        } else {
+                            raw_spread_type
+                        };
+                    spread_entries.push((
+                        spread_type,
+                        display_spread_type,
+                        spread_expr_idx,
+                        attr_i,
+                    ));
                 }
             }
         }
 
         // TS2322: Check spread props against expected types (deferred to account for overrides).
         if !spread_entries.is_empty() {
-            // Track explicit attrs WITH their attr index AND name node index, so
-            // the spread checker can anchor per-property TS2322 at the earlier
-            // explicit attribute when a spread overrides it (TS2783 case).
             let mut explicit_attr_entries: Vec<(usize, String, NodeIndex)> = Vec::new();
             let mut suppress_missing_props_from_spread = false;
             for (i, &node_idx) in attr_nodes.iter().enumerate() {
@@ -1189,8 +1206,12 @@ impl<'a> CheckerState<'a> {
             }
 
             let spread_count = spread_entries.len();
-            // Collect property names from each spread so later iterations know
-            // what properties earlier spreads already provide.
+            let merged_attrs_display = self
+                .format_jsx_attrs_effective_source_for_spread_assignability(
+                    attributes_idx,
+                    props_type,
+                    request,
+                );
             let mut earlier_spread_props: rustc_hash::FxHashSet<String> =
                 rustc_hash::FxHashSet::default();
             for (i, &(spread_type, raw_spread_type, _spread_expr_idx, spread_pos)) in
@@ -1202,9 +1223,6 @@ impl<'a> CheckerState<'a> {
                     .filter(|(attr_pos, _, _)| *attr_pos > spread_pos)
                     .map(|(_, name, _)| name.as_str())
                     .collect();
-                // Also include properties already provided by earlier spreads.
-                // This prevents false TS2739 on the last spread when earlier spreads
-                // cover some of the required properties.
                 for prop_name in &earlier_spread_props {
                     overridden.insert(prop_name.as_str());
                 }
@@ -1237,6 +1255,28 @@ impl<'a> CheckerState<'a> {
 
                 // Check if there are later spreads that could provide missing properties.
                 let has_later_spreads = i < spread_count - 1;
+                let has_later_explicit_excess_attr = has_excess_property_error
+                    && explicit_attr_entries
+                        .iter()
+                        .filter(|(attr_pos, _, _)| *attr_pos > spread_pos)
+                        .any(|(_, attr_name, _)| {
+                            if attr_name == "key"
+                                || attr_name == "ref"
+                                || attr_name.starts_with("data-")
+                                || attr_name.starts_with("aria-")
+                            {
+                                return false;
+                            }
+                            !matches!(
+                                self.resolve_property_access_with_env(props_type, attr_name),
+                                crate::query_boundaries::common::PropertyAccessResult::Success {
+                                    ..
+                                } | crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
+                                    property_type: Some(_),
+                                    ..
+                                }
+                            )
+                        });
 
                 // Check if TS2710 will be emitted: spread has children property AND there are body children
                 let spread_has_children = if let Some(spread_shape) =
@@ -1265,8 +1305,10 @@ impl<'a> CheckerState<'a> {
                     &earlier_explicit_attrs,
                     has_later_spreads,
                     suppress_missing_props,
+                    has_prop_type_error || has_later_explicit_excess_attr,
                     &display_target,
                     preferred_target_display,
+                    merged_attrs_display.as_deref(),
                 );
                 suppress_missing_props_from_spread |= had_error || suppress_missing_props;
 
@@ -1431,6 +1473,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let class_missing_props_component_type = special_attr_component_type.or(component_type);
+        let empty_attrs_with_children_injected_props = provided_attrs.is_empty()
+            && self.strip_jsx_children_injection_for_display(props_type) != props_type;
 
         let reported_class_missing_props_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
@@ -1438,6 +1482,7 @@ impl<'a> CheckerState<'a> {
             && !spread_covers_all
             && !skip_prop_checks
             && !display_target.is_empty()
+            && !empty_attrs_with_children_injected_props
             && !has_prop_type_error
             && !self.jsx_tag_is_logical_component_alias(tag_name_idx)
             && class_missing_props_component_type.is_some_and(|comp| {

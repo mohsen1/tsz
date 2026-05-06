@@ -68,8 +68,10 @@ impl<'a> CheckerState<'a> {
         earlier_explicit_attrs: &rustc_hash::FxHashMap<String, NodeIndex>,
         has_later_spreads: bool,
         suppress_missing_props: bool,
+        suppress_unanchored_type_mismatch: bool,
         display_target: &str,
         preferred_target_display: Option<&str>,
+        merged_attrs_display: Option<&str>,
     ) -> bool {
         use crate::query_boundaries::common::PropertyAccessResult;
 
@@ -80,6 +82,11 @@ impl<'a> CheckerState<'a> {
 
         let spread_has_type_params =
             crate::query_boundaries::common::contains_type_parameters(self.ctx.types, spread_type);
+        let spread_source_has_type_params =
+            crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                spread_source_type,
+            );
 
         // For concrete spread types, whole-type assignability is the fast path and
         // also prevents false positives from imprecise per-property extraction.
@@ -396,8 +403,18 @@ impl<'a> CheckerState<'a> {
             has_type_mismatch = false;
         }
 
+        if has_type_mismatch && suppress_unanchored_type_mismatch {
+            return true;
+        }
+
         if has_type_mismatch {
-            let spread_name = self.format_type(spread_source_type);
+            let spread_name = if spread_source_has_type_params {
+                self.format_type(spread_source_type)
+            } else {
+                merged_attrs_display
+                    .map(str::to_string)
+                    .unwrap_or_else(|| self.format_type(spread_source_type))
+            };
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&spread_name, &props_display],
@@ -508,7 +525,10 @@ impl<'a> CheckerState<'a> {
     /// optional `children`, and returns the remaining intersection (or the
     /// single non-children member if exactly one remains). All other types
     /// are returned unchanged.
-    fn strip_jsx_children_injection_for_display(&self, props_type: TypeId) -> TypeId {
+    pub(in crate::checkers_domain::jsx) fn strip_jsx_children_injection_for_display(
+        &self,
+        props_type: TypeId,
+    ) -> TypeId {
         // Walk through any display alias chain first — the alias usually
         // points to the original Lazy/Application that displays as the
         // bare prop type name.  Apply the same stripping to the resolved
@@ -523,7 +543,10 @@ impl<'a> CheckerState<'a> {
         self.strip_jsx_children_injection_for_display_inner(candidate)
     }
 
-    fn strip_jsx_children_injection_for_display_inner(&self, props_type: TypeId) -> TypeId {
+    pub(in crate::checkers_domain::jsx) fn strip_jsx_children_injection_for_display_inner(
+        &self,
+        props_type: TypeId,
+    ) -> TypeId {
         use crate::query_boundaries::common;
         // Handle the intersection case (e.g. raw `PoisonedProp & {children?}`).
         if let Some(members) = common::intersection_members(self.ctx.types, props_type) {
@@ -566,7 +589,10 @@ impl<'a> CheckerState<'a> {
     /// JSX-injected member (single optional `children` property, no other own
     /// state). Defensive: rejects any shape with extra properties or index
     /// signatures so user-authored types named `children` are unaffected.
-    fn intersection_member_is_jsx_children_injection(&self, member: TypeId) -> bool {
+    pub(in crate::checkers_domain::jsx) fn intersection_member_is_jsx_children_injection(
+        &self,
+        member: TypeId,
+    ) -> bool {
         use crate::query_boundaries::common;
         let Some(shape) = common::object_shape_for_type(self.ctx.types, member) else {
             return false;

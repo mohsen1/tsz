@@ -184,6 +184,23 @@ impl<'a> NamespaceES5Transformer<'a> {
         collect_runtime_exported_var_names(self.arena, innermost_body)
     }
 
+    pub fn collect_namespace_rewrite_var_names(
+        &self,
+        ns_idx: NodeIndex,
+    ) -> Option<(String, std::collections::HashSet<String>)> {
+        let (parts, innermost_body) = self.collect_all_namespace_parts(ns_idx)?;
+        let ns_name = parts.last()?.clone();
+        let mut names = collect_runtime_exported_var_names(self.arena, innermost_body);
+        if !self.prior_exported_vars.is_empty() {
+            names.extend(self.prior_exported_vars.iter().cloned());
+            let local_names = collect_local_var_names(self.arena, innermost_body);
+            for name in &local_names {
+                names.remove(name);
+            }
+        }
+        Some((ns_name, names))
+    }
+
     /// Extract leading comments from source text that fall within [`from_pos`, `to_pos`) range.
     /// Returns `IRNode::Raw` nodes since the text already includes comment delimiters.
     fn extract_comments_in_range(&self, from_pos: u32, to_pos: u32) -> Vec<IRNode> {

@@ -2,6 +2,7 @@
 //! Centralizes logic for converting `TypeIds` and `TypeDatas` to human-readable strings.
 
 mod compound;
+mod display_simplification;
 // `test_tracing` exercises `debug!` / `debug_span!` / `trace_span!`. The
 // workspace `tracing` dep filters those macros out at compile time when
 // `debug_assertions` is off (via the `release_max_level_warn` feature), so
@@ -225,7 +226,12 @@ impl<'a> TypeFormatter<'a> {
         // a generic key would also be deferred even when the obj is concrete.
         if !matches!(
             self.interner.lookup(idx),
-            Some(TypeData::Literal(_) | TypeData::Union(_))
+            Some(
+                TypeData::Literal(_)
+                    | TypeData::Union(_)
+                    | TypeData::UniqueSymbol(_)
+                    | TypeData::TypeQuery(_)
+            )
         ) {
             return arg;
         }
@@ -602,7 +608,7 @@ impl<'a> TypeFormatter<'a> {
     /// Preserve enough generic alias context for very long TS2339 receiver types
     /// while still eliding nested structural object branches.
     pub const fn with_long_property_receiver_display(mut self) -> Self {
-        self.max_depth = 64;
+        self.max_depth = 192;
         self.long_property_receiver_display = true;
         self
     }
@@ -1142,6 +1148,18 @@ impl<'a> TypeFormatter<'a> {
                 } else {
                     false
                 };
+            let use_lazy_type_alias =
+                if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(alias_origin) {
+                    self.def_store
+                        .and_then(|ds| ds.get(def_id).map(|def| (ds, def)))
+                        .is_some_and(|(ds, def)| {
+                            def.kind == crate::def::DefKind::TypeAlias
+                                && def.type_params.is_empty()
+                                && !def.body.is_some_and(|body| ds.is_computed_body(body))
+                        })
+                } else {
+                    false
+                };
 
             let skip_intersection_alias = (self.skip_intersection_display_alias
                 && matches!(
@@ -1176,7 +1194,7 @@ impl<'a> TypeFormatter<'a> {
                 || skip_object_alias
                 || (is_empty_object
                     && self.display_alias_application_base_is_type_alias(alias_origin));
-            if (!is_simple_type || use_keyof_alias || use_application_alias)
+            if (!is_simple_type || use_keyof_alias || use_application_alias || use_lazy_type_alias)
                 && !skip_alias_chase
                 && self.display_alias_visiting.insert(alias_origin)
             {
@@ -1588,11 +1606,28 @@ impl<'a> TypeFormatter<'a> {
                     display_args.len()
                 };
 
-                let args: Vec<Cow<'static, str>> = display_args
+                let mut args: Vec<Cow<'static, str>> = display_args
                     .iter()
                     .take(visible_arg_count)
-                    .map(|&arg| self.format(self.resolve_concrete_index_access_for_display(arg)))
+                    .map(|&arg| self.format(self.simplify_application_arg_for_display(arg)))
                     .collect();
+                if base_str.as_ref() == "Defaultize"
+                    && args.first().is_some_and(|arg| arg.len() > 120)
+                {
+                    for (idx, arg) in display_args
+                        .iter()
+                        .take(visible_arg_count)
+                        .enumerate()
+                        .skip(1)
+                    {
+                        if matches!(
+                            self.interner.lookup(*arg),
+                            Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+                        ) {
+                            args[idx] = Cow::Borrowed("{ ...; }");
+                        }
+                    }
+                }
                 let result = if args.is_empty()
                     && matches!(
                         base_str.as_ref(),
@@ -1616,6 +1651,10 @@ impl<'a> TypeFormatter<'a> {
                 self.format_mapped(mapped.as_ref()).into()
             }
             TypeData::IndexAccess(obj, idx) => {
+                let resolved = self.resolve_concrete_index_access_for_display(type_id);
+                if resolved != type_id {
+                    return self.format(resolved);
+                }
                 // Homomorphic mapped indexed access simplification:
                 // tsc displays `M[K]` for a homomorphic identity Mapped
                 // `M = { [P in keyof X]: X[P] }` (e.g. `Partial<X>`,

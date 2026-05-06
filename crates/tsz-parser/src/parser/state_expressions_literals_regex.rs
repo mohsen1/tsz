@@ -435,6 +435,15 @@ impl ParserState {
                         }
                     }
                     b'o' if atom_escape => {
+                        if strict_mode {
+                            emit(
+                                parser,
+                                escape_start,
+                                2,
+                                "This character cannot be escaped in a regular expression.",
+                                diagnostic_codes::THIS_CHARACTER_CANNOT_BE_ESCAPED_IN_A_REGULAR_EXPRESSION,
+                            );
+                        }
                         *pos += 1;
                     }
                     b'u' => {
@@ -453,6 +462,9 @@ impl ParserState {
                                 *pos += 1;
                                 digits += 1;
                             }
+                            if strict_mode && digits == 0 && *pos + 1 < end && body[*pos] == b'\\' {
+                                *pos += 2;
+                            }
                         }
                     }
                     b'x' => {
@@ -468,6 +480,16 @@ impl ParserState {
                         while *pos < end && body[*pos].is_ascii_digit() {
                             *pos += 1;
                         }
+                    }
+                    b'_' if strict_mode => {
+                        emit(
+                            parser,
+                            escape_start,
+                            2,
+                            "This character cannot be escaped in a regular expression.",
+                            diagnostic_codes::THIS_CHARACTER_CANNOT_BE_ESCAPED_IN_A_REGULAR_EXPRESSION,
+                        );
+                        *pos += 1;
                     }
                     b'b' | b'd' | b'D' | b's' | b'S' | b'w' | b'W' | b't' | b'n' | b'v' | b'f'
                     | b'r' | b'^' | b'$' | b'/' | b'\\' | b'.' | b'*' | b'+' | b'?' | b'('
@@ -928,6 +950,8 @@ impl ParserState {
                         }
                         b'{' => {
                             let brace_start = *pos;
+                            let had_quantifiable_term = is_previous_term_quantifiable;
+                            let mut reported_nothing_at_brace = false;
                             *pos += 1;
                             let min_start = *pos;
                             let min_length = scan_digits(body, body_end, pos);
@@ -940,6 +964,7 @@ impl ParserState {
                             };
 
                             if *pos < body_end && body[*pos] == b',' {
+                                let comma_pos = *pos;
                                 *pos += 1;
                                 let max_start = *pos;
                                 let max_length = scan_digits(body, body_end, pos);
@@ -948,9 +973,19 @@ impl ParserState {
                                 let has_closing = *pos < body_end && body[*pos] == b'}';
                                 if min_empty {
                                     if strict_mode && (max_length > 0 || has_closing) {
+                                        if !had_quantifiable_term {
+                                            emit(
+                                                parser,
+                                                brace_start,
+                                                1,
+                                                "There is nothing available for repetition.",
+                                                diagnostic_codes::THERE_IS_NOTHING_AVAILABLE_FOR_REPETITION,
+                                            );
+                                            reported_nothing_at_brace = true;
+                                        }
                                         emit(
                                             parser,
-                                            max_start,
+                                            comma_pos,
                                             1,
                                             "Incomplete quantifier. Digit expected.",
                                             diagnostic_codes::INCOMPLETE_QUANTIFIER_DIGIT_EXPECTED,
@@ -963,6 +998,8 @@ impl ParserState {
                                             "Unexpected '{'. Did you mean to escape it with backslash?",
                                             diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
                                         );
+                                        is_previous_term_quantifiable = true;
+                                        continue;
                                     } else {
                                         is_previous_term_quantifiable = true;
                                         continue;
@@ -974,7 +1011,7 @@ impl ParserState {
                                     let min_value: u32 = min_text
                                         .iter()
                                         .fold(0u32, |acc, b| acc * 10 + u32::from(*b - b'0'));
-                                    if max_value < min_value {
+                                    if max_value < min_value && (strict_mode || has_closing) {
                                         emit(
                                             parser,
                                             min_start,
@@ -987,6 +1024,18 @@ impl ParserState {
 
                                 if *pos >= body_end || body[*pos] != b'}' {
                                     if strict_mode {
+                                        if !had_quantifiable_term
+                                            && !min_empty
+                                            && !reported_nothing_at_brace
+                                        {
+                                            emit(
+                                                parser,
+                                                brace_start,
+                                                1,
+                                                "There is nothing available for repetition.",
+                                                diagnostic_codes::THERE_IS_NOTHING_AVAILABLE_FOR_REPETITION,
+                                            );
+                                        }
                                         emit(
                                             parser,
                                             *pos,
@@ -994,19 +1043,34 @@ impl ParserState {
                                             "'}' expected.",
                                             diagnostic_codes::EXPECTED,
                                         );
-                                        if *pos > 0 {
-                                            *pos -= 1;
+                                        if *pos + 1 < body_end
+                                            && body[*pos] == b'?'
+                                            && body[*pos + 1] == b'?'
+                                        {
+                                            *pos += 1;
                                         }
+                                        is_previous_term_quantifiable = false;
                                         continue;
                                     }
                                     is_previous_term_quantifiable = true;
                                     continue;
                                 }
 
+                                if !had_quantifiable_term && !reported_nothing_at_brace {
+                                    emit(
+                                        parser,
+                                        brace_start,
+                                        1,
+                                        "There is nothing available for repetition.",
+                                        diagnostic_codes::THERE_IS_NOTHING_AVAILABLE_FOR_REPETITION,
+                                    );
+                                }
                                 *pos += 1;
+                                is_previous_term_quantifiable = false;
                                 if *pos < body_end && body[*pos] == b'?' {
                                     *pos += 1;
                                 }
+                                continue;
                             } else if min_empty {
                                 if strict_mode {
                                     emit(
@@ -1023,6 +1087,15 @@ impl ParserState {
                                 continue;
                             } else if *pos >= body_end || body[*pos] != b'}' {
                                 if strict_mode {
+                                    if !had_quantifiable_term && !reported_nothing_at_brace {
+                                        emit(
+                                            parser,
+                                            brace_start,
+                                            1,
+                                            "There is nothing available for repetition.",
+                                            diagnostic_codes::THERE_IS_NOTHING_AVAILABLE_FOR_REPETITION,
+                                        );
+                                    }
                                     emit(
                                         parser,
                                         *pos,
@@ -1030,15 +1103,28 @@ impl ParserState {
                                         "'}' expected.",
                                         diagnostic_codes::EXPECTED,
                                     );
-                                    if *pos > 0 {
-                                        *pos -= 1;
+                                    if *pos + 1 < body_end
+                                        && body[*pos] == b'?'
+                                        && body[*pos + 1] == b'?'
+                                    {
+                                        *pos += 1;
                                     }
+                                    is_previous_term_quantifiable = false;
                                     continue;
                                 }
                                 is_previous_term_quantifiable = true;
                                 continue;
                             }
 
+                            if !had_quantifiable_term && !reported_nothing_at_brace {
+                                emit(
+                                    parser,
+                                    brace_start,
+                                    1,
+                                    "There is nothing available for repetition.",
+                                    diagnostic_codes::THERE_IS_NOTHING_AVAILABLE_FOR_REPETITION,
+                                );
+                            }
                             *pos += 1;
                             is_previous_term_quantifiable = false;
                             if *pos < body_end && body[*pos] == b'?' {

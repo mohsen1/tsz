@@ -542,6 +542,10 @@ name = "cross_module_nested_interface_tests"
 path = "tests/cross_module_nested_interface_tests.rs"
 
 [[test]]
+name = "cross_file_intrinsic_identifier_tests"
+path = "tests/cross_file_intrinsic_identifier_tests.rs"
+
+[[test]]
 name = "jsdoc_augments_empty_tests"
 path = "tests/jsdoc_augments_empty_tests.rs"
 
@@ -778,12 +782,20 @@ name = "intersection_index_signature_fingerprint_tests"
 path = "tests/intersection_index_signature_fingerprint_tests.rs"
 
 [[test]]
+name = "type_argument_inference_constraints_fingerprint_tests"
+path = "tests/type_argument_inference_constraints_fingerprint_tests.rs"
+
+[[test]]
 name = "shadowed_symbol_global_tests"
 path = "tests/shadowed_symbol_global_tests.rs"
 
 [[test]]
 name = "ts2855_static_super_field_tests"
 path = "tests/ts2855_static_super_field_tests.rs"
+
+[[test]]
+name = "jsdoc_tag_boundary_tests"
+path = "tests/jsdoc_tag_boundary_tests.rs"
 
 [lints]
 workspace = true

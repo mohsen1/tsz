@@ -314,6 +314,42 @@ fn test_transpile_module_accepts_file_name_option() {
 }
 
 #[test]
+fn test_ts_program_emit_json_uses_module_file_extensions() {
+    let mut program = TsProgram::new();
+    program
+        .set_compiler_options(r#"{"target":2,"module":5}"#)
+        .unwrap();
+    program.add_source_file(
+        "entry.mts".to_string(),
+        "export const value: number = 1;\n".to_string(),
+    );
+    program.add_source_file(
+        "worker.cts".to_string(),
+        "export const value: number = 1;\n".to_string(),
+    );
+
+    let json = program.emit_json();
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    let emitted_names: Vec<&str> = parsed["emittedFiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|file| file["name"].as_str())
+        .collect();
+
+    assert!(emitted_names.contains(&"entry.mjs"), "{emitted_names:?}");
+    assert!(emitted_names.contains(&"worker.cjs"), "{emitted_names:?}");
+    assert!(
+        !emitted_names.contains(&"entry.mts.js"),
+        "{emitted_names:?}"
+    );
+    assert!(
+        !emitted_names.contains(&"worker.cts.js"),
+        "{emitted_names:?}"
+    );
+}
+
+#[test]
 fn test_json_and_syntax_kind_utilities_contracts() {
     let parsed = parse_json_text("{ // comment\n  \"ok\": true\n}");
     let parsed_value: Value = serde_json::from_str(&parsed).unwrap();
@@ -351,6 +387,28 @@ fn test_wasm_source_file_factory_contract() {
     let root = source_file.get_root_handle();
     assert_ne!(root, u32::MAX);
     assert!(!source_file.get_statement_handles().is_empty());
+}
+
+#[test]
+fn test_source_file_declaration_file_extension_contract() {
+    for file_name in [
+        "index.d.ts",
+        "index.d.mts",
+        "index.d.cts",
+        "style.d.css.ts",
+        "types/INDEX.D.MTS",
+    ] {
+        let source_file = TsSourceFile::new(
+            file_name.to_string(),
+            "declare const value: string;".to_string(),
+        );
+        assert!(source_file.is_declaration_file(), "{file_name}");
+    }
+
+    for file_name in ["index.ts", "index.tsx", "style.css.ts", "index.d.tsx"] {
+        let source_file = TsSourceFile::new(file_name.to_string(), "const value = 1;".to_string());
+        assert!(!source_file.is_declaration_file(), "{file_name}");
+    }
 }
 
 #[test]

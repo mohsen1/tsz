@@ -4,13 +4,13 @@
 //! including Node16/NodeNext ESM extension validation (TS2834/TS2835).
 
 use super::{
-    ImportKind, ImportingModuleKind, ModuleExtension, ModuleResolver, ResolutionFailure,
-    ResolvedModule,
+    ImportKind, ImportingModuleKind, ModuleExtension, ModuleResolver, PackageType,
+    ResolutionFailure, ResolvedModule,
 };
 use crate::config::ModuleResolutionKind;
 use crate::module_resolver_helpers::KNOWN_EXTENSIONS;
 use crate::span::Span;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 impl ModuleResolver {
     const fn suggested_runtime_extension(&self, resolved_ext: ModuleExtension) -> &'static str {
@@ -64,15 +64,37 @@ impl ModuleResolver {
         import_kind: ImportKind,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         let candidate = containing_dir.join(specifier);
+        let mut candidates = vec![candidate];
+        candidates.extend(self.root_dirs_relative_candidates(containing_dir, specifier));
         let prefer_directory = specifier == "."
             || specifier == ".."
             || specifier.ends_with('/')
             || specifier.ends_with('\\');
         let try_resolve_candidate = |path: &Path| {
-            if prefer_directory {
-                self.try_directory(path)
+            let uses_require_resolution = import_kind == ImportKind::CjsRequire
+                || (matches!(import_kind, ImportKind::EsmImport | ImportKind::EsmReExport)
+                    && importing_module_kind == ImportingModuleKind::CommonJs);
+            let package_type = if matches!(
+                self.resolution_kind,
+                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+            ) && uses_require_resolution
+            {
+                let package_dir = if prefer_directory || path.is_dir() {
+                    path
+                } else {
+                    path.parent().unwrap_or_else(|| Path::new("."))
+                };
+                Some(
+                    self.get_package_type_for_dir(package_dir)
+                        .unwrap_or(PackageType::CommonJs),
+                )
             } else {
-                self.try_file_or_directory(path)
+                self.current_package_type
+            };
+            if prefer_directory {
+                self.try_directory_with_package_type(path, package_type)
+            } else {
+                self.try_file_or_directory_with_package_type(path, package_type)
             }
         };
 
@@ -120,7 +142,10 @@ impl ModuleResolver {
 
         if needs_extension_check {
             // Try to resolve to determine what extension to suggest (TS2835)
-            if let Some(resolved) = try_resolve_candidate(&candidate) {
+            for candidate in &candidates {
+                let Some(resolved) = try_resolve_candidate(candidate) else {
+                    continue;
+                };
                 // Resolution succeeded implicitly - this is an error in ESM mode.
                 // Only suggest an extension (TS2835) when the resolution was via direct file
                 // extension addition (e.g., ./foo → ./foo.ts). If the resolution went through
@@ -128,7 +153,7 @@ impl ModuleResolver {
                 // extension (TS2834) because adding .js to the specifier won't work.
                 let resolved_ext = ModuleExtension::from_path(&resolved);
                 let resolved_via_index =
-                    self.resolved_via_directory_index(Path::new(&resolved), &candidate);
+                    self.resolved_via_directory_index(Path::new(&resolved), candidate);
                 // Bare `.`, `./`, `..`, `../` specifiers (no path component to
                 // add an extension to) resolve via directory index but should
                 // emit TS2307 (Cannot find module), not TS2834, because there
@@ -167,14 +192,16 @@ impl ModuleResolver {
             // candidates but can still provide a useful TS2835 suggestion.
             // Notably, `.json` files are not in the extension candidate lists
             // (they require `resolveJsonModule`), but tsc still suggests them.
-            let json_candidate = candidate.with_extension("json");
-            if json_candidate.is_file() {
-                return Err(ResolutionFailure::ImportPathNeedsExtension {
-                    specifier: specifier.to_string(),
-                    suggested_extension: ".json".to_string(),
-                    containing_file: containing_file.to_string(),
-                    span: specifier_span,
-                });
+            for candidate in &candidates {
+                let json_candidate = candidate.with_extension("json");
+                if json_candidate.is_file() {
+                    return Err(ResolutionFailure::ImportPathNeedsExtension {
+                        specifier: specifier.to_string(),
+                        suggested_extension: ".json".to_string(),
+                        containing_file: containing_file.to_string(),
+                        span: specifier_span,
+                    });
+                }
             }
             // File doesn't exist - emit TS2834 (no suggestion) for ESM imports
             return Err(ResolutionFailure::ImportPathNeedsExtension {
@@ -185,22 +212,24 @@ impl ModuleResolver {
             });
         }
 
-        if let Some(resolved) = try_resolve_candidate(&candidate) {
-            let resolved_via_index =
-                self.resolved_via_directory_index(Path::new(&resolved), &candidate);
-            let resolved_using_ts_extension = (specifier.ends_with(".ts")
-                || specifier.ends_with(".tsx")
-                || specifier.ends_with(".mts")
-                || specifier.ends_with(".cts"))
-                && !resolved_via_index;
-            return Ok(ResolvedModule {
-                resolved_path: resolved.clone(),
-                resolved_using_ts_extension,
-                is_external: false,
-                package_name: None,
-                original_specifier: specifier.to_string(),
-                extension: ModuleExtension::from_path(&resolved),
-            });
+        for candidate in &candidates {
+            if let Some(resolved) = try_resolve_candidate(candidate) {
+                let resolved_via_index =
+                    self.resolved_via_directory_index(Path::new(&resolved), candidate);
+                let resolved_using_ts_extension = (specifier.ends_with(".ts")
+                    || specifier.ends_with(".tsx")
+                    || specifier.ends_with(".mts")
+                    || specifier.ends_with(".cts"))
+                    && !resolved_via_index;
+                return Ok(ResolvedModule {
+                    resolved_path: resolved.clone(),
+                    resolved_using_ts_extension,
+                    is_external: false,
+                    package_name: None,
+                    original_specifier: specifier.to_string(),
+                    extension: ModuleExtension::from_path(&resolved),
+                });
+            }
         }
 
         let js_json_extension_suggestion = matches!(
@@ -216,14 +245,16 @@ impl ModuleResolver {
                 ImportKind::CjsRequire => false,
             };
         if js_json_extension_suggestion {
-            let json_candidate = candidate.with_extension("json");
-            if json_candidate.is_file() {
-                return Err(ResolutionFailure::ImportPathNeedsExtension {
-                    specifier: specifier.to_string(),
-                    suggested_extension: ".json".to_string(),
-                    containing_file: containing_file.to_string(),
-                    span: specifier_span,
-                });
+            for candidate in &candidates {
+                let json_candidate = candidate.with_extension("json");
+                if json_candidate.is_file() {
+                    return Err(ResolutionFailure::ImportPathNeedsExtension {
+                        specifier: specifier.to_string(),
+                        suggested_extension: ".json".to_string(),
+                        containing_file: containing_file.to_string(),
+                        span: specifier_span,
+                    });
+                }
             }
         }
 
@@ -235,6 +266,41 @@ impl ModuleResolver {
             containing_file: containing_file.to_string(),
             span: specifier_span,
         })
+    }
+
+    fn root_dirs_relative_candidates(
+        &self,
+        containing_dir: &Path,
+        specifier: &str,
+    ) -> Vec<PathBuf> {
+        if self.root_dirs.is_empty() {
+            return Vec::new();
+        }
+
+        let containing_dir = normalize_path_segments(containing_dir);
+        let direct_candidate = normalize_path_segments(&containing_dir.join(specifier));
+        let mut candidates = Vec::new();
+
+        for origin_root in &self.root_dirs {
+            let origin_root = normalize_path_segments(origin_root);
+            if containing_dir.strip_prefix(&origin_root).is_err() {
+                continue;
+            }
+            let Ok(virtual_path) = direct_candidate.strip_prefix(&origin_root) else {
+                continue;
+            };
+
+            for target_root in &self.root_dirs {
+                let candidate = normalize_path_segments(&target_root.join(virtual_path));
+                if candidate == direct_candidate || candidates.iter().any(|seen| seen == &candidate)
+                {
+                    continue;
+                }
+                candidates.push(candidate);
+            }
+        }
+
+        candidates
     }
 
     /// Resolve an absolute import
@@ -263,4 +329,20 @@ impl ModuleResolver {
             span: specifier_span,
         })
     }
+}
+
+fn normalize_path_segments(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::RootDir | Component::Normal(_) | Component::Prefix(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
 }

@@ -102,6 +102,32 @@ pub(crate) fn is_type_query_in_non_flow_sensitive_signature_parameter(
     false
 }
 
+/// TS1229: A type predicate is only allowed in return type position for
+/// functions and methods. Reports the diagnostic on the predicate when it
+/// appears as the return-type annotation of a `CONSTRUCTOR_TYPE` node.
+pub(crate) fn report_type_predicate_in_constructor_type(
+    ctx: &mut crate::CheckerContext,
+    node_kind: u16,
+    type_annotation: tsz_parser::parser::NodeIndex,
+) {
+    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+    if node_kind != syntax_kind_ext::CONSTRUCTOR_TYPE {
+        return;
+    }
+    let Some(tn) = ctx.arena.get(type_annotation) else {
+        return;
+    };
+    if tn.kind != syntax_kind_ext::TYPE_PREDICATE {
+        return;
+    }
+    ctx.error(
+        tn.pos,
+        tn.end - tn.pos,
+        diagnostic_messages::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO.to_string(),
+        diagnostic_codes::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
+    );
+}
+
 // Check duplicate parameters from a TypeNodeChecker context.
 pub(crate) fn check_duplicate_parameters_in_type(
     ctx: &mut crate::CheckerContext,

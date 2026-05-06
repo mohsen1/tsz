@@ -321,13 +321,24 @@ export class CliTranspiler {
     const normalizedOutFile = outFile?.replace(/^[/\\]+/, '');
     const outputFilePath = normalizedOutFile ? path.join(testDir, normalizedOutFile) : null;
     const outputDtsPath = outputFilePath?.replace(/\.js$/, '.d.ts') ?? null;
+    const virtualSrcFileNames = new Set<string>();
+    if (expectedJsContent) {
+      const virtualSrcRegex = /const _jsxFileName = "\/\.src\/([^"]+)";/g;
+      for (let match: RegExpExecArray | null; (match = virtualSrcRegex.exec(expectedJsContent)) !== null;) {
+        virtualSrcFileNames.add(match[1].replace(/\\/g, '/'));
+      }
+    }
 
     const inputFiles: string[] = [];
     const expectedOutputs: OutputPaths[] = [];
 
     for (const file of files) {
       const relName = file.name.replace(/^\/+/, '');
-      const filePath = path.join(testDir, relName);
+      const normalizedRelName = relName.replace(/\\/g, '/');
+      const physicalRelName = virtualSrcFileNames.has(normalizedRelName)
+        ? path.posix.join('.src', normalizedRelName)
+        : relName;
+      const filePath = path.join(testDir, physicalRelName);
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, file.content, 'utf-8');
 

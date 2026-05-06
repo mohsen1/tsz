@@ -221,7 +221,7 @@ pub(super) fn implied_resolution_mode_for_file(file: &Path, base_dir: &Path) -> 
     implied_resolution_mode_for_file_with_cache(file, base_dir, &mut cache)
 }
 
-fn implied_resolution_mode_for_file_with_cache(
+pub(super) fn implied_resolution_mode_for_file_with_cache(
     file: &Path,
     base_dir: &Path,
     resolution_cache: &mut ModuleResolutionCache,
@@ -576,12 +576,16 @@ pub(crate) fn collect_module_requests_from_text(
     let mut parser = ParserState::new(file_name, text.to_string());
     let source_file = parser.parse_source_file();
     let (arena, _diagnostics) = parser.into_parts();
-    collect_module_specifiers(&arena, source_file)
+    let mut requests: Vec<_> = collect_module_specifiers(&arena, source_file)
         .into_iter()
         .map(|(specifier, _, import_kind, resolution_mode_override)| {
             (specifier, import_kind, resolution_mode_override)
         })
-        .collect()
+        .collect();
+    if let Some(source) = arena.get_source_file_at(source_file) {
+        requests.extend(collect_jsdoc_import_requests(source));
+    }
+    requests
 }
 
 /// Quick text scan to determine if a source file might contain module specifiers.
@@ -597,6 +601,141 @@ fn text_may_contain_module_specifiers(text: &str) -> bool {
         || text.contains("from '")
         || text.contains("from \"")
         || text.contains("declare module")
+}
+
+fn collect_jsdoc_import_requests(
+    source: &tsz::parser::node::SourceFileData,
+) -> Vec<(
+    String,
+    tsz::module_resolver::ImportKind,
+    Option<tsz::module_resolver::ImportingModuleKind>,
+)> {
+    use tsz::module_resolver::ImportKind;
+    use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+    if source.comments.is_empty() || !source.text.contains("@import") {
+        return Vec::new();
+    }
+
+    let source_text = source.text.as_ref();
+    let mut requests = Vec::new();
+    for comment in &source.comments {
+        if !is_jsdoc_comment(comment, source_text) {
+            continue;
+        }
+
+        let content = get_jsdoc_content(comment, source_text);
+        for line in content.lines() {
+            let trimmed = line.trim_start_matches('*').trim();
+            let Some(rest) = strip_jsdoc_import_tag_prefix(trimmed) else {
+                continue;
+            };
+            if let Some(specifier) = parse_jsdoc_import_module_specifier(rest) {
+                requests.push((specifier, ImportKind::EsmImport, None));
+            }
+        }
+    }
+
+    requests
+}
+
+fn strip_jsdoc_import_tag_prefix(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix("@import")?;
+    if rest
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    Some(rest)
+}
+
+fn parse_jsdoc_import_module_specifier(rest: &str) -> Option<String> {
+    let rest = rest.trim();
+    let from_idx = find_jsdoc_import_from_keyword(rest)?;
+    let before_from = rest[..from_idx].trim();
+    if matches!(
+        before_from.split_whitespace().next(),
+        Some("type" | "defer")
+    ) && before_from.contains(char::is_whitespace)
+    {
+        return None;
+    }
+
+    let after_from = rest[from_idx + 4..].trim_start();
+    let mut chars = after_from.char_indices();
+    let (_, quote) = chars.next()?;
+    if quote != '"' && quote != '\'' && quote != '`' {
+        return None;
+    }
+
+    let mut specifier = String::new();
+    let mut escaped = false;
+    for (_, ch) in chars {
+        if escaped {
+            specifier.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == quote {
+            return Some(specifier);
+        }
+        specifier.push(ch);
+    }
+
+    None
+}
+
+fn find_jsdoc_import_from_keyword(rest: &str) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut last_from = None;
+
+    for (idx, ch) in rest.char_indices() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        if ch == '"' || ch == '\'' || ch == '`' {
+            quote = Some(ch);
+            continue;
+        }
+
+        if rest[idx..].starts_with("from")
+            && !rest[..idx]
+                .chars()
+                .next_back()
+                .is_some_and(is_jsdoc_import_keyword_part)
+            && !rest[idx + 4..]
+                .chars()
+                .next()
+                .is_some_and(is_jsdoc_import_keyword_part)
+        {
+            last_from = Some(idx);
+        }
+    }
+
+    last_from
+}
+
+const fn is_jsdoc_import_keyword_part(ch: char) -> bool {
+    ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
 }
 
 pub(crate) fn collect_module_specifiers(
@@ -665,20 +804,37 @@ pub(crate) fn collect_module_specifiers(
 
         // Handle exports: export { x } from './module'
         if let Some(export_decl) = arena.get_export_decl(stmt) {
-            if let Some(text) = arena.get_literal_text(export_decl.module_specifier) {
+            if export_decl.export_clause.is_some()
+                && let Some(import_decl) = arena.get_import_decl_at(export_decl.export_clause)
+            {
+                let import_kind = if arena.get(export_decl.export_clause).is_some_and(|node| {
+                    node.kind == tsz::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                }) {
+                    ImportKind::CjsRequire
+                } else {
+                    ImportKind::EsmReExport
+                };
+                if let Some(text) = arena.get_literal_text(import_decl.module_specifier) {
+                    specifiers.push((
+                        strip_quotes(text),
+                        import_decl.module_specifier,
+                        import_kind,
+                        import_attributes_resolution_mode(arena, export_decl.attributes),
+                    ));
+                } else if let Some(spec_text) =
+                    extract_require_specifier(arena, import_decl.module_specifier)
+                {
+                    specifiers.push((
+                        spec_text,
+                        import_decl.module_specifier,
+                        ImportKind::CjsRequire,
+                        import_attributes_resolution_mode(arena, export_decl.attributes),
+                    ));
+                }
+            } else if let Some(text) = arena.get_literal_text(export_decl.module_specifier) {
                 specifiers.push((
                     strip_quotes(text),
                     export_decl.module_specifier,
-                    ImportKind::EsmReExport,
-                    import_attributes_resolution_mode(arena, export_decl.attributes),
-                ));
-            } else if export_decl.export_clause.is_some()
-                && let Some(import_decl) = arena.get_import_decl_at(export_decl.export_clause)
-                && let Some(text) = arena.get_literal_text(import_decl.module_specifier)
-            {
-                specifiers.push((
-                    strip_quotes(text),
-                    import_decl.module_specifier,
                     ImportKind::EsmReExport,
                     import_attributes_resolution_mode(arena, export_decl.attributes),
                 ));
@@ -740,21 +896,49 @@ pub(crate) fn collect_module_specifiers(
                     }
 
                     if let Some(export_decl) = arena.get_export_decl(inner_stmt) {
-                        if let Some(text) = arena.get_literal_text(export_decl.module_specifier) {
-                            specifiers.push((
-                                strip_quotes(text),
-                                export_decl.module_specifier,
-                                ImportKind::EsmReExport,
-                                import_attributes_resolution_mode(arena, export_decl.attributes),
-                            ));
-                        } else if export_decl.export_clause.is_some()
+                        if export_decl.export_clause.is_some()
                             && let Some(import_decl) =
                                 arena.get_import_decl_at(export_decl.export_clause)
-                            && let Some(text) = arena.get_literal_text(import_decl.module_specifier)
+                        {
+                            let import_kind =
+                                if arena.get(export_decl.export_clause).is_some_and(|node| {
+                                    node.kind
+                                        == tsz::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                                }) {
+                                    ImportKind::CjsRequire
+                                } else {
+                                    ImportKind::EsmReExport
+                                };
+                            if let Some(text) = arena.get_literal_text(import_decl.module_specifier)
+                            {
+                                specifiers.push((
+                                    strip_quotes(text),
+                                    import_decl.module_specifier,
+                                    import_kind,
+                                    import_attributes_resolution_mode(
+                                        arena,
+                                        export_decl.attributes,
+                                    ),
+                                ));
+                            } else if let Some(spec_text) =
+                                extract_require_specifier(arena, import_decl.module_specifier)
+                            {
+                                specifiers.push((
+                                    spec_text,
+                                    import_decl.module_specifier,
+                                    ImportKind::CjsRequire,
+                                    import_attributes_resolution_mode(
+                                        arena,
+                                        export_decl.attributes,
+                                    ),
+                                ));
+                            }
+                        } else if let Some(text) =
+                            arena.get_literal_text(export_decl.module_specifier)
                         {
                             specifiers.push((
                                 strip_quotes(text),
-                                import_decl.module_specifier,
+                                export_decl.module_specifier,
                                 ImportKind::EsmReExport,
                                 import_attributes_resolution_mode(arena, export_decl.attributes),
                             ));
@@ -1319,6 +1503,13 @@ pub(crate) fn resolve_module_specifier(
             options,
             package_type,
         ));
+        for candidate in root_dirs_relative_candidates(from_dir, &specifier, options) {
+            candidates.extend(expand_module_path_candidates(
+                &candidate,
+                options,
+                package_type,
+            ));
+        }
     } else if matches!(resolution, ModuleResolutionKind::Classic) {
         if let Some(paths) = options.paths.as_ref()
             && let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier)
@@ -1436,6 +1627,40 @@ pub(crate) fn resolve_module_specifier(
     }
 
     None
+}
+
+fn root_dirs_relative_candidates(
+    from_dir: &Path,
+    specifier: &str,
+    options: &ResolvedCompilerOptions,
+) -> Vec<PathBuf> {
+    if options.root_dirs.is_empty() {
+        return Vec::new();
+    }
+
+    let from_dir = normalize_path(from_dir);
+    let direct_candidate = normalize_path(&from_dir.join(specifier));
+    let mut candidates = Vec::new();
+
+    for origin_root in &options.root_dirs {
+        let origin_root = normalize_path(origin_root);
+        if from_dir.strip_prefix(&origin_root).is_err() {
+            continue;
+        }
+        let Ok(virtual_path) = direct_candidate.strip_prefix(&origin_root) else {
+            continue;
+        };
+
+        for target_root in &options.root_dirs {
+            let candidate = normalize_path(&target_root.join(virtual_path));
+            if candidate == direct_candidate || candidates.iter().any(|seen| seen == &candidate) {
+                continue;
+            }
+            candidates.push(candidate);
+        }
+    }
+
+    candidates
 }
 
 fn select_path_mapping<'a>(

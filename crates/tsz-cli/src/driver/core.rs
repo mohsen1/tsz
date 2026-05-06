@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::args::{CliArgs, Module, ModuleDetection, ModuleResolution, Target};
+use crate::args::{CliArgs, Module, ModuleDetection, ModuleResolution, NewLine, Target};
 use crate::config::{
-    ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
-    load_tsconfig_with_diagnostics, parse_tsconfig_with_diagnostics, resolve_compiler_options,
-    resolve_default_lib_files, resolve_lib_files, resolve_lib_files_with_options,
-    resolve_lib_files_with_options_transitive,
+    CompilerOptions, ModuleResolutionKind, ResolvedCompilerOptions, TsConfig,
+    checker_target_from_emitter, load_tsconfig, load_tsconfig_with_diagnostics,
+    parse_tsconfig_with_diagnostics, resolve_compiler_options, resolve_default_lib_files,
+    resolve_lib_files, resolve_lib_files_with_options, resolve_lib_files_with_options_transitive,
 };
 use tsz::binder::BinderOptions;
 use tsz::binder::BinderState;
@@ -27,18 +27,21 @@ use tsz::lib_loader::LibFile;
 use tsz::module_resolver::ModuleResolver;
 use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
-use tsz_common::common::ModuleKind;
+use tsz_common::common::{ModuleKind, NewLineKind};
 use tsz_common::file_extensions::{
     JS_FAMILY_EXTENSIONS, JSON_EXTENSION, TS_FAMILY_EXTENSIONS, is_json_file,
 };
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
-use super::emit::{EmitOutputsContext, emit_outputs, normalize_type_roots, write_outputs};
+use super::emit::{
+    EmitOutputsContext, emit_outputs, normalize_root_dirs, normalize_type_roots, write_outputs,
+};
 pub(crate) use super::emit::{normalize_base_url, normalize_output_dir, normalize_root_dir};
 use super::resolution::{
     ModuleResolutionCache, build_duplicate_package_redirects, canonicalize_or_owned,
     collect_export_binding_nodes, collect_import_bindings, collect_module_specifiers,
     collect_star_export_specifiers, collect_type_packages_from_root, default_type_roots, env_flag,
-    is_declaration_file, normalize_path, normalize_resolved_path, resolve_module_specifier,
+    implied_resolution_mode_for_file_with_cache, is_declaration_file, normalize_path,
+    normalize_resolved_path, resolve_module_specifier,
 };
 use crate::fs::{FileDiscoveryOptions, discover_ts_files, is_js_file, is_ts_file};
 use crate::incremental::{BuildInfo, default_build_info_path};
@@ -998,7 +1001,13 @@ fn compile_inner(
             return Err(e);
         }
     };
-    apply_cli_overrides(&mut resolved, args)?;
+    apply_cli_overrides_with_config_options(
+        &mut resolved,
+        args,
+        config
+            .as_ref()
+            .and_then(|cfg| cfg.compiler_options.as_ref()),
+    )?;
 
     // Wire removed-but-honored suppress flags from config
     if loaded.suppress_excess_property_errors {
@@ -1043,10 +1052,12 @@ fn compile_inner(
     let out_dir = normalize_output_dir(&base_dir, resolved.out_dir.clone());
     let declaration_dir = normalize_output_dir(&base_dir, resolved.declaration_dir.clone());
     let base_url = normalize_base_url(&base_dir, resolved.base_url.clone());
+    let root_dirs = normalize_root_dirs(&base_dir, resolved.root_dirs.clone());
     resolved.root_dir = root_dir.clone();
     resolved.out_dir = out_dir.clone();
     resolved.declaration_dir = declaration_dir.clone();
     resolved.base_url = base_url;
+    resolved.root_dirs = root_dirs;
     resolved.type_roots = normalize_type_roots(&base_dir, resolved.type_roots.clone());
 
     let discovery = build_discovery_options(
@@ -1425,6 +1436,10 @@ fn compile_inner(
         resolved.checker.no_types_and_symbols || sources_have_no_types_and_symbols(&sources);
     let lib_paths =
         resolve_effective_lib_paths(&resolved, &sources, &base_dir, disable_default_libs)?;
+    config_diagnostics.extend(collect_source_reference_lib_diagnostics(
+        &sources,
+        resolved.checker.no_lib,
+    ));
     let typescript_dom_replacement_globals = scan_typescript_dom_replacement_globals(&lib_paths);
     let lib_path_refs: Vec<&Path> = lib_paths.iter().map(PathBuf::as_path).collect();
 
@@ -2160,7 +2175,9 @@ fn resolve_effective_lib_paths(
             // Source-file `/// <reference lib="..." />` directives may name libs
             // that no longer exist in this TS version (e.g. rxjs references
             // `esnext.asynciterable`, since folded into `es2018.asynciterable`).
-            // Match tsc's behavior and silently skip unknown ones.
+            // The transitive resolver silently skips unknown names at this
+            // layer; user-facing TS2726 for invalid initial names is emitted
+            // separately by `collect_source_reference_lib_diagnostics`.
             let expanded_source_paths =
                 resolve_lib_files_with_options_transitive(&source_reference_libs, true)?;
             append_unique_lib_names(&mut lib_names, lib_names_from_paths(&expanded_source_paths));
@@ -2194,6 +2211,50 @@ fn collect_source_reference_libs(sources: &[SourceEntry]) -> Vec<String> {
         append_unique_lib_names(&mut lib_names, refs);
     }
     lib_names
+}
+
+/// Emit `TS2726` for user-authored source-file `/// <reference lib="..." />`
+/// directives whose value is empty or names a lib that does not exist.
+///
+/// `tsc` reports invalid initial lib names from user source files as
+/// `TS2726 Cannot find lib definition for '<name>'.` anchored at the lib
+/// attribute value. Transitive lib-to-lib references *inside* lib files
+/// remain silently skipped — that policy lives in the resolver in
+/// `tsz-core::config::resolve_lib_files_with_options_transitive`.
+///
+/// `no_lib` mirrors `--noLib`: when set, `tsc` ignores all lib references,
+/// so we skip diagnostic emission too.
+fn collect_source_reference_lib_diagnostics(
+    sources: &[SourceEntry],
+    no_lib: bool,
+) -> Vec<Diagnostic> {
+    if no_lib {
+        return Vec::new();
+    }
+    let mut diagnostics = Vec::new();
+    for source in sources {
+        let positioned = if let Some(text) = source.text.as_deref() {
+            tsz::config::extract_lib_references_with_positions(text)
+        } else {
+            std::fs::read_to_string(&source.path)
+                .map(|text| tsz::config::extract_lib_references_with_positions(&text))
+                .unwrap_or_default()
+        };
+        for reference in positioned {
+            if tsz::config::is_known_lib_name(&reference.raw) {
+                continue;
+            }
+            let message = format!("Cannot find lib definition for '{}'.", reference.raw.trim());
+            diagnostics.push(Diagnostic::error(
+                source.path.to_string_lossy().into_owned(),
+                reference.start,
+                reference.length,
+                message,
+                diagnostic_codes::CANNOT_FIND_LIB_DEFINITION_FOR,
+            ));
+        }
+    }
+    diagnostics
 }
 
 fn append_unique_lib_names(target: &mut Vec<String>, additional: Vec<String>) {
@@ -2574,7 +2635,7 @@ fn hash_text(text: &str) -> u64 {
 mod sources;
 #[cfg(test)]
 pub(crate) use sources::has_no_types_and_symbols_directive;
-pub use sources::{FileReadResult, read_source_file};
+pub use sources::{FileReadResult, find_tsconfig, read_source_file};
 use sources::{
     SourceEntry, SourceReadResult, build_discovery_options, collect_type_root_files,
     read_source_files, sources_have_no_default_lib, sources_have_no_types_and_symbols,
@@ -2590,9 +2651,23 @@ mod check_utils;
 use check::{collect_diagnostics, load_checker_libs};
 
 pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs) -> Result<()> {
+    apply_cli_overrides_with_config_options(options, args, None)
+}
+
+fn apply_cli_overrides_with_config_options(
+    options: &mut ResolvedCompilerOptions,
+    args: &CliArgs,
+    config_options: Option<&CompilerOptions>,
+) -> Result<()> {
     if let Some(target) = args.target {
         options.printer.target = target.to_script_target();
         options.checker.target = checker_target_from_emitter(options.printer.target);
+    }
+    if let Some(new_line) = args.new_line {
+        options.printer.new_line = match new_line {
+            NewLine::Lf => NewLineKind::LineFeed,
+            NewLine::Crlf => NewLineKind::CarriageReturnLineFeed,
+        };
     }
     if let Some(module) = args.module {
         options.printer.module = module.to_module_kind();
@@ -2602,6 +2677,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(module_resolution) = args.module_resolution {
         options.module_resolution = Some(module_resolution.to_module_resolution_kind());
     }
+    apply_module_resolution_derived_options(options, args, config_options);
     if let Some(resolve_package_json_exports) = args.resolve_package_json_exports {
         options.resolve_package_json_exports = resolve_package_json_exports;
     }
@@ -2622,7 +2698,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if let Some(use_define_for_class_fields) = args.use_define_for_class_fields {
         options.printer.use_define_for_class_fields = use_define_for_class_fields;
-    } else {
+    } else if !config_options.is_some_and(|options| options.use_define_for_class_fields.is_some()) {
         // Default: true for target >= ES2022, false otherwise (matches tsc behavior)
         options.printer.use_define_for_class_fields =
             (options.printer.target as u32) >= (tsz::emitter::ScriptTarget::ES2022 as u32);
@@ -2639,6 +2715,12 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if let Some(root_dir) = args.root_dir.as_ref() {
         options.root_dir = Some(root_dir.clone());
+    }
+    if let Some(base_url) = args.base_url.as_ref() {
+        options.base_url = Some(base_url.clone());
+    }
+    if let Some(root_dirs) = args.root_dirs.as_ref() {
+        options.root_dirs = root_dirs.clone();
     }
     if let Some(declaration_dir) = args.declaration_dir.as_ref() {
         options.declaration_dir = Some(declaration_dir.clone());
@@ -2669,6 +2751,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.source_map {
         options.source_map = true;
+    }
+    if args.inline_source_map {
+        options.inline_source_map = true;
     }
     if args.emit_bom {
         options.emit_bom = true;
@@ -2961,6 +3046,39 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
 
     Ok(())
+}
+
+fn apply_module_resolution_derived_options(
+    options: &mut ResolvedCompilerOptions,
+    args: &CliArgs,
+    config_options: Option<&CompilerOptions>,
+) {
+    let effective_resolution = options.effective_module_resolution();
+    options.checker.implied_classic_resolution =
+        matches!(effective_resolution, ModuleResolutionKind::Classic);
+
+    let config_has_resolve_package_json_exports =
+        config_options.is_some_and(|options| options.resolve_package_json_exports.is_some());
+    if args.resolve_package_json_exports.is_none() && !config_has_resolve_package_json_exports {
+        options.resolve_package_json_exports = matches!(
+            effective_resolution,
+            ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
+        );
+    }
+
+    let config_has_resolve_package_json_imports =
+        config_options.is_some_and(|options| options.resolve_package_json_imports.is_some());
+    if args.resolve_package_json_imports.is_none() && !config_has_resolve_package_json_imports {
+        options.resolve_package_json_imports = matches!(
+            effective_resolution,
+            ModuleResolutionKind::Node
+                | ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
+        );
+    }
 }
 
 fn validate_cli_compiler_option_diagnostics(

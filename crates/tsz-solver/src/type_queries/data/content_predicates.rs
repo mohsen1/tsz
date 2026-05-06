@@ -707,6 +707,35 @@ pub fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     }
 }
 
+/// Return true when a constraint admits a mutable array or tuple candidate.
+///
+/// Const type parameters preserve literal types, but when their declared
+/// constraint is mutable-array-like (`T extends unknown[]`, or a union with a
+/// mutable array member), array literal candidates must not be converted to
+/// readonly tuples.
+pub fn constraint_allows_mutable_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Array(_)) => true,
+        Some(TypeData::Tuple(list_id)) => !db.tuple_list(list_id).is_empty(),
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
+            .constraint
+            .is_some_and(|constraint| constraint_allows_mutable_array_like(db, constraint)),
+        Some(TypeData::Union(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| constraint_allows_mutable_array_like(db, member)),
+        Some(TypeData::Application(_) | TypeData::Lazy(_)) => {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+            evaluated != type_id && constraint_allows_mutable_array_like(db, evaluated)
+        }
+        _ => false,
+    }
+}
+
 /// Get the element type for mutable array forms that are identical for TS2403.
 ///
 /// This intentionally recognizes `T[]` and canonical `Array<T>` applications

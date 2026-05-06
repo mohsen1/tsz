@@ -135,6 +135,11 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if has_initializer
+                && let Some(type_text) = self.angle_bracket_const_assertion_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
                 && let Some(type_text) = self.explicit_asserted_type_text(initializer)
             {
                 self.write(": ");
@@ -178,7 +183,14 @@ impl<'a> DeclarationEmitter<'a> {
                     .expand_portable_mapped_object_text_in_current_context(&type_text)
                     .unwrap_or(type_text);
                 self.write(": ");
-                self.write(&type_text);
+                if keyword == "const"
+                    && let Some(formatted) =
+                        self.call_initializer_unexported_alias_literal_text(initializer)
+                {
+                    self.write(&formatted);
+                } else {
+                    self.write(&type_text);
+                }
             } else if has_initializer
                 && (self.emit_ts_late_bound_function_initializer_type_annotation(
                     decl_name,
@@ -201,6 +213,15 @@ impl<'a> DeclarationEmitter<'a> {
                         )
                     }))
             {
+            } else if has_initializer
+                && self
+                    .arena
+                    .get(initializer)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(type_text) = self.preferred_expression_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
             } else if let Some(resolved_type) = self.resolve_declaration_type_text(
                 &[decl_idx, decl_name],
                 has_initializer.then_some(initializer),
@@ -363,6 +384,24 @@ impl<'a> DeclarationEmitter<'a> {
                 if keyword == "const"
                     && let Some(interner) = self.type_interner
                 {
+                    if has_initializer
+                        && let Some(formatted) =
+                            self.call_initializer_unexported_alias_literal_text(initializer)
+                    {
+                        self.write(": ");
+                        self.write(&formatted);
+                        return;
+                    }
+
+                    if let Some(lit) =
+                        Self::enum_member_literal_initializer_value(interner, type_id)
+                    {
+                        let formatted = Self::format_literal_initializer(&lit, interner);
+                        self.write(": ");
+                        self.write(&formatted);
+                        return;
+                    }
+
                     if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
                         let formatted = Self::format_literal_initializer(&lit, interner);
                         self.write(": ");
@@ -1666,5 +1705,13 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => true,
         }
+    }
+
+    fn enum_member_literal_initializer_value(
+        interner: &tsz_solver::TypeInterner,
+        type_id: tsz_solver::types::TypeId,
+    ) -> Option<tsz_solver::types::LiteralValue> {
+        let (_def_id, member_type) = tsz_solver::visitor::enum_components(interner, type_id)?;
+        tsz_solver::visitor::literal_value(interner, member_type)
     }
 }

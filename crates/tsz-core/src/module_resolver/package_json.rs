@@ -10,22 +10,23 @@ use crate::module_resolver_helpers::PackageJson;
 
 impl ModuleResolver {
     /// Get the package type for a directory by walking up to find package.json
-    pub(super) fn get_package_type_for_dir(&mut self, dir: &Path) -> Option<PackageType> {
+    pub(super) fn get_package_type_for_dir(&self, dir: &Path) -> Option<PackageType> {
         // Check cache first
-        if let Some(cached) = self.package_type_cache.get(dir) {
-            return *cached;
+        let cached_dir_type = self.package_type_cache.borrow().get(dir).copied();
+        if let Some(cached) = cached_dir_type {
+            return cached;
         }
 
         let mut current = dir.to_path_buf();
         let mut visited = Vec::new();
 
         loop {
-            // Check cache for this path - copy the value to avoid borrow conflict
-            if let Some(&cached) = self.package_type_cache.get(&current) {
-                let result = cached;
+            let cached_current_type = self.package_type_cache.borrow().get(&current).copied();
+            if let Some(result) = cached_current_type {
                 // Cache all visited paths with this result
+                let mut cache = self.package_type_cache.borrow_mut();
                 for path in visited {
-                    self.package_type_cache.insert(path, result);
+                    cache.insert(path, result);
                 }
                 return result;
             }
@@ -43,8 +44,9 @@ impl ModuleResolver {
                     _ => None,
                 });
                 // Cache all visited paths
+                let mut cache = self.package_type_cache.borrow_mut();
                 for path in visited {
-                    self.package_type_cache.insert(path, package_type);
+                    cache.insert(path, package_type);
                 }
                 return package_type;
             }
@@ -57,8 +59,9 @@ impl ModuleResolver {
         }
 
         // No package.json found, cache as None
+        let mut cache = self.package_type_cache.borrow_mut();
         for path in visited {
-            self.package_type_cache.insert(path, None);
+            cache.insert(path, None);
         }
         None
     }

@@ -185,6 +185,7 @@ impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
 }
 
 mod comments_source;
+mod computed_declarations;
 mod emit_node;
 mod function_analysis;
 mod js_exports;
@@ -197,5 +198,6 @@ mod type_inference;
 mod type_param_rewrite;
 mod type_printing;
 mod type_printing_paths;
+mod unexported_alias_literal;
 mod variable_decl;
 mod visibility;

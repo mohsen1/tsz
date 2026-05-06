@@ -710,6 +710,9 @@ impl<'a> Printer<'a> {
             }
             self.write("finally ");
             self.emit(try_stmt.finally_block);
+        } else if try_stmt.catch_clause.is_none() {
+            self.write_line();
+            self.write("finally { }");
         }
     }
 
