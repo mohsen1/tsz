@@ -400,6 +400,10 @@ pub struct CheckerContext<'a> {
     /// different members from the same nested namespace.
     pub nested_namespace_candidates_cache: RefCell<NestedNamespaceCandidatesCache>,
 
+    /// True once `nested_namespace_candidates_cache` has been populated for every
+    /// nested namespace export name visible across all binders.
+    pub nested_namespace_candidates_cache_complete: Cell<bool>,
+
     /// Per-checker cache for text-based entity-name resolution used by lowering.
     /// Keyed by names like `React.ReactNode` / `JSX.Element` and stores both
     /// hits and misses to avoid repeatedly walking the same symbol graph during
