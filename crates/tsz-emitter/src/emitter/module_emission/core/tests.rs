@@ -203,6 +203,49 @@ export = Foo;
 }
 
 #[test]
+fn for_of_assignment_object_rest_uses_iteration_temp() {
+    let source = r#"let array: { x: number, y: string }[];
+for (let { x, ...restOf } of array) {
+    [x, restOf];
+}
+let xx: number;
+let rrestOff: { y: string };
+for ({ x: xx, ...rrestOff } of array ) {
+    [xx, rrestOff];
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("for (let _a of array) {"),
+        "Object-rest binding for-of should keep using a loop temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (let _b of array) {"),
+        "Object-rest assignment for-of should introduce a loop temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("({ x: xx } = _b, rrestOff = __rest(_b, [\"x\"]));"),
+        "Object-rest assignment should be emitted inside the loop body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Object.assign({ x: xx }, rrestOff) of array"),
+        "Object-rest assignment must not be emitted as an object-spread expression in the for-of header.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_arrow_this_capture_skips_multiple_user_bindings() {
     let source = r#"export function make(this: { value: string }) {
   const _this = "first user binding";
