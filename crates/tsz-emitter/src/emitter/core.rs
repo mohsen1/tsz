@@ -558,6 +558,11 @@ pub struct Printer<'a> {
     /// Used to determine if we're inside a function scope (depth > 0) or at top level (0).
     pub(crate) function_scope_depth: u32,
 
+    /// Current nesting depth of arrow-function scopes.
+    /// Used with `function_scope_depth` to determine whether an async arrow's
+    /// lexical `this` comes from a non-arrow function or from the top level.
+    pub(crate) arrow_function_scope_depth: u32,
+
     /// Current nesting depth for iterator for-of emission.
     pub(crate) iterator_for_of_depth: usize,
 
@@ -888,6 +893,7 @@ impl<'a> Printer<'a> {
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),
             function_scope_depth: 0,
+            arrow_function_scope_depth: 0,
             first_for_of_emitted: false,
             in_namespace_iife: false,
             namespace_scope_end: u32::MAX,
