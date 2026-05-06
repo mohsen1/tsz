@@ -456,10 +456,14 @@ fn template_substitution_type_is_valid(db: &dyn TypeDatabase, part: TypeId, dept
         ))
         | Some(TypeData::Literal(_))
         | Some(TypeData::TemplateLiteral(_)) => true,
-        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
+        Some(TypeData::Union(list_id)) => db
             .type_list(list_id)
             .iter()
             .all(|&member| template_substitution_type_is_valid(db, member, depth + 1)),
+        Some(TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| template_substitution_type_is_valid(db, member, depth + 1)),
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
             info.constraint.is_some_and(|constraint| {
                 template_substitution_type_is_valid(db, constraint, depth + 1)
