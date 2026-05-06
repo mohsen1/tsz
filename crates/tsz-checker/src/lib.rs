@@ -493,6 +493,9 @@ mod member_access_architecture_boundary_tests;
 #[path = "../tests/module_resolution_guard_tests.rs"]
 mod module_resolution_guard_tests;
 #[cfg(test)]
+#[path = "tests/mutable_binding_widening_from_const_literal_tests.rs"]
+mod mutable_binding_widening_from_const_literal_tests;
+#[cfg(test)]
 #[path = "../tests/never_returning_narrowing_tests.rs"]
 mod never_returning_narrowing_tests;
 #[cfg(test)]
