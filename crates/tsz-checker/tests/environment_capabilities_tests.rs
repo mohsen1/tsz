@@ -29,16 +29,20 @@ fn check_no_lib(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
 }
 
 // =============================================================================
-// TS2591: Node.js globals routed through capabilities
+// TS2580/TS2591: Node.js globals routed through capabilities
 // =============================================================================
 
 #[test]
-fn test_node_global_require_without_types_emits_ts2591() {
+fn test_node_global_require_without_explicit_types_emits_ts2591() {
+    // tsc emits TS2591 ("install @types/node and add 'node' to the types
+    // field") in the missing-global identifier path. TS2580 is reserved for
+    // separate module-resolution cases where the unresolved name is a module
+    // specifier rather than a global identifier.
     let diags = check_no_lib("const x = require('fs');");
     let ts2591: Vec<_> = diags.iter().filter(|d| d.code == 2591).collect();
     assert!(
         !ts2591.is_empty(),
-        "Expected TS2591 for 'require' (Node global), got: {diags:?}"
+        "Expected TS2591 for 'require' (Node global, no explicit types), got: {diags:?}"
     );
 }
 

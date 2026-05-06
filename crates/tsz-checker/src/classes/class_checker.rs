@@ -1470,14 +1470,6 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| {
                             self.intersection_instance_display_name(h_expr_idx, type_arguments)
                         })
-                        .or_else(|| {
-                            heritage_sym_id.and_then(|sym_id| {
-                                self.format_symbol_reference_with_type_arguments(
-                                    sym_id,
-                                    type_arguments,
-                                )
-                            })
-                        })
                         .unwrap_or_else(|| {
                             self.format_heritage_instance_display(
                                 instance_type,
@@ -1544,14 +1536,6 @@ impl<'a> CheckerState<'a> {
                         .format_heritage_class_symbol_reference(heritage_sym_id, type_arguments)
                         .or_else(|| {
                             self.intersection_instance_display_name(h_expr_idx, type_arguments)
-                        })
-                        .or_else(|| {
-                            heritage_sym_id.and_then(|sym_id| {
-                                self.format_symbol_reference_with_type_arguments(
-                                    sym_id,
-                                    type_arguments,
-                                )
-                            })
                         })
                         .unwrap_or_else(|| {
                             self.format_heritage_instance_display(

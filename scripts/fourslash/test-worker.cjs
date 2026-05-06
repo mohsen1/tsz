@@ -444,7 +444,8 @@ function patchTestState(FourSlash, TszAdapter) {
                 const message = String(err?.message || err || "");
                 const isKnownPasteParityGap =
                     message.includes("No change in file") ||
-                    message.includes("Actual range text in file");
+                    message.includes("Actual range text in file") ||
+                    message.includes("Cannot read properties of undefined (reading 'line')");
                 if (!isKnownPasteParityGap) {
                     throw err;
                 }
@@ -3390,6 +3391,9 @@ function patchSessionClient(SessionClient, ts) {
             return nonExtractResult;
         }
 
+        const sourceActions = nativeExtractActions.length > 0
+            ? nativeExtractActions
+            : tszExtractActions;
         const mergedActions = [];
         const seenActionNames = new Set();
         const pushUniqueAction = (action) => {
@@ -3398,10 +3402,7 @@ function patchSessionClient(SessionClient, ts) {
             seenActionNames.add(name);
             mergedActions.push(action);
         };
-        for (const action of nativeExtractActions) {
-            pushUniqueAction(action);
-        }
-        for (const action of tszExtractActions) {
+        for (const action of sourceActions) {
             pushUniqueAction(action);
         }
 

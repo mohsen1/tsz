@@ -629,6 +629,55 @@ impl<'a> LoweringPass<'a> {
                     }
                 }
             }
+            k if k == syntax_kind_ext::JSX_ELEMENT => {
+                if let Some(jsx) = self.arena.get_jsx_element(node) {
+                    self.visit(jsx.opening_element);
+                    for &child in &jsx.children.nodes {
+                        self.visit(child);
+                    }
+                    self.visit(jsx.closing_element);
+                }
+            }
+            k if k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                || k == syntax_kind_ext::JSX_OPENING_ELEMENT =>
+            {
+                if let Some(jsx) = self.arena.get_jsx_opening(node) {
+                    self.visit(jsx.tag_name);
+                    self.visit(jsx.attributes);
+                }
+            }
+            k if k == syntax_kind_ext::JSX_FRAGMENT => {
+                if let Some(jsx) = self.arena.get_jsx_fragment(node) {
+                    for &child in &jsx.children.nodes {
+                        self.visit(child);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::JSX_ATTRIBUTES => {
+                if let Some(attrs) = self.arena.get_jsx_attributes(node) {
+                    for &prop in &attrs.properties.nodes {
+                        self.visit(prop);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::JSX_ATTRIBUTE => {
+                if let Some(attr) = self.arena.get_jsx_attribute(node) {
+                    self.visit(attr.initializer);
+                }
+            }
+            k if k == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE => {
+                if self.ctx.target_es5 {
+                    self.transforms.helpers_mut().assign = true;
+                }
+                if let Some(spread) = self.arena.get_jsx_spread_attribute(node) {
+                    self.visit(spread.expression);
+                }
+            }
+            k if k == syntax_kind_ext::JSX_EXPRESSION => {
+                if let Some(expr) = self.arena.get_jsx_expression(node) {
+                    self.visit(expr.expression);
+                }
+            }
             k if k == syntax_kind_ext::IF_STATEMENT => {
                 if let Some(if_stmt) = self.arena.get_if_statement(node) {
                     self.visit(if_stmt.expression);

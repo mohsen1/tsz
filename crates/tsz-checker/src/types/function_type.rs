@@ -756,11 +756,14 @@ impl<'a> CheckerState<'a> {
                     has_contextual_type && !has_never_expected_context;
                 // Use type annotation if present, otherwise infer from context
                 let (type_id, has_external_binding_context) = if param.type_annotation.is_some() {
+                    self.push_typeof_param_scope(&params);
                     // Check parameter type for parameter properties in function types
                     self.check_type_for_parameter_properties(param.type_annotation);
                     // Check for undefined type names in parameter type
                     self.check_type_for_missing_names(param.type_annotation);
-                    (self.get_type_from_type_node(param.type_annotation), false)
+                    let annotation_type = self.get_type_from_type_node(param.type_annotation);
+                    self.pop_typeof_param_scope(&params);
+                    (annotation_type, false)
                 } else if is_this_param {
                     // For `this` parameter without type annotation:
                     // - Arrow functions: inherit outer `this` type to preserve lexical scoping

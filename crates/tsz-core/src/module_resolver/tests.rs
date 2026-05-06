@@ -1865,6 +1865,42 @@ fn test_resolver_package_without_package_json_uses_index_file() {
 }
 
 #[test]
+fn test_nodenext_bare_package_index_fallback_rejects_mts_entry() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_nodenext_pkg_index_mts_fallback");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+
+    fs::write(dir.join("src/index.ts"), "import { value } from 'pkg';").unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"type":"module"}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/index.mts"),
+        "export const value = 1;",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("pkg", &dir.join("src/index.ts"), Span::new(22, 27));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "NodeNext bare package fallback must not resolve index.mts, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_bare_specifier_from_node_modules_package_finds_sibling_package() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_node_modules_sibling");
@@ -3143,17 +3179,21 @@ fn test_lookup_resolution_mode_override_selects_import_condition() {
 }
 
 #[test]
-fn test_lookup_bundler_prefers_browser_condition() {
+fn test_lookup_bundler_does_not_default_to_browser_condition() {
+    // Per tsc 6.0, `moduleResolution: "bundler"` does NOT add `browser` to
+    // the default condition set. The `browser` condition must be opted in
+    // via `customConditions`. Without it, bundler should fall through the
+    // conditional `exports` map to `default`.
     use std::fs;
 
-    let dir = std::env::temp_dir().join("tsz_lookup_bundler_prefers_browser");
+    let dir = std::env::temp_dir().join("tsz_lookup_bundler_browser_default_off");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
     fs::create_dir_all(dir.join("src")).unwrap();
 
     fs::write(
         dir.join("node_modules/pkg/package.json"),
-        r#"{"name":"pkg","exports":{".":{"browser":"./browser.d.ts","node":"./node.d.ts"}}}"#,
+        r#"{"name":"pkg","exports":{".":{"browser":"./browser.d.ts","default":"./default.d.ts"}}}"#,
     )
     .unwrap();
     fs::write(
@@ -3162,8 +3202,8 @@ fn test_lookup_bundler_prefers_browser_condition() {
     )
     .unwrap();
     fs::write(
-        dir.join("node_modules/pkg/node.d.ts"),
-        "export const widget: \"node\";",
+        dir.join("node_modules/pkg/default.d.ts"),
+        "export const widget: \"default\";",
     )
     .unwrap();
     fs::write(dir.join("src/index.ts"), "import { widget } from 'pkg';").unwrap();
@@ -3190,7 +3230,64 @@ fn test_lookup_bundler_prefers_browser_condition() {
 
     let resolved = result
         .resolved_path
-        .expect("bundler resolution should prefer the browser condition");
+        .expect("bundler resolution should match `default` when `browser` is not opted in");
+    assert_eq!(resolved, dir.join("node_modules/pkg/default.d.ts"));
+    assert!(result.error.is_none());
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_bundler_uses_browser_when_in_custom_conditions() {
+    // Opting `browser` into `customConditions` re-enables it for bundler.
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_lookup_bundler_browser_via_custom");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{".":{"browser":"./browser.d.ts","default":"./default.d.ts"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/browser.d.ts"),
+        "export const widget: \"browser\";",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/default.d.ts"),
+        "export const widget: \"default\";",
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "import { widget } from 'pkg';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        custom_conditions: vec!["browser".to_string()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "pkg",
+        containing_file: &dir.join("src/index.ts"),
+        specifier_span: Span::new(24, 29),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
+
+    let resolved = result
+        .resolved_path
+        .expect("opting `browser` into customConditions should select the browser branch");
     assert_eq!(resolved, dir.join("node_modules/pkg/browser.d.ts"));
     assert!(result.error.is_none());
 
@@ -5031,4 +5128,280 @@ fn test_node16_cjs_require_uses_target_package_scope_extension_priority() {
     );
 
     let _ = fs::remove_dir_all(&dir);
+}
+// --- Issue #3334: node10 must not resolve package.json#imports by default ---
+
+#[test]
+fn test_node10_does_not_resolve_package_imports_by_default() {
+    // Per tsc 6.0, legacy `moduleResolution: "node"` (a.k.a. node10) does NOT
+    // resolve `package.json#imports` unless `resolvePackageJsonImports` is
+    // explicitly set to true. tsz must mirror that default.
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_node10_imports_default_off");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("package.json"),
+        r##"{"name":"app","imports":{"#mapped":"./src/mapped.d.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/mapped.d.ts"),
+        "export declare const value: 1;",
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "import { value } from '#mapped';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        // Intentionally not setting `resolve_package_json_imports`; default
+        // for Node should be false in tsc 6.0.
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("#mapped", &dir.join("src/index.ts"), Span::new(22, 30));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "node10 must not resolve `#mapped` via package.json#imports by default, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_node10_resolves_package_imports_when_explicitly_enabled() {
+    // When the user opts in via `resolvePackageJsonImports: true`, the
+    // imports field should be honored even under node10.
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_node10_imports_explicit_on");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("package.json"),
+        r##"{"name":"app","imports":{"#mapped":"./src/mapped.d.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/mapped.d.ts"),
+        "export declare const value: 1;",
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "import { value } from '#mapped';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let resolved = resolver
+        .resolve("#mapped", &dir.join("src/index.ts"), Span::new(22, 30))
+        .expect("explicit opt-in should resolve `#mapped`");
+    assert_eq!(resolved.resolved_path, dir.join("src/mapped.d.ts"));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// --- Issue #3352: invalid exports/imports targets must fail resolution ---
+
+#[test]
+fn test_exports_target_rejects_parent_escape() {
+    // A `package.json#exports` target that escapes the package root via
+    // `../` is invalid per Node.js PACKAGE_TARGET_RESOLVE; resolution must
+    // fail rather than silently traverse outside the package.
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_exports_target_parent_escape");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{"./leak":"../leak.d.ts"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/leak.d.ts"),
+        "export declare const value: number;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import { value } from 'pkg/leak';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("pkg/leak", &dir.join("src/index.ts"), Span::new(22, 32));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "exports target `../leak.d.ts` must be rejected, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_exports_target_rejects_node_modules_segment() {
+    // A `package.json#exports` target that contains a `node_modules` path
+    // segment is invalid per Node.js PACKAGE_TARGET_RESOLVE.
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_exports_target_node_modules");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg/node_modules/dep")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{"./inner":"./node_modules/dep/index.d.ts"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/node_modules/dep/index.d.ts"),
+        "export declare const value: number;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import { value } from 'pkg/inner';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("pkg/inner", &dir.join("src/index.ts"), Span::new(22, 33));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "exports target containing `node_modules` segment must be rejected, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_imports_target_rejects_absolute_path() {
+    // A `package.json#imports` target that is an absolute filesystem path
+    // is invalid per Node.js PACKAGE_IMPORTS_RESOLVE; resolution must fail.
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_imports_target_absolute");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    let abs_target = dir.join("abs.d.ts");
+    fs::write(&abs_target, "export declare const value: number;").unwrap();
+    let package_json = format!(
+        r##"{{"name":"app","imports":{{"#abs":{}}}}}"##,
+        serde_json::to_string(&abs_target.to_string_lossy().to_string()).unwrap()
+    );
+    fs::write(dir.join("package.json"), package_json).unwrap();
+    fs::write(dir.join("src/index.ts"), "import { value } from '#abs';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        resolve_package_json_imports: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("#abs", &dir.join("src/index.ts"), Span::new(22, 28));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "imports target with an absolute path must be rejected, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_imports_target_rejects_parent_escape() {
+    // An imports target that escapes the project via `../` is invalid.
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_imports_target_parent_escape");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::create_dir_all(dir.join("..").join("escape")).ok();
+    fs::write(
+        dir.join("package.json"),
+        r##"{"name":"app","imports":{"#leak":"../leak.d.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "import { value } from '#leak';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        resolve_package_json_imports: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("#leak", &dir.join("src/index.ts"), Span::new(22, 29));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "imports target containing `..` segment must be rejected, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_is_valid_relative_package_target_rejects_invalid_targets() {
+    use super::exports_imports::is_valid_relative_package_target;
+
+    assert!(is_valid_relative_package_target("./foo.d.ts"));
+    assert!(is_valid_relative_package_target("./lib/inner/foo.d.ts"));
+
+    // No leading "./" prefix.
+    assert!(!is_valid_relative_package_target("foo.d.ts"));
+    assert!(!is_valid_relative_package_target("../leak.d.ts"));
+    // Absolute paths.
+    assert!(!is_valid_relative_package_target("/abs/foo.d.ts"));
+
+    // `..` segments anywhere are invalid.
+    assert!(!is_valid_relative_package_target("./../leak.d.ts"));
+    assert!(!is_valid_relative_package_target("./lib/../leak.d.ts"));
+
+    // `node_modules` segments are invalid.
+    assert!(!is_valid_relative_package_target("./node_modules/dep.d.ts"));
+    assert!(!is_valid_relative_package_target(
+        "./lib/node_modules/dep.d.ts"
+    ));
+}
+
+#[test]
+fn test_is_valid_bare_imports_target_rejects_absolute_and_relative() {
+    use super::exports_imports::is_valid_bare_imports_target;
+
+    assert!(is_valid_bare_imports_target("some-package"));
+    assert!(is_valid_bare_imports_target("@scope/pkg"));
+    assert!(is_valid_bare_imports_target("@scope/pkg/sub"));
+
+    // Empty string is invalid.
+    assert!(!is_valid_bare_imports_target(""));
+    // Relative-looking targets must be handled by the relative-target path.
+    assert!(!is_valid_bare_imports_target("./local.d.ts"));
+    assert!(!is_valid_bare_imports_target("../parent.d.ts"));
+    // Absolute paths.
+    assert!(!is_valid_bare_imports_target("/abs/path.d.ts"));
+    assert!(!is_valid_bare_imports_target("\\abs\\path.d.ts"));
+    // Windows drive paths.
+    assert!(!is_valid_bare_imports_target("C:/abs.d.ts"));
 }

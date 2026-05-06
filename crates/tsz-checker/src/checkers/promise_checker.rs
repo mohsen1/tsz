@@ -273,6 +273,22 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn object_type_symbol_is_promise_like(&self, type_id: TypeId) -> bool {
+        let query::PromiseTypeKind::Object(shape_id) =
+            query::classify_promise_type(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+
+        let shape = self.ctx.types.object_shape(shape_id);
+        let Some(sym_id) = shape.symbol else {
+            return false;
+        };
+
+        self.promise_symbol_and_decl_file(sym_id)
+            .is_some_and(|(symbol, _)| self.is_promise_like_name(symbol.escaped_name.as_str()))
+    }
+
     /// Extract a Promise member from a contextual type that may be a union.
     ///
     /// When the contextual type for a `new Promise(...)` expression is a union like
@@ -715,10 +731,15 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Fallback: if the alias expands to a promise-like type reference (e.g., Promise from lib),
-        // treat it as Promise<unknown> if we can't get the type argument.
-        // This handles cases like: type PromiseAlias<T> = Promise<T> where Promise comes from lib.
-        if self.type_ref_is_promise_like(lowered) {
+        // Fallback only for aliases that still resolve to a Promise-like type after
+        // lowering, or aliases whose own name is Promise-like. Do not use
+        // `type_ref_is_promise_like` by itself here: it treats arbitrary object
+        // types as Promise-like, so `type Box<T> = { data: T }` would unwrap to
+        // `T` after `await Promise<Box<T>>`.
+        if self.is_promise_type(lowered)
+            || self.is_promise_like_name(symbol.escaped_name.as_str())
+            || self.object_type_symbol_is_promise_like(lowered)
+        {
             // If we have args, try to return the first one (the T in Promise<T>)
             // Otherwise return UNKNOWN for stricter type checking
             return Some(args.first().copied().unwrap_or(TypeId::UNKNOWN));

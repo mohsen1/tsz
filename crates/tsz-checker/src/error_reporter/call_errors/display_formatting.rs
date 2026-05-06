@@ -1788,6 +1788,11 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
     ) -> String {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let is_array_literal_arg = self
+            .ctx
+            .arena
+            .get(expr_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
         if let Some(expr_node) = self.ctx.arena.get(expr_idx)
             && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
             && ident.escaped_text == "arguments"
@@ -1849,7 +1854,9 @@ impl<'a> CheckerState<'a> {
         {
             return display;
         }
-        if let Some(display) = self.rebuilt_array_source_display(arg_type, param_type) {
+        if !is_array_literal_arg
+            && let Some(display) = self.rebuilt_array_source_display(arg_type, param_type)
+        {
             return display;
         }
         if let Some(display) =
@@ -1898,12 +1905,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let display = if self
+        let should_widen_display = self
             .materialize_finite_mapped_call_parameter_display_type(param_type)
             .is_some()
             && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, display_type)
                 .is_some()
-        {
+            || (is_array_literal_arg && !self.is_literal_sensitive_assignment_target(param_type));
+
+        let display = if should_widen_display {
             self.format_type_diagnostic_widened(display_type)
         } else {
             self.format_type_for_assignability_message(display_type)

@@ -1536,6 +1536,45 @@ export const b = id(a);
 }
 
 #[test]
+fn fix_exported_generic_call_literals_preserve_inferred_literal_types() {
+    let output = emit_dts(
+        r#"
+export function generic<T>(value: T) {
+  return value;
+}
+
+export const viaGeneric = generic("ok" as const);
+
+export const genericArrow = <T>(value: T) => value;
+export const viaGenericArrow = genericArrow("ok" as const);
+
+function localGeneric<T>(value: T) {
+  return value;
+}
+export const viaLocalGeneric = localGeneric("ok" as const);
+
+const localGenericArrow = <T>(value: T) => value;
+export const viaLocalGenericArrow = localGenericArrow("ok" as const);
+
+export const viaInlineArrow = (<T>(value: T) => value)("ok" as const);
+"#,
+    );
+
+    for name in [
+        "viaGeneric",
+        "viaGenericArrow",
+        "viaLocalGeneric",
+        "viaLocalGenericArrow",
+        "viaInlineArrow",
+    ] {
+        assert!(
+            output.contains(&format!("export declare const {name}: \"ok\";")),
+            "expected {name} to preserve the literal call result: {output}"
+        );
+    }
+}
+
+#[test]
 fn fix_const_literal_preservation_uses_lexical_const_symbol() {
     let output = emit_dts_with_binding(
         r#"

@@ -421,7 +421,7 @@ fn compilation_cache_to_build_info(
 ) -> BuildInfo {
     use crate::incremental::{
         BuildInfoOptions, CachedDiagnostic, CachedRelatedInformation, EmitSignature,
-        FileInfo as IncrementalFileInfo,
+        FileInfo as IncrementalFileInfo, compute_file_version,
     };
     use std::collections::BTreeMap;
 
@@ -437,8 +437,9 @@ fn compilation_cache_to_build_info(
             .to_string_lossy()
             .replace('\\', "/");
 
-        // Create file info with version (hash) and signature
-        let version = format!("{hash:016x}");
+        // `version` is compared against the source file content on the next
+        // build, while `signature` tracks the exported API shape.
+        let version = compute_file_version(path).unwrap_or_else(|_| format!("{hash:016x}"));
         let signature = Some(format!("{hash:016x}"));
         file_infos.insert(
             relative_path.clone(),
@@ -2760,6 +2761,9 @@ fn apply_cli_overrides_with_config_options(
         options.rewrite_relative_import_extensions = true;
         options.printer.rewrite_relative_import_extensions = true;
     }
+    if args.trace_resolution {
+        options.trace_resolution = true;
+    }
     if let Some(custom_conditions) = args.custom_conditions.as_ref() {
         options.custom_conditions = custom_conditions.clone();
     }
@@ -2865,6 +2869,9 @@ fn apply_cli_overrides_with_config_options(
     if args.no_unchecked_indexed_access {
         options.checker.no_unchecked_indexed_access = true;
     }
+    if args.no_unchecked_side_effect_imports {
+        options.checker.no_unchecked_side_effect_imports = true;
+    }
     if args.exact_optional_property_types {
         options.checker.exact_optional_property_types = true;
     }
@@ -2934,6 +2941,10 @@ fn apply_cli_overrides_with_config_options(
         options.allow_synthetic_default_imports = true;
         options.checker.allow_synthetic_default_imports = true;
     }
+    if let Some(allow_synthetic_default_imports) = args.allow_synthetic_default_imports {
+        options.allow_synthetic_default_imports = allow_synthetic_default_imports;
+        options.checker.allow_synthetic_default_imports = allow_synthetic_default_imports;
+    }
     if args.no_emit {
         options.no_emit = true;
     }
@@ -2943,6 +2954,9 @@ fn apply_cli_overrides_with_config_options(
     if args.no_resolve {
         options.no_resolve = true;
         options.checker.no_resolve = true;
+    }
+    if args.allow_umd_global_access {
+        options.checker.allow_umd_global_access = true;
     }
     if args.preserve_symlinks {
         options.preserve_symlinks = true;
@@ -3138,6 +3152,29 @@ fn validate_cli_compiler_option_diagnostics(
     args: &CliArgs,
     config: Option<&TsConfig>,
 ) -> Result<Vec<Diagnostic>> {
+    use tsz::checker::diagnostics::{diagnostic_messages, format_message};
+
+    let mut diagnostics = Vec::new();
+    for key in ["paths", "plugins"] {
+        let provided = match key {
+            "paths" => cli_config_only_option_has_non_null_value(args.paths.as_ref()),
+            "plugins" => cli_config_only_option_has_non_null_value(args.plugins.as_ref()),
+            _ => false,
+        };
+        if provided {
+            diagnostics.push(Diagnostic::error(
+                String::new(),
+                0,
+                0,
+                format_message(
+                    diagnostic_messages::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
+                    &[key],
+                ),
+                diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
+            ));
+        }
+    }
+
     let mut compiler_options = serde_json::Map::new();
 
     if let Some(target) = args.target {
@@ -3198,20 +3235,30 @@ fn validate_cli_compiler_option_diagnostics(
             out_file.to_string_lossy().into_owned().into(),
         );
     }
-    if args.declaration {
+    let config_bool = |get: fn(&CompilerOptions) -> Option<bool>| -> bool {
+        config_options.and_then(get).unwrap_or(false)
+    };
+    if args.declaration
+        || (args.emit_declaration_only && config_bool(|options| options.declaration))
+    {
         compiler_options.insert("declaration".to_string(), true.into());
     }
-    if args.emit_declaration_only {
+    if args.composite || (args.emit_declaration_only && config_bool(|options| options.composite)) {
+        compiler_options.insert("composite".to_string(), true.into());
+    }
+    if args.no_emit
+        || (args.allow_importing_ts_extensions && config_bool(|options| options.no_emit))
+    {
+        compiler_options.insert("noEmit".to_string(), true.into());
+    }
+    if args.emit_declaration_only
+        || (args.allow_importing_ts_extensions
+            && config_bool(|options| options.emit_declaration_only))
+    {
         compiler_options.insert("emitDeclarationOnly".to_string(), true.into());
     }
     if args.declaration_map {
         compiler_options.insert("declarationMap".to_string(), true.into());
-    }
-    if args.composite {
-        compiler_options.insert("composite".to_string(), true.into());
-    }
-    if args.no_emit {
-        compiler_options.insert("noEmit".to_string(), true.into());
     }
     if args.allow_js {
         compiler_options.insert("allowJs".to_string(), true.into());
@@ -3227,6 +3274,15 @@ fn validate_cli_compiler_option_diagnostics(
     }
     if args.verbatim_module_syntax {
         compiler_options.insert("verbatimModuleSyntax".to_string(), true.into());
+    }
+    if args.allow_importing_ts_extensions {
+        compiler_options.insert("allowImportingTsExtensions".to_string(), true.into());
+    }
+    if args.rewrite_relative_import_extensions
+        || (args.allow_importing_ts_extensions
+            && config_bool(|options| options.rewrite_relative_import_extensions))
+    {
+        compiler_options.insert("rewriteRelativeImportExtensions".to_string(), true.into());
     }
     if let Some(resolve_package_json_exports) = args.resolve_package_json_exports {
         compiler_options.insert(
@@ -3256,7 +3312,7 @@ fn validate_cli_compiler_option_diagnostics(
     }
 
     if compiler_options.is_empty() {
-        return Ok(Vec::new());
+        return Ok(diagnostics);
     }
 
     let mut root = serde_json::Map::new();
@@ -3266,7 +3322,12 @@ fn validate_cli_compiler_option_diagnostics(
     );
     let source = serde_json::Value::Object(root).to_string();
     let parsed = parse_tsconfig_with_diagnostics(&source, "")?;
-    Ok(parsed.diagnostics)
+    diagnostics.extend(parsed.diagnostics);
+    Ok(diagnostics)
+}
+
+fn cli_config_only_option_has_non_null_value(values: Option<&Vec<String>>) -> bool {
+    values.is_some_and(|values| !(values.len() == 1 && values[0].eq_ignore_ascii_case("null")))
 }
 
 fn effective_ignore_deprecations_for_cli_validation<'a>(

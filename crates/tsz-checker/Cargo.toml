@@ -46,6 +46,10 @@ name = "generator_return_type_widening_tests"
 path = "tests/generator_return_type_widening_tests.rs"
 
 [[test]]
+name = "implicit_any_nullish_return_tests"
+path = "tests/implicit_any_nullish_return_tests.rs"
+
+[[test]]
 name = "async_return_widening_tests"
 path = "tests/async_return_widening_tests.rs"
 
@@ -738,6 +742,10 @@ name = "jsx_pragma_factory_marks_imports_referenced_tests"
 path = "tests/jsx_pragma_factory_marks_imports_referenced_tests.rs"
 
 [[test]]
+name = "jsx_pragma_boundary_tests"
+path = "tests/jsx_pragma_boundary_tests.rs"
+
+[[test]]
 name = "discriminant_narrow_function_lazy_preserved_tests"
 path = "tests/discriminant_narrow_function_lazy_preserved_tests.rs"
 
@@ -770,6 +778,10 @@ name = "unused_catch_binding_tests"
 path = "tests/unused_catch_binding_tests.rs"
 
 [[test]]
+name = "unused_nested_destructured_param_tests"
+path = "tests/unused_nested_destructured_param_tests.rs"
+
+[[test]]
 name = "template_literal_bigint_placeholder_tests"
 path = "tests/template_literal_bigint_placeholder_tests.rs"
 
@@ -800,6 +812,10 @@ path = "tests/ts2855_static_super_field_tests.rs"
 [[test]]
 name = "jsdoc_tag_boundary_tests"
 path = "tests/jsdoc_tag_boundary_tests.rs"
+
+[[test]]
+name = "jsdoc_import_multiline_tests"
+path = "tests/jsdoc_import_multiline_tests.rs"
 
 [[test]]
 name = "jsdoc_import_default_and_named_tests"

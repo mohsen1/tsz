@@ -40,7 +40,7 @@ impl<'a> CheckerState<'a> {
         prop_names.sort();
         prop_names.dedup();
         for prop_name in prop_names {
-            if prop_name.starts_with("__private_brand_") {
+            if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                 continue;
             }
             let prop_result = self.resolve_property_access_with_env(base_for_props, &prop_name);

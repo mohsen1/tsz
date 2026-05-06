@@ -187,6 +187,32 @@ fn relevant_strict_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn variadic_rest_tuple_satisfies_array_rest_constraint() {
+    let source = r#"
+export {};
+
+export interface Option<T> {
+  zip<O extends Array<Option<any>>>(...others: O): Option<[T, ...UnzipOptionArray<O>]>;
+}
+
+type UnzipOption<T> = T extends Option<infer V> ? V : never;
+type UnzipOptionArray<T> = { [k in keyof T]: T[k] extends Option<any> ? UnzipOption<T[k]> : never };
+
+declare const opt1: Option<number>;
+declare const opt2: Option<string>;
+declare const opt3: Option<boolean>;
+
+opt1.zip(opt2, opt3);
+"#;
+
+    let diagnostics = relevant_lib_diagnostics(source);
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2345),
+        "rest tuple should satisfy Array<Option<any>> constraint: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn conditional_parameter_infers_through_branches_before_assignability() {
     let source = r#"
 interface Iterable<T> {}
@@ -2156,6 +2182,23 @@ const arr1: string[] = map(identity)(['a']);
             .iter()
             .any(|(code, msg)| *code == 2322 && msg.contains("string[]")),
         "map(identity)(['a']) should preserve string[] assignability. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn pipe_preserves_self_constrained_generic_function_result() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function foo<T extends { value: T }>(x: T): T;
+
+const g10: <T extends { value: T }>(x: T) => T = pipe(foo);
+const g12: <T extends { value: T }>(x: T) => T = pipe(foo, foo);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "pipe(foo) should preserve the self-constrained generic signature. Got: {diags:#?}"
     );
 }
 
