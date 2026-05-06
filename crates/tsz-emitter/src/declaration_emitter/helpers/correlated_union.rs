@@ -95,9 +95,13 @@ impl<'a> DeclarationEmitter<'a> {
         let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?.trim();
         let tuple_start = inner.find("readonly [")?;
         let tuple_body_start = tuple_start + "readonly [".len();
-        let tuple_body_end = inner.find("][number] as Item[")?;
+        let tuple_body_end = inner.get(tuple_body_start..)?.find("][number]")? + tuple_body_start;
         let tuple_inner = inner.get(tuple_body_start..tuple_body_end)?;
-        let after_as = inner.get(tuple_body_end + "][number] as Item[".len()..)?;
+        let after_number = inner
+            .get(tuple_body_end + "][number]".len()..)?
+            .trim_start();
+        let after_as = after_number.strip_prefix("as")?.trim_start();
+        let after_as = after_as.strip_prefix("Item[")?;
         let attr_end = after_as.find(']')?;
         let attr_name = after_as
             .get(..attr_end)?
@@ -114,7 +118,11 @@ impl<'a> DeclarationEmitter<'a> {
             if item.is_empty() {
                 continue;
             }
-            let key = Self::type_literal_property_string_literal_value(item, attr_name)?;
+            let key = if attr_name == "string" {
+                Self::first_type_literal_string_property_value(item)?
+            } else {
+                Self::type_literal_property_string_literal_value(item, attr_name)?
+            };
             members.push(Self::format_mapped_tuple_member(&key, item));
         }
         (!members.is_empty()).then(|| format!("{{\n{}\n}}", members.join("\n")))
@@ -133,6 +141,21 @@ impl<'a> DeclarationEmitter<'a> {
                 if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
                     return Some(value.trim_matches('"').to_string());
                 }
+            }
+        }
+        None
+    }
+
+    fn first_type_literal_string_property_value(type_text: &str) -> Option<String> {
+        for line in type_text.lines() {
+            let trimmed = line.trim().trim_end_matches(';').trim();
+            let trimmed = trimmed.strip_prefix("readonly ").unwrap_or(trimmed);
+            let Some((_, value)) = trimmed.split_once(':') else {
+                continue;
+            };
+            let value = value.trim();
+            if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+                return Some(value.trim_matches('"').to_string());
             }
         }
         None
