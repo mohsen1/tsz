@@ -724,6 +724,58 @@ impl<'a> CheckerState<'a> {
     // JSDoc typedef / callback / import parsing
     // -----------------------------------------------------------------
 
+    /// Collapse multi-line `@import` clauses onto a single line so the
+    /// downstream tag parser sees the full clause text. JSDoc allows the
+    /// import to wrap across lines:
+    ///   /**
+    ///    * @import
+    ///    * { A, B }
+    ///    * from "./types"
+    ///    */
+    /// Without this preprocessing, the line-based tag parser sees only
+    /// `@import` (empty rest) and silently fails to register A and B.
+    pub(super) fn merge_jsdoc_import_continuations(jsdoc: &str) -> String {
+        let mut result = String::with_capacity(jsdoc.len());
+        let mut pending: Option<String> = None;
+        let strip_jsdoc_leading = |line: &str| -> String {
+            let mut s = line.trim();
+            s = s
+                .trim_start_matches("/**")
+                .trim_start_matches("/*")
+                .trim_start_matches('*')
+                .trim();
+            s = s.trim_end_matches("*/").trim();
+            s.to_string()
+        };
+        for line in jsdoc.lines() {
+            let stripped = strip_jsdoc_leading(line);
+            if let Some(text) = pending.as_mut() {
+                let already_complete = text.contains(" from \"")
+                    || text.contains(" from '")
+                    || text.contains(" from `");
+                if !already_complete && !stripped.is_empty() && !stripped.starts_with('@') {
+                    text.push(' ');
+                    text.push_str(&stripped);
+                    continue;
+                }
+                let flushed = pending.take().unwrap();
+                result.push_str(&flushed);
+                result.push('\n');
+            }
+            if Self::strip_jsdoc_tag_prefix(&stripped, "import").is_some() {
+                pending = Some(line.to_string());
+                continue;
+            }
+            result.push_str(line);
+            result.push('\n');
+        }
+        if let Some(text) = pending {
+            result.push_str(&text);
+            result.push('\n');
+        }
+        result
+    }
+
     pub(crate) fn parse_jsdoc_typedefs(jsdoc: &str) -> Vec<(String, JsdocTypedefInfo)> {
         let mut typedefs = Vec::new();
         let mut current_name: Option<String> = None;
@@ -739,6 +791,14 @@ impl<'a> CheckerState<'a> {
                 .into_iter()
                 .map(|(name, constraint)| JsdocTemplateParamInfo { name, constraint })
                 .collect();
+        // Multi-line `@import` continuation: when the import clause is split
+        // across lines (e.g. `@import\n* { A, B }\n* from "./types"`), the
+        // line-by-line tag parser sees an empty rest on the `@import` line
+        // and silently registers nothing. Rewrite the input so each
+        // `@import` and its continuation lines collapse onto a single line
+        // before tag-level parsing.
+        let jsdoc_owned = Self::merge_jsdoc_import_continuations(jsdoc);
+        let jsdoc = jsdoc_owned.as_str();
         for raw_line in jsdoc.lines() {
             // Normalize both multiline (`/** ... */`) and single-line (`/** ... */`)
             // JSDoc block-comment lines into tag content before parsing.
