@@ -51,7 +51,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader, Read as IoRead, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -1421,7 +1421,7 @@ fn find_angle_bracket_match(arena: &NodeArena, source: &str, pos: usize) -> Opti
 // =============================================================================
 
 /// Read a Content-Length framed message from stdin (tsserver protocol)
-fn read_content_length_message(reader: &mut BufReader<std::io::Stdin>) -> Result<Option<String>> {
+fn read_content_length_message<R: BufRead>(reader: &mut R) -> Result<Option<String>> {
     let mut header_line = String::new();
     let bytes_read = reader.read_line(&mut header_line)?;
     if bytes_read == 0 {
@@ -1459,7 +1459,7 @@ fn read_content_length_message(reader: &mut BufReader<std::io::Stdin>) -> Result
 }
 
 /// Write a Content-Length framed message to stdout (tsserver protocol)
-fn write_content_length_message(stdout: &mut std::io::Stdout, message: &str) -> Result<()> {
+fn write_content_length_message<W: Write>(stdout: &mut W, message: &str) -> Result<()> {
     write!(
         stdout,
         "Content-Length: {}\r\n\r\n{}",
@@ -1496,8 +1496,16 @@ fn run_tsserver_protocol(server: &mut Server) -> Result<()> {
     let mut stdin = BufReader::new(std::io::stdin());
     let mut stdout = std::io::stdout();
 
+    run_tsserver_protocol_with_io(server, &mut stdin, &mut stdout)
+}
+
+fn run_tsserver_protocol_with_io<R: BufRead, W: Write>(
+    server: &mut Server,
+    stdin: &mut R,
+    stdout: &mut W,
+) -> Result<()> {
     loop {
-        let message = match read_content_length_message(&mut stdin)? {
+        let message = match read_content_length_message(stdin)? {
             Some(msg) => msg,
             None => break, // EOF
         };
@@ -1519,19 +1527,18 @@ fn run_tsserver_protocol(server: &mut Server) -> Result<()> {
                     body: None,
                 };
                 let json = serde_json::to_string(&error_response)?;
-                write_content_length_message(&mut stdout, &json)?;
+                write_content_length_message(stdout, &json)?;
                 continue;
             }
         };
 
-        let is_exit = request.command == "exit";
-        let response = server.handle_tsserver_request(request);
-        let json = serde_json::to_string(&response)?;
-        write_content_length_message(&mut stdout, &json)?;
-
-        if is_exit {
+        if request.command == "exit" {
             break;
         }
+
+        let response = server.handle_tsserver_request(request);
+        let json = serde_json::to_string(&response)?;
+        write_content_length_message(stdout, &json)?;
     }
 
     Ok(())
