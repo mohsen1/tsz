@@ -359,6 +359,47 @@ fn prepare_paste_edits_accepts_protocol_copied_text_span() {
 }
 
 #[test]
+fn brace_completion_rejects_less_than_opening_brace() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/index.ts",
+                    "fileContent": "const x = 1;\n",
+                }),
+            ))
+            .success
+    );
+
+    let less_than = server.handle_tsserver_request(make_request(
+        "braceCompletion",
+        serde_json::json!({
+            "file": "/src/index.ts",
+            "line": 1,
+            "offset": 1,
+            "openingBrace": "<",
+        }),
+    ));
+    assert!(!less_than.success);
+    assert_eq!(less_than.message.as_deref(), Some("No content available."));
+    assert_eq!(less_than.body, None);
+
+    let paren = server.handle_tsserver_request(make_request(
+        "braceCompletion",
+        serde_json::json!({
+            "file": "/src/index.ts",
+            "line": 1,
+            "offset": 1,
+            "openingBrace": "(",
+        }),
+    ));
+    assert!(paren.success);
+    assert_eq!(paren.body, Some(serde_json::json!(true)));
+}
+
+#[test]
 fn implementation_finds_cross_file_class_implementation() {
     let mut server = make_server();
     assert!(
