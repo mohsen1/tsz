@@ -1656,9 +1656,13 @@ impl<'a> LoweringPass<'a> {
             if has_spread {
                 self.transforms
                     .insert(idx, TransformDirective::ES5CallSpread { call_expr: idx });
-                // __spreadArray is only needed when spread arguments must be merged
-                // with additional segments (not for plain foo(...args)).
-                if self.call_spread_needs_spread_array(args.nodes.as_slice()) {
+                // __spreadArray is needed when spread arguments must be merged
+                // with additional segments. With downlevelIteration, even a
+                // single spread must go through __read/__spreadArray so
+                // iterable-but-not-array-like values are expanded before apply().
+                if self.call_spread_needs_spread_array(args.nodes.as_slice())
+                    || self.ctx.options.downlevel_iteration
+                {
                     self.transforms.helpers_mut().spread_array = true;
                     // When downlevelIteration is enabled, spread on iterables
                     // needs __read to convert iterator results to arrays.
