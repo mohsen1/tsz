@@ -972,6 +972,15 @@ fn compile_inner(
         args,
         config.as_ref(),
     )?);
+    if args.source_map || args.declaration_map {
+        config_diagnostics.retain(|d| {
+            !(d.code
+                == diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+                && d.message_text.contains("mapRoot")
+                && d.message_text.contains("sourceMap")
+                && d.message_text.contains("declarationMap"))
+        });
+    }
 
     // TS5103 (invalid ignoreDeprecations value) and TS5102 (removed option) are fatal
     // in tsc: they stop compilation and report only config-level errors.
