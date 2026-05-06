@@ -815,6 +815,11 @@ impl<'a> CheckerState<'a> {
         let Some(import) = self.ctx.arena.get_import_decl(node) else {
             return;
         };
+        let request_kind = crate::context::ResolutionRequestKind::EsmImport;
+        let request_resolution_mode = self.ctx.resolution_mode_for_request(
+            request_kind,
+            self.get_resolution_mode_override(import.attributes),
+        );
 
         let is_type_only_import = self
             .ctx
@@ -939,8 +944,7 @@ impl<'a> CheckerState<'a> {
         // unresolved-import reporting is disabled (the lightweight multi-file harness
         // uses this mode). Only skip entirely when the module also can't be resolved.
         if !self.ctx.report_unresolved_imports {
-            let resolution_mode =
-                self.requested_resolution_mode(import.attributes, is_type_only_import);
+            let resolution_mode = request_resolution_mode;
             self.check_js_type_only_imports_after_import_validation(import, module_name);
             let module_resolves = self
                 .ctx
@@ -989,7 +993,12 @@ impl<'a> CheckerState<'a> {
         // producing extra diagnostics on missing imports.
         let module_resolves_dts = self
             .ctx
-            .resolve_import_target_from_file_with_mode(self.ctx.current_file_idx, module_name, None)
+            .resolve_import_target_from_file_for_request(
+                self.ctx.current_file_idx,
+                module_name,
+                request_resolution_mode,
+                request_kind,
+            )
             .is_some()
             || self
                 .ctx
@@ -1032,10 +1041,13 @@ impl<'a> CheckerState<'a> {
         // rewriteRelativeImportExtensions also suppresses this error (tsc utilities.ts:9045).
         // tsc does not emit TS5097 inside declaration files (.d.ts).
         // When the resolver reports TS6142 (jsx not set), tsc does not also emit TS5097.
-        let has_jsx_not_set_error = self.ctx.get_resolution_error(module_name).is_some_and(|e| {
-            e.code
-                == crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
-        });
+        let has_jsx_not_set_error = self
+            .ctx
+            .get_resolution_error_for_request(module_name, request_resolution_mode, request_kind)
+            .is_some_and(|e| {
+                e.code
+                    == crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
+            });
         // tsc only emits TS5097 when the module actually resolves (so the .ts
         // extension is the user's mistake on a real file). When the module
         // doesn't resolve at all, tsc emits TS2307 ('cannot find module')
@@ -1161,7 +1173,11 @@ impl<'a> CheckerState<'a> {
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         // This must be checked before resolved_modules to catch extensionless import errors
         let module_key = module_name.to_string();
-        if let Some(error) = self.ctx.get_resolution_error(module_name) {
+        if let Some(error) = self.ctx.get_resolution_error_for_request(
+            module_name,
+            request_resolution_mode,
+            request_kind,
+        ) {
             // Extract error values before mutable borrow
             let mut error_code = error.code;
             let mut error_message = error.message.clone();
@@ -1316,14 +1332,13 @@ impl<'a> CheckerState<'a> {
 
         // Check if module was successfully resolved
         if self.resolved_module_set_contains_specifier(module_name) {
-            let resolution_mode =
-                self.requested_resolution_mode(import.attributes, is_type_only_import);
             if let Some(target_idx) = self
                 .ctx
-                .resolve_import_target_from_file_with_mode(
+                .resolve_import_target_from_file_for_request(
                     self.ctx.current_file_idx,
                     module_name,
-                    resolution_mode,
+                    request_resolution_mode,
+                    request_kind,
                 )
                 .or_else(|| self.ctx.resolve_import_target(module_name))
             {
@@ -1416,26 +1431,13 @@ impl<'a> CheckerState<'a> {
                         }
                     };
 
-                    // TSC suppresses TS1479 for .cjs/.cts files with relative imports.
-                    // These explicitly-CJS files only get TS1479 for non-relative
-                    // (package) imports where Node's runtime resolution would fail loading
-                    // an ESM module via require(). Relative imports within the project are
-                    // handled by tsc's output processing, not Node's runtime loader.
-                    // For .cjs (JavaScript) source files, this suppression applies to
-                    // ALL relative imports (including explicit .mjs targets) because tsc
-                    // does not run the CJS→ESM boundary check on JS source files beyond
-                    // package (non-relative) specifiers. For .cts (TypeScript) sources,
-                    // relative imports of explicit .mjs/.mts targets still emit TS1479.
+                    // TSC suppresses TS1479 for .cjs relative imports, but .cts
+                    // files still report the CJS -> ESM boundary for relative
+                    // imports that resolve to ESM targets.
                     let is_explicit_cjs_js_file = self.ctx.file_name.ends_with(".cjs");
-                    let is_explicit_cjs_ts_file = self.ctx.file_name.ends_with(".cts");
                     let is_relative_import =
                         module_name.starts_with("./") || module_name.starts_with("../");
-                    let relative_import_is_explicit_esm = module_name.ends_with(".mjs")
-                        || module_name.ends_with(".mts")
-                        || module_name.ends_with(".d.mts");
-                    let suppress_for_cjs_relative = is_relative_import
-                        && (is_explicit_cjs_js_file
-                            || (is_explicit_cjs_ts_file && !relative_import_is_explicit_esm));
+                    let suppress_for_cjs_relative = is_relative_import && is_explicit_cjs_js_file;
 
                     // TS1479 only applies under Node16/Node18 module kinds where
                     // CJS/ESM interop boundaries exist at runtime. Node20/NodeNext,

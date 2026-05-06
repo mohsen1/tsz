@@ -141,6 +141,29 @@ fn optional_instantiation_recovery_emits_optional_call() {
 }
 
 #[test]
+fn jsx_numeric_tag_recovery_preserves_tail() {
+    let source =
+        "const x = \"oops\";\nconst a = + <number> x;\nconst b = + <> x;\nconst c = + <1234> x;\n";
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            jsx: JsxEmit::Preserve,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        output.contains("const c = + < />1234> x;"),
+        "Malformed numeric JSX tag should preserve the recovered numeric tail.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn decorated_anonymous_class_expression_sets_empty_function_name() {
     let source = "declare let dec: any;\n(@dec class {});";
     let output = parse_lower_print(

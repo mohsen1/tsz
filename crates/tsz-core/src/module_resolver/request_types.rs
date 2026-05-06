@@ -303,7 +303,7 @@ pub enum ModuleExtension {
 
 /// Import syntax kind - determines which error codes to use
 /// for extensionless imports in Node16/NodeNext resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub enum ImportKind {
     /// ESM static import: `import { x } from "./foo"`
     #[default]
