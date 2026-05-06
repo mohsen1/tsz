@@ -337,6 +337,13 @@ impl<'a> CheckerState<'a> {
                 .import_name
                 .as_deref()
                 .unwrap_or(&symbol.escaped_name);
+            if export_name == "default"
+                && self.ctx.compiler_options.module.is_node_module()
+                && self.ctx.file_is_esm == Some(true)
+                && !self.module_is_esm(module_name)
+            {
+                return Some(sym_id);
+            }
             let source_file_idx = self
                 .ctx
                 .resolve_symbol_file_index(sym_id)
@@ -722,6 +729,18 @@ impl<'a> CheckerState<'a> {
             } else {
                 return None;
             }
+        }
+
+        if let Some(member_symbol) = self
+            .get_cross_file_symbol(member_id)
+            .or_else(|| self.ctx.binder.get_symbol(member_id))
+            && member_symbol.has_any_flags(symbol_flags::ALIAS)
+            && member_symbol.import_name.as_deref() == Some("default")
+            && let Some(module_specifier) = member_symbol.import_module.clone()
+            && let Some(namespace_type) =
+                self.node_esm_cjs_default_import_namespace_type(&module_specifier)
+        {
+            return Some(namespace_type);
         }
 
         let resolved_member_id = if let Some(member_symbol) = self.get_cross_file_symbol(member_id)
