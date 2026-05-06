@@ -37,6 +37,38 @@ expected = iter[Symbol.asyncIterator];
 }
 
 #[test]
+fn test_es5_async_function_arguments_reference_reports_ts2522() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+async function f(a = 1) {
+    return arguments.length;
+}
+
+class C {
+    async m() {
+        return arguments.length;
+    }
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES5,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2522 = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2522 && message.contains("async function or method in ES5")
+        })
+        .count();
+    assert_eq!(
+        ts2522, 2,
+        "Expected TS2522 for async function and method arguments references. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_isolated_declarations_reports_computed_object_literal_exports() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",

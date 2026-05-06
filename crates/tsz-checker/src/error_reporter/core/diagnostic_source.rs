@@ -631,6 +631,17 @@ impl<'a> CheckerState<'a> {
         Some(symbol.escaped_name.clone())
     }
 
+    pub(crate) fn property_receiver_application_base_name(
+        &self,
+        type_id: TypeId,
+    ) -> Option<String> {
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, type_id)?;
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(app.base))?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        Some(self.ctx.types.resolve_atom(def.name))
+    }
+
     pub(crate) fn format_property_receiver_type_for_diagnostic(&mut self, ty: TypeId) -> String {
         if let Some(module_name) = self.ctx.namespace_module_names.get(&ty) {
             return format!(
@@ -657,13 +668,20 @@ impl<'a> CheckerState<'a> {
         if let Some(application_display) = application_display {
             let display_ty =
                 self.normalize_property_receiver_application_display_type(application_display);
+            let preserve_object_args = self
+                .property_receiver_application_base_name(display_ty)
+                .is_some_and(|name| name == "merge");
             let mut formatter = self
                 .ctx
                 .create_diagnostic_type_formatter()
                 .with_long_property_receiver_display()
-                .with_long_property_receiver_object_elision_end_depth(192)
                 .with_display_properties()
                 .with_skip_application_alias_names();
+            if !preserve_object_args {
+                formatter = formatter.with_long_property_receiver_object_elision_end_depth(192);
+            } else {
+                formatter = formatter.with_long_property_receiver_object_elision_end_depth(0);
+            }
             return Self::truncate_property_receiver_display(
                 formatter.format(display_ty).into_owned(),
             );

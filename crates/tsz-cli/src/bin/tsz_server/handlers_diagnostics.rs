@@ -275,17 +275,22 @@ impl Server {
         };
 
         if input.include_line_position {
+            let start = Self::utf16_offset_for_byte_offset(input.content, input.start_offset);
+            let end = Self::utf16_offset_for_byte_offset(
+                input.content,
+                input.start_offset.saturating_add(input.length),
+            );
             // When includeLinePosition is true, the harness expects:
-            // - start: 0-based byte offset (number)
-            // - length: byte length (number)
+            // - start: 0-based UTF-16 offset (number)
+            // - length: UTF-16 length (number)
             // - startLocation: {line, offset} (1-based)
             // - endLocation: {line, offset} (1-based)
             // - message: the diagnostic text
             // - category: category string
             // - code: error code
             serde_json::json!({
-                "start": input.start_offset,
-                "length": input.length,
+                "start": start,
+                "length": end.saturating_sub(start),
                 "startLocation": {
                     "line": start_pos.line + 1,
                     "offset": start_pos.character + 1,
@@ -314,6 +319,17 @@ impl Server {
                 "category": cat_str,
             })
         }
+    }
+
+    fn utf16_offset_for_byte_offset(content: &str, byte_offset: u32) -> u32 {
+        let limit = usize::try_from(byte_offset)
+            .unwrap_or(content.len())
+            .min(content.len());
+        content
+            .char_indices()
+            .take_while(|(idx, _)| *idx < limit)
+            .map(|(_, ch)| u32::try_from(ch.len_utf16()).unwrap_or(0))
+            .sum()
     }
 
     fn normalized_diagnostic_span(

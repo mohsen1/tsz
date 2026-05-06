@@ -122,6 +122,9 @@ impl<'a> CheckerState<'a> {
 
             // TS1212/TS1213/TS1214: Reserved word used as parameter name in strict mode
             if crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text) {
+                if self.rest_parameter_name_is_recovery_artifact(param_idx, param.name) {
+                    continue;
+                }
                 self.emit_strict_mode_reserved_word_error(
                     param.name,
                     &ident.escaped_text,
@@ -175,6 +178,29 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn rest_parameter_name_is_recovery_artifact(
+        &self,
+        param_idx: NodeIndex,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+            return false;
+        };
+        if !param.dot_dot_dot_token {
+            return false;
+        }
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        self.ctx
+            .syntax_parse_error_positions
+            .iter()
+            .any(|&pos| pos > name_node.end && pos < param_node.end)
     }
 
     /// Check type parameter names for strict-mode reserved words (TS1212/TS1213/TS1214).
@@ -1296,6 +1322,60 @@ impl<'a> CheckerState<'a> {
 // =============================================================================
 // Tests
 // =============================================================================
+
+#[cfg(test)]
+mod strict_parameter_name_tests {
+    use crate::context::CheckerOptions;
+    use crate::query_boundaries::common::TypeInterner;
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    fn checker_codes_with_parse_health(source: &str) -> Vec<u32> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let parse_diagnostics = parser.get_diagnostics().to_vec();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.has_parse_errors = !parse_diagnostics.is_empty();
+        checker.ctx.has_syntax_parse_errors = !parse_diagnostics.is_empty();
+        checker.ctx.syntax_parse_error_positions =
+            parse_diagnostics.iter().map(|diag| diag.start).collect();
+        checker.ctx.all_parse_error_positions =
+            parse_diagnostics.iter().map(|diag| diag.start).collect();
+
+        checker.check_source_file(root);
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|diag| diag.code)
+            .collect()
+    }
+
+    #[test]
+    fn recovered_rest_parameter_modifier_suppresses_class_strict_reserved_name() {
+        let codes = checker_codes_with_parse_health(
+            "class C {
+                 constructor(...public rest: string[]) {}
+             }",
+        );
+        assert!(
+            !codes.contains(&1213),
+            "recovered `...public rest` should not cascade into TS1213: {codes:?}"
+        );
+    }
+}
 
 #[cfg(test)]
 mod binding_pattern_defaults_tests {
