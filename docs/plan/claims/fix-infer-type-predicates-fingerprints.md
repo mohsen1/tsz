@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/infer-type-predicates-fingerprints`
-- **PR**: TBD
+- **PR**: #3691
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 - **Claimed**: 2026-05-06 04:21:08 UTC
