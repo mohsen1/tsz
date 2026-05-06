@@ -1163,6 +1163,69 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
+    pub(in crate::declaration_emitter) fn type_text_has_undefined_branch(type_text: &str) -> bool {
+        let mut text = type_text.trim();
+        while let Some(inner) = Self::strip_balanced_outer_parens(text) {
+            text = inner.trim();
+        }
+
+        if text == "undefined" {
+            return true;
+        }
+
+        let union_indices = Self::top_level_byte_indices(text, b'|');
+        if union_indices.is_empty() {
+            return false;
+        }
+
+        let mut start = 0usize;
+        for index in union_indices {
+            if Self::type_text_has_undefined_branch(&text[start..index]) {
+                return true;
+            }
+            start = index + 1;
+        }
+        Self::type_text_has_undefined_branch(&text[start..])
+    }
+
+    fn strip_balanced_outer_parens(text: &str) -> Option<&str> {
+        let bytes = text.as_bytes();
+        if bytes.first() != Some(&b'(') || bytes.last() != Some(&b')') {
+            return None;
+        }
+
+        let mut depth = 0usize;
+        let mut quote: Option<u8> = None;
+        let mut escaped = false;
+
+        for (i, &byte) in bytes.iter().enumerate() {
+            if let Some(q) = quote {
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == q {
+                    quote = None;
+                }
+                continue;
+            }
+
+            match byte {
+                b'\'' | b'"' | b'`' => quote = Some(byte),
+                b'(' => depth += 1,
+                b')' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 && i != bytes.len() - 1 {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        (depth == 0).then_some(&text[1..text.len() - 1])
+    }
+
     fn skip_ascii_whitespace(text: &str, start: usize) -> Option<usize> {
         let bytes = text.as_bytes();
         let mut i = start;
