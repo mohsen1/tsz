@@ -547,7 +547,7 @@ impl<'a> CheckerState<'a> {
                 "Resolved overloaded call return type"
             );
             if let Some(predicate) = overload_resolution.selected_type_predicate.clone() {
-                self.ctx.call_type_predicates.insert(idx.0, predicate);
+                self.store_call_type_predicate(idx, call.expression, predicate);
             }
             return self.handle_call_result(
                 overload_resolution.result,
@@ -2643,17 +2643,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(stored_predicate) = stored_call_predicate {
-            let assertion_target_is_valid = !stored_predicate.0.asserts
-                || matches!(
-                    stored_predicate.0.target,
-                    tsz_solver::TypePredicateTarget::This
-                )
-                || self.validate_assertion_call_target(idx, call.expression);
-            if assertion_target_is_valid {
-                self.ctx
-                    .call_type_predicates
-                    .insert(idx.0, stored_predicate);
-            }
+            self.store_call_type_predicate(idx, call.expression, stored_predicate);
         }
 
         let (mut result, mut allow_contextual_mismatch_deferral) = self

@@ -503,6 +503,11 @@ pub struct CheckerContext<'a> {
     /// predicates with inferred type arguments applied (e.g., `T` -> `string`).
     pub call_type_predicates: crate::control_flow::CallPredicateMap,
 
+    /// Assertion calls that failed TS2775/TS2776 validation.
+    /// These calls must not be used as assertion boundaries by later flow
+    /// analysis, even if the callee type has an assertion predicate.
+    pub invalid_assertion_calls: FxHashSet<u32>,
+
     /// Nodes where TS2454 (used before assigned) was emitted.
     /// When TS2454 fires, `check_flow_usage` returns the declared type (un-narrowed).
     /// The second narrowing pass in `get_type_of_node` must NOT re-narrow these nodes,

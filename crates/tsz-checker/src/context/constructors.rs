@@ -104,6 +104,7 @@ impl<'a> CheckerContext<'a> {
             symbol_flow_confirmed: RefCell::new(FxHashMap::default()),
             narrowing_cache: tsz_solver::NarrowingCache::new(),
             call_type_predicates: FxHashMap::default(),
+            invalid_assertion_calls: FxHashSet::default(),
             daa_error_nodes: FxHashSet::default(),
             deferred_ts2454_errors: Vec::new(),
             flow_narrowed_nodes: FxHashSet::with_capacity_and_hasher(256, Default::default()),

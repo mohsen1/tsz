@@ -213,6 +213,8 @@ pub struct FlowAnalyzer<'a> {
     /// Instantiated type predicates from generic call resolutions.
     /// Keyed by call expression node index.
     pub(crate) call_type_predicates: Option<&'a CallPredicateMap>,
+    /// Assertion calls that failed target validation and must not narrow.
+    pub(crate) invalid_assertion_calls: Option<&'a FxHashSet<u32>>,
     /// Reusable buffers for flow analysis.
     pub(crate) flow_worklist: Option<&'a RefCell<VecDeque<(FlowNodeId, TypeId)>>>,
     pub(crate) flow_in_worklist: Option<&'a RefCell<FxHashSet<FlowNodeId>>>,
@@ -422,6 +424,7 @@ impl<'a> FlowAnalyzer<'a> {
             shared_numeric_atom_cache: None,
             narrowing_cache: None,
             call_type_predicates: None,
+            invalid_assertion_calls: None,
             flow_worklist: None,
             flow_in_worklist: None,
             flow_visited: None,
@@ -456,6 +459,7 @@ impl<'a> FlowAnalyzer<'a> {
             shared_numeric_atom_cache: None,
             narrowing_cache: None,
             call_type_predicates: None,
+            invalid_assertion_calls: None,
             flow_worklist: None,
             flow_in_worklist: None,
             flow_visited: None,
@@ -496,6 +500,12 @@ impl<'a> FlowAnalyzer<'a> {
     /// Set instantiated call type predicates from generic call resolutions.
     pub const fn with_call_type_predicates(mut self, predicates: &'a CallPredicateMap) -> Self {
         self.call_type_predicates = Some(predicates);
+        self
+    }
+
+    /// Set invalid assertion calls that must not participate in flow narrowing.
+    pub const fn with_invalid_assertion_calls(mut self, calls: &'a FxHashSet<u32>) -> Self {
+        self.invalid_assertion_calls = Some(calls);
         self
     }
 
@@ -2265,6 +2275,12 @@ impl<'a> FlowAnalyzer<'a> {
             return pre_type;
         };
         if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return pre_type;
+        }
+        if self
+            .invalid_assertion_calls
+            .is_some_and(|calls| calls.contains(&flow.node.0))
+        {
             return pre_type;
         }
         let Some(call) = self.arena.get_call_expr(node) else {
