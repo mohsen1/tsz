@@ -1556,9 +1556,9 @@ impl<'a> CheckerState<'a> {
             };
 
             let (type_params, type_param_updates) = self.push_type_parameters(&sig.type_parameters);
-            let (params, this_type) = self.extract_params_from_signature(sig);
+            let (params, this_type) = self.extract_params_from_signature_in_type_literal(sig);
             let (return_type, type_predicate) =
-                self.return_type_and_predicate(sig.type_annotation, &params);
+                self.return_type_and_predicate_in_type_literal(sig.type_annotation, &params);
 
             let shape = FunctionShape {
                 type_params,
@@ -1579,7 +1579,18 @@ impl<'a> CheckerState<'a> {
             };
 
             if sig.type_annotation.is_some() {
-                let base = self.get_type_from_type_node(sig.type_annotation);
+                let base = self.get_type_from_type_node_in_type_literal(sig.type_annotation);
+                let evaluated = self.evaluate_type_with_env(base);
+                let base = if evaluated != TypeId::ERROR && evaluated != TypeId::UNKNOWN {
+                    let has_members = crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        evaluated,
+                    )
+                    .is_some_and(|shape| !shape.properties.is_empty());
+                    if has_members { evaluated } else { base }
+                } else {
+                    base
+                };
                 // Optional property signatures carry an implicit `| undefined`
                 // in their type. The sibling helper `get_type_of_interface_member`
                 // preserves this via `PropertyInfo.optional`; this "simple"

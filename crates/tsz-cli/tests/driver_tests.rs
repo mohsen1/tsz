@@ -7004,6 +7004,58 @@ fn compile_resolves_package_imports_array_fallback_after_missing_target() {
 }
 
 #[test]
+fn compile_cross_module_nested_interface_method_checks_optional_argument() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["consumer.ts", "lib.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("lib.ts"),
+        r#"
+export interface IServer {}
+
+export interface IWorkspace {
+  toAbsolutePath(server: IServer): string;
+}
+
+export interface IConfig {
+  workspace: IWorkspace;
+  server?: IServer;
+}
+"#,
+    );
+    write_file(
+        &base.join("consumer.ts"),
+        r#"
+import { IConfig } from "./lib";
+
+declare const cfg: IConfig;
+
+cfg.workspace.toAbsolutePath(cfg.server);
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE),
+        "Expected TS2345 for optional imported nested-interface argument, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_rejects_root_slash_package_import_specifier_under_node16() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

@@ -1247,6 +1247,8 @@ impl<'a> CheckerState<'a> {
         // colliding cache entry from the caller's file.
         checker.ctx.symbol_types.remove(&sym_id);
         checker.ctx.symbol_instance_types.remove(&sym_id);
+        checker.ctx.symbol_to_def.borrow_mut().clear();
+        checker.ctx.def_to_symbol.borrow_mut().clear();
         for &id in &self.ctx.symbol_resolution_set {
             if id != sym_id {
                 checker.ctx.symbol_resolution_set.insert(id);

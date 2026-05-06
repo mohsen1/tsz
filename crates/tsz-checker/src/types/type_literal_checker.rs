@@ -435,8 +435,30 @@ impl<'a> CheckerState<'a> {
                 if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(sym_id) {
                     self.prime_lib_type_params(name);
                 }
-                // Resolve the symbol's structural body first
-                let _ = self.type_reference_symbol_type(sym_id);
+                let is_cross_file_interface =
+                    self.get_cross_file_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE)
+                    });
+                if is_cross_file_interface {
+                    let interface_type = self.compute_interface_type_from_declarations(sym_id);
+                    if interface_type != TypeId::ERROR && interface_type != TypeId::UNKNOWN {
+                        let has_members = crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            interface_type,
+                        )
+                        .is_some_and(|shape| !shape.properties.is_empty());
+                        if has_members {
+                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            self.ctx
+                                .definition_store
+                                .register_type_to_def(interface_type, def_id);
+                            return interface_type;
+                        }
+                    }
+                } else {
+                    // Resolve the symbol's structural body first.
+                    let _ = self.type_reference_symbol_type(sym_id);
+                }
                 let type_params = self.get_type_params_for_symbol(sym_id);
                 // Mirror `resolve_simple_type_reference`: when a bare type reference
                 // omits required type arguments, return ERROR so cascading TS2322
