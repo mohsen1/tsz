@@ -245,3 +245,38 @@ fn reopened_dotted_namespace_qualifies_merged_exports_by_source_path() {
         "Nested namespace should qualify merged parent exports through the parent IIFE parameter.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn same_block_class_extends_class_uses_unqualified_name() {
+    // Regression for `genericRecursiveImplicitConstructorErrors3` and
+    // `collisionCodeGenModuleWithModuleReopening`: when a class declared in
+    // the SAME namespace block extends another class declared in that same
+    // block, the `extends` clause must reference the bare class name. tsc
+    // emits `class B extends A` (not `class B extends X.A`) because A is
+    // lexically in scope inside the IIFE.
+    //
+    // The `namespace_exported_names` set, populated for reopened blocks,
+    // can include names that are also locally declared in the current
+    // block (the merge logic in `collect_namespace_exported_names` adds
+    // prior-block class exports). Without ordering the
+    // `namespace_current_class_fn_enum_names` check first, the qualifier
+    // branch wins and the output incorrectly becomes `extends X.A`.
+    let source = "namespace X {\n  export class A {}\n}\nnamespace X {\n  export class A {}\n  export class B extends A {}\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("class B extends A {"),
+        "Same-block class reference in extends should be unqualified.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("extends X.A"),
+        "Same-block class reference must not be qualified through the namespace name.\nOutput:\n{output}"
+    );
+}
