@@ -728,4 +728,36 @@ class RegularClass {\n    accessor shouldError;\n}\n";
             "The hoisted ESM export for the class should still be emitted.\nOutput:\n{output}"
         );
     }
+
+    #[test]
+    fn amd_es5_reexported_enum_folds_export_into_iife() {
+        let source = "enum E { A }\nexport { E };\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::AMD,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_target_es5(ctx.target_es5);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("})(E || (exports.E = E = {}));"),
+            "AMD ES5 enum re-export should fold the export into the enum IIFE.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("\n    exports.E = E;"),
+            "AMD ES5 enum re-export should not emit a separate export assignment.\nOutput:\n{output}"
+        );
+    }
 }
