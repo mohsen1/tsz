@@ -84,6 +84,16 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn default_expression_has_safe_nameable_surface_type(&self, expr_idx: NodeIndex) -> bool {
+        if self
+            .call_expression_reused_type_text(expr_idx)
+            .is_some_and(|type_text| {
+                Self::type_text_starts_with_import_type(&type_text)
+                    && !self.import_type_uses_private_package_subpath(&type_text)
+            })
+        {
+            return true;
+        }
+
         let Some(resolved_type) = self.resolve_declaration_type_text(&[expr_idx], Some(expr_idx))
         else {
             return false;
