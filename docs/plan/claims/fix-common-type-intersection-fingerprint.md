@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/common-type-intersection-fingerprint`
-- **PR**: TBD
+- **PR**: #3817
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance)
 - **Claimed**: 2026-05-06 07:06:14 UTC
