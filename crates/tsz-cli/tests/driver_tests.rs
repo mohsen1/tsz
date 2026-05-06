@@ -5228,6 +5228,53 @@ fn compile_respects_no_emit_on_error() {
 }
 
 #[test]
+fn compile_namespace_import_reserved_statement_starters_emit_recovered_payload() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "module": "commonjs",
+            "outDir": "dist",
+            "noEmitOnError": false
+          },
+          "files": ["input.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("input.ts"),
+        "import * as do from \"m\";\nimport * as try from \"m\";\nimport * as return from \"m\";\nconst after = 1;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.iter().any(|d| d.code
+            == diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE
+            && d.message_text.contains("'do'")),
+        "Expected TS1359 for `do`, got diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let js = std::fs::read_to_string(base.join("dist/input.js")).expect("read emitted JS");
+    assert!(
+        js.contains("do") && js.contains("while (\"m\");"),
+        "`do` namespace-import recovery should emit a do/while payload, got: {js}"
+    );
+    assert!(
+        js.contains("try {") && js.contains("finally {"),
+        "`try` namespace-import recovery should emit try/finally payload, got: {js}"
+    );
+    assert!(
+        js.contains("return from;") && js.contains("const after = 1;"),
+        "`return` namespace-import recovery and following statement should emit, got: {js}"
+    );
+}
+
+#[test]
 fn compile_with_project_dir_uses_tsconfig() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

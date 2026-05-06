@@ -112,6 +112,58 @@ export const visible = 3;
 }
 
 #[test]
+fn strip_internal_parameter_property_comments_do_not_emit_internal_fields() {
+    let source = r#"
+export class Foo {
+  constructor(
+    /** @internal */
+    public isInternal1: string,
+    /** @internal */ public isInternal2: string, /** @internal */
+    public isInternal3: string,
+    // @internal
+    public isInternal4: string,
+    // nothing
+    /** @internal */
+    public isInternal5: string,
+    /* @internal */ public isInternal6: string,
+    /* @internal */ public isInternal7: string, /** @internal */
+    // not work
+    public notInternal1: string,
+    // @internal
+    /* not work */
+    public notInternal2: string,
+    /* not work */
+    // @internal
+    /* not work */
+    public notInternal3: string,
+  ) { }
+}
+
+export class Bar {
+  constructor(/* @internal */ public isInternal1: string) {}
+}
+"#;
+    let output = emit_dts_strip_internal(source);
+
+    assert!(
+        !output.contains("    isInternal1: string;"),
+        "Expected @internal parameter properties to skip class fields: {output}"
+    );
+    assert!(
+        output.contains("notInternal1: string;")
+            && output.contains("notInternal2: string;")
+            && output.contains("notInternal3: string;"),
+        "Expected non-internal parameter properties to remain as class fields: {output}"
+    );
+    assert!(
+        output.contains("constructor(\n    /** @internal */\n    isInternal1: string")
+            && output.contains("/** @internal */ isInternal2: string")
+            && output.contains("constructor(/* @internal */ isInternal1: string);"),
+        "Expected constructor parameters to preserve relevant inline comments: {output}"
+    );
+}
+
+#[test]
 fn test_object_rest_with_keyword_property_names_omits_destructured_key() {
     let source = r#"
 type P = {
