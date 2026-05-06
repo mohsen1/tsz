@@ -591,6 +591,22 @@ pub fn is_literal_or_primitive_or_compound_of_those(
     }
 }
 
+/// Returns true when `type_id` is a literal type or a union whose members are
+/// all literal types.
+pub fn is_literal_or_literal_union_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(_)) => true,
+        Some(TypeData::Union(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .all(|&member| is_literal_or_literal_union_type(db, member)),
+        _ => false,
+    }
+}
+
 /// Get the members of an intersection type.
 ///
 /// Returns None if the type is not an intersection.

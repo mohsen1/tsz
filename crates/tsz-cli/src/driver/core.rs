@@ -2761,6 +2761,9 @@ fn apply_cli_overrides_with_config_options(
         options.rewrite_relative_import_extensions = true;
         options.printer.rewrite_relative_import_extensions = true;
     }
+    if args.trace_resolution {
+        options.trace_resolution = true;
+    }
     if let Some(custom_conditions) = args.custom_conditions.as_ref() {
         options.custom_conditions = custom_conditions.clone();
     }

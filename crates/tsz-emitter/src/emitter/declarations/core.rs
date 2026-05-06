@@ -628,9 +628,36 @@ impl<'a> Printer<'a> {
         source
             .lines()
             .map(str::trim)
-            .filter(|line| self.is_recoverable_interface_return_statement(line))
-            .map(str::to_string)
+            .filter_map(|line| {
+                self.recover_interface_var_statement(line).or_else(|| {
+                    self.is_recoverable_interface_return_statement(line)
+                        .then(|| line.to_string())
+                })
+            })
             .collect()
+    }
+
+    fn recover_interface_var_statement(&self, line: &str) -> Option<String> {
+        let rest = line.strip_prefix("var ")?;
+        let rest = rest.trim_start();
+        let mut end = 0usize;
+        for (idx, ch) in rest.char_indices() {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+                end = idx + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if end == 0 {
+            return None;
+        }
+
+        let after_name = rest[end..].trim_start();
+        if !matches!(after_name.as_bytes().first(), Some(b':' | b';' | b',')) {
+            return None;
+        }
+
+        Some(format!("var {};", &rest[..end]))
     }
 
     fn is_recoverable_interface_return_statement(&self, line: &str) -> bool {

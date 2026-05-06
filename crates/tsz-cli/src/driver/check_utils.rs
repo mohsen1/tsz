@@ -1416,19 +1416,10 @@ pub(super) fn filtered_parse_diagnostics(
         .iter()
         .any(|d| !matches!(d.code, 1009 | 1185 | 1214 | 1262) && !is_parser_grammar_code(d.code));
 
-    // In tsc, TS1359 for 'await' as a binding identifier in async/static-block
-    // contexts is emitted by the checker via grammarErrorOnNode, NOT by the parser.
-    // grammarErrorOnNode checks hasParseDiagnostics(sourceFile) and suppresses the
-    // error when any parse diagnostic exists. In tsz, this check lives in the parser
-    // (check_illegal_binding_identifier). We replicate tsc's suppression by filtering
-    // out TS1359-for-await when ANY other non-grammar parse diagnostic is present.
-    let has_non_await1359_parse_error = parse_diagnostics.iter().any(|d| {
-        // Exclude the special codes and grammar codes from the trigger check
-        !(matches!(d.code, 1009 | 1185 | 1214 | 1262)
-            || is_parser_grammar_code(d.code)
-            // Also exclude TS1359 for 'await' — those are grammar checks in tsc
-            || (d.code == 1359 && d.message.contains("'await'")))
-    });
+    // TS1359 for `await` is parser-emitted in tsz. Keep it alongside unrelated
+    // parse diagnostics (tsc does this in plain JS binder errors), but suppress
+    // it for expression-recovery cases where TS1109 is the primary diagnostic.
+    let has_expression_expected_parse_error = parse_diagnostics.iter().any(|d| d.code == 1109);
     parse_diagnostics
         .iter()
         .filter(|diagnostic| {
@@ -1447,11 +1438,11 @@ pub(super) fn filtered_parse_diagnostics(
             {
                 return false;
             }
-            // Suppress TS1359 for 'await' when other parse diagnostics exist.
-            // In tsc this is a checker grammar check suppressed by hasParseDiagnostics.
+            // Suppress TS1359 for 'await' when expression recovery already
+            // reported TS1109 at the construct.
             if diagnostic.code == 1359
                 && diagnostic.message.contains("'await'")
-                && has_non_await1359_parse_error
+                && has_expression_expected_parse_error
             {
                 return false;
             }
@@ -1546,6 +1537,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 1206 // Decorators are not valid here
         | 8038 // Decorators may not appear after 'export' if they also appear before 'export'
         | 1210 // Code contained in a class is evaluated in strict mode
+        | 1214 // Identifier expected; 'yield' is reserved in module strict mode
         | 1215 // Identifier expected; 'await' is a reserved word
         | 1223 // Constructor implementation is missing
         | 1228 // A type predicate is only allowed in return type position
@@ -1568,6 +1560,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 2657 // JSX expressions must have one parent element
         | 17008 // JSX element '{0}' has no corresponding closing tag
         | 18030 // An optional chain cannot contain private identifiers
+        | 18012 // '#constructor' is a reserved word
     )
 }
 
@@ -3319,6 +3312,35 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
     }
 
     #[test]
+    fn filtered_parse_diagnostics_keeps_await_ts1359_with_unrelated_parse_errors() {
+        use tsz::parser::ParseDiagnostic;
+
+        let diagnostics = vec![
+            ParseDiagnostic {
+                start: 100,
+                length: 5,
+                message:
+                    "Identifier expected. 'await' is a reserved word that cannot be used here."
+                        .to_string(),
+                code: 1359,
+            },
+            ParseDiagnostic {
+                start: 10,
+                length: 6,
+                message: "A module cannot have multiple default exports.".to_string(),
+                code: 2528,
+            },
+        ];
+
+        let filtered = filtered_parse_diagnostics(&diagnostics, false);
+        let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&1359),
+            "TS1359 for 'await' should survive unrelated parse diagnostics, got: {codes:?}"
+        );
+    }
+
+    #[test]
     fn filtered_parse_diagnostics_keeps_await_ts1359_when_alone() {
         use tsz::parser::ParseDiagnostic;
 
@@ -3336,6 +3358,16 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
             codes.contains(&1359),
             "TS1359 for 'await' should be kept when it's the only diagnostic, got: {codes:?}"
         );
+    }
+
+    #[test]
+    fn js_parse_allowlist_keeps_plain_js_binder_strict_codes() {
+        for code in [1214, 18012] {
+            assert!(
+                is_ts1xxx_allowed_in_js(code),
+                "plain JS binder parse diagnostic TS{code} should be reported in JavaScript files"
+            );
+        }
     }
 
     #[test]

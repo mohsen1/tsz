@@ -27,18 +27,6 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
-#[derive(Clone, Debug)]
-pub(in crate::declaration_emitter) struct FunctionTypeParamText {
-    optional: bool,
-    type_text: String,
-}
-
-#[derive(Clone, Debug)]
-pub(in crate::declaration_emitter) struct FunctionTypeTextParts {
-    parameters: Vec<FunctionTypeParamText>,
-    return_type: String,
-}
-
 pub(in crate::declaration_emitter) struct CallableDeclParts<'b> {
     pub(in crate::declaration_emitter) modifiers: Option<&'b NodeList>,
     pub(in crate::declaration_emitter) type_parameters: Option<&'b NodeList>,
@@ -361,19 +349,30 @@ impl<'a> DeclarationEmitter<'a> {
         }?;
         let type_text = if std::ptr::eq(source_arena, self.arena) {
             match printed {
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any"))
+                Some(printed) if printed != "any" => {
+                    if let Some(raw_type_text) = self.local_type_annotation_text(type_annotation) {
+                        if Self::type_text_starts_with_string_intrinsic(&raw_type_text) {
+                            raw_type_text
+                        } else if (!printed.contains("any") || type_text.contains("any"))
+                            && printed.contains("typeof ")
+                            && !type_text.contains("typeof ")
+                        {
+                            printed.replace("typeof ", "")
+                        } else if !printed.contains("any") || type_text.contains("any") {
+                            printed
+                        } else {
+                            type_text
+                        }
+                    } else if (!printed.contains("any") || type_text.contains("any"))
                         && printed.contains("typeof ")
-                        && !type_text.contains("typeof ") =>
-                {
-                    printed.replace("typeof ", "")
-                }
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any")) =>
-                {
-                    printed
+                        && !type_text.contains("typeof ")
+                    {
+                        printed.replace("typeof ", "")
+                    } else if !printed.contains("any") || type_text.contains("any") {
+                        printed
+                    } else {
+                        type_text
+                    }
                 }
                 _ => type_text,
             }
@@ -3244,6 +3243,15 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    pub(in crate::declaration_emitter) fn is_simple_identifier_text(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first == '$' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+    }
+
     pub(in crate::declaration_emitter) fn type_reference_name_text(
         &self,
         name_idx: NodeIndex,
@@ -3500,6 +3508,17 @@ impl<'a> DeclarationEmitter<'a> {
                     .is_some_and(|params| !params.nodes.is_empty());
             let is_source_with_return_annotation =
                 callable.body.is_some() && callable.type_annotation.is_some();
+            if imported_module.is_some()
+                && !is_ambient_function
+                && self
+                    .current_file_path
+                    .as_deref()
+                    .is_some_and(|current_path| {
+                        self.paths_refer_to_same_source_file(current_path, &source_file.file_name)
+                    })
+            {
+                return None;
+            }
             if (!is_ambient_function
                 && !is_source_overload_signature
                 && !is_source_with_return_annotation)
@@ -3514,8 +3533,10 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let mut type_text = self
-                .emit_type_node_text_from_arena(source_arena, callable.type_annotation)
-                .or_else(|| self.source_slice_from_arena(source_arena, callable.type_annotation))?
+                .source_slice_from_arena(source_arena, callable.type_annotation)
+                .or_else(|| {
+                    self.emit_type_node_text_from_arena(source_arena, callable.type_annotation)
+                })?
                 .trim_end()
                 .trim_end_matches(';')
                 .trim_end()
@@ -3588,12 +3609,36 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 return None;
             }
-            type_text = Self::replace_whole_words_in_text(&type_text, &type_param_substitutions);
+            let mut protected_type_param_names = Vec::new();
+            let protected_substitutions = type_param_substitutions
+                .iter()
+                .enumerate()
+                .map(|(substitution_idx, (name_text, arg_text))| {
+                    let mut protected_arg_text = arg_text.clone();
+                    for (param_idx, param_name) in type_param_names.iter().enumerate() {
+                        if !Self::contains_whole_word_in_text(&protected_arg_text, param_name) {
+                            continue;
+                        }
+                        let protected_name =
+                            format!("__tszDeclEmitTypeParam{substitution_idx}_{param_idx}__");
+                        protected_arg_text = Self::replace_whole_words_in_text(
+                            &protected_arg_text,
+                            &[(param_name.clone(), protected_name.clone())],
+                        );
+                        protected_type_param_names.push((protected_name, param_name.clone()));
+                    }
+                    (name_text.clone(), protected_arg_text)
+                })
+                .collect::<Vec<_>>();
+            type_text = Self::replace_whole_words_in_text(&type_text, &protected_substitutions);
             if type_param_names
                 .iter()
                 .any(|name| Self::contains_whole_word_in_text(&type_text, name))
             {
                 return None;
+            }
+            for (protected_name, param_name) in protected_type_param_names {
+                type_text = type_text.replace(&protected_name, &param_name);
             }
             if Self::leading_type_reference_name(&type_text)
                 .is_some_and(Self::is_builtin_conditional_utility_type_name)
@@ -4084,6 +4129,13 @@ impl<'a> DeclarationEmitter<'a> {
             .then_some(name)
     }
 
+    fn type_text_starts_with_string_intrinsic(type_text: &str) -> bool {
+        matches!(
+            Self::leading_type_reference_name(type_text),
+            Some("Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize")
+        )
+    }
+
     pub(in crate::declaration_emitter) fn function_signature_accepts_call_arguments(
         &self,
         source_arena: &NodeArena,
@@ -4138,251 +4190,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
-    }
-
-    pub(in crate::declaration_emitter) fn infer_function_type_substitutions(
-        source: &FunctionTypeTextParts,
-        argument: &FunctionTypeTextParts,
-        type_param_names: &[String],
-        substitutions: &mut Vec<(String, String)>,
-    ) {
-        for (source_param_index, source_param) in source.parameters.iter().enumerate() {
-            if !type_param_names
-                .iter()
-                .any(|name| name.as_str() == source_param.type_text)
-            {
-                continue;
-            }
-            if substitutions
-                .iter()
-                .any(|(name, _)| name.as_str() == source_param.type_text)
-            {
-                continue;
-            }
-            if let Some(argument_param) = argument.parameters.get(source_param_index) {
-                substitutions.push((
-                    source_param.type_text.clone(),
-                    Self::parenthesize_generic_function_type_argument(&argument_param.type_text),
-                ));
-            } else if source_param.optional {
-                substitutions.push((source_param.type_text.clone(), "unknown".to_string()));
-            }
-        }
-
-        if type_param_names
-            .iter()
-            .any(|name| name.as_str() == source.return_type)
-            && !substitutions
-                .iter()
-                .any(|(name, _)| name.as_str() == source.return_type)
-        {
-            substitutions.push((
-                source.return_type.clone(),
-                Self::parenthesize_generic_function_type_argument(&argument.return_type),
-            ));
-        }
-    }
-
-    pub(in crate::declaration_emitter) fn function_type_parts_for_expression(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<FunctionTypeTextParts> {
-        if let Some(type_text) = self.preferred_expression_type_text(expr_idx)
-            && let Some(parts) = Self::parse_function_type_text(&type_text)
-        {
-            return Some(parts);
-        }
-
-        let sym_id = self.value_reference_symbol(expr_idx)?;
-        let binder = self.binder?;
-        let sym_id = self
-            .resolve_portability_import_alias(sym_id, binder)
-            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
-        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
-            let decl_node = source_arena.get(decl_idx)?;
-            let func = source_arena.get_function(decl_node)?;
-            let return_type = self
-                .emit_type_node_text_from_arena(source_arena, func.type_annotation)
-                .or_else(|| self.source_slice_from_arena(source_arena, func.type_annotation))?
-                .trim_end()
-                .trim_end_matches(';')
-                .trim()
-                .to_string();
-            let mut parameters = Vec::new();
-            for &param_idx in &func.parameters.nodes {
-                let Some(param_node) = source_arena.get(param_idx) else {
-                    continue;
-                };
-                let Some(param) = source_arena.get_parameter(param_node) else {
-                    continue;
-                };
-                let type_text = self
-                    .source_slice_from_arena(source_arena, param.type_annotation)
-                    .unwrap_or_else(|| "any".to_string())
-                    .trim()
-                    .to_string();
-                parameters.push(FunctionTypeParamText {
-                    optional: param.question_token || param.initializer != NodeIndex::NONE,
-                    type_text,
-                });
-            }
-            Some(FunctionTypeTextParts {
-                parameters,
-                return_type,
-            })
-        })
-    }
-
-    pub(in crate::declaration_emitter) fn parse_function_type_text(
-        type_text: &str,
-    ) -> Option<FunctionTypeTextParts> {
-        let trimmed = type_text.trim().trim_end_matches(';').trim();
-        let arrow_index = Self::find_top_level_arrow(trimmed)?;
-        let params_text = trimmed.get(..arrow_index)?.trim();
-        let return_type = trimmed
-            .get(arrow_index + 2..)?
-            .trim()
-            .trim_end_matches(';')
-            .trim()
-            .to_string();
-        let params_text = params_text
-            .strip_prefix('(')
-            .and_then(|text| text.strip_suffix(')'))?;
-        let mut parameters = Vec::new();
-        for raw_param in Self::split_top_level_commas(params_text) {
-            let raw_param = raw_param.trim();
-            if raw_param.is_empty() {
-                continue;
-            }
-            let raw_param = raw_param.strip_prefix("...").unwrap_or(raw_param).trim();
-            let (optional, type_text) =
-                if let Some(colon_index) = Self::find_top_level_byte(raw_param, b':') {
-                    let name_text = raw_param.get(..colon_index)?.trim();
-                    let type_text = raw_param.get(colon_index + 1..)?.trim();
-                    (name_text.ends_with('?'), type_text)
-                } else {
-                    (false, raw_param)
-                };
-            parameters.push(FunctionTypeParamText {
-                optional,
-                type_text: type_text.to_string(),
-            });
-        }
-
-        (!return_type.is_empty()).then_some(FunctionTypeTextParts {
-            parameters,
-            return_type,
-        })
-    }
-
-    fn find_top_level_arrow(text: &str) -> Option<usize> {
-        let bytes = text.as_bytes();
-        let mut paren_depth = 0usize;
-        let mut bracket_depth = 0usize;
-        let mut brace_depth = 0usize;
-        let mut angle_depth = 0usize;
-        let mut i = 0usize;
-        while i + 1 < bytes.len() {
-            match bytes[i] {
-                b'(' => paren_depth += 1,
-                b')' => paren_depth = paren_depth.saturating_sub(1),
-                b'[' => bracket_depth += 1,
-                b']' => bracket_depth = bracket_depth.saturating_sub(1),
-                b'{' => brace_depth += 1,
-                b'}' => brace_depth = brace_depth.saturating_sub(1),
-                b'<' => angle_depth += 1,
-                b'>' => angle_depth = angle_depth.saturating_sub(1),
-                b'=' if bytes[i + 1] == b'>'
-                    && paren_depth == 0
-                    && bracket_depth == 0
-                    && brace_depth == 0
-                    && angle_depth == 0 =>
-                {
-                    return Some(i);
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        None
-    }
-
-    pub(in crate::declaration_emitter) fn split_top_level_commas(text: &str) -> Vec<&str> {
-        let mut parts = Vec::new();
-        let mut start = 0usize;
-        let mut paren_depth = 0usize;
-        let mut bracket_depth = 0usize;
-        let mut brace_depth = 0usize;
-        let mut angle_depth = 0usize;
-
-        for (idx, byte) in text.bytes().enumerate() {
-            match byte {
-                b'(' => paren_depth += 1,
-                b')' => paren_depth = paren_depth.saturating_sub(1),
-                b'[' => bracket_depth += 1,
-                b']' => bracket_depth = bracket_depth.saturating_sub(1),
-                b'{' => brace_depth += 1,
-                b'}' => brace_depth = brace_depth.saturating_sub(1),
-                b'<' => angle_depth += 1,
-                b'>' => angle_depth = angle_depth.saturating_sub(1),
-                b',' if paren_depth == 0
-                    && bracket_depth == 0
-                    && brace_depth == 0
-                    && angle_depth == 0 =>
-                {
-                    if let Some(part) = text.get(start..idx) {
-                        parts.push(part);
-                    }
-                    start = idx + 1;
-                }
-                _ => {}
-            }
-        }
-        if let Some(part) = text.get(start..) {
-            parts.push(part);
-        }
-        parts
-    }
-
-    fn find_top_level_byte(text: &str, target: u8) -> Option<usize> {
-        let mut paren_depth = 0usize;
-        let mut bracket_depth = 0usize;
-        let mut brace_depth = 0usize;
-        let mut angle_depth = 0usize;
-
-        for (idx, byte) in text.bytes().enumerate() {
-            match byte {
-                b'(' => paren_depth += 1,
-                b')' => paren_depth = paren_depth.saturating_sub(1),
-                b'[' => bracket_depth += 1,
-                b']' => bracket_depth = bracket_depth.saturating_sub(1),
-                b'{' => brace_depth += 1,
-                b'}' => brace_depth = brace_depth.saturating_sub(1),
-                b'<' => angle_depth += 1,
-                b'>' => angle_depth = angle_depth.saturating_sub(1),
-                byte if byte == target
-                    && paren_depth == 0
-                    && bracket_depth == 0
-                    && brace_depth == 0
-                    && angle_depth == 0 =>
-                {
-                    return Some(idx);
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
-    pub(in crate::declaration_emitter) fn parenthesize_generic_function_type_argument(
-        type_text: &str,
-    ) -> String {
-        let trimmed = type_text.trim();
-        if trimmed.starts_with('<') && trimmed.contains("=>") {
-            format!("({trimmed})")
-        } else {
-            trimmed.to_string()
-        }
     }
 
     fn qualify_ambient_module_exported_names_in_text(
@@ -5421,6 +5228,22 @@ impl<'a> DeclarationEmitter<'a> {
         !self.print_type_id(inferred_return_type).contains("typeof ")
     }
 
+    pub(in crate::declaration_emitter) fn source_return_type_is_function_type_param(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> bool {
+        let Some(ref type_params) = func.type_parameters else {
+            return false;
+        };
+        let Some(name) = Self::simple_type_reference_name(source_type_text) else {
+            return false;
+        };
+        self.collect_type_param_names(type_params)
+            .iter()
+            .any(|type_param| type_param == &name)
+    }
+
     pub(in crate::declaration_emitter) fn function_return_type_text_for_declaration_scope(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
@@ -6070,11 +5893,139 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 let data = self.arena.get_method_decl(member_node)?;
-                self.method_function_type_text(member_idx, data, depth)
-                    .map(|type_text| format!("{name}: {type_text}"))
+                if self.object_literal_method_uses_property_syntax(data) {
+                    self.method_function_type_text(member_idx, data, depth)
+                        .map(|type_text| format!("{name}: {type_text}"))
+                } else {
+                    self.method_signature_type_text_named_at(member_idx, data, name, depth)
+                }
             }
             _ => None,
         }
+    }
+
+    fn method_signature_type_text_named_at(
+        &self,
+        method_idx: NodeIndex,
+        method: &tsz_parser::parser::node::MethodDeclData,
+        name: &str,
+        depth: u32,
+    ) -> Option<String> {
+        let mut scratch = self.scratch_declaration_emitter();
+        scratch.indent_level = depth;
+        scratch.write(name);
+        if method.question_token {
+            scratch.write("?");
+        }
+
+        let jsdoc_template_params = if method
+            .type_parameters
+            .as_ref()
+            .is_none_or(|type_params| type_params.nodes.is_empty())
+        {
+            self.jsdoc_template_params_for_node(method_idx)
+        } else {
+            Vec::new()
+        };
+        if let Some(ref type_params) = method.type_parameters {
+            if !type_params.nodes.is_empty() {
+                scratch.emit_type_parameters(type_params);
+            } else if !jsdoc_template_params.is_empty() {
+                scratch.emit_jsdoc_template_parameters(&jsdoc_template_params);
+            }
+        } else if !jsdoc_template_params.is_empty() {
+            scratch.emit_jsdoc_template_parameters(&jsdoc_template_params);
+        }
+
+        scratch.write("(");
+        scratch.emit_parameters_with_body(&method.parameters, method.body);
+        scratch.write("): ");
+        scratch.emit_method_function_type_return(method_idx, method);
+        let type_text = scratch.writer.take_output();
+        (!type_text.trim().is_empty()).then_some(type_text)
+    }
+
+    fn object_literal_method_uses_property_syntax(
+        &self,
+        method: &tsz_parser::parser::node::MethodDeclData,
+    ) -> bool {
+        let Some(name_node) = self.arena.get(method.name) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        if self
+            .resolved_computed_property_name_text(method.name)
+            .is_some()
+            || self.computed_property_name_is_symbol_access(method.name)
+            || self.computed_property_name_is_literal_key(method.name)
+        {
+            return false;
+        }
+
+        let computed_key_requires_property_syntax = self
+            .arena
+            .get_computed_property(name_node)
+            .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
+            .is_none_or(|type_id| {
+                type_id == tsz_solver::types::TypeId::ANY
+                    || self.type_interner.is_some_and(|interner| {
+                        !tsz_solver::type_queries::is_type_usable_as_property_name(
+                            interner, type_id,
+                        )
+                    })
+            });
+
+        method.question_token || computed_key_requires_property_syntax
+    }
+
+    fn computed_property_name_is_literal_key(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NumericLiteral as u16
+            || expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+    }
+
+    fn computed_property_name_is_symbol_access(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        self.get_identifier_text(access.expression).as_deref() == Some("Symbol")
     }
 
     fn format_object_member_type_text(name: &str, type_text: &str, depth: u32) -> String {
@@ -6753,13 +6704,26 @@ impl<'a> DeclarationEmitter<'a> {
         let mut actual_insertions = 0usize;
         for (name_text, member_text) in computed_members {
             let line = format!("{indent}{member_text};");
+            let line_trimmed = line.trim();
+            if Self::object_literal_method_line_matches_name(line_trimmed, &name_text)
+                && lines.iter().any(|existing| {
+                    Self::object_literal_method_line_matches_name(existing.trim(), &name_text)
+                })
+            {
+                continue;
+            }
+            let exact_exists = lines.iter().any(|existing| existing.trim() == line_trimmed);
             if let Some(existing_idx) = lines.iter().position(|existing| {
-                Self::object_literal_property_line_matches(existing, &name_text, &line)
+                existing.trim() != line_trimmed
+                    && Self::object_literal_property_line_matches(existing, &name_text, &line)
             }) {
-                lines[existing_idx] = line;
+                if exact_exists {
+                    lines.remove(existing_idx);
+                } else {
+                    lines[existing_idx] = line;
+                }
             } else {
-                let line_trimmed = line.trim();
-                if !lines.iter().any(|existing| existing.trim() == line_trimmed) {
+                if !exact_exists {
                     lines.insert(insert_at + actual_insertions, line);
                     actual_insertions += 1;
                 }
@@ -6781,6 +6745,17 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some(lines.join("\n"))
+    }
+
+    fn object_literal_method_line_matches_name(existing: &str, name_text: &str) -> bool {
+        let without_readonly = existing
+            .strip_prefix("readonly ")
+            .unwrap_or(existing)
+            .trim_start();
+        without_readonly.starts_with(&format!("{name_text}("))
+            || without_readonly.starts_with(&format!("{name_text}<"))
+            || without_readonly.starts_with(&format!("{name_text}?("))
+            || without_readonly.starts_with(&format!("{name_text}?<"))
     }
 
     pub(in crate::declaration_emitter) fn object_literal_property_line_matches(

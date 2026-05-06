@@ -205,6 +205,11 @@ Skill usage rules:
   Checker symptoms often have solver or boundary-helper root causes.
 - **Every fix ships with a unit test** in the owning crate (`tsz-solver`,
   `tsz-checker`, etc.) plus no-regression verification on conformance.
+- **Every PR updates conformance snapshots** by running
+  `scripts/conformance/conformance.sh snapshot` and committing the refreshed
+  `scripts/conformance/conformance-snapshot.json`,
+  `scripts/conformance/conformance-detail.json`, and
+  `scripts/conformance/conformance-baseline.txt`.
 - **Architecture first.** Follow §3, §4, §11, §12, §22 of this file. Never
   bypass `query_boundaries/assignability`; never pattern-match solver
   internals from the checker.

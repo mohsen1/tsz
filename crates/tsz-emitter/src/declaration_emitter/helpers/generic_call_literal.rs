@@ -10,14 +10,13 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
-        self.generic_call_literal_type_text(expr_idx).or_else(|| {
-            self.call_expression_returned_local_class_constructor_text(expr_idx, false)
-                .or_else(|| {
-                    self.super_method_call_return_type_text(expr_idx)
-                        .or_else(|| self.call_expression_source_return_type_text(expr_idx))
-                        .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
-                })
-        })
+        self.call_expression_returned_local_class_constructor_text(expr_idx, false)
+            .or_else(|| {
+                self.super_method_call_return_type_text(expr_idx)
+                    .or_else(|| self.call_expression_source_return_type_text(expr_idx))
+                    .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
+                    .or_else(|| self.generic_call_literal_type_text(expr_idx))
+            })
     }
 
     pub(in crate::declaration_emitter) fn generic_call_literal_type_text(
@@ -35,7 +34,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let interner = self.type_interner?;
-        tsz_solver::type_queries::is_literal_type(interner, type_id)
+        tsz_solver::type_queries::is_literal_or_literal_union_type(interner, type_id)
             .then(|| self.print_type_id_for_inferred_declaration(type_id))
     }
 
