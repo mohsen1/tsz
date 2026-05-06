@@ -1,6 +1,6 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
 use crate::fs::{is_valid_module_file, is_valid_module_or_js_file};
@@ -17,6 +17,20 @@ pub(crate) struct ModuleResolutionCache {
     package_json_by_path: FxHashMap<PathBuf, Option<PackageJson>>,
     node_modules_dir_by_path: FxHashMap<PathBuf, bool>,
     package_root_dir_by_path: FxHashMap<PathBuf, bool>,
+}
+
+fn package_relative_target_path(package_root: &Path, target: &str) -> Option<PathBuf> {
+    let rest = target.strip_prefix("./")?;
+    let path = Path::new(target);
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return None;
+    }
+    Some(package_root.join(rest))
 }
 
 impl ModuleResolutionCache {
@@ -491,8 +505,8 @@ pub(crate) fn resolve_type_package_entry_with_mode_and_cache(
     // Try the exports map first
     if let Some(exports) = &package_json.exports
         && let Some(target) = resolve_exports_subpath(exports, ".", &conditions)
+        && let Some(target_path) = package_relative_target_path(package_root, &target)
     {
-        let target_path = package_root.join(target.trim_start_matches("./"));
         // Try to find a declaration file at the target
         let package_type = package_type_from_json(Some(package_json));
         for candidate in expand_module_path_candidates(&target_path, options, package_type) {
@@ -562,12 +576,16 @@ pub(crate) fn collect_module_requests_from_text(
     let mut parser = ParserState::new(file_name, text.to_string());
     let source_file = parser.parse_source_file();
     let (arena, _diagnostics) = parser.into_parts();
-    collect_module_specifiers(&arena, source_file)
+    let mut requests: Vec<_> = collect_module_specifiers(&arena, source_file)
         .into_iter()
         .map(|(specifier, _, import_kind, resolution_mode_override)| {
             (specifier, import_kind, resolution_mode_override)
         })
-        .collect()
+        .collect();
+    if let Some(source) = arena.get_source_file_at(source_file) {
+        requests.extend(collect_jsdoc_import_requests(source));
+    }
+    requests
 }
 
 /// Quick text scan to determine if a source file might contain module specifiers.
@@ -583,6 +601,141 @@ fn text_may_contain_module_specifiers(text: &str) -> bool {
         || text.contains("from '")
         || text.contains("from \"")
         || text.contains("declare module")
+}
+
+fn collect_jsdoc_import_requests(
+    source: &tsz::parser::node::SourceFileData,
+) -> Vec<(
+    String,
+    tsz::module_resolver::ImportKind,
+    Option<tsz::module_resolver::ImportingModuleKind>,
+)> {
+    use tsz::module_resolver::ImportKind;
+    use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+    if source.comments.is_empty() || !source.text.contains("@import") {
+        return Vec::new();
+    }
+
+    let source_text = source.text.as_ref();
+    let mut requests = Vec::new();
+    for comment in &source.comments {
+        if !is_jsdoc_comment(comment, source_text) {
+            continue;
+        }
+
+        let content = get_jsdoc_content(comment, source_text);
+        for line in content.lines() {
+            let trimmed = line.trim_start_matches('*').trim();
+            let Some(rest) = strip_jsdoc_import_tag_prefix(trimmed) else {
+                continue;
+            };
+            if let Some(specifier) = parse_jsdoc_import_module_specifier(rest) {
+                requests.push((specifier, ImportKind::EsmImport, None));
+            }
+        }
+    }
+
+    requests
+}
+
+fn strip_jsdoc_import_tag_prefix(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix("@import")?;
+    if rest
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    Some(rest)
+}
+
+fn parse_jsdoc_import_module_specifier(rest: &str) -> Option<String> {
+    let rest = rest.trim();
+    let from_idx = find_jsdoc_import_from_keyword(rest)?;
+    let before_from = rest[..from_idx].trim();
+    if matches!(
+        before_from.split_whitespace().next(),
+        Some("type" | "defer")
+    ) && before_from.contains(char::is_whitespace)
+    {
+        return None;
+    }
+
+    let after_from = rest[from_idx + 4..].trim_start();
+    let mut chars = after_from.char_indices();
+    let (_, quote) = chars.next()?;
+    if quote != '"' && quote != '\'' && quote != '`' {
+        return None;
+    }
+
+    let mut specifier = String::new();
+    let mut escaped = false;
+    for (_, ch) in chars {
+        if escaped {
+            specifier.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == quote {
+            return Some(specifier);
+        }
+        specifier.push(ch);
+    }
+
+    None
+}
+
+fn find_jsdoc_import_from_keyword(rest: &str) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut last_from = None;
+
+    for (idx, ch) in rest.char_indices() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        if ch == '"' || ch == '\'' || ch == '`' {
+            quote = Some(ch);
+            continue;
+        }
+
+        if rest[idx..].starts_with("from")
+            && !rest[..idx]
+                .chars()
+                .next_back()
+                .is_some_and(is_jsdoc_import_keyword_part)
+            && !rest[idx + 4..]
+                .chars()
+                .next()
+                .is_some_and(is_jsdoc_import_keyword_part)
+        {
+            last_from = Some(idx);
+        }
+    }
+
+    last_from
+}
+
+const fn is_jsdoc_import_keyword_part(ch: char) -> bool {
+    ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
 }
 
 pub(crate) fn collect_module_specifiers(
@@ -2169,6 +2322,9 @@ fn resolve_package_imports_specifier(
             && let Some(imports) = package_json.imports.as_ref()
             && let Some(target) = resolve_imports_subpath(imports, module_specifier, &conditions)
         {
+            if target.starts_with('/') || target.starts_with('.') {
+                package_relative_target_path(current, &target)?;
+            }
             let package_type = package_type_from_json(Some(&package_json));
             if let Some(resolved) =
                 resolve_package_entry(current, &target, options, package_type, resolution_cache)
@@ -2497,12 +2653,7 @@ fn resolve_export_entry(
     if entry.is_empty() {
         return None;
     }
-    let entry = entry.trim_start_matches("./");
-    let path = if Path::new(entry).is_absolute() {
-        PathBuf::from(entry)
-    } else {
-        package_root.join(entry)
-    };
+    let path = package_relative_target_path(package_root, entry)?;
 
     for candidate in expand_export_path_candidates(&path, options, package_type) {
         if candidate.is_file() && is_valid_module_file(&candidate) {
@@ -2573,11 +2724,10 @@ fn try_remap_output_to_source(
         canon_package_root.join(configured)
     }
 
-    let target = target.trim_start_matches("./");
     // Canonicalize package_root first (it exists) so that symlinks are resolved
     // before joining the target (which may not exist on disk).
     let canon_root = normalize_resolved_path(package_root, options);
-    let target_path = canon_root.join(target);
+    let target_path = package_relative_target_path(&canon_root, target)?;
 
     // Compute the source directory: the root from which source files are organized.
     // Use rootDir if set (already canonicalized), otherwise fall back to the
