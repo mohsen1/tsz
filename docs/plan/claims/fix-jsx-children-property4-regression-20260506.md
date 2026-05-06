@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/jsx-children-property4-regression-20260506-170500`
-- **PR**: TBD
-- **Status**: implemented
+- **PR**: #4194
+- **Status**: PR opened
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
