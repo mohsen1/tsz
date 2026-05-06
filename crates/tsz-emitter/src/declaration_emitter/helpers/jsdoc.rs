@@ -1631,7 +1631,8 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_is_js_file {
             return;
         }
-        let exported = self.source_file_has_module_syntax(source_file);
+        let exported = self.source_file_has_module_syntax(source_file)
+            && self.js_export_equals_names.is_empty();
 
         let mut decls = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {
