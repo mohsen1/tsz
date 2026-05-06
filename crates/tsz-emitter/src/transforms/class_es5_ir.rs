@@ -1801,10 +1801,20 @@ impl<'a> ES5ClassTransformer<'a> {
                 IRNode::id(self.class_name.clone()),
             )));
         }
+        if !computed_prop_temp_decls.is_empty() {
+            let var_decls: Vec<IRNode> = computed_prop_temp_decls
+                .into_iter()
+                .map(|name| IRNode::VarDecl {
+                    name: name.into(),
+                    initializer: None,
+                })
+                .collect();
+            body.push(IRNode::VarDeclList(var_decls));
+        }
+        body.extend(computed_prop_init_entries);
 
         // Prototype methods and static members interleaved in source order
-        let mut deferred_static_blocks = computed_prop_init_entries;
-        deferred_static_blocks.extend(self.emit_all_members_ir(&mut body, class_idx));
+        let deferred_static_blocks = self.emit_all_members_ir(&mut body, class_idx);
 
         // Legacy decorator __decorate calls (inside IIFE, before return)
         if self.legacy_decorators {
@@ -1846,7 +1856,7 @@ impl<'a> ES5ClassTransformer<'a> {
         body.push(IRNode::ret(Some(IRNode::id(self.class_name.clone()))));
 
         // Build WeakMap declarations and instantiations
-        let mut weakmap_decls: Vec<String> = computed_prop_temp_decls;
+        let mut weakmap_decls: Vec<String> = Vec::new();
         weakmap_decls.extend(self.private_fields.iter().map(|f| f.weakmap_name.clone()));
 
         // Add private accessor WeakMap variables
