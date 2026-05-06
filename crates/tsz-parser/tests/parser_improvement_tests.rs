@@ -672,6 +672,31 @@ fn test_regex_missing_parenthesis_reports_ts1005_at_regex_end() {
 }
 
 #[test]
+fn test_unterminated_regex_class_suppresses_missing_bracket() {
+    let source = "let r = /[a/;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    let slash_pos = source.find('/').expect("regex slash") as u32;
+
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL
+                && d.start == slash_pos
+        }),
+        "expected TS1161 at regex slash, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message == "']' expected."),
+        "unterminated regex class should not also emit missing bracket diagnostic, got {codes:?}: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_unterminated_regex_with_angle_text_reports_ts1161() {
     for source in ["const r = /<x>;\n", "const r = /a<x>;\n"] {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

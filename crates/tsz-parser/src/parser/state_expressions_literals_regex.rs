@@ -1266,7 +1266,9 @@ impl ParserState {
         self.current_token = self.scanner.get_token();
 
         // Check for unterminated regex literal (TS1161)
-        if (self.scanner.get_token_flags() & TokenFlags::Unterminated as u32) != 0 {
+        let regex_is_unterminated =
+            (self.scanner.get_token_flags() & TokenFlags::Unterminated as u32) != 0;
+        if regex_is_unterminated {
             // Suppress TS1161 when the unterminated "regex" body is the tail of a
             // JSX closing tag (e.g., `</a:b>` parsed outside JSX context where `/`
             // is misinterpreted as a regex start). The slash must be immediately
@@ -1342,7 +1344,7 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::RegularExpressionLiteral);
 
-        if let Some(missing) = self.missing_regex_closing_token(&text) {
+        if !regex_is_unterminated && let Some(missing) = self.missing_regex_closing_token(&text) {
             // Position the missing-token message at the end of the regex body (the
             // slash/flag boundary), matching tsc behavior for malformed character
             // classes and groups.
