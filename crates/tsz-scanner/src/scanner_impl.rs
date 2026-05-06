@@ -2732,7 +2732,7 @@ impl ScannerState {
             if let Some(c) = char::from_u32(ch) {
                 result.push(c);
             }
-            self.pos += 1;
+            self.pos += self.char_len_at(self.pos);
         }
 
         // Unterminated string
