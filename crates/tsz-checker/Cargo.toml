@@ -274,6 +274,10 @@ name = "ts1203_node_esm_tests"
 path = "tests/ts1203_node_esm_tests.rs"
 
 [[test]]
+name = "node_esm_default_import_export_equals_callable_tests"
+path = "tests/node_esm_default_import_export_equals_callable_tests.rs"
+
+[[test]]
 name = "ts1254_ambient_const_tests"
 path = "tests/ts1254_ambient_const_tests.rs"
 
