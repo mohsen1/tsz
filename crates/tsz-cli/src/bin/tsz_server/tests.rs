@@ -78,6 +78,29 @@ fn make_request(command: &str, arguments: serde_json::Value) -> TsServerRequest 
 }
 
 #[test]
+fn emit_output_preserves_type_only_module_marker() {
+    let mut server = make_server();
+    let response = server.handle_tsserver_request(make_request(
+        "open",
+        serde_json::json!({
+            "file": "/index.ts",
+            "fileContent": "export type T = string;\n",
+        }),
+    ));
+    assert!(response.success);
+
+    let response = server.handle_tsserver_request(make_request(
+        "emit-output",
+        serde_json::json!({ "file": "/index.ts" }),
+    ));
+    assert!(response.success);
+    let body = response.body.expect("emit-output should return a body");
+    assert_eq!(body["emitSkipped"], false);
+    assert_eq!(body["outputFiles"][0]["name"], "/index.js");
+    assert_eq!(body["outputFiles"][0]["text"], "export {};\n");
+}
+
+#[test]
 fn reset_clears_session_state_but_keeps_server_alive() {
     let mut server = make_server();
     server

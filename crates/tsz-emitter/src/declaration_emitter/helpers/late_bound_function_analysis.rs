@@ -3,6 +3,7 @@
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -259,19 +260,14 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn late_bound_assignment_member_for_statement(
+    fn late_bound_assignment_member_for_expression(
         &self,
-        stmt_idx: NodeIndex,
+        expr_idx: NodeIndex,
         root_name: &str,
     ) -> Option<LateBoundAssignmentMember> {
-        let stmt_node = self.arena.get(stmt_idx)?;
-        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-            return None;
-        }
-        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
         let expr_idx = self
             .arena
-            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
             return None;
@@ -345,6 +341,212 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    fn collect_late_bound_assignment_members_from_node(
+        &self,
+        node_idx: NodeIndex,
+        root_name: &str,
+        declared_members: &FxHashSet<String>,
+        members: &mut Vec<LateBoundAssignmentMember>,
+    ) {
+        let Some(node) = self.arena.get(node_idx) else {
+            return;
+        };
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            || node.kind == syntax_kind_ext::MODULE_DECLARATION
+        {
+            return;
+        }
+
+        if let Some(member) = self.late_bound_assignment_member_for_expression(node_idx, root_name)
+        {
+            Self::record_late_bound_assignment_member(members, member, declared_members);
+        }
+
+        if let Some(block) = self.arena.get_block(node) {
+            for stmt_idx in block.statements.nodes.iter().copied() {
+                self.collect_late_bound_assignment_members_from_node(
+                    stmt_idx,
+                    root_name,
+                    declared_members,
+                    members,
+                );
+            }
+            return;
+        }
+
+        if let Some(loop_data) = self.arena.get_loop(node) {
+            if node.kind == syntax_kind_ext::DO_STATEMENT {
+                self.collect_late_bound_assignment_members_from_node(
+                    loop_data.statement,
+                    root_name,
+                    declared_members,
+                    members,
+                );
+                if loop_data.condition.is_some() {
+                    self.collect_late_bound_assignment_members_from_node(
+                        loop_data.condition,
+                        root_name,
+                        declared_members,
+                        members,
+                    );
+                }
+                return;
+            }
+
+            if loop_data.initializer.is_some() {
+                self.collect_late_bound_assignment_members_from_node(
+                    loop_data.initializer,
+                    root_name,
+                    declared_members,
+                    members,
+                );
+            }
+            if loop_data.condition.is_some() {
+                self.collect_late_bound_assignment_members_from_node(
+                    loop_data.condition,
+                    root_name,
+                    declared_members,
+                    members,
+                );
+            }
+            self.collect_late_bound_assignment_members_from_node(
+                loop_data.statement,
+                root_name,
+                declared_members,
+                members,
+            );
+            if loop_data.incrementor.is_some() {
+                self.collect_late_bound_assignment_members_from_node(
+                    loop_data.incrementor,
+                    root_name,
+                    declared_members,
+                    members,
+                );
+            }
+            return;
+        }
+
+        if let Some(for_in_of) = self.arena.get_for_in_of(node) {
+            self.collect_late_bound_assignment_members_from_node(
+                for_in_of.initializer,
+                root_name,
+                declared_members,
+                members,
+            );
+            self.collect_late_bound_assignment_members_from_node(
+                for_in_of.expression,
+                root_name,
+                declared_members,
+                members,
+            );
+            self.collect_late_bound_assignment_members_from_node(
+                for_in_of.statement,
+                root_name,
+                declared_members,
+                members,
+            );
+            return;
+        }
+
+        for child_idx in self.arena.get_children(node_idx) {
+            self.collect_late_bound_assignment_members_from_node(
+                child_idx,
+                root_name,
+                declared_members,
+                members,
+            );
+        }
+    }
+
+    fn record_late_bound_assignment_member(
+        members: &mut Vec<LateBoundAssignmentMember>,
+        member: LateBoundAssignmentMember,
+        declared_members: &FxHashSet<String>,
+    ) {
+        if declared_members.contains(&member.property_name_text) {
+            return;
+        }
+        if let Some(existing) =
+            members
+                .iter_mut()
+                .find(|existing: &&mut LateBoundAssignmentMember| {
+                    existing.property_name_text == member.property_name_text
+                })
+        {
+            *existing = member;
+        } else {
+            members.push(member);
+        }
+    }
+
+    fn declared_late_bound_namespace_member_names(&self, root_name: &str) -> FxHashSet<String> {
+        let mut names = FxHashSet::default();
+        let Some(source_file) = self.arena.source_files.first() else {
+            return names;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module) = self.arena.get_module(stmt_node) else {
+                continue;
+            };
+            if self.get_identifier_text(module.name).as_deref() != Some(root_name) {
+                continue;
+            }
+            self.collect_declared_namespace_member_names(module.body, &mut names);
+        }
+
+        names
+    }
+
+    fn collect_declared_namespace_member_names(
+        &self,
+        node_idx: NodeIndex,
+        names: &mut FxHashSet<String>,
+    ) {
+        let Some(node) = self.arena.get(node_idx) else {
+            return;
+        };
+        if let Some(var_decl) = self.arena.get_variable_declaration(node)
+            && let Some(name) = self.get_identifier_text(var_decl.name)
+        {
+            names.insert(name);
+        } else if let Some(func) = self.arena.get_function(node)
+            && let Some(name) = self.get_identifier_text(func.name)
+        {
+            names.insert(name);
+        } else if let Some(class) = self.arena.get_class(node)
+            && let Some(name) = self.get_identifier_text(class.name)
+        {
+            names.insert(name);
+        } else if let Some(iface) = self.arena.get_interface(node)
+            && let Some(name) = self.get_identifier_text(iface.name)
+        {
+            names.insert(name);
+        } else if let Some(alias) = self.arena.get_type_alias(node)
+            && let Some(name) = self.get_identifier_text(alias.name)
+        {
+            names.insert(name);
+        } else if let Some(enum_data) = self.arena.get_enum(node)
+            && let Some(name) = self.get_identifier_text(enum_data.name)
+        {
+            names.insert(name);
+        }
+
+        for child_idx in self.arena.get_children(node_idx) {
+            self.collect_declared_namespace_member_names(child_idx, names);
+        }
+    }
+
     pub(in crate::declaration_emitter) fn collect_ts_late_bound_assignment_members(
         &self,
         root_name_idx: NodeIndex,
@@ -364,24 +566,14 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let mut members = Vec::new();
+        let declared_members = self.declared_late_bound_namespace_member_names(&root_name);
         for &stmt_idx in &source_file.statements.nodes {
-            let Some(member) =
-                self.late_bound_assignment_member_for_statement(stmt_idx, &root_name)
-            else {
-                continue;
-            };
-
-            if let Some(existing) =
-                members
-                    .iter_mut()
-                    .find(|existing: &&mut LateBoundAssignmentMember| {
-                        existing.property_name_text == member.property_name_text
-                    })
-            {
-                *existing = member;
-            } else {
-                members.push(member);
-            }
+            self.collect_late_bound_assignment_members_from_node(
+                stmt_idx,
+                &root_name,
+                &declared_members,
+                &mut members,
+            );
         }
 
         members

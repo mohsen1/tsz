@@ -1296,7 +1296,6 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<T> {
         let binder = self.binder?;
         let symbol = binder.symbols.get(sym_id)?;
-
         for decl_idx in symbol.declarations.iter().copied() {
             if let Some(result) = self
                 .arena
@@ -2047,13 +2046,7 @@ impl<'a> DeclarationEmitter<'a> {
                 type_text
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                let reused_type_text = self
-                    .call_expression_returned_local_class_constructor_text(expr_idx, false)
-                    .or_else(|| {
-                        self.super_method_call_return_type_text(expr_idx)
-                            .or_else(|| self.call_expression_source_return_type_text(expr_idx))
-                            .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
-                    });
+                let reused_type_text = self.call_expression_reused_type_text(expr_idx);
                 let reused_type_uses_function_local_alias =
                     reused_type_text.as_deref().is_some_and(|type_text| {
                         self.type_text_starts_with_function_local_type_alias(type_text)
@@ -2110,7 +2103,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn super_method_call_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn super_method_call_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
             return None;
@@ -4010,7 +4006,7 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 continue;
             }
-            let Some(arg_type_text) = self.preferred_expression_type_text(arg_idx) else {
+            let Some(arg_type_text) = self.call_argument_type_text_for_substitution(arg_idx) else {
                 continue;
             };
             substitutions.push((
@@ -4055,6 +4051,24 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         substitutions
+    }
+
+    fn call_argument_type_text_for_substitution(&self, arg_idx: NodeIndex) -> Option<String> {
+        if let Some(type_text) = self.reference_declared_type_annotation_text(arg_idx) {
+            return Some(type_text);
+        }
+
+        let expr_idx = self.skip_parenthesized_expression(arg_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::StringLiteral as u16 {
+            let literal = self.arena.get_literal(expr_node)?;
+            return Some(format!(
+                "\"{}\"",
+                super::escape_string_for_double_quote(literal.text.as_ref())
+            ));
+        }
+
+        self.preferred_expression_type_text(arg_idx)
     }
 
     pub(in crate::declaration_emitter) fn function_signature_accepts_call_arguments(

@@ -1865,6 +1865,42 @@ fn test_resolver_package_without_package_json_uses_index_file() {
 }
 
 #[test]
+fn test_nodenext_bare_package_index_fallback_rejects_mts_entry() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_nodenext_pkg_index_mts_fallback");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+
+    fs::write(dir.join("src/index.ts"), "import { value } from 'pkg';").unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"type":"module"}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/index.mts"),
+        "export const value = 1;",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("pkg", &dir.join("src/index.ts"), Span::new(22, 27));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "NodeNext bare package fallback must not resolve index.mts, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_bare_specifier_from_node_modules_package_finds_sibling_package() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_node_modules_sibling");

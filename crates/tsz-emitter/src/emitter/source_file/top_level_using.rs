@@ -1274,6 +1274,15 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
             self.write_export_binding_start("default");
+            // Inside a top-level System using-block, anonymous default
+            // classes thread through a `_default` tracker variable so
+            // the export call mirrors tsc's
+            // `exports_1("default", _default = default_1);` shape. Outside
+            // a using-block (or for non-anonymous classes) the binding
+            // name is the live binding and no tracker is needed.
+            if self.in_top_level_using_scope {
+                self.write("_default = ");
+            }
             self.write(&binding_name);
             self.write_export_binding_end();
             return true;

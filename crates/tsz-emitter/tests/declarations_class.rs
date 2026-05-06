@@ -703,6 +703,30 @@ fn computed_property_no_side_effect_for_string_literal() {
     );
 }
 
+#[test]
+fn es5_computed_property_temps_stay_inside_class_iife() {
+    let source = r#"var s: string;
+var n: number;
+var a: any;
+class C {
+    [n] = n;
+    static [s + s]: string;
+    [s + n] = 2;
+    static [s + a] = 0
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES5);
+
+    assert!(
+        output.contains("function C() {\n        this[_a] = n;\n        this[_b] = 2;\n    }\n    var _a, _b, _c;\n    _a = n, s + s, _b = s + n, _c = s + a;\n    C[_c] = 0;"),
+        "Computed property temps and side effects should stay inside the class IIFE before static computed assignments.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("}());\n_a = n"),
+        "Computed property side effects should not be deferred after the class IIFE.\nOutput:\n{output}"
+    );
+}
+
 /// Trailing comment on class body opening `{` should be suppressed.
 /// tsc: `class E extends A {` (comment dropped)
 #[test]

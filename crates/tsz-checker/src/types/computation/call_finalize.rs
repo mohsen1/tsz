@@ -249,16 +249,33 @@ impl<'a> CheckerState<'a> {
                                 .copied()
                                 .is_none_or(|original| original != actual);
                         if aggregate_rest_mismatch {
-                            allow_contextual_mismatch_deferral = false;
-                            (
-                                CallResult::ArgumentTypeMismatch {
-                                    index,
-                                    expected,
-                                    actual,
-                                    fallback_return,
-                                },
-                                false,
-                            )
+                            let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                            let aggregate_assignable = self
+                                .is_assignable_to_with_env(actual, expected)
+                                || self.is_assignable_to_with_env(actual, evaluated_param);
+                            if aggregate_assignable {
+                                recovered_argument_mismatch = true;
+                                (
+                                    CallResult::ArgumentTypeMismatch {
+                                        index,
+                                        expected: evaluated_param,
+                                        actual,
+                                        fallback_return,
+                                    },
+                                    true,
+                                )
+                            } else {
+                                allow_contextual_mismatch_deferral = false;
+                                (
+                                    CallResult::ArgumentTypeMismatch {
+                                        index,
+                                        expected,
+                                        actual,
+                                        fallback_return,
+                                    },
+                                    false,
+                                )
+                            }
                         } else {
                             let evaluated_param = self.evaluate_type_with_env(param.type_id);
                             // Detect variadic tuple spread markers: when a generic type
