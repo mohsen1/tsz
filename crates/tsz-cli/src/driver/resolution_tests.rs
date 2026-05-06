@@ -782,6 +782,22 @@ fn test_collect_module_specifiers_finds_require_with_whitespace_before_paren() {
 }
 
 #[test]
+fn test_collect_module_specifiers_finds_jsdoc_import_tags() {
+    let text = r#"
+// @ts-check
+/** @import { "a,b" as CommaName } from "./dep" */
+/** @type {CommaName} */
+const value = "x";
+"#;
+    let path = Path::new("test.js");
+    let specifiers = collect_module_specifiers_from_text(path, text);
+    assert!(
+        specifiers.contains(&"./dep".to_string()),
+        "Should find JSDoc @import specifier './dep', got: {specifiers:?}"
+    );
+}
+
+#[test]
 fn test_collect_module_specifiers_require_has_correct_kind() {
     use tsz::module_resolver::ImportKind;
     let text = r#"const data = require("./data.json");"#;

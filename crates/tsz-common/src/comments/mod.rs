@@ -113,11 +113,12 @@ fn collect_comment_at(
             return Some(len);
         };
         let mut pos = start_pos + 2;
-        while pos < len && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+        while pos < len && comment_line_break_len_at(bytes, pos) == 0 {
             pos += 1;
         }
 
-        let has_trailing_new_line = pos < len;
+        let line_break_len = comment_line_break_len_at(bytes, pos);
+        let has_trailing_new_line = line_break_len > 0;
         comments.push(CommentRange::new(
             start,
             u32::try_from(pos).unwrap_or(u32::MAX),
@@ -125,12 +126,7 @@ fn collect_comment_at(
             has_trailing_new_line,
         ));
 
-        if pos < len && bytes[pos] == b'\r' {
-            pos += 1;
-        }
-        if pos < len && bytes[pos] == b'\n' {
-            pos += 1;
-        }
+        pos += line_break_len;
         Some(pos)
     } else if next == b'*' {
         let Ok(start) = u32::try_from(start_pos) else {
@@ -161,6 +157,20 @@ fn collect_comment_at(
         Some(pos)
     } else {
         None
+    }
+}
+
+fn comment_line_break_len_at(bytes: &[u8], pos: usize) -> usize {
+    match bytes.get(pos) {
+        Some(b'\r') if bytes.get(pos + 1) == Some(&b'\n') => 2,
+        Some(b'\n') | Some(b'\r') => 1,
+        Some(0xE2)
+            if bytes.get(pos + 1) == Some(&0x80)
+                && matches!(bytes.get(pos + 2), Some(0xA8 | 0xA9)) =>
+        {
+            3
+        }
+        _ => 0,
     }
 }
 
