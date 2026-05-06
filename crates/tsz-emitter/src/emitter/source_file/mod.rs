@@ -869,4 +869,39 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
             "AMD ES5 enum re-export should not emit a separate export assignment.\nOutput:\n{output}"
         );
     }
+
+    #[test]
+    fn anonymous_declare_module_recovers_runtime_class_shell() {
+        let source = "declare module {\n    export class XDate {\n        getDay(): number;\n        static now(): number;\n    }\n}\nvar d = new XDate();\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("declare;\nmodule;\n{"),
+            "Anonymous declare module should recover declare/module shell.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("export class XDate"),
+            "Runtime class shell should be preserved.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("getDay"),
+            "Ambient class members should remain erased.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var d = new XDate();"),
+            "Following runtime statement should still emit.\nOutput:\n{output}"
+        );
+    }
 }
