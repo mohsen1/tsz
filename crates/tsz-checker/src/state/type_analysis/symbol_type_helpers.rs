@@ -114,6 +114,10 @@ impl<'a> CheckerState<'a> {
         param_type_id: TypeId,
         param_name: &str,
     ) -> bool {
+        if constraint_type == TypeId::ERROR || param_type_id == TypeId::ERROR {
+            return false;
+        }
+
         // Direct match
         if constraint_type == param_type_id {
             return true;
