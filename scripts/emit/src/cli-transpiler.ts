@@ -82,10 +82,11 @@ interface CompilerFlagOptions {
 // --strictNullChecks (and was at structural risk of dropping any future flag).
 function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): void {
   // alwaysStrict defaults to true in tsz (matching TS6+). For test variants
-  // that explicitly want alwaysStrict=false, we must forward the flag —
+  // that explicitly want alwaysStrict=false, we must forward the flag;
   // dropping it would re-default to true and emit a spurious "use strict".
   if (opts.alwaysStrict !== undefined) {
     args.push('--alwaysStrict', opts.alwaysStrict ? 'true' : 'false');
+    if (!opts.alwaysStrict) args.push('--ignoreDeprecations', '6.0');
   }
   if (opts.sourceMap) args.push('--sourceMap');
   if (opts.inlineSourceMap) args.push('--inlineSourceMap');
@@ -275,7 +276,7 @@ export class CliTranspiler {
     const {
       sourceFileName,
       declaration = false,
-      alwaysStrict = false,
+      alwaysStrict,
       sourceMap = false,
       inlineSourceMap = false,
       declarationMap = false,
@@ -423,6 +424,8 @@ export class CliTranspiler {
       const type = fs.statSync(targetPath).isDirectory() ? 'dir' : 'file';
       fs.symlinkSync(targetPath, linkPath, type);
     }
+
+    this.writeRootConfigForEmbeddedTsconfig(testDir, files);
 
     try {
       const targetArg = targetToCliArg(target);
@@ -575,7 +578,7 @@ export class CliTranspiler {
       let dts: string | null = null;
 
       const normalizeOutputRelPath = (filePath: string): string => {
-        return path.relative(testDir, filePath).split(path.sep).join('/');
+        return path.relative(testDir, filePath).split(path.sep).join('/').replace(/\\/g, '/');
       };
 
       const normalizeRequestedOutputName = (name: string): string => {
@@ -733,5 +736,40 @@ export class CliTranspiler {
     if (fs.existsSync(this.tempDir)) {
       fs.rmSync(this.tempDir, { recursive: true, force: true });
     }
+  }
+
+  private writeRootConfigForEmbeddedTsconfig(testDir: string, files: SourceInputFile[]): void {
+    if (files.some(file => file.name.replace(/^\/+/, '').replace(/\\/g, '/') === 'tsconfig.json')) {
+      return;
+    }
+
+    const embedded = files.find(file => file.name.replace(/\\/g, '/').endsWith('/tsconfig.json'));
+    if (!embedded) return;
+
+    let config: unknown;
+    try {
+      config = JSON.parse(embedded.content);
+    } catch {
+      return;
+    }
+    if (!config || typeof config !== 'object') return;
+
+    const configObject = config as Record<string, unknown>;
+    const compilerOptions = configObject.compilerOptions;
+    if (!compilerOptions || typeof compilerOptions !== 'object') return;
+
+    const rootConfig = {
+      ...configObject,
+      compilerOptions: { ...(compilerOptions as Record<string, unknown>) },
+    };
+    const rootCompilerOptions = rootConfig.compilerOptions as Record<string, unknown>;
+    const configDir = path.posix.dirname(embedded.name.replace(/^\/+/, '').replace(/\\/g, '/'));
+    if (typeof rootCompilerOptions.baseUrl === 'string') {
+      rootCompilerOptions.baseUrl = path.posix
+        .normalize(path.posix.join(configDir, rootCompilerOptions.baseUrl))
+        .replace(/^\.$/, '');
+    }
+
+    fs.writeFileSync(path.join(testDir, 'tsconfig.json'), JSON.stringify(rootConfig, null, 2), 'utf-8');
   }
 }

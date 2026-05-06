@@ -13,7 +13,7 @@ use crate::types::{
 };
 use crate::visitor::{
     intersection_list_id, intrinsic_kind, literal_value, string_intrinsic_components,
-    template_literal_id, union_list_id,
+    template_literal_id, type_param_info, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -681,6 +681,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn is_template_type_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
         // Regular subtype check first
         if self.check_subtype(source, target).is_true() {
+            return true;
+        }
+
+        if let (Some(source_info), Some(target_info)) = (
+            type_param_info(self.interner, source),
+            type_param_info(self.interner, target),
+        ) && source_info.name == target_info.name
+        {
             return true;
         }
 

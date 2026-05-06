@@ -2761,6 +2761,9 @@ fn apply_cli_overrides_with_config_options(
         options.rewrite_relative_import_extensions = true;
         options.printer.rewrite_relative_import_extensions = true;
     }
+    if args.trace_resolution {
+        options.trace_resolution = true;
+    }
     if let Some(custom_conditions) = args.custom_conditions.as_ref() {
         options.custom_conditions = custom_conditions.clone();
     }
@@ -2865,6 +2868,9 @@ fn apply_cli_overrides_with_config_options(
     }
     if args.no_unchecked_indexed_access {
         options.checker.no_unchecked_indexed_access = true;
+    }
+    if args.no_unchecked_side_effect_imports {
+        options.checker.no_unchecked_side_effect_imports = true;
     }
     if args.exact_optional_property_types {
         options.checker.exact_optional_property_types = true;

@@ -1826,6 +1826,31 @@ export const y = x;
     }
 
     #[test]
+    fn system_top_level_using_env_hoists_before_later_nested_var() {
+        let source = "export { y };\nusing z = null;\nif (false) {\n    var y = 1;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::System,
+                target: ScriptTarget::ES2022,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var z, env_1, y;"),
+            "System top-level using should place the disposable environment before later nested var hoists.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn system_exported_object_binding_initializer_assigns_and_exports_hoisted_name() {
         let source = "export let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\n";
 

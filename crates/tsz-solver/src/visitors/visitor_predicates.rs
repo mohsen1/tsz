@@ -247,7 +247,18 @@ pub fn is_primitive_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
     matches!(
         types.lookup(type_id),
-        Some(TypeData::Intrinsic(_) | TypeData::Literal(_))
+        Some(
+            TypeData::Intrinsic(
+                IntrinsicKind::Void
+                    | IntrinsicKind::Null
+                    | IntrinsicKind::Undefined
+                    | IntrinsicKind::Boolean
+                    | IntrinsicKind::Number
+                    | IntrinsicKind::String
+                    | IntrinsicKind::Bigint
+                    | IntrinsicKind::Symbol,
+            ) | TypeData::Literal(_)
+        )
     )
 }
 

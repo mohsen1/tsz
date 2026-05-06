@@ -212,7 +212,7 @@ impl<'a> CheckerState<'a> {
         let find_missing = |props: &[tsz_solver::PropertyInfo]| {
             props.iter().find_map(|prop| {
                 let prop_name = self.ctx.types.resolve_atom(prop.name);
-                if prop_name.starts_with("__private_brand_")
+                if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name)
                     || required_property_name.is_some_and(|required| prop.name != required)
                     || prop.visibility == tsz_solver::Visibility::Public
                     || source_has_prop(prop.name)
@@ -796,7 +796,7 @@ impl<'a> CheckerState<'a> {
                             );
                             return;
                         }
-                        if prop_name.starts_with("__private_brand") {
+                        if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                             // Private brand mismatch
                             self.error_type_not_assignable_generic_with_anchor(
                                 source, target, anchor_idx,
@@ -1151,7 +1151,11 @@ impl<'a> CheckerState<'a> {
             && annotation_text.contains('&')
             && !annotation_text.trim_start().starts_with("keyof ")
         {
-            source_str = self.format_declared_annotation_for_diagnostic(&annotation_text);
+            source_str = self
+                .declared_intersection_annotation_display_for_expression(expr_idx)
+                .unwrap_or_else(|| {
+                    self.format_declared_annotation_for_diagnostic(&annotation_text)
+                });
             source_from_annotation = true;
         }
         if self
@@ -1388,7 +1392,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let rest = &display[i + 2..];
-            if rest.starts_with('"') || rest.starts_with("true") || rest.starts_with("false") {
+            if rest.starts_with('"')
+                || rest.starts_with('\'')
+                || rest.starts_with("true")
+                || rest.starts_with("false")
+            {
                 return true;
             }
             if rest
@@ -1612,7 +1620,7 @@ impl<'a> CheckerState<'a> {
                         // doesn't report these as missing properties.
                         return;
                     }
-                    if prop_name.starts_with("__private_brand") {
+                    if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                         if let Some((display_prop, owner_name, visibility)) =
                             self.private_or_protected_brand_backing_member_display(target, None)
                         {

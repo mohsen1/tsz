@@ -22,6 +22,34 @@ fn test_is_numeric_literal_name() {
 }
 
 #[test]
+fn test_is_synthetic_private_brand_name() {
+    // Synthetic forms minted by class_type/core.rs (digit suffixes only).
+    assert!(is_synthetic_private_brand_name("__private_brand_0"));
+    assert!(is_synthetic_private_brand_name("__private_brand_42"));
+    assert!(is_synthetic_private_brand_name(
+        "__private_brand_4294967295"
+    ));
+    assert!(is_synthetic_private_brand_name("__private_brand_node_0"));
+    assert!(is_synthetic_private_brand_name("__private_brand_node_17"));
+
+    // User-authored properties that share the textual prefix must not be
+    // misclassified (issue #3067).
+    assert!(!is_synthetic_private_brand_name("__private_brand_value"));
+    assert!(!is_synthetic_private_brand_name(
+        "__private_brand_node_name"
+    ));
+    assert!(!is_synthetic_private_brand_name("__private_brand_42x"));
+    assert!(!is_synthetic_private_brand_name("__private_brand_x42"));
+    assert!(!is_synthetic_private_brand_name("__private_brand_node_42x"));
+    assert!(!is_synthetic_private_brand_name("__private_brand_"));
+    assert!(!is_synthetic_private_brand_name("__private_brand_node_"));
+    assert!(!is_synthetic_private_brand_name("__private_brand"));
+    assert!(!is_synthetic_private_brand_name("private_brand_42"));
+    assert!(!is_synthetic_private_brand_name(""));
+    assert!(!is_synthetic_private_brand_name("ordinary"));
+}
+
+#[test]
 fn test_type_id_ext_non_never() {
     // Test non_never
     assert_eq!(TypeId::UNKNOWN.non_never(), Some(TypeId::UNKNOWN));

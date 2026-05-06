@@ -82,7 +82,7 @@ impl<'a> CheckerState<'a> {
                 .and_then(|shape| {
                     shape.properties.iter().find_map(|prop| {
                         let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-                        (!prop_name.starts_with("__private_brand_")
+                        (!tsz_solver::utils::is_synthetic_private_brand_name(&prop_name)
                             && prop.visibility != tsz_solver::Visibility::Public)
                             .then(|| (prop_name.to_string(), prop.visibility))
                     })

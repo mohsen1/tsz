@@ -742,6 +742,28 @@ fn test_amd_export_import_namespace_alias_emits_export_assignment() {
 }
 
 #[test]
+fn test_commonjs_export_import_type_only_namespace_identifier_is_erased() {
+    let source = "export namespace C { export interface I {} }\nexport import v = C;\nexport namespace M { export var w: v.I; }\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports.M = void 0;"),
+        "runtime namespace export should still be initialized.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.v"),
+        "type-only import-equals alias should not emit a CJS export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn amd_known_declaration_file_without_bang_module_is_stripped() {
     let declarations = r#"declare module "regular" {
     export const value: number;
