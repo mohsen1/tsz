@@ -25,56 +25,6 @@ enum SyntacticNullishness {
 }
 
 impl<'a> CheckerState<'a> {
-    fn callable_max_fixed_param_count_for_nullish_reduction(
-        &self,
-        type_id: TypeId,
-    ) -> Option<usize> {
-        let type_id = crate::query_boundaries::common::remove_nullish(self.ctx.types, type_id);
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        {
-            return members
-                .into_iter()
-                .filter_map(|member| {
-                    self.callable_max_fixed_param_count_for_nullish_reduction(member)
-                })
-                .max();
-        }
-
-        if let Some(shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-        {
-            return Some(shape.params.iter().take_while(|param| !param.rest).count());
-        }
-
-        crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id).and_then(
-            |shape| {
-                shape
-                    .call_signatures
-                    .iter()
-                    .map(|sig| sig.params.iter().take_while(|param| !param.rest).count())
-                    .max()
-            },
-        )
-    }
-
-    fn prefer_non_nullish_left_callable_for_nullish_reduction(
-        &self,
-        non_nullish_left: TypeId,
-        right_type: TypeId,
-    ) -> bool {
-        let Some(left_max) =
-            self.callable_max_fixed_param_count_for_nullish_reduction(non_nullish_left)
-        else {
-            return false;
-        };
-        let Some(right_max) = self.callable_max_fixed_param_count_for_nullish_reduction(right_type)
-        else {
-            return false;
-        };
-        left_max > right_max
-    }
-
     fn global_function_interface_type_for_instanceof(&mut self) -> Option<TypeId> {
         let function_sym_id = self.ctx.binder.lib_symbol_ids.iter().find_map(|&sym_id| {
             self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
@@ -199,12 +149,6 @@ impl<'a> CheckerState<'a> {
                         logical_idx,
                         &TypingRequest::for_write_context(),
                     );
-                }
-                if self.prefer_non_nullish_left_callable_for_nullish_reduction(
-                    non_nullish_left,
-                    right_type,
-                ) {
-                    return non_nullish_left;
                 }
                 vec![non_nullish_left, right_type]
             };
@@ -1168,10 +1112,7 @@ impl<'a> CheckerState<'a> {
                     let result = match non_nullish {
                         None => right_type,
                         Some(non_nullish) => {
-                            if self.prefer_non_nullish_left_callable_for_nullish_reduction(
-                                non_nullish,
-                                right_type,
-                            ) || non_nullish == right_type
+                            if non_nullish == right_type
                                 || self.is_subtype_of(right_type, non_nullish)
                             {
                                 non_nullish

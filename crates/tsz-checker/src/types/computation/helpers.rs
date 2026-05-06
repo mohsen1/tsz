@@ -22,94 +22,6 @@ impl<'a> CheckerState<'a> {
     // Core Type Computation
     // =========================================================================
 
-    fn fixed_callable_param_count_for_conditional_reduction(
-        &self,
-        type_id: TypeId,
-    ) -> Option<usize> {
-        if let Some(shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-        {
-            return Some(shape.params.iter().take_while(|param| !param.rest).count());
-        }
-
-        crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id).and_then(
-            |shape| {
-                shape
-                    .call_signatures
-                    .iter()
-                    .map(|sig| sig.params.iter().take_while(|param| !param.rest).count())
-                    .max()
-            },
-        )
-    }
-
-    fn conditional_object_branches_have_common_callable_arity_difference(
-        &mut self,
-        when_true: TypeId,
-        when_false: TypeId,
-    ) -> bool {
-        let true_type = self.evaluate_type_with_env(when_true);
-        let false_type = self.evaluate_type_with_env(when_false);
-        let Some(true_shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, true_type)
-        else {
-            return false;
-        };
-        let Some(false_shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, false_type)
-        else {
-            return false;
-        };
-
-        true_shape.properties.iter().any(|true_prop| {
-            let Some(false_prop) = false_shape
-                .properties
-                .iter()
-                .find(|false_prop| false_prop.name == true_prop.name)
-            else {
-                return false;
-            };
-            let Some(true_count) =
-                self.fixed_callable_param_count_for_conditional_reduction(true_prop.type_id)
-            else {
-                return false;
-            };
-            let Some(false_count) =
-                self.fixed_callable_param_count_for_conditional_reduction(false_prop.type_id)
-            else {
-                return false;
-            };
-            true_count != false_count
-        })
-    }
-
-    fn reduce_conditional_callable_branch_types(
-        &mut self,
-        when_true: TypeId,
-        when_false: TypeId,
-    ) -> Option<TypeId> {
-        let true_param_count =
-            self.fixed_callable_param_count_for_conditional_reduction(when_true)?;
-        let false_param_count =
-            self.fixed_callable_param_count_for_conditional_reduction(when_false)?;
-
-        let true_assignable_to_false = self.is_assignable_to_with_env(when_true, when_false);
-        let false_assignable_to_true = self.is_assignable_to_with_env(when_false, when_true);
-
-        match (true_assignable_to_false, false_assignable_to_true) {
-            (true, false) => Some(when_false),
-            (false, true) => Some(when_true),
-            (true, true) => {
-                if false_param_count >= true_param_count {
-                    Some(when_false)
-                } else {
-                    Some(when_true)
-                }
-            }
-            (false, false) => None,
-        }
-    }
-
     /// Evaluate a type deeply for binary operation checking.
     ///
     /// Unlike `evaluate_type_with_resolution` which only handles the top-level type,
@@ -307,20 +219,6 @@ impl<'a> CheckerState<'a> {
         // assigned to a `const` with a literal union annotation, e.g.:
         //   const c1 = cond ? "foo" : "bar";        // should be "foo" | "bar"
         //   const c2: "foo" | "bar" = c1;            // should pass
-
-        if self.conditional_object_branches_have_common_callable_arity_difference(
-            when_true, when_false,
-        ) {
-            return self
-                .ctx
-                .types
-                .union_literal_reduce(vec![when_true, when_false]);
-        }
-
-        if let Some(reduced) = self.reduce_conditional_callable_branch_types(when_true, when_false)
-        {
-            return reduced;
-        }
 
         // Use Solver API for type computation (Solver-First architecture)
         expr_ops::compute_conditional_expression_type(

@@ -417,11 +417,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let mut required_param_types_at_pos = Vec::new();
             let mut optional_param_types_at_pos = Vec::new();
             let mut saw_absent = false;
+            let mut saw_rest_at_pos = false;
 
             for (params, _, has_rest) in &all_signatures {
                 if i < params.len() {
                     let param = &params[i];
                     if param.rest {
+                        saw_rest_at_pos = true;
                         // For rest params like `...b: number[]`, extract the element type
                         // so we intersect `number` (not `number[]`) with other members' types
                         if let Some(elem) = crate::type_queries::get_array_element_type(
@@ -444,6 +446,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         }
                     }
                 } else if *has_rest {
+                    saw_rest_at_pos = true;
                     // Position i is beyond this member's positional params, but the
                     // member has a rest param that covers all remaining positions.
                     // Include its element type in the intersection.
@@ -494,12 +497,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     required_param_types_at_pos.iter().any(|&required_type| {
                         !self.checker.is_assignable_to(optional_type, required_type)
                     })
-                }) || (saw_absent
-                    && required_param_types_at_pos.iter().any(|&required_type| {
-                        !self
-                            .checker
-                            .is_assignable_to(TypeId::UNDEFINED, required_type)
-                    }))
+                }) || saw_rest_at_pos
+                    || (saw_absent
+                        && required_param_types_at_pos.iter().any(|&required_type| {
+                            !self
+                                .checker
+                                .is_assignable_to(TypeId::UNDEFINED, required_type)
+                        }))
                     || (optional_param_types_at_pos.is_empty() && !saw_absent));
 
             if requires_argument {
