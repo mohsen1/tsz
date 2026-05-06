@@ -180,6 +180,46 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn es2015_auto_accessor_storage_vars_follow_private_helpers() {
+        let source = "// Header comment\n\
+// Regular class should still error when targeting ES5\n\
+class RegularClass {\n    accessor shouldError: string;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        let helper_pos = output
+            .find("var __classPrivateFieldGet =")
+            .expect("private field helper should be emitted");
+        let storage_pos = output
+            .find("var _RegularClass_shouldError_accessor_storage;")
+            .expect("accessor storage declaration should be emitted");
+        let class_comment_pos = output
+            .find("// Regular class should still error when targeting ES5")
+            .expect("class leading comment should be emitted");
+
+        assert!(
+            helper_pos < storage_pos,
+            "Auto-accessor storage vars should be emitted after private-field helpers.\nOutput:\n{output}"
+        );
+        assert!(
+            storage_pos < class_comment_pos,
+            "Auto-accessor storage vars should stay before the class leading comment.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn legacy_decorated_private_auto_accessors_use_unique_storage_names() {
         let source = "declare var dec: any;\n\
 class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n";
