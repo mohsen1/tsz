@@ -774,6 +774,10 @@ name = "unused_catch_binding_tests"
 path = "tests/unused_catch_binding_tests.rs"
 
 [[test]]
+name = "unused_nested_destructured_param_tests"
+path = "tests/unused_nested_destructured_param_tests.rs"
+
+[[test]]
 name = "template_literal_bigint_placeholder_tests"
 path = "tests/template_literal_bigint_placeholder_tests.rs"
 

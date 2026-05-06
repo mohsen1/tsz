@@ -864,7 +864,13 @@ impl<'a> CheckerState<'a> {
     /// Also returns true for binding elements nested inside a PARAMETER node
     /// (e.g. `function f({ a, b: [c] }) {}` — `a`, `b`, and `c` are all
     /// parameters in tsc's accounting and are exempt from `noUnusedLocals`).
+    ///
+    /// The walk is bounded only by parser recursion depth (which limits AST
+    /// depth), not by an arbitrary fixed-depth heuristic — arbitrarily deep
+    /// destructured parameter bindings must still resolve to their owning
+    /// `Parameter` (see issue #3139).
     fn is_parameter_declaration(&self, idx: NodeIndex) -> bool {
+        use tsz_common::limits::MAX_PARSER_RECURSION_DEPTH;
         use tsz_parser::parser::syntax_kind_ext;
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -874,9 +880,10 @@ impl<'a> CheckerState<'a> {
         }
         // Walk up through BINDING_ELEMENT / OBJECT_BINDING_PATTERN / ARRAY_BINDING_PATTERN
         // ancestors — if the enclosing declaration is a PARAMETER, this is a destructured
-        // parameter binding.
+        // parameter binding. Anything else (VariableDeclaration, CatchClause, ...) means
+        // the binding is local.
         let mut current = idx;
-        for _ in 0..20 {
+        for _ in 0..MAX_PARSER_RECURSION_DEPTH {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 return false;
             };
