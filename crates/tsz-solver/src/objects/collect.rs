@@ -7,8 +7,8 @@ use crate::relations::subtype::TypeResolver;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    IndexSignature, IntrinsicKind, ObjectShape, PropertyInfo, TypeData, TypeId, TypeListId,
-    Visibility,
+    IndexSignature, IntrinsicKind, MappedModifier, ObjectShape, PropertyInfo, TypeData, TypeId,
+    TypeListId, Visibility,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -63,7 +63,7 @@ pub enum PropertyCollectionResult {
 ///
 /// # Important
 /// - Call signatures are NOT collected (this is for properties only)
-/// - Mapped types are NOT handled (input should be pre-lowered/evaluated)
+/// - Mapped types are handled only when their property set can be reduced to finite keys
 /// - `any & T` always returns `Any` (commutative)
 pub fn collect_properties<R>(
     type_id: TypeId,
@@ -162,6 +162,9 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 let shape = self.interner.object_shape(shape_id);
                 self.merge_shape(&shape);
             }
+            Some(TypeData::Mapped(mapped_id)) => {
+                self.collect_finite_mapped_properties(mapped_id);
+            }
             // Any type in intersection makes everything Any (commutative)
             Some(TypeData::Intrinsic(IntrinsicKind::Any)) => {
                 self.found_any = true;
@@ -200,6 +203,54 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 // Not an object or intersection - ignore (call signatures, primitives, etc.)
             }
         }
+    }
+
+    fn collect_finite_mapped_properties(&mut self, mapped_id: crate::types::MappedTypeId) {
+        let Some(names) =
+            crate::type_queries::collect_finite_mapped_property_names(self.interner, mapped_id)
+        else {
+            return;
+        };
+
+        let mapped = self.interner.mapped_type(mapped_id);
+        let optional = mapped.optional_modifier == Some(MappedModifier::Add);
+        let readonly = mapped.readonly_modifier == Some(MappedModifier::Add);
+        let mut properties = Vec::with_capacity(names.len());
+
+        for name in names {
+            let name_text = self.interner.resolve_atom(name);
+            let Some(type_id) = crate::type_queries::get_finite_mapped_property_type(
+                self.interner,
+                mapped_id,
+                &name_text,
+            ) else {
+                continue;
+            };
+            properties.push(PropertyInfo {
+                name,
+                type_id,
+                write_type: type_id,
+                optional,
+                readonly,
+                visibility: Visibility::Public,
+                is_method: false,
+                is_class_prototype: false,
+                parent_id: None,
+                declaration_order: 0,
+                is_string_named: false,
+                is_symbol_named: false,
+                single_quoted_name: false,
+            });
+        }
+
+        let shape = ObjectShape {
+            flags: crate::types::ObjectFlags::empty(),
+            properties,
+            string_index: None,
+            number_index: None,
+            symbol: None,
+        };
+        self.merge_shape(&shape);
     }
 
     /// Collect common properties from all union members.

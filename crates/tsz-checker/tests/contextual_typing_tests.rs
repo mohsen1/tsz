@@ -585,6 +585,15 @@ createMachine2({
 "#;
 
     let diagnostics = check_default(source);
+    let assignability_cascades: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322 || diag.code == 2345)
+        .collect();
+    assert!(
+        assignability_cascades.is_empty(),
+        "Expected no object/call assignability cascades for contextual mapped intersection handlers, got diagnostics={assignability_cascades:?}"
+    );
+
     let mut relevant: Vec<_> = diagnostics
         .iter()
         .filter(|diag| diag.code == 2353 || diag.code == 7006)
@@ -714,6 +723,15 @@ createMachine2({
 "#;
 
     let diagnostics = check_default(source);
+    let assignability_cascades: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322 || diag.code == 2345)
+        .collect();
+    assert!(
+        assignability_cascades.is_empty(),
+        "Expected no object/call assignability cascades in the full contextual mapped intersection sequence, got diagnostics={assignability_cascades:?}"
+    );
+
     let mut relevant: Vec<_> = diagnostics
         .iter()
         .filter(|diag| diag.code == 2353 || diag.code == 7006)
