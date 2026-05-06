@@ -449,7 +449,6 @@ impl Server {
                 "es2015" | "es6" => ModuleKind::ES2015,
                 "es2020" => ModuleKind::ES2020,
                 "es2022" => ModuleKind::ES2022,
-                "esnext" => ModuleKind::ESNext,
                 "node16" => ModuleKind::Node16,
                 "node18" => ModuleKind::Node18,
                 "node20" => ModuleKind::Node20,
@@ -1809,7 +1808,7 @@ impl Server {
             .unwrap_or(false);
         let mut projects: Vec<(&String, &Vec<String>)> =
             self.external_project_files.iter().collect();
-        projects.sort_by(|(left, _), (right, _)| left.cmp(right));
+        projects.sort_by_key(|(left, _)| *left);
 
         let body: Vec<serde_json::Value> = projects
             .into_iter()

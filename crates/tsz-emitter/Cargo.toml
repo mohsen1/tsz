@@ -90,5 +90,9 @@ path = "tests/system_using_es_decorator_default_tests.rs"
 name = "system_using_default_tracker_tests"
 path = "tests/system_using_default_tracker_tests.rs"
 
+[[test]]
+name = "cjs_arbitrary_module_namespace_identifier_tests"
+path = "tests/cjs_arbitrary_module_namespace_identifier_tests.rs"
+
 [lints]
 workspace = true
