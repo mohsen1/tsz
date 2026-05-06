@@ -382,6 +382,37 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn decorator_metadata_nolib_isolated_global_type_uses_typeof_guard() {
+        let source = "declare var Decorate: PropertyDecorator;\nexport class B {\n    @Decorate\n    member: Map<string, number>;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                no_lib: true,
+                isolated_modules: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a;"),
+            "Metadata guard should hoist its temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("__metadata(\"design:type\", typeof (_a = typeof Map !== \"undefined\" && Map) === \"function\" ? _a : Object)"),
+            "No-lib isolated metadata should guard unresolved global constructors.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn commonjs_top_level_using_direct_exported_legacy_class_stays_inline() {
         let source =
             "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
@@ -446,6 +477,30 @@ class RegularClass {\n    accessor shouldError;\n}\n";
         assert!(
             class_pos < direct_export_pos && direct_export_pos < alias_export_pos,
             "CommonJS class export aliases should be emitted after the class in tsc order.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn legacy_decorated_declare_computed_property_emits_decorator_target() {
+        let source = "declare function decorator(target: any, key: any): any;\nconst b = Symbol('b');\nclass Foo {\n    @decorator declare [b]: number;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                target: ScriptTarget::ESNext,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("], Foo.prototype, b, void 0);"),
+            "Legacy decorators on computed declare fields should emit the computed target expression.\nOutput:\n{output}"
         );
     }
 

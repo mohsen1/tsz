@@ -311,6 +311,67 @@ impl BinderState {
         ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 
+    /// Collapse `@import` tag continuations onto a single line so the
+    /// line-by-line binder can register the alias.
+    ///
+    /// JSDoc allows the import clause to be split over several lines, e.g.
+    ///
+    /// ```text
+    /// /**
+    ///  * @import
+    ///  * * as types
+    ///  * from "./types"
+    ///  */
+    /// ```
+    ///
+    /// Without this preprocessing, the binder sees `@import` followed by an
+    /// empty rest and silently fails to register the namespace alias —
+    /// every later `types.A` reference then fires TS2304.
+    fn merge_jsdoc_import_continuations(jsdoc: &str) -> String {
+        // Note: this preprocessor runs over JSDoc text that has already been
+        // normalized by `get_jsdoc_content`, so the outer `* ` decoration is
+        // gone. We MUST NOT strip any further leading `*`s, since
+        // `import * as types` puts a real `*` at the start of the
+        // continuation line — accidentally consuming it would turn the line
+        // into `as types` and erase the namespace import.
+        let mut result = String::with_capacity(jsdoc.len());
+        let mut pending: Option<String> = None;
+        for line in jsdoc.lines() {
+            let stripped = line.trim();
+            if let Some(text) = pending.as_mut() {
+                let already_complete = text.contains(" from \"")
+                    || text.contains(" from '")
+                    || text.contains(" from `");
+                if !already_complete && !stripped.is_empty() && !stripped.starts_with('@') {
+                    text.push(' ');
+                    text.push_str(stripped);
+                    continue;
+                }
+                let flushed = pending
+                    .take()
+                    .expect("pending import text is present while flushing continuation");
+                result.push_str(&flushed);
+                result.push('\n');
+            }
+            if stripped.strip_prefix("@import").is_some_and(|rest| {
+                !rest
+                    .chars()
+                    .next()
+                    .is_some_and(Self::is_jsdoc_import_keyword_part)
+            }) {
+                pending = Some(line.to_string());
+                continue;
+            }
+            result.push_str(line);
+            result.push('\n');
+        }
+        if let Some(text) = pending {
+            result.push_str(&text);
+            result.push('\n');
+        }
+        result
+    }
+
     fn bind_jsdoc_import_tags(
         &mut self,
         arena: &NodeArena,
@@ -329,7 +390,9 @@ impl BinderState {
             if !is_jsdoc_comment(comment, source_text) {
                 continue;
             }
-            let content = get_jsdoc_content(comment, source_text);
+            let raw_content = get_jsdoc_content(comment, source_text);
+            let merged_content = Self::merge_jsdoc_import_continuations(raw_content.as_ref());
+            let content: &str = merged_content.as_str();
             for line in content.lines() {
                 let trimmed = line.trim_start_matches('*').trim();
                 let Some(rest) = trimmed.strip_prefix("@import") else {

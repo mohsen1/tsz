@@ -12,8 +12,54 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     fn emit_class_member_name_preserving_class_expression_name(&mut self, name: NodeIndex) {
+        if self
+            .arena
+            .get(name)
+            .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+            && let Some(ident) = self.arena.get_identifier_at(name)
+        {
+            let private_name = ident.escaped_text.as_str();
+            if private_name.trim_start_matches('#') == "constructor" {
+                if private_name.starts_with('#') {
+                    self.write(private_name);
+                } else {
+                    self.write("#");
+                    self.write(private_name);
+                }
+                return;
+            }
+        }
+
         let prev_alias = self.scoped_class_expression_self_alias.take();
-        self.emit(name);
+        if let Some(name_node) = self.arena.get(name)
+            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && !self.pending_weakmap_inits.is_empty()
+            && let Some(computed) = self.arena.get_computed_property(name_node)
+        {
+            let weakmap_inits = std::mem::take(&mut self.pending_weakmap_inits);
+            self.write("[(");
+            for (i, init) in weakmap_inits.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(init);
+            }
+            self.write(", ");
+            let expression = self
+                .arena
+                .get(computed.expression)
+                .filter(|node| node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION)
+                .and_then(|node| self.arena.get_parenthesized(node))
+                .map_or(computed.expression, |paren| paren.expression);
+            if let Some(temp_name) = self.computed_prop_temp_map.get(&expression) {
+                self.write(&temp_name.clone());
+            } else {
+                self.emit(expression);
+            }
+            self.write(")]");
+        } else {
+            self.emit(name);
+        }
         self.scoped_class_expression_self_alias = prev_alias;
     }
 

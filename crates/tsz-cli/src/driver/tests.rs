@@ -1464,3 +1464,71 @@ fn js_only_syntactic_error_suppresses_semantic_diagnostics_program_wide() {
         );
     }
 }
+
+#[test]
+fn module_preserve_checked_js_resolved_require_does_not_emit_missing_node_global() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    fs::create_dir_all(base.join("node_modules/dep")).expect("create dep package");
+    fs::write(
+        base.join("node_modules/dep/package.json"),
+        r#"{
+          "name": "dep",
+          "exports": {
+            "import": "./import.mjs",
+            "require": "./require.js"
+          }
+        }"#,
+    )
+    .expect("write package");
+    fs::write(
+        base.join("node_modules/dep/import.d.mts"),
+        "export const esm: \"esm\";\n",
+    )
+    .expect("write import types");
+    fs::write(
+        base.join("node_modules/dep/require.d.ts"),
+        "declare const cjs: \"cjs\";\nexport = cjs;\n",
+    )
+    .expect("write require types");
+    fs::write(
+        base.join("index.ts"),
+        "import { esm } from \"dep\";\nimport cjs = require(\"dep\");\n",
+    )
+    .expect("write index");
+    fs::write(
+        base.join("main.js"),
+        "import { esm } from \"dep\";\nconst cjs = require(\"dep\");\n",
+    )
+    .expect("write main");
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "preserve",
+            "target": "esnext",
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["index.ts", "main.js"]
+        }"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let node_global_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2591)
+        .collect();
+    assert!(
+        node_global_diags.is_empty(),
+        "module preserve require forms should not emit TS2591 when the package resolves; got: {node_global_diags:?}; all diagnostics: {:?}",
+        result.diagnostics,
+    );
+}

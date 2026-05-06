@@ -520,6 +520,40 @@ impl<'a> CheckerState<'a> {
             return reported;
         }
 
+        // Mapped object type `{ [P in Keys]: Template }`. The template is in a
+        // nested scope where the mapped type parameter is valid.
+        if let Some((type_param_name, constraint, template)) =
+            Self::jsdoc_mapped_type_parts(trimmed)
+        {
+            let mut reported = false;
+            let constraint = constraint.trim();
+            let constraint = constraint
+                .strip_prefix("keyof ")
+                .unwrap_or(constraint)
+                .trim();
+            let constraint = constraint
+                .strip_prefix("typeof ")
+                .unwrap_or(constraint)
+                .trim();
+            reported |= self.walk_jsdoc_type_for_unresolved_leaves(
+                constraint,
+                comment_pos,
+                comment_end,
+                source_text,
+                template_params,
+            );
+            let mut nested_template_params = template_params.to_vec();
+            nested_template_params.push(type_param_name.to_string());
+            reported |= self.walk_jsdoc_type_for_unresolved_leaves(
+                template,
+                comment_pos,
+                comment_end,
+                source_text,
+                &nested_template_params,
+            );
+            return reported;
+        }
+
         // Object literal `{ a: T, b: U }`.
         if trimmed.starts_with('{') && trimmed.ends_with('}') {
             let inner = &trimmed[1..trimmed.len() - 1];
@@ -583,5 +617,57 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    fn jsdoc_mapped_type_parts(type_expr: &str) -> Option<(&str, &str, &str)> {
+        let inner = type_expr.strip_prefix('{')?.strip_suffix('}')?.trim();
+        if !inner.starts_with('[') {
+            return None;
+        }
+
+        let mut square_depth = 0u32;
+        let mut close_bracket = None;
+        for (idx, ch) in inner.char_indices() {
+            match ch {
+                '[' => square_depth += 1,
+                ']' => {
+                    square_depth = square_depth.saturating_sub(1);
+                    if square_depth == 0 {
+                        close_bracket = Some(idx);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let close_bracket = close_bracket?;
+        let header = inner[1..close_bracket].trim();
+        let mut after_bracket = inner[close_bracket + 1..].trim();
+        if let Some(rest) = after_bracket.strip_prefix("-?") {
+            after_bracket = rest.trim();
+        } else if let Some(rest) = after_bracket.strip_prefix('?') {
+            after_bracket = rest.trim();
+        }
+        let template = after_bracket.strip_prefix(':')?.trim();
+        let in_idx = Self::find_jsdoc_diagnostic_mapped_in_keyword(header)?;
+        let type_param_name = header[..in_idx].trim();
+        let constraint = header[in_idx + 2..].trim();
+        (!type_param_name.is_empty() && !constraint.is_empty() && !template.is_empty()).then_some((
+            type_param_name,
+            constraint,
+            template,
+        ))
+    }
+
+    fn find_jsdoc_diagnostic_mapped_in_keyword(header: &str) -> Option<usize> {
+        for (idx, _) in header.match_indices("in") {
+            let before = header[..idx].chars().next_back();
+            let after = header[idx + 2..].chars().next();
+            if before.is_some_and(char::is_whitespace) && after.is_some_and(char::is_whitespace) {
+                return Some(idx);
+            }
+        }
+        None
     }
 }

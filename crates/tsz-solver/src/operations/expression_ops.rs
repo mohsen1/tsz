@@ -11,7 +11,7 @@ use crate::caches::db::QueryDatabase;
 use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
 use crate::is_subtype_of;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId};
+use crate::types::{IntrinsicKind, ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId};
 use std::sync::Arc;
 use tsz_common::interner::Atom;
 
@@ -408,12 +408,100 @@ pub fn compute_template_expression_type_contextual(
             // For each interpolated part, check if it's assignable to the template constraint
             // (string | number | bigint | boolean | null | undefined).
             // If so, use the part type directly; otherwise widen to string.
-            let part = parts[i];
+            let part = template_substitution_type(db, parts[i]);
             spans.push(TemplateSpan::Type(part));
         }
     }
 
     db.template_literal(spans)
+}
+
+fn template_substitution_type(db: &dyn TypeDatabase, part: TypeId) -> TypeId {
+    if template_substitution_type_is_valid(db, part, 0) {
+        part
+    } else {
+        TypeId::STRING
+    }
+}
+
+fn template_substitution_type_is_valid(db: &dyn TypeDatabase, part: TypeId, depth: u32) -> bool {
+    if depth > 10 {
+        return false;
+    }
+    if matches!(
+        part,
+        TypeId::STRING
+            | TypeId::NUMBER
+            | TypeId::BIGINT
+            | TypeId::BOOLEAN
+            | TypeId::NULL
+            | TypeId::UNDEFINED
+            | TypeId::BOOLEAN_TRUE
+            | TypeId::BOOLEAN_FALSE
+    ) {
+        return true;
+    }
+    if part.is_intrinsic() {
+        return false;
+    }
+
+    match db.lookup(part) {
+        Some(TypeData::Intrinsic(
+            IntrinsicKind::String
+            | IntrinsicKind::Number
+            | IntrinsicKind::Bigint
+            | IntrinsicKind::Boolean
+            | IntrinsicKind::Null
+            | IntrinsicKind::Undefined,
+        ))
+        | Some(TypeData::Literal(_))
+        | Some(TypeData::TemplateLiteral(_)) => true,
+        Some(TypeData::Union(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .all(|&member| template_substitution_type_is_valid(db, member, depth + 1)),
+        Some(TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| template_substitution_type_is_valid(db, member, depth + 1)),
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+            info.constraint.is_some_and(|constraint| {
+                template_substitution_type_is_valid(db, constraint, depth + 1)
+                    || template_substitution_constraint_is_dependent(db, constraint, depth + 1)
+            })
+        }
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            template_substitution_type_is_valid(db, inner, depth + 1)
+        }
+        _ => false,
+    }
+}
+
+fn template_substitution_constraint_is_dependent(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: u32,
+) -> bool {
+    if depth > 10 || type_id.is_intrinsic() {
+        return false;
+    }
+
+    match db.lookup(type_id) {
+        Some(
+            TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::KeyOf(_)
+            | TypeData::IndexAccess(_, _),
+        ) => true,
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| template_substitution_constraint_is_dependent(db, member, depth + 1)),
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            template_substitution_constraint_is_dependent(db, inner, depth + 1)
+        }
+        _ => false,
+    }
 }
 
 /// Checks whether a type is or contains a template literal contextual type.

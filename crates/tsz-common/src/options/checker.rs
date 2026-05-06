@@ -32,7 +32,8 @@ pub struct CheckerOptions {
     /// Prevents loading default lib.d.ts files which provide types like Array, Object, etc.
     pub no_types_and_symbols: bool,
     /// Whether compilerOptions.types was explicitly set.
-    /// This distinguishes TS2580/2581/2582 from TS2591/2592/2593 for missing external globals.
+    /// This distinguishes install-only diagnostics from types-field diagnostics in
+    /// module-resolution paths that consult ambient package loading.
     pub types_explicitly_set: bool,
     /// Target ECMAScript version (ES3, ES5, ES2015, ES2016, etc.)
     /// Controls which built-in types are available (e.g., Promise requires ES2015)
