@@ -1605,6 +1605,36 @@ fn test_indentation_returns_absolute_position() {
 }
 
 #[test]
+fn test_todo_comments_report_utf16_position_after_non_bmp_text() {
+    let mut server = make_server();
+    let file = "/todo-unicode.ts";
+    let source = "const s = \"😀\"; // TODO after emoji\n";
+    server
+        .open_files
+        .insert(file.to_string(), source.to_string());
+
+    let response = server.handle_tsserver_request(make_request(
+        "todoComments",
+        serde_json::json!({
+            "file": file,
+            "descriptors": [{ "text": "TODO", "priority": 1 }],
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("todoComments should return a body");
+    let comments = body
+        .as_array()
+        .expect("todoComments body should be an array");
+    assert_eq!(comments.len(), 1, "expected one TODO comment, got {body:#}");
+    assert_eq!(comments[0]["message"], "TODO after emoji");
+    assert_eq!(
+        comments[0]["position"], 19,
+        "todoComments position should use UTF-16 offsets, not UTF-8 byte offsets: {body:#}"
+    );
+}
+
+#[test]
 fn test_signature_help_has_no_body_without_signature() {
     let mut server = make_server();
     server

@@ -585,14 +585,28 @@ impl Server {
                     }
                 }
                 let message = &rest[..msg_end];
+                let position = Self::utf16_position_for_byte_offset(source_text, pos);
                 results.push(serde_json::json!({
                     "descriptor": { "text": text, "priority": priority },
                     "message": message,
-                    "position": pos,
+                    "position": position,
                 }));
                 return; // Only match first descriptor at this position
             }
         }
+    }
+
+    fn utf16_position_for_byte_offset(source_text: &str, byte_offset: usize) -> usize {
+        let byte_offset = byte_offset.min(source_text.len());
+        let boundary = if source_text.is_char_boundary(byte_offset) {
+            byte_offset
+        } else {
+            (0..byte_offset)
+                .rev()
+                .find(|&idx| source_text.is_char_boundary(idx))
+                .unwrap_or(0)
+        };
+        source_text[..boundary].encode_utf16().count()
     }
 
     pub(crate) fn handle_doc_comment_template(
