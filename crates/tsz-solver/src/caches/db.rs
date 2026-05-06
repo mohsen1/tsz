@@ -1085,6 +1085,9 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Returns the variance of each type parameter for the given `DefId`.
     /// Returns None if the `DefId` is not a generic type or variance cannot be determined.
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>>;
+
+    /// Store a resolver-computed variance mask for reuse by later relation checks.
+    fn insert_type_param_variance(&self, _def_id: DefId, _variance: Arc<[Variance]>) {}
 }
 
 impl QueryDatabase for TypeInterner {
