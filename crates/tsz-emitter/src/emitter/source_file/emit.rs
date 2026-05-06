@@ -511,6 +511,8 @@ impl<'a> Printer<'a> {
             self.write("\"use strict\";");
             self.write_line();
         }
+        let script_pre_header_hoist_byte_offset = self.writer.len();
+        let script_pre_header_hoist_line = self.writer.current_line();
 
         // Emit header comments AFTER "use strict" but BEFORE helpers.
         // Use skip_trivia_forward to find the actual token start since
@@ -1346,8 +1348,16 @@ impl<'a> Printer<'a> {
         self.prepare_logical_assignment_value_temps(source_idx);
         self.prepare_object_rest_assignment_temps(source_idx);
 
-        let mut hoisted_var_byte_offset = self.writer.len();
-        let mut hoisted_var_line = self.writer.current_line();
+        let mut hoisted_var_byte_offset = if is_file_module {
+            self.writer.len()
+        } else {
+            script_pre_header_hoist_byte_offset
+        };
+        let mut hoisted_var_line = if is_file_module {
+            self.writer.current_line()
+        } else {
+            script_pre_header_hoist_line
+        };
 
         // Emit statements with their leading comments.
         // In this parser, node.pos includes leading trivia (whitespace + comments).
