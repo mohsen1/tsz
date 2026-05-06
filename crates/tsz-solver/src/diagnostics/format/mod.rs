@@ -24,8 +24,8 @@ use crate::diagnostics::{
     get_message_template,
 };
 use crate::types::{
-    IntrinsicKind, MappedModifier, ObjectFlags, ObjectShape, StringIntrinsicKind, TypeData, TypeId,
-    TypeListId, TypeParamInfo,
+    MappedModifier, ObjectFlags, ObjectShape, StringIntrinsicKind, TypeData, TypeId, TypeListId,
+    TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -2014,9 +2014,7 @@ impl<'a> TypeFormatter<'a> {
         }
 
         let key = self.atom(prop.name);
-        let key_display = if prop.is_symbol_named {
-            key.to_string()
-        } else if key.parse::<f64>().is_ok() {
+        let key_display = if prop.is_symbol_named || key.parse::<f64>().is_ok() {
             key.to_string()
         } else {
             format!("\"{key}\"")
