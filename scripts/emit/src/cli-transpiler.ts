@@ -651,9 +651,14 @@ export class CliTranspiler {
       };
 
       const readFirstExisting = (candidates: string[]): string | null => {
+        const existing = firstExistingOutput(candidates);
+        return existing?.content ?? null;
+      };
+
+      const firstExistingOutput = (candidates: string[]): { path: string; content: string } | null => {
         for (const candidate of candidates) {
           if (fs.existsSync(candidate)) {
-            return fs.readFileSync(candidate, 'utf-8');
+            return { path: candidate, content: fs.readFileSync(candidate, 'utf-8') };
           }
         }
         return null;
@@ -695,7 +700,10 @@ export class CliTranspiler {
       }
 
       if (declaration) {
-        const namedDts = readNamedOutput(expectedDtsFileName, true, expectedDtsContent);
+        const hasMultifileDtsExpectation = expectedDtsContent?.includes('//// [') === true;
+        const namedDts = hasMultifileDtsExpectation
+          ? null
+          : readNamedOutput(expectedDtsFileName, true, expectedDtsContent);
         if (namedDts !== null) {
           dts = namedDts;
         } else {
@@ -703,9 +711,12 @@ export class CliTranspiler {
           for (const out of [...expectedOutputs].sort((a, b) => {
             return normalizeOutputRelPath(a.dtsPath).localeCompare(normalizeOutputRelPath(b.dtsPath));
           })) {
-            const dtsChunk = readFirstExisting(out.dtsCandidates);
-            if (dtsChunk !== null) {
-              dtsChunks.push(dtsChunk);
+            const dtsOutput = firstExistingOutput(out.dtsCandidates);
+            if (dtsOutput !== null) {
+              if (hasMultifileDtsExpectation && dtsChunks.length > 0) {
+                dtsChunks.push(`//// [${normalizeOutputRelPath(dtsOutput.path)}]\n`);
+              }
+              dtsChunks.push(dtsOutput.content);
             }
           }
           dts = dtsChunks.length > 0 ? dtsChunks.join('') : null;
