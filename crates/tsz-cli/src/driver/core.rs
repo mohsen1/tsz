@@ -938,6 +938,13 @@ fn compile_inner(
     };
 
     let cwd = normalize_path(cwd);
+    let ignored_config_path_for_no_input = if args.ignore_config && args.files.is_empty() {
+        resolve_tsconfig_path(&cwd, args.project.as_deref())
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
     let tsconfig_path = if args.ignore_config {
         // --ignoreConfig: skip tsconfig.json discovery and loading entirely
         None
@@ -1080,6 +1087,34 @@ fn compile_inner(
     resolved.base_url = base_url;
     resolved.root_dirs = root_dirs;
     resolved.type_roots = normalize_type_roots(&base_dir, resolved.type_roots.clone());
+
+    if args.ignore_config
+        && args.files.is_empty()
+        && let Some(config_path) = ignored_config_path_for_no_input.as_deref()
+    {
+        let diagnostics = no_input_diagnostics_for_config(
+            config_diagnostics,
+            Some(config_path),
+            None,
+            None,
+            resolved.allow_js,
+        );
+        return Ok(CompilationResult {
+            diagnostics,
+            emitted_files: Vec::new(),
+            files_read: Vec::new(),
+            file_infos: Vec::new(),
+            request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
+            interned_types_count: 0,
+            interner_estimated_bytes: 0,
+            query_cache_stats: None,
+            def_store_stats: None,
+            phase_timings: PhaseTimings::default(),
+            residency_stats: None,
+            module_dep_stats: None,
+            invalidation_summaries: Vec::new(),
+        });
+    }
 
     let discovery = build_discovery_options(
         args,
