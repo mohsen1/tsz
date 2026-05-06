@@ -5618,6 +5618,63 @@ fn compile_resolves_node_modules_exports_subpath() {
 }
 
 #[test]
+fn compile_cli_node16_resolution_enables_package_json_exports_without_config() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.mts"),
+        "import { mode } from 'pkg';\n\nconst actual: 'cjs' = mode;\n",
+    );
+    write_file(
+        &base.join("node_modules/pkg/package.json"),
+        r#"{
+          "name": "pkg",
+          "exports": {
+            ".": {
+              "import": "./esm.d.ts",
+              "require": "./cjs.d.ts"
+            }
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg/esm.d.ts"),
+        "export const mode: 'esm';",
+    );
+    write_file(
+        &base.join("node_modules/pkg/cjs.d.ts"),
+        "export const mode: 'cjs';",
+    );
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--moduleResolution",
+        "node16",
+        "--module",
+        "node16",
+        "--noEmit",
+        "--strict",
+        "main.mts",
+    ])
+    .expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|diag| diag.code).collect();
+
+    assert!(
+        !codes
+            .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "CLI node16 options should imply package.json exports resolution, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected imports to resolve through the export map to the ESM declaration, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_uses_versioned_types_export_conditions_without_false_ts2551() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -15627,6 +15684,60 @@ const foo2 = value => /** @type {string} */(/** @type {T} */({ ...value }));
         ts2322.len(),
         2,
         "Expected the two existing TS2322 diagnostics from the cast mismatch shape, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_jsdoc_template_prefix_tag_does_not_create_type_parameter() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true,
+            "types": []
+          },
+          "files": ["index.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"// @ts-check
+
+/**
+ * @templatex T
+ * @param {T} value
+ */
+function id(value) {
+  return value;
+}
+
+id("not a number").toFixed();
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        result.diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_NAME
+                && d.message_text.contains("Cannot find name 'T'")
+        }),
+        "Expected @templatex to be ignored so {{T}} reports TS2304, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN),
+        "Expected no TS2551 from treating @templatex as a real generic, got diagnostics: {:?}",
         result.diagnostics
     );
 }

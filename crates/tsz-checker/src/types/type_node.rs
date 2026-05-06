@@ -177,18 +177,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
-    // =========================================================================
-    // Type Reference Resolution
-    // =========================================================================
-
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
     fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
         self.lower_with_resolvers(idx, false, true)
     }
-
-    // =========================================================================
-    // Composite Type Resolution
-    // =========================================================================
 
     /// Get type from a union type node (A | B).
     ///
@@ -601,10 +593,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         false
     }
-
-    // =========================================================================
-    // Function and Callable Types
-    // =========================================================================
 
     /// Get type from a function type node (e.g., () => number, (x: string) => void).
     fn get_type_from_function_type(&mut self, idx: NodeIndex) -> TypeId {
@@ -1376,10 +1364,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         factory.object(properties)
     }
 
-    // =========================================================================
-    // Symbol Resolution Helpers
-    // =========================================================================
-
     /// Resolve a type symbol from a node index.
     ///
     /// Looks up the identifier in `file_locals` and `lib_contexts` for symbols with
@@ -1652,10 +1636,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         None
     }
-
-    // =========================================================================
-    // Helper Methods
-    // =========================================================================
 
     /// Extract parameter information from a signature.
     fn extract_params_from_signature(
@@ -1982,11 +1962,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .and_then(|call| arena.get(call.expression))
             .and_then(|expr_node| arena.get_identifier(expr_node))
             .is_some_and(|ident| ident.escaped_text == "Symbol")
-    }
-
-    /// Get the context reference (for read-only access).
-    pub const fn context(&self) -> &CheckerContext<'ctx> {
-        self.ctx
     }
 }
 #[cfg(test)]

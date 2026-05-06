@@ -198,7 +198,7 @@ impl<'a> CheckerState<'a> {
 
                 let intrinsic_reference_is_unshadowed = type_param.is_none()
                     && match sym_id {
-                        Some(sym_id) => self.ctx.symbol_is_from_actual_lib(sym_id),
+                        Some(sym_id) => self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id),
                         None => true,
                     };
                 if intrinsic_reference_is_unshadowed {

@@ -9,10 +9,10 @@ use std::time::Instant;
 
 use crate::args::{CliArgs, Module, ModuleDetection, ModuleResolution, Target};
 use crate::config::{
-    ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
-    load_tsconfig_with_diagnostics, parse_tsconfig_with_diagnostics, resolve_compiler_options,
-    resolve_default_lib_files, resolve_lib_files, resolve_lib_files_with_options,
-    resolve_lib_files_with_options_transitive,
+    CompilerOptions, ModuleResolutionKind, ResolvedCompilerOptions, TsConfig,
+    checker_target_from_emitter, load_tsconfig, load_tsconfig_with_diagnostics,
+    parse_tsconfig_with_diagnostics, resolve_compiler_options, resolve_default_lib_files,
+    resolve_lib_files, resolve_lib_files_with_options, resolve_lib_files_with_options_transitive,
 };
 use tsz::binder::BinderOptions;
 use tsz::binder::BinderState;
@@ -999,7 +999,13 @@ fn compile_inner(
             return Err(e);
         }
     };
-    apply_cli_overrides(&mut resolved, args)?;
+    apply_cli_overrides_with_config_options(
+        &mut resolved,
+        args,
+        config
+            .as_ref()
+            .and_then(|cfg| cfg.compiler_options.as_ref()),
+    )?;
 
     // Wire removed-but-honored suppress flags from config
     if loaded.suppress_excess_property_errors {
@@ -2591,6 +2597,14 @@ mod check_utils;
 use check::{collect_diagnostics, load_checker_libs};
 
 pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs) -> Result<()> {
+    apply_cli_overrides_with_config_options(options, args, None)
+}
+
+fn apply_cli_overrides_with_config_options(
+    options: &mut ResolvedCompilerOptions,
+    args: &CliArgs,
+    config_options: Option<&CompilerOptions>,
+) -> Result<()> {
     if let Some(target) = args.target {
         options.printer.target = target.to_script_target();
         options.checker.target = checker_target_from_emitter(options.printer.target);
@@ -2603,6 +2617,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(module_resolution) = args.module_resolution {
         options.module_resolution = Some(module_resolution.to_module_resolution_kind());
     }
+    apply_module_resolution_derived_options(options, args, config_options);
     if let Some(resolve_package_json_exports) = args.resolve_package_json_exports {
         options.resolve_package_json_exports = resolve_package_json_exports;
     }
@@ -2962,6 +2977,39 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
 
     Ok(())
+}
+
+fn apply_module_resolution_derived_options(
+    options: &mut ResolvedCompilerOptions,
+    args: &CliArgs,
+    config_options: Option<&CompilerOptions>,
+) {
+    let effective_resolution = options.effective_module_resolution();
+    options.checker.implied_classic_resolution =
+        matches!(effective_resolution, ModuleResolutionKind::Classic);
+
+    let config_has_resolve_package_json_exports =
+        config_options.is_some_and(|options| options.resolve_package_json_exports.is_some());
+    if args.resolve_package_json_exports.is_none() && !config_has_resolve_package_json_exports {
+        options.resolve_package_json_exports = matches!(
+            effective_resolution,
+            ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
+        );
+    }
+
+    let config_has_resolve_package_json_imports =
+        config_options.is_some_and(|options| options.resolve_package_json_imports.is_some());
+    if args.resolve_package_json_imports.is_none() && !config_has_resolve_package_json_imports {
+        options.resolve_package_json_imports = matches!(
+            effective_resolution,
+            ModuleResolutionKind::Node
+                | ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
+        );
+    }
 }
 
 fn validate_cli_compiler_option_diagnostics(

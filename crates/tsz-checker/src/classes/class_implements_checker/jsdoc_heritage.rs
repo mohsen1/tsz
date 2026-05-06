@@ -374,7 +374,7 @@ impl<'a> CheckerState<'a> {
         let mut out: Vec<JsDocTemplateParam> = Vec::new();
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed.strip_prefix("@template") else {
+            let Some(rest) = Self::strip_jsdoc_tag_prefix(trimmed, "template") else {
                 continue;
             };
             let mut rest = rest.trim_start();
