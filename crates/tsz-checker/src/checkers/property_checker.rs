@@ -1552,7 +1552,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
     fn intersection_protected_and_public_property_is_public() {
         let diagnostics = check_diagnostics(
             r#"
