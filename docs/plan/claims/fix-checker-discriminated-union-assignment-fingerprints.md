@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-05
 - **Branch**: `fix/checker-discriminated-union-assignment-fingerprints`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #3583
+- **Status**: ready
 - **Workstream**: 1 (conformance)
 
 ## Intent
@@ -17,4 +17,6 @@ assignment diagnostic is emitted for the GH39357 case.
 
 ## Verification
 
-- Pending.
+- `CARGO_TARGET_DIR=.target/nextest-local cargo nextest run -p tsz-checker --lib discriminated_union_object_literal_expands_literal_alias_property_target discriminated_tuple_union_accepts_literal_union_tuple_elements`
+- `./scripts/conformance/conformance.sh run --filter "assignmentCompatWithDiscriminatedUnion" --verbose`
+- `./scripts/conformance/conformance.sh run --max 200`

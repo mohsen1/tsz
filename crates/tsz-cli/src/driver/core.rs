@@ -33,7 +33,8 @@ use tsz_common::file_extensions::{
 };
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
 use super::emit::{
-    EmitOutputsContext, emit_outputs, normalize_root_dirs, normalize_type_roots, write_outputs,
+    EmitOutputsContext, OutputFile, emit_outputs, normalize_root_dirs, normalize_type_roots,
+    write_outputs,
 };
 pub(crate) use super::emit::{normalize_base_url, normalize_output_dir, normalize_root_dir};
 use super::resolution::{
@@ -1684,7 +1685,21 @@ fn compile_inner(
         })?;
         diagnostics.extend(emit_diags);
         if should_emit {
-            write_outputs(&outputs, resolved.emit_bom)?
+            let blocked_declaration_sources = declaration_emit_blocking_source_files(&diagnostics);
+            if blocked_declaration_sources.is_empty() {
+                write_outputs(&outputs, resolved.emit_bom)?
+            } else {
+                let filtered_outputs: Vec<_> = outputs
+                    .into_iter()
+                    .filter(|output| {
+                        should_write_output_after_declaration_diagnostics(
+                            output,
+                            &blocked_declaration_sources,
+                        )
+                    })
+                    .collect();
+                write_outputs(&filtered_outputs, resolved.emit_bom)?
+            }
         } else {
             // Declaration emit ran for diagnostics only (--noEmit with --declaration)
             Vec::new()
@@ -1804,6 +1819,44 @@ fn compile_inner(
         module_dep_stats: collected.module_dep_stats,
         invalidation_summaries: Vec::new(),
     })
+}
+
+fn declaration_emit_blocking_source_files(diagnostics: &[Diagnostic]) -> FxHashSet<PathBuf> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.category == DiagnosticCategory::Error
+                && is_declaration_emit_blocking_diagnostic_code(diagnostic.code)
+                && !diagnostic.file.is_empty()
+        })
+        .map(|diagnostic| normalize_path(Path::new(&diagnostic.file)))
+        .collect()
+}
+
+const fn is_declaration_emit_blocking_diagnostic_code(code: u32) -> bool {
+    matches!(
+        code,
+        diagnostic_codes::EXPORTED_VARIABLE_HAS_OR_IS_USING_NAME_FROM_EXTERNAL_MODULE_BUT_CANNOT_BE_NAMED
+    )
+}
+
+fn should_write_output_after_declaration_diagnostics(
+    output: &OutputFile,
+    blocked_sources: &FxHashSet<PathBuf>,
+) -> bool {
+    if !is_declaration_output_path(&output.path) {
+        return true;
+    }
+
+    let Some(source_path) = output.source_path.as_ref() else {
+        return blocked_sources.is_empty();
+    };
+    !blocked_sources.contains(&normalize_path(source_path))
+}
+
+fn is_declaration_output_path(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    path.ends_with(".d.ts") || path.ends_with(".d.ts.map")
 }
 
 fn normalize_ts2883_diagnostics_in_place(
@@ -2698,7 +2751,7 @@ fn apply_cli_overrides_with_config_options(
     }
     if let Some(use_define_for_class_fields) = args.use_define_for_class_fields {
         options.printer.use_define_for_class_fields = use_define_for_class_fields;
-    } else if !config_options.is_some_and(|options| options.use_define_for_class_fields.is_some()) {
+    } else if config_options.is_none_or(|options| options.use_define_for_class_fields.is_none()) {
         // Default: true for target >= ES2022, false otherwise (matches tsc behavior)
         options.printer.use_define_for_class_fields =
             (options.printer.target as u32) >= (tsz::emitter::ScriptTarget::ES2022 as u32);
@@ -3147,6 +3200,24 @@ fn validate_cli_compiler_option_diagnostics(
             && config_bool(|options| options.emit_declaration_only))
     {
         compiler_options.insert("emitDeclarationOnly".to_string(), true.into());
+    }
+    if args.declaration_map {
+        compiler_options.insert("declarationMap".to_string(), true.into());
+    }
+    if args.allow_js {
+        compiler_options.insert("allowJs".to_string(), true.into());
+    }
+    if args.experimental_decorators {
+        compiler_options.insert("experimentalDecorators".to_string(), true.into());
+    }
+    if args.emit_decorator_metadata {
+        compiler_options.insert("emitDecoratorMetadata".to_string(), true.into());
+    }
+    if args.isolated_declarations {
+        compiler_options.insert("isolatedDeclarations".to_string(), true.into());
+    }
+    if args.verbatim_module_syntax {
+        compiler_options.insert("verbatimModuleSyntax".to_string(), true.into());
     }
     if args.allow_importing_ts_extensions {
         compiler_options.insert("allowImportingTsExtensions".to_string(), true.into());

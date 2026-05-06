@@ -185,8 +185,14 @@ impl<'a> CheckerState<'a> {
 
         let class_chain_summary = self.summarize_class_chain(class_idx);
 
+        // TS2855 fires when `super.<field>` accesses a parent class **instance**
+        // field. From within a static member/initializer, `super` is the parent
+        // class object itself (not its prototype), so `super.x` resolves to the
+        // parent's *static* member — TS2855 must not fire there.
+        let in_static_context = self.is_in_static_class_member_context(error_node);
         if self.is_super_expression(object_expr)
             && !is_static
+            && !in_static_context
             && matches!(
                 class_chain_summary.member_kind(property_name, false, true),
                 Some(ClassMemberKind::FieldLike)

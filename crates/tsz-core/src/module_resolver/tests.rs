@@ -249,6 +249,43 @@ fn test_imports_pattern_key_is_not_treated_as_exact_match_for_literal_star_speci
 }
 
 #[test]
+fn test_package_imports_conditional_falls_back_after_missing_target() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_imports_conditional_missing_fallback");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(
+        dir.join("package.json"),
+        r##"{
+            "name": "app",
+            "imports": {
+                "#x": {
+                    "import": "./missing.d.ts",
+                    "default": "./ok.d.ts"
+                }
+            }
+        }"##,
+    )
+    .unwrap();
+    fs::write(dir.join("ok.d.ts"), "export declare const v: number;").unwrap();
+    fs::write(dir.join("index.ts"), "import { v } from '#x';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("#x", &dir.join("index.ts"), Span::new(0, 2));
+
+    let resolved = result.expect("default condition should resolve after missing import target");
+    assert_eq!(resolved.resolved_path, dir.join("ok.d.ts"));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_match_types_versions_pattern() {
     assert_eq!(
         match_types_versions_pattern("*", "index"),
@@ -514,6 +551,46 @@ fn test_package_exports_target_cannot_escape_package_root() {
 }
 
 #[test]
+fn test_package_exports_target_cannot_contain_node_modules_segment() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_exports_target_node_modules");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg/node_modules")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{"./secret":"./node_modules/secret.d.ts"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/node_modules/secret.d.ts"),
+        "export declare const value: number;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import { value } from 'pkg/secret';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("pkg/secret", &dir.join("src/index.ts"), Span::new(0, 31));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "export target containing node_modules must not resolve, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_package_imports_absolute_target_is_invalid() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_imports_absolute_target");
@@ -545,6 +622,42 @@ fn test_package_imports_absolute_target_is_invalid() {
     assert!(
         matches!(result, Err(ResolutionFailure::NotFound { .. })),
         "absolute imports target must not resolve, got {result:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_imports_target_cannot_contain_node_modules_segment() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_imports_target_node_modules");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("package.json"),
+        r##"{"name":"app","imports":{"#secret":"./node_modules/secret.d.ts"}}"##,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/secret.d.ts"),
+        "export declare const value: number;",
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "import { value } from '#secret';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("#secret", &dir.join("src/index.ts"), Span::new(0, 29));
+
+    assert!(
+        matches!(result, Err(ResolutionFailure::NotFound { .. })),
+        "imports target containing node_modules must not resolve, got {result:?}"
     );
 
     let _ = fs::remove_dir_all(&dir);
