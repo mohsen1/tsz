@@ -7,12 +7,13 @@
 
 ## Scope
 
-Align the fingerprint-only diagnostics for `keyofAndIndexedAccessErrors.ts`, starting with index-type diagnostic spans/messages and then the generic indexed-assignment TS2322 displays if needed.
+Align the index-type diagnostic fingerprints for `keyofAndIndexedAccessErrors.ts` by fixing TS2537/TS2538 spans, duplicate same-span emissions, and invalid union member messages. The remaining generic indexed-assignment TS2322 drift is out of scope for this PR.
 
 ## Current mismatch
 
-Exact conformance reports matching code families but drift in TS2537, TS2538, and TS2322 fingerprints.
+Initial exact conformance reported matching code families but drift in TS2537, TS2538, and TS2322 fingerprints. After this change, TS2537/TS2538 fingerprints match; the remaining mismatch is limited to TS2322 generic indexed-assignment fingerprints.
 
 ## Verification
 
+- `cargo nextest run -p tsz-checker --test conformance_issues indexed_access`
 - `./scripts/conformance/conformance.sh run --filter "keyofAndIndexedAccessErrors" --verbose`
