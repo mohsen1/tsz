@@ -1241,10 +1241,40 @@ impl<'a> TypePrinter<'a> {
             .get(&computed.expression.0)
             .copied()
             .or_else(|| type_cache.node_types.get(&name_idx.0).copied())
+            .or_else(|| self.computed_name_expression_declared_type(computed.expression))
         else {
             return false;
         };
 
         !tsz_solver::type_queries::is_type_usable_as_property_name(self.interner, key_type)
+    }
+
+    fn computed_name_expression_declared_type(
+        &self,
+        expr_idx: tsz_parser::NodeIndex,
+    ) -> Option<TypeId> {
+        let node_arena = self.node_arena?;
+        let symbol_arena = self.symbol_arena?;
+        let type_cache = self.type_cache?;
+        let expr_node = node_arena.get(expr_idx)?;
+        let ident = node_arena.get_identifier(expr_node)?;
+        let name = node_arena.resolve_identifier_text(ident);
+
+        symbol_arena
+            .find_all_by_name(name)
+            .iter()
+            .filter_map(|sym_id| symbol_arena.get(*sym_id))
+            .flat_map(|symbol| symbol.all_declarations())
+            .find_map(|decl_idx| {
+                let decl_node = node_arena.get(decl_idx)?;
+                let var_decl = node_arena.get_variable_declaration(decl_node)?;
+                if var_decl.type_annotation == tsz_parser::NodeIndex::NONE {
+                    return None;
+                }
+                type_cache
+                    .node_types
+                    .get(&var_decl.type_annotation.0)
+                    .copied()
+            })
     }
 }

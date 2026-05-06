@@ -90,6 +90,7 @@ interface TestCase {
   preserveValueImports: boolean;
   removeComments: boolean;
   stripInternal: boolean;
+  baseUrl?: string;
   outFile?: string;
   outDir?: string;
   declarationDir?: string;
@@ -189,6 +190,7 @@ function getCacheKey(
   preserveValueImports: boolean = false,
   removeComments: boolean = false,
   stripInternal: boolean = false,
+  baseUrl: string = '',
   outFile: string = '',
   outDir: string = '',
   declarationDir: string = '',
@@ -244,6 +246,7 @@ function getCacheKey(
     preserveValueImports,
     removeComments,
     stripInternal,
+    baseUrl,
     outFile,
     outDir,
     declarationDir,
@@ -661,6 +664,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     // custom outFile names (e.g., dummy.js, output.js).
     const outFile = typeof directives.outfile === 'string' ? directives.outfile : undefined;
     const normalizedOutFile = outFile?.replace(/^[/\\]+/, '');
+    const baseUrl = typeof tsconfigOptions.baseUrl === 'string' ? tsconfigOptions.baseUrl : undefined;
     const outDir = typeof tsconfigOptions.outDir === 'string' ? tsconfigOptions.outDir : undefined;
     const declarationDir = typeof tsconfigOptions.declarationDir === 'string' ? tsconfigOptions.declarationDir : undefined;
     const rootDir = typeof tsconfigOptions.rootDir === 'string' ? tsconfigOptions.rootDir : undefined;
@@ -762,6 +766,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       preserveValueImports,
       removeComments,
       stripInternal,
+      baseUrl,
       outFile,
       outDir,
       declarationDir,
@@ -894,6 +899,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.preserveValueImports,
       testCase.removeComments,
       testCase.stripInternal,
+      testCase.baseUrl ?? '',
       testCase.outFile ?? '',
       testCase.outDir ?? '',
       testCase.declarationDir ?? '',
@@ -940,6 +946,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         preserveValueImports: testCase.preserveValueImports,
         removeComments: testCase.removeComments,
         stripInternal: testCase.stripInternal,
+        baseUrl: testCase.baseUrl,
         outFile: testCase.outFile,
         outDir: testCase.outDir,
         declarationDir: testCase.declarationDir,

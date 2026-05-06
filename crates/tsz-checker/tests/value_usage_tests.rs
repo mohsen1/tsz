@@ -1,5 +1,7 @@
 //! Tests for TS2693 (type-only as value) and TS2362/TS2363 (arithmetic operand errors)
 
+use crate::context::{CheckerOptions, ScriptTarget};
+
 #[test]
 fn test_interface_used_as_value() {
     let source = r"
@@ -147,6 +149,38 @@ const r5 = a % b;  // OK - number modulo
     assert_eq!(
         error_count, 0,
         "Expected no TS2362/TS2363 errors, got {error_count}"
+    );
+}
+
+#[test]
+fn test_for_of_unknown_expression_emits_ts18046() {
+    let source = r"
+declare const value: unknown;
+
+for (const item of value) {
+    item.foo;
+}
+";
+    let diags = crate::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diags.iter().any(|d| {
+            d.code == 18046 && d.message_text.contains("'value' is of type 'unknown'")
+        }),
+        "Expected TS18046 for the for-of source expression, got {diags:?}"
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.message_text.contains("'item' is of type 'unknown'")),
+        "Expected no cascaded TS18046 on the recovered loop variable, got {diags:?}"
     );
 }
 
