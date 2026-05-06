@@ -273,6 +273,113 @@ fn test_exports_js_target_substitutes_dts() {
 }
 
 #[test]
+fn test_package_exports_target_cannot_escape_package_root() {
+    use std::fs;
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let root = dir.path();
+    fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+
+    fs::write(
+        root.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{"./leak":"../leak.d.ts"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("node_modules/leak.d.ts"),
+        "export declare const value: number;",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/index.ts"),
+        "import { value } from 'pkg/leak';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &root.join("src/index.ts"),
+        "pkg/leak",
+        &options,
+        root,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved, None,
+        "exports target escaping the package root must not resolve"
+    );
+}
+
+#[test]
+fn test_package_imports_absolute_target_is_invalid() {
+    use std::fs;
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+
+    let abs_target = root.join("abs.d.ts").to_string_lossy().into_owned();
+    fs::write(root.join("abs.d.ts"), "export declare const value: number;").unwrap();
+    fs::write(
+        root.join("package.json"),
+        serde_json::json!({
+            "name": "app",
+            "imports": {
+                "#abs": abs_target
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    fs::write(root.join("src/index.ts"), "import { value } from '#abs';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &root.join("src/index.ts"),
+        "#abs",
+        &options,
+        root,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(resolved, None, "absolute imports target must not resolve");
+}
+
+#[test]
 fn test_duplicate_package_redirects_prefer_stable_lexical_root_when_depth_ties() {
     use std::fs;
 
@@ -671,6 +778,22 @@ fn test_collect_module_specifiers_finds_require_with_whitespace_before_paren() {
     assert!(
         specifiers.contains(&"./data.json".to_string()),
         "Should find spaced require specifier './data.json', got: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_finds_jsdoc_import_tags() {
+    let text = r#"
+// @ts-check
+/** @import { "a,b" as CommaName } from "./dep" */
+/** @type {CommaName} */
+const value = "x";
+"#;
+    let path = Path::new("test.js");
+    let specifiers = collect_module_specifiers_from_text(path, text);
+    assert!(
+        specifiers.contains(&"./dep".to_string()),
+        "Should find JSDoc @import specifier './dep', got: {specifiers:?}"
     );
 }
 
@@ -1142,6 +1265,31 @@ fn test_resolve_module_specifier_paths_without_base_url_use_project_base() {
         &known_files,
     );
     assert_eq!(baz, Some(base.join("types/main.d.ts")));
+}
+
+#[test]
+fn test_resolve_module_specifier_root_dirs_overlay() {
+    let base = PathBuf::from("/tmp/tsz-test-rootdirs");
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        root_dirs: vec![base.join("src"), base.join("generated")],
+        ..Default::default()
+    };
+
+    let mut known_files = FxHashSet::default();
+    known_files.insert(base.join("generated/generated.ts"));
+    let mut cache = ModuleResolutionCache::default();
+
+    let resolved = resolve_module_specifier(
+        &base.join("src/main.ts"),
+        "./generated",
+        &options,
+        &base,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(resolved, Some(base.join("generated/generated.ts")));
 }
 
 #[test]

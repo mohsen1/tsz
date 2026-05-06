@@ -322,7 +322,7 @@ impl<'a> CheckerState<'a> {
             && self.body_has_arguments_reference(func.body);
         if self.is_js_file()
             && let Some(ref jsdoc) = self.find_jsdoc_for_function(func_idx)
-            && !jsdoc.contains("@callback")
+            && !Self::jsdoc_contains_tag(jsdoc, "callback")
             && (!is_closure || should_check_closure_jsdoc_param_names)
         {
             self.check_jsdoc_param_tag_names(jsdoc, &func.parameters.nodes, func_idx);

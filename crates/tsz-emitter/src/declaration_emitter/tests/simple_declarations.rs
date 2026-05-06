@@ -112,6 +112,58 @@ export const visible = 3;
 }
 
 #[test]
+fn strip_internal_parameter_property_comments_do_not_emit_internal_fields() {
+    let source = r#"
+export class Foo {
+  constructor(
+    /** @internal */
+    public isInternal1: string,
+    /** @internal */ public isInternal2: string, /** @internal */
+    public isInternal3: string,
+    // @internal
+    public isInternal4: string,
+    // nothing
+    /** @internal */
+    public isInternal5: string,
+    /* @internal */ public isInternal6: string,
+    /* @internal */ public isInternal7: string, /** @internal */
+    // not work
+    public notInternal1: string,
+    // @internal
+    /* not work */
+    public notInternal2: string,
+    /* not work */
+    // @internal
+    /* not work */
+    public notInternal3: string,
+  ) { }
+}
+
+export class Bar {
+  constructor(/* @internal */ public isInternal1: string) {}
+}
+"#;
+    let output = emit_dts_strip_internal(source);
+
+    assert!(
+        !output.contains("    isInternal1: string;"),
+        "Expected @internal parameter properties to skip class fields: {output}"
+    );
+    assert!(
+        output.contains("notInternal1: string;")
+            && output.contains("notInternal2: string;")
+            && output.contains("notInternal3: string;"),
+        "Expected non-internal parameter properties to remain as class fields: {output}"
+    );
+    assert!(
+        output.contains("constructor(\n    /** @internal */\n    isInternal1: string")
+            && output.contains("/** @internal */ isInternal2: string")
+            && output.contains("constructor(/* @internal */ isInternal1: string);"),
+        "Expected constructor parameters to preserve relevant inline comments: {output}"
+    );
+}
+
+#[test]
 fn test_object_rest_with_keyword_property_names_omits_destructured_key() {
     let source = r#"
 type P = {
@@ -970,6 +1022,31 @@ function format(x) {
     assert!(
         output.contains("declare function format(x: number): string;"),
         "Expected JSDoc function declaration types to flow into .d.ts emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_emits_constrained_jsdoc_template() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template {string} T
+ * @param {T} x
+ * @returns {T}
+ */
+export function id(x) {
+  return x;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function id<T extends string>(x: T): T;"),
+        "Expected constrained JSDoc template to emit as a type parameter constraint: {output}"
+    );
+    assert!(
+        !output.contains("id<{string}, T>"),
+        "Did not expect braced JSDoc constraint to emit as a fake type parameter: {output}"
     );
 }
 
@@ -3349,6 +3426,66 @@ export const b = E.regular;
     assert!(
         output.contains("export declare const b = E.regular;"),
         "Expected property const enum member initializer: {output}"
+    );
+}
+
+#[test]
+fn test_inferred_const_from_namespace_infinity_alias_emits_literal() {
+    let output = emit_dts_with_binding(
+        r#"
+export enum Foo {
+    A = 1e999,
+    B = -1e999,
+}
+
+namespace X {
+    type A = 1e999;
+
+    export function f(): A {
+        throw new Error()
+    }
+}
+
+export const m = X.f();
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const m: Infinity;"),
+        "Expected inaccessible infinity alias return to emit structural literal: {output}"
+    );
+    assert!(
+        !output.contains("export declare const m: A;"),
+        "Did not expect inaccessible alias or unqualified enum member to leak: {output}"
+    );
+}
+
+#[test]
+fn test_inferred_const_from_explicit_enum_member_return_keeps_member_type() {
+    let output = emit_dts_with_binding(
+        r#"
+export enum Foo {
+    A = 1,
+    B = 2,
+}
+
+namespace X {
+    export function f(): Foo.A {
+        throw new Error()
+    }
+}
+
+export const m = X.f();
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const m: Foo.A;"),
+        "Expected explicit enum member return annotation to stay nameable: {output}"
+    );
+    assert!(
+        !output.contains("export declare const m: 1;"),
+        "Did not expect explicit enum member return to collapse to literal: {output}"
     );
 }
 

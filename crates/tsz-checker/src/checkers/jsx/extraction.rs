@@ -11,6 +11,34 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn jsx_class_component_props_alias_hint(&self, instance_type: TypeId) -> Option<TypeId> {
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, instance_type)
+            .or_else(|| {
+                self.ctx
+                    .types
+                    .get_display_alias(instance_type)
+                    .and_then(|alias| {
+                        crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                    })
+            })?;
+        let &props_arg = app.args.first()?;
+        crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, props_arg)
+            .then_some(props_arg)
+    }
+
+    fn store_jsx_props_display_alias_if_matching(&mut self, props_type: TypeId, alias: TypeId) {
+        if self.ctx.types.get_display_alias(props_type).is_some() {
+            return;
+        }
+        let alias_evaluated = self.evaluate_type_with_env(alias);
+        if alias_evaluated != TypeId::ERROR
+            && self.is_assignable_to(alias_evaluated, props_type)
+            && self.is_assignable_to(props_type, alias_evaluated)
+        {
+            self.ctx.types.store_display_alias(props_type, alias);
+        }
+    }
+
     fn jsx_type_contains_callable_surface(&mut self, type_id: TypeId) -> bool {
         let mut stack = vec![type_id];
         let mut seen = rustc_hash::FxHashSet::default();
@@ -1306,6 +1334,9 @@ impl<'a> CheckerState<'a> {
         } else {
             raw_instance_type
         };
+        let props_alias_hint = self
+            .jsx_class_component_props_alias_hint(raw_instance_type)
+            .or_else(|| self.jsx_class_component_props_alias_hint(instance_type));
 
         // Look up ElementAttributesProperty to know which instance property is props
         // Pass element_idx so TS2608 can be emitted if >1 property
@@ -1333,11 +1364,25 @@ impl<'a> CheckerState<'a> {
                     };
                 match props_result {
                     PropertyAccessResult::Success { type_id, .. } => {
-                        Some(self.strip_implicit_jsx_children_from_props_fallback(type_id))
+                        let props_type =
+                            self.strip_implicit_jsx_children_from_props_fallback(type_id);
+                        if let Some(alias) = props_alias_hint {
+                            self.store_jsx_props_display_alias_if_matching(props_type, alias);
+                        }
+                        Some(props_type)
                     }
                     _ => first_param_type
                         .and_then(|param_type| {
-                            let param_type = self.evaluate_type_with_env(param_type);
+                            let raw_param_type = param_type;
+                            let param_type = self.evaluate_type_with_env(raw_param_type);
+                            if param_type != raw_param_type
+                                && param_type != TypeId::ERROR
+                                && self.ctx.types.get_display_alias(param_type).is_none()
+                            {
+                                self.ctx
+                                    .types
+                                    .store_display_alias(param_type, raw_param_type);
+                            }
                             // When no ElementAttributesProperty is defined, tsc uses the
                             // first constructor parameter as the props type even when it is
                             // a primitive (e.g. `new(n: string): …`). The synthesized attrs
@@ -1377,7 +1422,12 @@ impl<'a> CheckerState<'a> {
                         _ => self.resolve_property_access_with_env(evaluated_instance, name),
                     };
                 match props_result {
-                    PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                    PropertyAccessResult::Success { type_id, .. } => {
+                        if let Some(alias) = props_alias_hint {
+                            self.store_jsx_props_display_alias_if_matching(type_id, alias);
+                        }
+                        Some(type_id)
+                    }
                     // Instance type doesn't have the ElementAttributesProperty member.
                     // This can happen when class inheritance doesn't include inherited
                     // members in the construct signature return type.
@@ -1387,7 +1437,16 @@ impl<'a> CheckerState<'a> {
                     _ => {
                         // Try first construct param as fallback (React-style: new(props: P))
                         if let Some(first_param_type) = first_param_type {
-                            let param_type = self.evaluate_type_with_env(first_param_type);
+                            let raw_param_type = first_param_type;
+                            let param_type = self.evaluate_type_with_env(raw_param_type);
+                            if param_type != raw_param_type
+                                && param_type != TypeId::ERROR
+                                && self.ctx.types.get_display_alias(param_type).is_none()
+                            {
+                                self.ctx
+                                    .types
+                                    .store_display_alias(param_type, raw_param_type);
+                            }
                             if param_type != TypeId::ANY
                                 && param_type != TypeId::ERROR
                                 && param_type != TypeId::STRING

@@ -6,7 +6,7 @@ use tracing::{info, warn};
 
 use crate::args::CliArgs;
 use crate::incremental::BuildInfo;
-use crate::project_refs::ResolvedProject;
+use crate::project_refs::{ResolvedProject, load_project};
 
 /// Check if a project is up-to-date by examining its .tsbuildinfo file
 /// and the outputs of its referenced projects.
@@ -119,12 +119,23 @@ fn are_referenced_projects_uptodate(
 ) -> bool {
     // For each referenced project
     for reference in &project.resolved_references {
-        let project_dir = reference
-            .config_path
-            .parent()
-            .unwrap_or(reference.config_path.as_path());
-
-        let ref_build_info_path = project_dir.join("tsconfig.tsbuildinfo");
+        let ref_project = match load_project(&reference.config_path) {
+            Ok(project) => project,
+            Err(e) => {
+                if args.build_verbose {
+                    warn!(
+                        "Failed to load referenced project {}: {}",
+                        reference.config_path.display(),
+                        e
+                    );
+                }
+                return false;
+            }
+        };
+        let project_dir = &ref_project.root_dir;
+        let Some(ref_build_info_path) = get_build_info_path(&ref_project) else {
+            return false;
+        };
 
         if !ref_build_info_path.exists() {
             if args.build_verbose {
@@ -202,8 +213,19 @@ fn are_referenced_projects_uptodate(
 }
 
 /// Get the path to the .tsbuildinfo file for a project
-fn get_build_info_path(project: &ResolvedProject) -> Option<PathBuf> {
+pub fn get_build_info_path(project: &ResolvedProject) -> Option<PathBuf> {
     use crate::incremental::default_build_info_path;
+
+    if let Some(explicit_path) = project
+        .config
+        .base
+        .compiler_options
+        .as_ref()
+        .and_then(|opts| opts.ts_build_info_file.as_deref())
+        .filter(|path| !path.is_empty())
+    {
+        return Some(project.root_dir.join(explicit_path));
+    }
 
     // Use the same logic as incremental.rs
     let out_dir = project.out_dir.as_deref();
@@ -325,6 +347,24 @@ mod tests {
     }
 
     #[test]
+    fn get_build_info_path_uses_explicit_tsbuildinfo_file() {
+        let temp = create_project_dir("explicit_path");
+        let root_dir = temp.path().to_path_buf();
+        let config_path = root_dir.join("tsconfig.json");
+        fs::write(
+            &config_path,
+            r#"{"compilerOptions":{"composite":true,"tsBuildInfoFile":"custom.info"}}"#,
+        )
+        .unwrap();
+
+        let project = load_project(&config_path).unwrap();
+        assert_eq!(
+            get_build_info_path(&project),
+            Some(project.root_dir.join("custom.info"))
+        );
+    }
+
+    #[test]
     fn is_project_up_to_date_returns_false_for_root_buildinfo_version_mismatch() {
         let temp = create_project_dir("version_mismatch");
         let root_dir = temp.path().to_path_buf();
@@ -390,6 +430,36 @@ mod tests {
         let ref_config_path = ref_dir.join("tsconfig.json");
         fs::write(&ref_config_path, "{}").unwrap();
         write_reference_build_info(&ref_dir, None);
+
+        let project = make_project(
+            config_path,
+            root_dir,
+            vec![resolved_reference(ref_config_path)],
+            None,
+        );
+
+        assert!(is_project_up_to_date(&project, &cli_args()));
+    }
+
+    #[test]
+    fn is_project_up_to_date_uses_referenced_explicit_tsbuildinfo_file() {
+        let temp = create_project_dir("ref_explicit_buildinfo");
+        let root_dir = temp.path().to_path_buf();
+        let config_path = write_project_config(&root_dir);
+        let source_path = write_source_file(&root_dir, "src/index.ts", "export const x = 1;");
+        write_root_build_info(&root_dir, &source_path, None, None);
+
+        let ref_dir = root_dir.join("ref");
+        fs::create_dir_all(&ref_dir).unwrap();
+        let ref_config_path = ref_dir.join("tsconfig.json");
+        fs::write(
+            &ref_config_path,
+            r#"{"compilerOptions":{"composite":true,"tsBuildInfoFile":"custom.info"}}"#,
+        )
+        .unwrap();
+        let mut ref_build_info = BuildInfo::new();
+        ref_build_info.latest_changed_dts_file = None;
+        ref_build_info.save(&ref_dir.join("custom.info")).unwrap();
 
         let project = make_project(
             config_path,
