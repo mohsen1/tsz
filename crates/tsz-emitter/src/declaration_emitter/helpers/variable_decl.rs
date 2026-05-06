@@ -486,6 +486,13 @@ impl<'a> DeclarationEmitter<'a> {
                 };
                 let selected_type_text =
                     Self::normalize_inferred_array_any_text(&selected_type_text);
+                if has_initializer {
+                    self.insert_import_for_reused_static_call_type(
+                        initializer,
+                        &selected_type_text,
+                    );
+                }
+                self.insert_import_for_unqualified_imported_type(&selected_type_text);
                 self.write(": ");
                 self.write(&Self::strip_synthetic_anonymous_object_members(
                     &selected_type_text,
@@ -530,6 +537,122 @@ impl<'a> DeclarationEmitter<'a> {
                 .map_or(init_node.end, |node| node.end);
             self.skip_comments_before_raw(skip_end);
         }
+    }
+
+    fn insert_import_for_reused_static_call_type(
+        &mut self,
+        initializer: NodeIndex,
+        type_text: &str,
+    ) {
+        let Some(init_idx) = self.skip_parenthesized_expression(initializer) else {
+            return;
+        };
+        let Some(init_node) = self.arena.get(init_idx) else {
+            return;
+        };
+        if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return;
+        }
+        let Some(call) = self.arena.get_call_expr(init_node) else {
+            return;
+        };
+        let Some(callee_node) = self.arena.get(call.expression) else {
+            return;
+        };
+        let Some(access) = self.arena.get_access_expr(callee_node) else {
+            return;
+        };
+        let Some(receiver_name) = self.get_identifier_text(access.expression) else {
+            return;
+        };
+        if !type_text
+            .trim_start()
+            .starts_with(&format!("{receiver_name}<"))
+        {
+            return;
+        }
+        let Some(module) = self
+            .imported_value_module_specifier_from_syntax(access.expression)
+            .or_else(|| self.named_import_module_for_local(&receiver_name))
+            .or_else(|| {
+                self.source_file_text
+                    .as_deref()
+                    .and_then(|text| self.named_import_module_from_text(text, &receiver_name))
+            })
+        else {
+            return;
+        };
+        let import_line = format!("import {{ {receiver_name} }} from \"{module}\";");
+        if self.writer.get_output().contains(&import_line) {
+            return;
+        }
+        self.writer.insert_line_at(0, 0, &import_line);
+        self.emitted_module_indicator = true;
+    }
+
+    fn insert_import_for_unqualified_imported_type(&mut self, type_text: &str) {
+        let Some(type_name) = Self::leading_type_reference_name(type_text) else {
+            return;
+        };
+        let Some(module) = self
+            .source_file_text
+            .as_deref()
+            .and_then(|text| self.named_import_module_from_text(text, type_name))
+            .or_else(|| self.named_import_module_for_local(type_name))
+        else {
+            return;
+        };
+        let import_line = format!("import {{ {type_name} }} from \"{module}\";");
+        if self.writer.get_output().contains(&import_line) {
+            return;
+        }
+        self.writer.insert_line_at(0, 0, &import_line);
+        self.emitted_module_indicator = true;
+    }
+
+    fn named_import_module_for_local(&self, local_name: &str) -> Option<String> {
+        let source_file = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_node) = self.arena.get(import.module_specifier) else {
+                continue;
+            };
+            let Some(module_lit) = self.arena.get_literal(module_node) else {
+                continue;
+            };
+            let Some(clause_node) = self.arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if clause.named_bindings.is_some()
+                && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                && let Some(bindings) = self.arena.get_named_imports(bindings_node)
+            {
+                for &spec_idx in &bindings.elements.nodes {
+                    let Some(spec_node) = self.arena.get(spec_idx) else {
+                        continue;
+                    };
+                    let Some(specifier) = self.arena.get_specifier(spec_node) else {
+                        continue;
+                    };
+                    if self.get_identifier_text(specifier.name).as_deref() == Some(local_name) {
+                        return Some(module_lit.text.clone());
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn variable_declaration_has_effective_export(&self, decl_idx: NodeIndex) -> bool {

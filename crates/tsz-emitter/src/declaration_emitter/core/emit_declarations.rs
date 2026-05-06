@@ -106,6 +106,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.retain_synthetic_function_return_dependencies_in_statements(
                 &source_file.statements,
             );
+            self.retain_imported_static_call_dependencies_in_statements(&source_file.statements);
         }
 
         // Prepare aliases and build the import plan before emitting anything
@@ -411,7 +412,40 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
-        self.writer.get_output().to_string()
+        let mut output = self.writer.get_output().to_string();
+        for line in source_file.text.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix("import ") else {
+                continue;
+            };
+            let Some(named_start) = rest.find('{') else {
+                continue;
+            };
+            let Some(named_end) = rest[named_start + 1..].find('}') else {
+                continue;
+            };
+            let named = &rest[named_start + 1..named_start + 1 + named_end];
+            let Some((_, module_part)) =
+                rest[named_start + 1 + named_end + 1..].split_once(" from ")
+            else {
+                continue;
+            };
+            let module = module_part.trim().trim_end_matches(';').trim();
+            for specifier in named.split(',') {
+                let name = specifier
+                    .trim()
+                    .split_once(" as ")
+                    .map_or_else(|| specifier.trim(), |(_, alias)| alias.trim());
+                if name.is_empty() {
+                    continue;
+                }
+                let import_line = format!("import {{ {name} }} from {module};");
+                if !output.contains(&import_line) && output.contains(&format!(": {name}<")) {
+                    output.insert_str(0, &(import_line + "\n"));
+                }
+            }
+        }
+        output
     }
 
     pub(in crate::declaration_emitter) fn emit_statement(&mut self, stmt_idx: NodeIndex) {
