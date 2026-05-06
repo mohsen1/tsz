@@ -141,6 +141,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if let Some(constraint) = constraint
             && !self.checker.is_assignable_to(effective_arg_ty, constraint)
             && !self.is_function_union_compat(effective_arg_ty, constraint)
+            && !self.callable_satisfies_top_rest_any_constraint(effective_arg_ty, constraint)
         {
             // In the trivial single-type-param fast path, the parameter IS the
             // type parameter itself, so a constraint violation means the argument
