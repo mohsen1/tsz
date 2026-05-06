@@ -32,6 +32,16 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    pub(crate) fn format_type_for_property_receiver_message(&mut self, type_id: TypeId) -> String {
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties()
+            .with_expand_scalar_mapped_alias_applications()
+            .with_preserve_optional_parameter_surface_syntax(true);
+        formatter.format(type_id).into_owned()
+    }
+
     pub(crate) fn truncate_property_receiver_display(display: String) -> String {
         const MAX_PROPERTY_RECEIVER_DISPLAY_CHARS: usize = 320;
         let should_truncate = display.starts_with("Omit<") || display.starts_with("merge<");
