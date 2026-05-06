@@ -124,14 +124,21 @@ impl<'a> CheckerState<'a> {
         // per-lib parameter resolver in every project checker repeatedly lowers
         // the merged Array declarations and can exhaust the shared interner
         // before ordinary global constructors are resolved.
-        let array_type_for_params = self.resolve_lib_type_by_name("Array");
-        let array_type_params = self
+        let mut array_type_for_params = self.resolve_lib_type_by_name("Array");
+        let mut array_type_params = self
             .ctx
             .binder
             .file_locals
             .get("Array")
             .map(|sym_id| self.get_type_params_for_symbol(sym_id))
             .unwrap_or_default();
+        if array_type_params.is_empty() {
+            let (resolved_array, resolved_params) = self.resolve_lib_type_with_params("Array");
+            if !resolved_params.is_empty() {
+                array_type_for_params = resolved_array.or(array_type_for_params);
+                array_type_params = resolved_params;
+            }
+        }
         let array_type_params_for_flow = array_type_params.clone();
 
         // Eagerly resolve ConcatArray and FlatArray, which are referenced by Array's

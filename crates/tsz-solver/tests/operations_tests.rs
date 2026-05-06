@@ -9929,6 +9929,154 @@ fn test_property_access_array_push_with_intersection_array_base() {
     }
 }
 
+#[test]
+fn test_array_push_instantiates_intersection_array_base_parameter() {
+    let interner = TypeInterner::new();
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let push_func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("items")),
+            type_id: interner.array(t_type),
+            optional: false,
+            rest: true,
+        }],
+        return_type: TypeId::NUMBER,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let array_decl_a = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("push"),
+        push_func,
+    )]);
+    let array_decl_b = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("length"),
+        TypeId::NUMBER,
+    )]);
+    let array_base = interner.intersection2(array_decl_a, array_decl_b);
+    interner.set_array_base_type(array_base, vec![t_param]);
+
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+    let u_param = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let u_type = interner.intern(TypeData::TypeParameter(u_param));
+    let u_array = interner.array(u_type);
+
+    let result = evaluator.resolve_property_access(u_array, "push");
+    let PropertyAccessResult::Success { type_id, .. } = result else {
+        panic!("Expected Success for generic array push, got {result:?}");
+    };
+    let Some(TypeData::Function(func_id)) = interner.lookup(type_id) else {
+        panic!(
+            "Expected function type for push, got {:?}",
+            interner.lookup(type_id)
+        );
+    };
+    let shape = interner.function_shape(func_id);
+    let [param] = shape.params.as_slice() else {
+        panic!(
+            "Expected one rest parameter for push, got {:?}",
+            shape.params
+        );
+    };
+    assert_eq!(
+        crate::type_queries::get_array_element_type(&interner, param.type_id),
+        Some(u_type)
+    );
+}
+
+#[test]
+fn test_array_push_uses_symbol_params_when_array_base_params_missing() {
+    use crate::TypeEnvironment;
+    use crate::types::{ObjectShape, SymbolRef};
+
+    let interner = TypeInterner::new();
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let push_func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("items")),
+            type_id: interner.array(t_type),
+            optional: false,
+            rest: true,
+        }],
+        return_type: TypeId::NUMBER,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let array_symbol = tsz_binder::SymbolId(1);
+    let array_base = interner.object_with_index(ObjectShape {
+        properties: vec![PropertyInfo::method(
+            interner.intern_string("push"),
+            push_func,
+        )],
+        symbol: Some(array_symbol),
+        ..Default::default()
+    });
+    interner.set_array_base_type(array_base, Vec::new());
+
+    let mut env = TypeEnvironment::new();
+    env.insert_with_params(SymbolRef(array_symbol.0), array_base, vec![t_param]);
+
+    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
+    let u_param = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let u_type = interner.intern(TypeData::TypeParameter(u_param));
+    let u_array = interner.array(u_type);
+
+    let result = evaluator.resolve_property_access(u_array, "push");
+    let PropertyAccessResult::Success { type_id, .. } = result else {
+        panic!("Expected Success for generic array push, got {result:?}");
+    };
+    let Some(TypeData::Function(func_id)) = interner.lookup(type_id) else {
+        panic!(
+            "Expected function type for push, got {:?}",
+            interner.lookup(type_id)
+        );
+    };
+    let shape = interner.function_shape(func_id);
+    let [param] = shape.params.as_slice() else {
+        panic!(
+            "Expected one rest parameter for push, got {:?}",
+            shape.params
+        );
+    };
+    assert_eq!(
+        crate::type_queries::get_array_element_type(&interner, param.type_id),
+        Some(u_type)
+    );
+}
+
 /// Test that array mapped type method resolution works correctly.
 /// When { [P in keyof T]: T[P] } where T extends any[] is accessed with .`pop()`,
 /// it should resolve to the array method, not map through the template.
