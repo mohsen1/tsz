@@ -66,6 +66,9 @@ impl<'a> CheckerState<'a> {
             {
                 return self.current_file_commonjs_namespace_type();
             }
+            if self.is_require_call_callee_without_node_global(name, idx) {
+                return TypeId::ANY;
+            }
             if self.is_js_file() {
                 match name {
                     "exports" => {
@@ -79,7 +82,17 @@ impl<'a> CheckerState<'a> {
                         }
                         return self.current_file_commonjs_namespace_type();
                     }
-                    "module" | "require" => return TypeId::ANY,
+                    "module" | "require" if !self.current_source_file_has_esm_syntax() => {
+                        return TypeId::ANY;
+                    }
+                    "module" | "require" => {
+                        self.error_at_node_msg(
+                            idx,
+                            crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+                            &[name],
+                        );
+                        return TypeId::ERROR;
+                    }
                     "__dirname" | "__filename" => {
                         self.error_at_node_msg(
                             idx,
@@ -1006,6 +1019,16 @@ impl<'a> CheckerState<'a> {
                         && self.is_module_export_equals_type_only(&module_specifier)
                     {
                         // type-only through export= chain — skip
+                    } else if let Some(&alias_sym_id) = self
+                        .ctx
+                        .binder
+                        .node_symbols
+                        .get(&import_decl.import_clause.0)
+                        .or_else(|| self.ctx.binder.node_symbols.get(&stmt_idx.0))
+                        && self.alias_resolves_to_type_only(alias_sym_id)
+                    {
+                        // `import Alias = NS.Type` is not a value import when the
+                        // qualified target resolves to an interface/type alias.
                     } else {
                         return true;
                     }

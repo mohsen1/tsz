@@ -93,6 +93,36 @@ fn test_assignment_object_rest_uses_es5_lowering() {
 }
 
 #[test]
+fn object_rest_computed_exclusion_reuses_key_temp() {
+    let output = emit_es5(
+        r#"
+declare function getKey(): string;
+const source: any = {};
+const { [getKey()]: value = 1, ...rest } = source;
+console.log(value);
+"#,
+    );
+
+    assert_eq!(
+        output.matches("getKey()").count(),
+        1,
+        "Computed rest key expression must be evaluated once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" = source[_"),
+        "Computed property read should use a temp key.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === \"symbol\" ? ") && output.contains(" + \"\""),
+        "__rest exclusion should use TypeScript's symbol-safe computed-key coercion.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__rest(source, [getKey()])"),
+        "__rest exclusion must not re-evaluate the computed key expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_destructuring_nested_object() {
     let output = emit_es5("const {a: {b}} = obj;\n");
     assert!(

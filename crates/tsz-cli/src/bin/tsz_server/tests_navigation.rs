@@ -53,9 +53,7 @@ fn test_definition_empty_response_is_valid_array() {
 }
 
 #[test]
-fn test_definition_and_bound_span_has_valid_text_span() {
-    // The definitionAndBoundSpan response must always have a textSpan with
-    // valid start/end, even when no definitions are found.
+fn test_definition_and_bound_span_has_no_body_without_definition() {
     let mut server = make_server();
     server
         .open_files
@@ -66,16 +64,9 @@ fn test_definition_and_bound_span_has_valid_text_span() {
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp
-        .body
-        .expect("definitionAndBoundSpan should return a body");
-    let text_span = body
-        .get("textSpan")
-        .expect("definitionAndBoundSpan must have textSpan");
-    assert_valid_span(text_span, "definitionAndBoundSpan textSpan");
     assert!(
-        body.get("definitions").is_some(),
-        "definitionAndBoundSpan must have definitions array"
+        resp.body.is_none(),
+        "definitionAndBoundSpan should omit body when no definition exists"
     );
 }
 
@@ -96,6 +87,70 @@ fn test_navtree_fallback_has_spans() {
         "navtree fallback must have at least one span"
     );
     assert_valid_span(&spans_arr[0], "navtree fallback span");
+}
+
+#[test]
+fn test_navtree_full_returns_numeric_text_spans() {
+    let mut server = make_server();
+    let source = "export function f(x: number) {\n  return x;\n}\n";
+    server
+        .open_files
+        .insert("/a.ts".to_string(), source.to_string());
+
+    let req = make_request("navtree-full", serde_json::json!({"file": "/a.ts"}));
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("navtree-full should return a body");
+    let root_span = body
+        .get("spans")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|spans| spans.first())
+        .expect("navtree-full root should include a span");
+    assert_eq!(
+        root_span.get("start").and_then(serde_json::Value::as_u64),
+        Some(0),
+        "navtree-full root span should use numeric TextSpan shape: {root_span:?}"
+    );
+    assert_eq!(
+        root_span.get("length").and_then(serde_json::Value::as_u64),
+        Some(source.len() as u64),
+        "navtree-full root span should cover the source text: {root_span:?}"
+    );
+
+    let function_item = body
+        .get("childItems")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("text").and_then(serde_json::Value::as_str) == Some("f"))
+        })
+        .expect("navtree-full should include function f");
+    let function_span = function_item
+        .get("spans")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|spans| spans.first())
+        .expect("function item should include a span");
+    assert!(
+        function_span
+            .get("start")
+            .and_then(serde_json::Value::as_u64)
+            .is_some(),
+        "function span should use numeric TextSpan shape: {function_span:?}"
+    );
+    let name_span = function_item
+        .get("nameSpan")
+        .expect("function item should include numeric nameSpan");
+    assert_eq!(
+        name_span.get("start").and_then(serde_json::Value::as_u64),
+        Some(16),
+        "function nameSpan should start at the function name: {name_span:?}"
+    );
+    assert_eq!(
+        name_span.get("length").and_then(serde_json::Value::as_u64),
+        Some(1),
+        "function nameSpan should cover the function name: {name_span:?}"
+    );
 }
 
 #[test]
@@ -542,6 +597,72 @@ fn test_rename_quoted_alias_marker_offset_uses_literal_only_locations() {
 }
 
 #[test]
+fn test_document_highlights_import_specifier_dedupes_and_has_context() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export const shared = 1;\nshared;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import { shared } from \"./a\";\nshared;\n".to_string(),
+    );
+
+    let req = make_request(
+        "documentHighlights",
+        serde_json::json!({
+            "file": "/b.ts",
+            "line": 1,
+            "offset": 10,
+            "filesToSearch": ["/b.ts"]
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("documentHighlights should return a body");
+    let groups = body
+        .as_array()
+        .expect("documentHighlights body should be an array");
+    let spans = groups
+        .first()
+        .and_then(|group| group.get("highlightSpans"))
+        .and_then(serde_json::Value::as_array)
+        .expect("documentHighlights should include highlightSpans");
+
+    let import_spans: Vec<_> = spans
+        .iter()
+        .filter(|span| {
+            span["start"]["line"].as_u64() == Some(1)
+                && span["start"]["offset"].as_u64() == Some(10)
+                && span["end"]["offset"].as_u64() == Some(16)
+        })
+        .collect();
+    assert_eq!(
+        import_spans.len(),
+        1,
+        "import specifier highlight should not be duplicated: {spans:?}"
+    );
+    let import_span = import_spans[0];
+    assert_eq!(
+        import_span.get("kind").and_then(serde_json::Value::as_str),
+        Some("writtenReference"),
+        "import specifier should be a writtenReference: {import_span:?}"
+    );
+    assert!(
+        import_span.get("contextStart").is_some() && import_span.get("contextEnd").is_some(),
+        "import specifier highlight should include import-line context: {import_span:?}"
+    );
+    assert!(
+        spans.iter().any(|span| {
+            span["start"]["line"].as_u64() == Some(2)
+                && span["start"]["offset"].as_u64() == Some(1)
+                && span["end"]["offset"].as_u64() == Some(7)
+        }),
+        "expected the local usage highlight too: {spans:?}"
+    );
+}
+
+#[test]
 fn test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs() {
     let mut server = make_server();
     server.open_files.insert(
@@ -895,6 +1016,132 @@ fn test_type_only_quoted_alias_references_work_from_type_keyword_offset() {
             .filter_map(|entry| entry.get("file").and_then(serde_json::Value::as_str))
             .any(|file| file == "/bar.ts"),
         "expected type-only quoted alias refs to include /bar.ts: {refs:?}"
+    );
+}
+
+#[test]
+fn test_type_only_quoted_alias_references_follow_local_alias_uses() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "type foo = \"foo\";",
+            "export { type foo as \"__<alias>\" };",
+            "import { type \"__<alias>\" as bar } from \"./foo\";",
+            "const testBar: bar = \"foo\";",
+        ]
+        .join("\n"),
+    );
+    server.open_files.insert(
+        "/bar.ts".to_string(),
+        [
+            "import { type \"__<alias>\" as first } from \"./foo\";",
+            "export { type \"__<alias>\" as \"<other>\" } from \"./foo\";",
+            "import { type \"<other>\" as second } from \"./bar\";",
+            "const testFirst: first = \"foo\";",
+            "const testSecond: second = \"foo\";",
+        ]
+        .join("\n"),
+    );
+
+    let req = make_request(
+        "references",
+        serde_json::json!({
+            "file": "/foo.ts",
+            "line": 2,
+            "offset": 24
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("references should return body");
+    assert_eq!(
+        body.get("symbolName").and_then(serde_json::Value::as_str),
+        Some("\"__<alias>\""),
+        "quoted type alias references should preserve symbolName: {body:?}"
+    );
+    let refs = body
+        .get("refs")
+        .and_then(serde_json::Value::as_array)
+        .expect("references should include refs array");
+    assert_eq!(
+        refs.len(),
+        12,
+        "expected the full quoted type-only alias chain, got: {refs:?}"
+    );
+
+    let ref_text = |entry: &serde_json::Value| -> Option<String> {
+        let file = entry.get("file")?.as_str()?;
+        let source = server.open_files.get(file)?;
+        let start = entry.get("start")?;
+        let end = entry.get("end")?;
+        let start_line = start.get("line")?.as_u64()? as usize;
+        let start_offset = start.get("offset")?.as_u64()? as usize;
+        let end_line = end.get("line")?.as_u64()? as usize;
+        let end_offset = end.get("offset")?.as_u64()? as usize;
+        if start_line != end_line || start_offset == 0 || end_offset == 0 {
+            return None;
+        }
+        let line = source.lines().nth(start_line.checked_sub(1)?)?;
+        line.get(start_offset - 1..end_offset - 1)
+            .map(str::to_string)
+    };
+
+    let has_ref = |file: &str, line: u64, text: &str| {
+        refs.iter().any(|entry| {
+            entry.get("file").and_then(serde_json::Value::as_str) == Some(file)
+                && entry
+                    .get("start")
+                    .and_then(|start| start.get("line"))
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(line)
+                && ref_text(entry).as_deref() == Some(text)
+        })
+    };
+
+    for (file, line, text) in [
+        ("/foo.ts", 2, "__<alias>"),
+        ("/foo.ts", 3, "__<alias>"),
+        ("/foo.ts", 3, "bar"),
+        ("/foo.ts", 4, "bar"),
+        ("/bar.ts", 1, "__<alias>"),
+        ("/bar.ts", 1, "first"),
+        ("/bar.ts", 2, "__<alias>"),
+        ("/bar.ts", 2, "<other>"),
+        ("/bar.ts", 3, "<other>"),
+        ("/bar.ts", 3, "second"),
+        ("/bar.ts", 4, "first"),
+        ("/bar.ts", 5, "second"),
+    ] {
+        assert!(
+            has_ref(file, line, text),
+            "missing reference {file}:{line} {text:?}; refs: {refs:?}"
+        );
+    }
+
+    let queried_export = refs.iter().find(|entry| {
+        entry.get("file").and_then(serde_json::Value::as_str) == Some("/foo.ts")
+            && entry
+                .get("start")
+                .and_then(|start| start.get("line"))
+                .and_then(serde_json::Value::as_u64)
+                == Some(2)
+            && ref_text(entry).as_deref() == Some("__<alias>")
+    });
+    let queried_export = queried_export.expect("query export alias reference should be present");
+    assert_eq!(
+        queried_export
+            .get("isDefinition")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "queried export alias should be marked as a definition: {queried_export:?}"
+    );
+    assert_eq!(
+        queried_export
+            .get("isWriteAccess")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "queried export alias should be marked as a write reference: {queried_export:?}"
     );
 }
 

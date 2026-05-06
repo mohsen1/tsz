@@ -13,7 +13,7 @@ use tsz::emitter::{NewLineKind, Printer};
 use tsz::enums::evaluator::{EnumEvaluator, EnumValue};
 use tsz::parallel::{BoundFile, MergedProgram};
 use tsz_common::common::ModuleKind;
-use tsz_common::diagnostics::Diagnostic;
+use tsz_common::diagnostics::{Diagnostic, DiagnosticCategory};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -23,6 +23,7 @@ use tsz_scanner::SyntaxKind;
 pub(crate) struct OutputFile {
     pub(crate) path: PathBuf,
     pub(crate) contents: String,
+    pub(crate) source_path: Option<PathBuf>,
 }
 
 pub(crate) struct EmitOutputsContext<'a> {
@@ -107,6 +108,10 @@ pub(crate) fn emit_outputs(
         context.program,
         context.options.printer.preserve_const_enums,
     );
+    let type_only_export_equals_modules = build_type_only_export_equals_modules(
+        context.program,
+        context.options.printer.preserve_const_enums,
+    );
 
     // Build the set of JS output paths produced by TypeScript source files
     // (.ts/.tsx/.mts/.cts). When --allowJs is set and a JS input file (e.g.
@@ -184,7 +189,11 @@ pub(crate) fn emit_outputs(
                 &mut type_only_nodes,
             );
             printer_options.type_only_nodes = std::sync::Arc::new(type_only_nodes);
+            printer_options.type_only_export_equals_modules =
+                type_only_export_equals_modules.clone();
 
+            printer_options.no_lib = context.options.checker.no_lib;
+            printer_options.isolated_modules = context.options.checker.isolated_modules;
             // Wire JSX options from resolved compiler options to printer
             if let Some(jsx) = context.options.jsx {
                 printer_options.jsx = config_jsx_to_emitter_jsx(jsx);
@@ -340,6 +349,7 @@ pub(crate) fn emit_outputs(
                     map_output = Some(OutputFile {
                         path: map_path,
                         contents: map_json,
+                        source_path: Some(input_path.clone()),
                     });
                 }
             }
@@ -351,6 +361,7 @@ pub(crate) fn emit_outputs(
                 outputs.push(OutputFile {
                     path: js_path,
                     contents,
+                    source_path: Some(input_path.clone()),
                 });
                 if let Some(map_output) = map_output {
                     outputs.push(map_output);
@@ -442,7 +453,7 @@ pub(crate) fn emit_outputs(
                         None
                     };
 
-                if let Some((_, _, output_name)) = map_info.as_ref() {
+                if let Some((map_path, _, output_name)) = map_info.as_ref() {
                     if let Some(source_text) = file
                         .arena
                         .get(file.source_file)
@@ -451,7 +462,8 @@ pub(crate) fn emit_outputs(
                     {
                         emitter.set_source_map_text(source_text);
                     }
-                    emitter.enable_source_map(output_name, &file.file_name);
+                    let source_name = declaration_map_source_name(map_path, &input_path);
+                    emitter.enable_source_map_without_sources_content(output_name, &source_name);
                 }
 
                 // Run usage analysis and calculate required imports if we have type cache
@@ -495,7 +507,7 @@ pub(crate) fn emit_outputs(
                 let emitter_diagnostics = normalize_ts2883_diagnostics(emitter.take_diagnostics());
                 let declaration_emit_blocked = emitter_diagnostics
                     .iter()
-                    .any(|diagnostic| diagnostic.code == 7056);
+                    .any(|diagnostic| diagnostic.category == DiagnosticCategory::Error);
                 emit_diagnostics.extend(emitter_diagnostics);
                 if declaration_emit_blocked {
                     declaration_bundle_blocked = true;
@@ -513,6 +525,7 @@ pub(crate) fn emit_outputs(
                     map_output = Some(OutputFile {
                         path: map_path,
                         contents: map_json,
+                        source_path: Some(input_path.clone()),
                     });
                 }
 
@@ -532,6 +545,7 @@ pub(crate) fn emit_outputs(
                     outputs.push(OutputFile {
                         path: dts_path,
                         contents,
+                        source_path: Some(input_path.clone()),
                     });
                     if let Some(map_output) = map_output {
                         outputs.push(map_output);
@@ -590,6 +604,7 @@ pub(crate) fn emit_outputs(
         outputs.push(OutputFile {
             path: bundle_path,
             contents: bundled,
+            source_path: None,
         });
     }
 
@@ -600,6 +615,7 @@ pub(crate) fn emit_outputs(
         outputs.push(OutputFile {
             path: bundle_path,
             contents: join_declaration_bundle_chunks(&declaration_bundle_chunks, new_line),
+            source_path: None,
         });
     }
 
@@ -1181,6 +1197,51 @@ fn map_output_info(output_path: &Path) -> Option<(PathBuf, String, String)> {
     Some((map_path, map_name, output_name))
 }
 
+fn declaration_map_source_name(map_path: &Path, source_path: &Path) -> String {
+    let map_dir = map_path.parent().unwrap_or_else(|| Path::new(""));
+    relative_path_from_dir(map_dir, source_path)
+        .unwrap_or_else(|| source_path.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn relative_path_from_dir(from_dir: &Path, to_path: &Path) -> Option<PathBuf> {
+    if from_dir.is_absolute() != to_path.is_absolute() {
+        return None;
+    }
+
+    let from_components = normalized_path_components(from_dir);
+    let to_components = normalized_path_components(to_path);
+    let mut common_len = 0;
+    while common_len < from_components.len()
+        && common_len < to_components.len()
+        && from_components[common_len] == to_components[common_len]
+    {
+        common_len += 1;
+    }
+
+    let mut relative = PathBuf::new();
+    for _ in common_len..from_components.len() {
+        relative.push("..");
+    }
+    for component in &to_components[common_len..] {
+        relative.push(component);
+    }
+
+    Some(relative)
+}
+
+fn normalized_path_components(path: &Path) -> Vec<std::ffi::OsString> {
+    path.components()
+        .filter_map(|component| match component {
+            std::path::Component::CurDir | std::path::Component::RootDir => None,
+            std::path::Component::ParentDir => Some(std::ffi::OsString::from("..")),
+            std::path::Component::Normal(part) => Some(part.to_os_string()),
+            std::path::Component::Prefix(prefix) => Some(prefix.as_os_str().to_os_string()),
+        })
+        .collect()
+}
+
 fn append_source_mapping_url(contents: &mut String, map_name: &str, new_line: &str) {
     if !contents.is_empty() && !contents.ends_with(new_line) {
         contents.push_str(new_line);
@@ -1556,6 +1617,95 @@ fn build_ambient_global_type_only_names(
 
     type_only_names.retain(|name| !value_names.contains(name));
     type_only_names
+}
+
+fn build_type_only_export_equals_modules(
+    program: &MergedProgram,
+    preserve_const_enums: bool,
+) -> FxHashSet<String> {
+    let mut modules = FxHashSet::default();
+
+    for file in &program.files {
+        let input_path = PathBuf::from(&file.file_name);
+        if !is_declaration_file(&input_path) {
+            continue;
+        }
+
+        let Some(source) = file
+            .arena
+            .get(file.source_file)
+            .and_then(|node| file.arena.get_source_file(node))
+        else {
+            continue;
+        };
+
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = file.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module) = file.arena.get_module(stmt_node) else {
+                continue;
+            };
+            if !file
+                .arena
+                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+            {
+                continue;
+            }
+            let Some(module_name) = file
+                .arena
+                .get(module.name)
+                .and_then(|node| file.arena.get_literal(node))
+                .map(|lit| lit.text.clone())
+            else {
+                continue;
+            };
+            let Some(statements) = module_block_statements(&file.arena, module.body) else {
+                continue;
+            };
+            let Some(export_name) = export_equals_identifier_name(&file.arena, statements) else {
+                continue;
+            };
+            let value_names =
+                tsz_emitter::transforms::module_commonjs::build_value_declaration_names(
+                    &file.arena,
+                    statements,
+                    preserve_const_enums,
+                );
+
+            if !value_names.contains(&export_name) {
+                modules.insert(module_name);
+            }
+        }
+    }
+
+    modules
+}
+
+fn module_block_statements(arena: &NodeArena, body_idx: NodeIndex) -> Option<&[NodeIndex]> {
+    let body_node = arena.get(body_idx)?;
+    let block = arena.get_module_block(body_node)?;
+    block
+        .statements
+        .as_ref()
+        .map(|statements| statements.nodes.as_slice())
+}
+
+fn export_equals_identifier_name(arena: &NodeArena, statements: &[NodeIndex]) -> Option<String> {
+    statements.iter().find_map(|&stmt_idx| {
+        let node = arena.get(stmt_idx)?;
+        if node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+            return None;
+        }
+        let export_assignment = arena.get_export_assignment(node)?;
+        if !export_assignment.is_export_equals {
+            return None;
+        }
+        arena.identifier_text_owned(export_assignment.expression)
+    })
 }
 
 fn source_file_has_top_level_module_syntax(arena: &NodeArena, statements: &[NodeIndex]) -> bool {

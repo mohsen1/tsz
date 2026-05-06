@@ -1,5 +1,76 @@
 use crate::state::CheckerState;
 
+/// Find the byte offset of a top-level `=>` arrow in a JSDoc type
+/// expression, ignoring arrows nested inside `<>`, `()`, `{}`, `[]` or
+/// quoted strings.
+fn find_top_level_jsdoc_arrow(expr: &str) -> Option<usize> {
+    let mut angle_depth = 0u32;
+    let mut paren_depth = 0u32;
+    let mut brace_depth = 0u32;
+    let mut square_depth = 0u32;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let bytes = expr.as_bytes();
+    let mut i = 0usize;
+    while i + 1 < bytes.len() {
+        let ch = bytes[i] as char;
+        let next = bytes[i + 1] as char;
+        match ch {
+            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            '"' if !in_single_quote => in_double_quote = !in_double_quote,
+            _ if in_single_quote || in_double_quote => {
+                i += 1;
+                continue;
+            }
+            '<' => angle_depth += 1,
+            '>' if angle_depth > 0 => angle_depth -= 1,
+            '(' => paren_depth += 1,
+            ')' if paren_depth > 0 => paren_depth -= 1,
+            '{' => brace_depth += 1,
+            '}' if brace_depth > 0 => brace_depth -= 1,
+            '[' => square_depth += 1,
+            ']' if square_depth > 0 => square_depth -= 1,
+            '=' if next == '>'
+                && angle_depth == 0
+                && paren_depth == 0
+                && brace_depth == 0
+                && square_depth == 0 =>
+            {
+                return Some(i);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Whether a JSDoc type expression is a single (possibly dotted, possibly
+/// generic) identifier reference: `Foo`, `Foo.Bar`, `Foo<X>`. Returns
+/// false for compound types (function, object literal, union, etc.).
+fn is_jsdoc_simple_type_name(expr: &str) -> bool {
+    if expr.is_empty() {
+        return false;
+    }
+    let Some(first) = expr.chars().next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() && first != '_' && first != '$' {
+        return false;
+    }
+    let mut angle_depth = 0u32;
+    for ch in expr.chars() {
+        match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '$' | '.' => {}
+            '<' => angle_depth += 1,
+            '>' if angle_depth > 0 => angle_depth -= 1,
+            ',' | ' ' if angle_depth > 0 => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn report_jsdoc_param_generic_instantiation_errors(
         &mut self,
@@ -301,5 +372,302 @@ impl<'a> CheckerState<'a> {
         }
 
         reported
+    }
+
+    /// Walk a JSDoc type expression and emit TS2304 for any unresolved
+    /// simple-name leaves found inside compound type structures
+    /// (object-literal property values, arrow function parameter and
+    /// return types, parenthesized types, array element types, union
+    /// and intersection branches, and the type-arguments of generic
+    /// instantiations).
+    ///
+    /// Top-level simple-name expressions (e.g. `@param {Missing}`) are
+    /// not reported here: the existing simple-name path in
+    /// `jsdoc/diagnostics.rs` already handles that case. This helper
+    /// covers the compound-type cases that path skips.
+    ///
+    /// `template_params` lists in-scope `@template` names so that
+    /// type-parameter references inside the same JSDoc comment are not
+    /// flagged. `comment_pos`/`comment_end`/`source_text` are passed
+    /// through to `emit_jsdoc_cannot_find_name` for diagnostic
+    /// positioning and spelling-suggestion handling.
+    pub(crate) fn report_jsdoc_unresolved_inner_type_leaves(
+        &mut self,
+        type_expr: &str,
+        comment_pos: u32,
+        comment_end: u32,
+        source_text: &str,
+        template_params: &[String],
+    ) -> bool {
+        let trimmed = type_expr.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        if is_jsdoc_simple_type_name(trimmed) {
+            // Top-level simple names are handled by the existing path.
+            return false;
+        }
+        self.walk_jsdoc_type_for_unresolved_leaves(
+            trimmed,
+            comment_pos,
+            comment_end,
+            source_text,
+            template_params,
+        )
+    }
+
+    fn walk_jsdoc_type_for_unresolved_leaves(
+        &mut self,
+        expr: &str,
+        comment_pos: u32,
+        comment_end: u32,
+        source_text: &str,
+        template_params: &[String],
+    ) -> bool {
+        let trimmed = expr.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        // Strip JSDoc decorators: `!T` (non-null), `?T` (nullable), `T=` (optional).
+        let trimmed = trimmed
+            .trim_start_matches('!')
+            .trim_start_matches('?')
+            .trim();
+        let trimmed = trimmed.trim_end_matches('=').trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+
+        // Array suffix `T[]`.
+        if let Some(stripped) = trimmed.strip_suffix("[]") {
+            return self.walk_jsdoc_type_for_unresolved_leaves(
+                stripped,
+                comment_pos,
+                comment_end,
+                source_text,
+                template_params,
+            );
+        }
+
+        // Arrow function `(params) => ret` or `() => ret`.
+        if let Some(arrow_idx) = find_top_level_jsdoc_arrow(trimmed) {
+            let mut reported = false;
+            let params_str = trimmed[..arrow_idx].trim();
+            let ret_str = trimmed[arrow_idx + 2..].trim();
+            if params_str.starts_with('(') && params_str.ends_with(')') {
+                let inner = &params_str[1..params_str.len() - 1];
+                for param in Self::split_top_level_params(inner) {
+                    let param_text = param.trim();
+                    if param_text.is_empty() {
+                        continue;
+                    }
+                    let param_text = param_text
+                        .strip_prefix("...")
+                        .map(str::trim)
+                        .unwrap_or(param_text);
+                    let type_part =
+                        if let Some(colon_idx) = Self::find_top_level_char(param_text, ':') {
+                            param_text[colon_idx + 1..].trim()
+                        } else {
+                            // Bare type position (no `name:` form).
+                            param_text
+                        };
+                    reported |= self.walk_jsdoc_type_for_unresolved_leaves(
+                        type_part,
+                        comment_pos,
+                        comment_end,
+                        source_text,
+                        template_params,
+                    );
+                }
+            }
+            reported |= self.walk_jsdoc_type_for_unresolved_leaves(
+                ret_str,
+                comment_pos,
+                comment_end,
+                source_text,
+                template_params,
+            );
+            return reported;
+        }
+
+        // Parenthesized type `(T)` (no top-level arrow — already handled above).
+        if trimmed.starts_with('(') && trimmed.ends_with(')') {
+            let inner = &trimmed[1..trimmed.len() - 1];
+            return self.walk_jsdoc_type_for_unresolved_leaves(
+                inner,
+                comment_pos,
+                comment_end,
+                source_text,
+                template_params,
+            );
+        }
+
+        // Union `T | U` or intersection `T & U`.
+        if let Some(parts) = Self::split_top_level_binary(trimmed, '|')
+            .or_else(|| Self::split_top_level_binary(trimmed, '&'))
+        {
+            let mut reported = false;
+            for part in parts {
+                reported |= self.walk_jsdoc_type_for_unresolved_leaves(
+                    part,
+                    comment_pos,
+                    comment_end,
+                    source_text,
+                    template_params,
+                );
+            }
+            return reported;
+        }
+
+        // Mapped object type `{ [P in Keys]: Template }`. The template is in a
+        // nested scope where the mapped type parameter is valid.
+        if let Some((type_param_name, constraint, template)) =
+            Self::jsdoc_mapped_type_parts(trimmed)
+        {
+            let mut reported = false;
+            let constraint = constraint.trim();
+            let constraint = constraint
+                .strip_prefix("keyof ")
+                .unwrap_or(constraint)
+                .trim();
+            let constraint = constraint
+                .strip_prefix("typeof ")
+                .unwrap_or(constraint)
+                .trim();
+            reported |= self.walk_jsdoc_type_for_unresolved_leaves(
+                constraint,
+                comment_pos,
+                comment_end,
+                source_text,
+                template_params,
+            );
+            let mut nested_template_params = template_params.to_vec();
+            nested_template_params.push(type_param_name.to_string());
+            reported |= self.walk_jsdoc_type_for_unresolved_leaves(
+                template,
+                comment_pos,
+                comment_end,
+                source_text,
+                &nested_template_params,
+            );
+            return reported;
+        }
+
+        // Object literal `{ a: T, b: U }`.
+        if trimmed.starts_with('{') && trimmed.ends_with('}') {
+            let inner = &trimmed[1..trimmed.len() - 1];
+            let mut reported = false;
+            for prop in Self::split_object_properties(inner) {
+                let prop = prop.trim();
+                if prop.is_empty() {
+                    continue;
+                }
+                let Some(colon_idx) = Self::find_top_level_char(prop, ':') else {
+                    continue;
+                };
+                let value = prop[colon_idx + 1..].trim();
+                reported |= self.walk_jsdoc_type_for_unresolved_leaves(
+                    value,
+                    comment_pos,
+                    comment_end,
+                    source_text,
+                    template_params,
+                );
+            }
+            return reported;
+        }
+
+        // Generic instantiation `Foo<X, Y>`: descend into each type-arg.
+        if let Some(angle_idx) = Self::find_top_level_char(trimmed, '<')
+            && trimmed.ends_with('>')
+        {
+            let args = &trimmed[angle_idx + 1..trimmed.len() - 1];
+            let mut reported = false;
+            for arg in Self::split_type_args_respecting_nesting(args) {
+                reported |= self.walk_jsdoc_type_for_unresolved_leaves(
+                    arg,
+                    comment_pos,
+                    comment_end,
+                    source_text,
+                    template_params,
+                );
+            }
+            return reported;
+        }
+
+        // Leaf: simple identifier name.
+        if is_jsdoc_simple_type_name(trimmed) {
+            // Skip in-scope `@template` parameters.
+            if template_params.iter().any(|t| t == trimmed) {
+                return false;
+            }
+            // `Object` and `object` are accepted bases in JSDoc; resolution
+            // succeeds, but defensively skip them anyway.
+            if matches!(trimmed, "Object" | "object") {
+                return false;
+            }
+            let resolved = self.resolve_jsdoc_type_str(trimmed);
+            let unresolved = resolved.is_none_or(|ty| {
+                ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
+            });
+            if unresolved {
+                self.emit_jsdoc_cannot_find_name(trimmed, comment_pos, comment_end, source_text);
+                return true;
+            }
+        }
+        false
+    }
+
+    fn jsdoc_mapped_type_parts(type_expr: &str) -> Option<(&str, &str, &str)> {
+        let inner = type_expr.strip_prefix('{')?.strip_suffix('}')?.trim();
+        if !inner.starts_with('[') {
+            return None;
+        }
+
+        let mut square_depth = 0u32;
+        let mut close_bracket = None;
+        for (idx, ch) in inner.char_indices() {
+            match ch {
+                '[' => square_depth += 1,
+                ']' => {
+                    square_depth = square_depth.saturating_sub(1);
+                    if square_depth == 0 {
+                        close_bracket = Some(idx);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let close_bracket = close_bracket?;
+        let header = inner[1..close_bracket].trim();
+        let mut after_bracket = inner[close_bracket + 1..].trim();
+        if let Some(rest) = after_bracket.strip_prefix("-?") {
+            after_bracket = rest.trim();
+        } else if let Some(rest) = after_bracket.strip_prefix('?') {
+            after_bracket = rest.trim();
+        }
+        let template = after_bracket.strip_prefix(':')?.trim();
+        let in_idx = Self::find_jsdoc_diagnostic_mapped_in_keyword(header)?;
+        let type_param_name = header[..in_idx].trim();
+        let constraint = header[in_idx + 2..].trim();
+        (!type_param_name.is_empty() && !constraint.is_empty() && !template.is_empty()).then_some((
+            type_param_name,
+            constraint,
+            template,
+        ))
+    }
+
+    fn find_jsdoc_diagnostic_mapped_in_keyword(header: &str) -> Option<usize> {
+        for (idx, _) in header.match_indices("in") {
+            let before = header[..idx].chars().next_back();
+            let after = header[idx + 2..].chars().next();
+            if before.is_some_and(char::is_whitespace) && after.is_some_and(char::is_whitespace) {
+                return Some(idx);
+            }
+        }
+        None
     }
 }

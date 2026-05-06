@@ -27,18 +27,6 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
-#[derive(Clone, Debug)]
-struct FunctionTypeParamText {
-    optional: bool,
-    type_text: String,
-}
-
-#[derive(Clone, Debug)]
-struct FunctionTypeTextParts {
-    parameters: Vec<FunctionTypeParamText>,
-    return_type: String,
-}
-
 pub(in crate::declaration_emitter) struct CallableDeclParts<'b> {
     pub(in crate::declaration_emitter) modifiers: Option<&'b NodeList>,
     pub(in crate::declaration_emitter) type_parameters: Option<&'b NodeList>,
@@ -361,19 +349,30 @@ impl<'a> DeclarationEmitter<'a> {
         }?;
         let type_text = if std::ptr::eq(source_arena, self.arena) {
             match printed {
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any"))
+                Some(printed) if printed != "any" => {
+                    if let Some(raw_type_text) = self.local_type_annotation_text(type_annotation) {
+                        if Self::type_text_starts_with_string_intrinsic(&raw_type_text) {
+                            raw_type_text
+                        } else if (!printed.contains("any") || type_text.contains("any"))
+                            && printed.contains("typeof ")
+                            && !type_text.contains("typeof ")
+                        {
+                            printed.replace("typeof ", "")
+                        } else if !printed.contains("any") || type_text.contains("any") {
+                            printed
+                        } else {
+                            type_text
+                        }
+                    } else if (!printed.contains("any") || type_text.contains("any"))
                         && printed.contains("typeof ")
-                        && !type_text.contains("typeof ") =>
-                {
-                    printed.replace("typeof ", "")
-                }
-                Some(printed)
-                    if printed != "any"
-                        && (!printed.contains("any") || type_text.contains("any")) =>
-                {
-                    printed
+                        && !type_text.contains("typeof ")
+                    {
+                        printed.replace("typeof ", "")
+                    } else if !printed.contains("any") || type_text.contains("any") {
+                        printed
+                    } else {
+                        type_text
+                    }
                 }
                 _ => type_text,
             }
@@ -809,7 +808,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn find_type_alias_type_node_in_arena(
+    pub(in crate::declaration_emitter) fn find_type_alias_type_node_in_arena(
         &self,
         arena: &NodeArena,
         name: &str,
@@ -991,7 +990,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn emit_type_node_text_from_arena(
+    pub(in crate::declaration_emitter) fn emit_type_node_text_from_arena(
         &self,
         source_arena: &NodeArena,
         type_idx: NodeIndex,
@@ -1104,7 +1103,10 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     Some(sym_id)
                 } else {
-                    binder.get_node_symbol(type_idx)
+                    binder.get_node_symbol(type_idx).or_else(|| {
+                        self.identifier_text_from_arena(arena, type_idx)
+                            .and_then(|name| binder.symbols.find_by_name(&name))
+                    })
                 }
             }
             _ => None,
@@ -1172,7 +1174,7 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn type_member_declared_type_annotation_text(
+    pub(in crate::declaration_emitter) fn type_member_declared_type_annotation_text(
         &self,
         type_sym_id: SymbolId,
         member_name: &str,
@@ -1285,6 +1287,37 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
+            if let Some(interface) = source_arena.get_interface(decl_node)
+                && let Some(heritage_clauses) = interface.heritage_clauses.as_ref()
+            {
+                for &heritage_idx in &heritage_clauses.nodes {
+                    let Some(heritage_node) = source_arena.get(heritage_idx) else {
+                        continue;
+                    };
+                    let Some(heritage) = source_arena.get_heritage(heritage_node) else {
+                        continue;
+                    };
+                    for &base_idx in &heritage.types.nodes {
+                        let Some(base_node) = source_arena.get(base_idx) else {
+                            continue;
+                        };
+                        let base_expr = source_arena
+                            .get_expr_type_args(base_node)
+                            .map_or(base_idx, |expr| expr.expression);
+                        let Some(base_sym_id) =
+                            self.declaration_type_symbol_from_type_node(source_arena, base_expr)
+                        else {
+                            continue;
+                        };
+                        if let Some(type_text) =
+                            self.type_member_declared_type_annotation_text(base_sym_id, member_name)
+                        {
+                            return Some(type_text);
+                        }
+                    }
+                }
+            }
+
             None
         })
     }
@@ -1296,7 +1329,6 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<T> {
         let binder = self.binder?;
         let symbol = binder.symbols.get(sym_id)?;
-
         for decl_idx in symbol.declarations.iter().copied() {
             if let Some(result) = self
                 .arena
@@ -1393,7 +1425,10 @@ impl<'a> DeclarationEmitter<'a> {
         result
     }
 
-    fn contains_whole_word_in_text(text: &str, word: &str) -> bool {
+    pub(in crate::declaration_emitter) fn contains_whole_word_in_text(
+        text: &str,
+        word: &str,
+    ) -> bool {
         let bytes = text.as_bytes();
         let word_bytes = word.as_bytes();
         let word_len = word_bytes.len();
@@ -2047,21 +2082,34 @@ impl<'a> DeclarationEmitter<'a> {
                 type_text
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                let reused_type_text = self
-                    .call_expression_returned_local_class_constructor_text(expr_idx, false)
-                    .or_else(|| {
-                        self.super_method_call_return_type_text(expr_idx)
-                            .or_else(|| self.call_expression_source_return_type_text(expr_idx))
-                            .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
+                let reused_type_text = self.call_expression_reused_type_text(expr_idx);
+                let reused_type_uses_function_local_alias =
+                    reused_type_text.as_deref().is_some_and(|type_text| {
+                        self.type_text_starts_with_function_local_type_alias(type_text)
                     });
                 if reused_type_text.is_some()
                     && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
                     && type_id != tsz_solver::types::TypeId::ANY
                     && type_id != tsz_solver::types::TypeId::ERROR
-                    && self
-                        .type_contains_conditional_alias_application_for_inferred_emit(type_id, 0)
+                    && (reused_type_uses_function_local_alias
+                        || self.should_expand_named_application_for_inferred_declaration(type_id)
+                        || self.type_contains_conditional_alias_application_for_inferred_emit(
+                            type_id, 0,
+                        ))
                 {
-                    return Some(self.print_type_id_for_inferred_declaration(type_id));
+                    let printed = self.print_type_id_for_inferred_declaration(type_id);
+                    if let Some(call) = self.arena.get_call_expr(expr_node) {
+                        if let Some((alias_name, module_specifier)) =
+                            self.call_receiver_default_import_alias(call.expression)
+                        {
+                            return Some(Self::rewrite_import_type_export_to_default_alias(
+                                &printed,
+                                &alias_name,
+                                &module_specifier,
+                            ));
+                        }
+                    }
+                    return Some(printed);
                 }
                 reused_type_text
             }
@@ -2103,7 +2151,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn super_method_call_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn super_method_call_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
             return None;
@@ -2452,14 +2503,16 @@ impl<'a> DeclarationEmitter<'a> {
         {
             if let Some(type_text) = self.preferred_expression_type_text(initializer) {
                 let type_text = Self::strip_synthetic_anonymous_object_members(&type_text);
-                return self
+                let type_text = self
                     .expand_portable_mapped_object_text_in_current_context(&type_text)
                     .unwrap_or(type_text);
+                return self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
             }
             let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
-            return self
+            let type_text = self
                 .expand_portable_mapped_object_text_in_current_context(&type_text)
                 .unwrap_or(type_text);
+            return self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
         }
 
         if (type_id != tsz_solver::types::TypeId::ANY
@@ -2570,6 +2623,34 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(in crate::declaration_emitter) fn declaration_type_is_uninformative(
+        &self,
+        candidates: &[NodeIndex],
+    ) -> bool {
+        self.get_node_type_or_names(candidates)
+            .is_none_or(|type_id| {
+                type_id == tsz_solver::types::TypeId::ANY
+                    || type_id == tsz_solver::types::TypeId::ERROR
+                    || type_id == tsz_solver::types::TypeId::UNKNOWN
+            })
+    }
+
+    pub(in crate::declaration_emitter) fn as_const_assertion_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::AS_EXPRESSION {
+            return None;
+        }
+        let assertion = self.arena.get_type_assertion(expr_node)?;
+        if !self.type_assertion_is_const(assertion.type_node) {
+            return None;
+        }
+
+        self.const_asserted_expression_type_text(assertion.expression, self.indent_level)
+    }
+
     pub(in crate::declaration_emitter) fn angle_bracket_const_assertion_type_text(
         &self,
         expr_idx: NodeIndex,
@@ -2580,18 +2661,22 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let assertion = self.arena.get_type_assertion(expr_node)?;
-        let asserted_type = self.arena.get(assertion.type_node)?;
-        let is_const_assertion = asserted_type.kind == SyntaxKind::ConstKeyword as u16
-            || self
-                .get_identifier_text(assertion.type_node)
-                .or_else(|| self.emit_type_node_text(assertion.type_node))
-                .as_deref()
-                == Some("const");
-        if !is_const_assertion {
+        if !self.type_assertion_is_const(assertion.type_node) {
             return None;
         }
 
         self.const_asserted_expression_type_text(assertion.expression, self.indent_level)
+    }
+
+    fn type_assertion_is_const(&self, type_node_idx: NodeIndex) -> bool {
+        self.arena
+            .get(type_node_idx)
+            .is_some_and(|asserted_type| asserted_type.kind == SyntaxKind::ConstKeyword as u16)
+            || self
+                .get_identifier_text(type_node_idx)
+                .or_else(|| self.emit_type_node_text(type_node_idx))
+                .as_deref()
+                == Some("const")
     }
 
     fn const_asserted_expression_type_text(
@@ -2652,8 +2737,13 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
+            let element_depth = if element_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                depth
+            } else {
+                depth + 1
+            };
             parts.push(
-                self.const_asserted_expression_type_text(element_idx, depth + 1)
+                self.const_asserted_expression_type_text(element_idx, element_depth)
                     .unwrap_or_else(|| "any".to_string()),
             );
         }
@@ -2732,9 +2822,16 @@ impl<'a> DeclarationEmitter<'a> {
         type_node_idx: NodeIndex,
     ) -> Option<String> {
         let name = self.simple_type_reference_name_text(type_node_idx)?;
-        let alias_type_node =
-            self.find_enclosing_block_type_alias_type_node(assertion_expr_idx, &name)?;
-        let alias_text = self.emit_type_node_text_normalized(alias_type_node)?;
+        let alias_decl_idx =
+            self.find_enclosing_block_type_alias_declaration(assertion_expr_idx, &name)?;
+        let alias_node = self.arena.get(alias_decl_idx)?;
+        let alias = self.arena.get_type_alias(alias_node)?;
+        let mut alias_text = self.emit_type_node_text_normalized(alias.type_node)?;
+        let substitutions = self
+            .type_alias_application_substitutions(alias.type_parameters.as_ref(), type_node_idx);
+        if !substitutions.is_empty() {
+            alias_text = Self::replace_whole_words_in_text(&alias_text, &substitutions);
+        }
         if alias_text.contains("typeof ") {
             return Some(alias_text);
         }
@@ -2750,7 +2847,10 @@ impl<'a> DeclarationEmitter<'a> {
             );
         }
 
-        None
+        alias_text
+            .trim_start()
+            .starts_with('{')
+            .then(|| Self::normalize_local_type_literal_accessor_text(&alias_text))
     }
 
     fn type_text_contains_mapped_type_literal(text: &str) -> bool {
@@ -2815,38 +2915,6 @@ impl<'a> DeclarationEmitter<'a> {
         if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
             let type_ref = self.arena.get_type_ref(type_node)?;
             return self.type_reference_name_text(type_ref.type_name);
-        }
-        None
-    }
-
-    fn find_enclosing_block_type_alias_type_node(
-        &self,
-        from_idx: NodeIndex,
-        name: &str,
-    ) -> Option<NodeIndex> {
-        let mut current_idx = from_idx;
-        while let Some(ext) = self.arena.get_extended(current_idx) {
-            let parent_idx = ext.parent;
-            if !parent_idx.is_some() {
-                return None;
-            }
-            let parent_node = self.arena.get(parent_idx)?;
-            if parent_node.kind == syntax_kind_ext::BLOCK
-                && let Some(block) = self.arena.get_block(parent_node)
-                && let Some(type_node) =
-                    block.statements.nodes.iter().copied().find_map(|stmt_idx| {
-                        let stmt_node = self.arena.get(stmt_idx)?;
-                        if stmt_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                            return None;
-                        }
-                        let alias = self.arena.get_type_alias(stmt_node)?;
-                        (self.get_identifier_text(alias.name).as_deref() == Some(name))
-                            .then_some(alias.type_node)
-                    })
-            {
-                return Some(type_node);
-            }
-            current_idx = parent_idx;
         }
         None
     }
@@ -3175,7 +3243,7 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn is_simple_identifier_text(text: &str) -> bool {
+    pub(in crate::declaration_emitter) fn is_simple_identifier_text(text: &str) -> bool {
         let mut chars = text.chars();
         let Some(first) = chars.next() else {
             return false;
@@ -3197,24 +3265,6 @@ impl<'a> DeclarationEmitter<'a> {
             return self.get_identifier_text(qualified.right);
         }
         None
-    }
-
-    pub(in crate::declaration_emitter) fn serialized_property_name_length(
-        &self,
-        name: &str,
-    ) -> usize {
-        let mut chars = name.chars();
-        let Some(first) = chars.next() else {
-            return 2;
-        };
-        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
-            return name.len() + 2;
-        }
-        if chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()) {
-            name.len()
-        } else {
-            name.len() + 2
-        }
     }
 
     pub(in crate::declaration_emitter) fn skip_parenthesized_expression(
@@ -3458,6 +3508,17 @@ impl<'a> DeclarationEmitter<'a> {
                     .is_some_and(|params| !params.nodes.is_empty());
             let is_source_with_return_annotation =
                 callable.body.is_some() && callable.type_annotation.is_some();
+            if imported_module.is_some()
+                && !is_ambient_function
+                && self
+                    .current_file_path
+                    .as_deref()
+                    .is_some_and(|current_path| {
+                        self.paths_refer_to_same_source_file(current_path, &source_file.file_name)
+                    })
+            {
+                return None;
+            }
             if (!is_ambient_function
                 && !is_source_overload_signature
                 && !is_source_with_return_annotation)
@@ -3472,8 +3533,10 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let mut type_text = self
-                .emit_type_node_text_from_arena(source_arena, callable.type_annotation)
-                .or_else(|| self.source_slice_from_arena(source_arena, callable.type_annotation))?
+                .source_slice_from_arena(source_arena, callable.type_annotation)
+                .or_else(|| {
+                    self.emit_type_node_text_from_arena(source_arena, callable.type_annotation)
+                })?
                 .trim_end()
                 .trim_end_matches(';')
                 .trim_end()
@@ -3481,6 +3544,7 @@ impl<'a> DeclarationEmitter<'a> {
 
             let mut type_param_names = Vec::new();
             let mut type_param_substitutions = Vec::new();
+            let mut type_param_fallbacks = Vec::new();
             if let Some(type_params) = callable.type_parameters {
                 for &param_idx in &type_params.nodes {
                     if let Some(param_node) = source_arena.get(param_idx)
@@ -3488,6 +3552,22 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(name_text) =
                             self.identifier_text_from_arena(source_arena, param.name)
                     {
+                        let fallback = if param.default.is_some() {
+                            self.emit_type_node_text_from_arena(source_arena, param.default)
+                                .or_else(|| {
+                                    self.source_slice_from_arena(source_arena, param.default)
+                                })
+                        } else if param.constraint.is_some() {
+                            self.emit_type_node_text_from_arena(source_arena, param.constraint)
+                                .or_else(|| {
+                                    self.source_slice_from_arena(source_arena, param.constraint)
+                                })
+                        } else {
+                            None
+                        };
+                        if let Some(fallback) = fallback {
+                            type_param_fallbacks.push((name_text.clone(), fallback));
+                        }
                         type_param_names.push(name_text);
                     }
                 }
@@ -3509,6 +3589,18 @@ impl<'a> DeclarationEmitter<'a> {
                     );
                 }
             }
+            for (name_text, fallback_text) in &type_param_fallbacks {
+                if type_param_substitutions
+                    .iter()
+                    .any(|(substituted, _)| substituted == name_text)
+                    || !Self::contains_whole_word_in_text(&type_text, name_text)
+                {
+                    continue;
+                }
+                let fallback_text =
+                    Self::replace_whole_words_in_text(fallback_text, &type_param_substitutions);
+                type_param_substitutions.push((name_text.clone(), fallback_text));
+            }
             if explicit_type_args.is_empty()
                 && type_param_substitutions.is_empty()
                 && type_param_names
@@ -3517,7 +3609,52 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 return None;
             }
-            type_text = Self::replace_whole_words_in_text(&type_text, &type_param_substitutions);
+            let mut protected_type_param_names = Vec::new();
+            let protected_substitutions = type_param_substitutions
+                .iter()
+                .enumerate()
+                .map(|(substitution_idx, (name_text, arg_text))| {
+                    let mut protected_arg_text = arg_text.clone();
+                    for (param_idx, param_name) in type_param_names.iter().enumerate() {
+                        if !Self::contains_whole_word_in_text(&protected_arg_text, param_name) {
+                            continue;
+                        }
+                        let protected_name =
+                            format!("__tszDeclEmitTypeParam{substitution_idx}_{param_idx}__");
+                        protected_arg_text = Self::replace_whole_words_in_text(
+                            &protected_arg_text,
+                            &[(param_name.clone(), protected_name.clone())],
+                        );
+                        protected_type_param_names.push((protected_name, param_name.clone()));
+                    }
+                    (name_text.clone(), protected_arg_text)
+                })
+                .collect::<Vec<_>>();
+            type_text = Self::replace_whole_words_in_text(&type_text, &protected_substitutions);
+            if type_param_names
+                .iter()
+                .any(|name| Self::contains_whole_word_in_text(&type_text, name))
+            {
+                return None;
+            }
+            for (protected_name, param_name) in protected_type_param_names {
+                type_text = type_text.replace(&protected_name, &param_name);
+            }
+            if Self::leading_type_reference_name(&type_text)
+                .is_some_and(Self::is_builtin_conditional_utility_type_name)
+                && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
+            {
+                return Some(self.print_type_id_expanded_for_inferred_declaration(type_id));
+            }
+            if let Some(expanded) =
+                self.event_like_correlated_alias_return_text(source_arena, &type_text, call)
+            {
+                type_text = expanded;
+            } else if let Some(expanded) =
+                Self::expand_tuple_item_lookup_mapped_type_text(&type_text)
+            {
+                type_text = expanded;
+            }
 
             let source_path = self.get_symbol_source_path(sym_id, binder).or_else(|| {
                 self.arena_to_path
@@ -3587,6 +3724,10 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    fn is_builtin_conditional_utility_type_name(name: &str) -> bool {
+        matches!(name, "Exclude" | "Extract" | "NonNullable")
+    }
+
     fn rewrite_typeof_import_default_return_type(
         &self,
         source_path: &str,
@@ -3608,6 +3749,7 @@ impl<'a> DeclarationEmitter<'a> {
             .module_exports
             .get(target_module_path)?
             .get("default")?;
+        let default_sym = self.resolve_portability_symbol(default_sym, binder);
         let declared_type = self.declared_type_annotation_text_for_symbol(default_sym)?;
         let public_module =
             Self::combine_public_module_specifier(imported_module, &module_specifier)?;
@@ -3987,89 +4129,11 @@ impl<'a> DeclarationEmitter<'a> {
             .then_some(name)
     }
 
-    fn infer_call_type_param_substitutions_from_arguments(
-        &self,
-        source_arena: &NodeArena,
-        parameters: &NodeList,
-        call: &tsz_parser::parser::node::CallExprData,
-        type_param_names: &[String],
-    ) -> Vec<(String, String)> {
-        let Some(args) = call.arguments.as_ref() else {
-            return Vec::new();
-        };
-
-        let mut substitutions: Vec<(String, String)> = Vec::new();
-        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
-            let Some(param_node) = source_arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = source_arena.get_parameter(param_node) else {
-                continue;
-            };
-            let Some(param_type_text) = self
-                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
-                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
-            else {
-                continue;
-            };
-            let param_type_text = param_type_text.trim();
-            if !type_param_names
-                .iter()
-                .any(|name| name.as_str() == param_type_text)
-            {
-                continue;
-            }
-            if substitutions
-                .iter()
-                .any(|(name, _)| name.as_str() == param_type_text)
-            {
-                continue;
-            }
-            let Some(arg_type_text) = self.preferred_expression_type_text(arg_idx) else {
-                continue;
-            };
-            substitutions.push((
-                param_type_text.to_string(),
-                Self::parenthesize_generic_function_type_argument(&arg_type_text),
-            ));
-        }
-
-        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
-            let Some(param_node) = source_arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = source_arena.get_parameter(param_node) else {
-                continue;
-            };
-            let Some(param_type_text) = self
-                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
-                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
-            else {
-                continue;
-            };
-            if !type_param_names
-                .iter()
-                .any(|name| Self::contains_whole_word_in_text(&param_type_text, name))
-            {
-                continue;
-            }
-            let Some(source_function_type) = Self::parse_function_type_text(&param_type_text)
-            else {
-                continue;
-            };
-            let Some(argument_function_type) = self.function_type_parts_for_expression(arg_idx)
-            else {
-                continue;
-            };
-            Self::infer_function_type_substitutions(
-                &source_function_type,
-                &argument_function_type,
-                type_param_names,
-                &mut substitutions,
-            );
-        }
-
-        substitutions
+    fn type_text_starts_with_string_intrinsic(type_text: &str) -> bool {
+        matches!(
+            Self::leading_type_reference_name(type_text),
+            Some("Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize")
+        )
     }
 
     pub(in crate::declaration_emitter) fn function_signature_accepts_call_arguments(
@@ -4126,247 +4190,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
-    }
-
-    fn infer_function_type_substitutions(
-        source: &FunctionTypeTextParts,
-        argument: &FunctionTypeTextParts,
-        type_param_names: &[String],
-        substitutions: &mut Vec<(String, String)>,
-    ) {
-        for (source_param_index, source_param) in source.parameters.iter().enumerate() {
-            if !type_param_names
-                .iter()
-                .any(|name| name.as_str() == source_param.type_text)
-            {
-                continue;
-            }
-            if substitutions
-                .iter()
-                .any(|(name, _)| name.as_str() == source_param.type_text)
-            {
-                continue;
-            }
-            if let Some(argument_param) = argument.parameters.get(source_param_index) {
-                substitutions.push((
-                    source_param.type_text.clone(),
-                    Self::parenthesize_generic_function_type_argument(&argument_param.type_text),
-                ));
-            } else if source_param.optional {
-                substitutions.push((source_param.type_text.clone(), "unknown".to_string()));
-            }
-        }
-
-        if type_param_names
-            .iter()
-            .any(|name| name.as_str() == source.return_type)
-            && !substitutions
-                .iter()
-                .any(|(name, _)| name.as_str() == source.return_type)
-        {
-            substitutions.push((
-                source.return_type.clone(),
-                Self::parenthesize_generic_function_type_argument(&argument.return_type),
-            ));
-        }
-    }
-
-    fn function_type_parts_for_expression(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<FunctionTypeTextParts> {
-        if let Some(type_text) = self.preferred_expression_type_text(expr_idx)
-            && let Some(parts) = Self::parse_function_type_text(&type_text)
-        {
-            return Some(parts);
-        }
-
-        let sym_id = self.value_reference_symbol(expr_idx)?;
-        let binder = self.binder?;
-        let sym_id = self
-            .resolve_portability_import_alias(sym_id, binder)
-            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
-        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
-            let decl_node = source_arena.get(decl_idx)?;
-            let func = source_arena.get_function(decl_node)?;
-            let return_type = self
-                .emit_type_node_text_from_arena(source_arena, func.type_annotation)
-                .or_else(|| self.source_slice_from_arena(source_arena, func.type_annotation))?
-                .trim_end()
-                .trim_end_matches(';')
-                .trim()
-                .to_string();
-            let mut parameters = Vec::new();
-            for &param_idx in &func.parameters.nodes {
-                let Some(param_node) = source_arena.get(param_idx) else {
-                    continue;
-                };
-                let Some(param) = source_arena.get_parameter(param_node) else {
-                    continue;
-                };
-                let type_text = self
-                    .source_slice_from_arena(source_arena, param.type_annotation)
-                    .unwrap_or_else(|| "any".to_string())
-                    .trim()
-                    .to_string();
-                parameters.push(FunctionTypeParamText {
-                    optional: param.question_token || param.initializer != NodeIndex::NONE,
-                    type_text,
-                });
-            }
-            Some(FunctionTypeTextParts {
-                parameters,
-                return_type,
-            })
-        })
-    }
-
-    fn parse_function_type_text(type_text: &str) -> Option<FunctionTypeTextParts> {
-        let trimmed = type_text.trim().trim_end_matches(';').trim();
-        let arrow_index = Self::find_top_level_arrow(trimmed)?;
-        let params_text = trimmed.get(..arrow_index)?.trim();
-        let return_type = trimmed
-            .get(arrow_index + 2..)?
-            .trim()
-            .trim_end_matches(';')
-            .trim()
-            .to_string();
-        let params_text = params_text
-            .strip_prefix('(')
-            .and_then(|text| text.strip_suffix(')'))?;
-        let mut parameters = Vec::new();
-        for raw_param in Self::split_top_level_commas(params_text) {
-            let raw_param = raw_param.trim();
-            if raw_param.is_empty() {
-                continue;
-            }
-            let raw_param = raw_param.strip_prefix("...").unwrap_or(raw_param).trim();
-            let (optional, type_text) =
-                if let Some(colon_index) = Self::find_top_level_byte(raw_param, b':') {
-                    let name_text = raw_param.get(..colon_index)?.trim();
-                    let type_text = raw_param.get(colon_index + 1..)?.trim();
-                    (name_text.ends_with('?'), type_text)
-                } else {
-                    (false, raw_param)
-                };
-            parameters.push(FunctionTypeParamText {
-                optional,
-                type_text: type_text.to_string(),
-            });
-        }
-
-        (!return_type.is_empty()).then_some(FunctionTypeTextParts {
-            parameters,
-            return_type,
-        })
-    }
-
-    fn find_top_level_arrow(text: &str) -> Option<usize> {
-        let bytes = text.as_bytes();
-        let mut paren_depth = 0usize;
-        let mut bracket_depth = 0usize;
-        let mut brace_depth = 0usize;
-        let mut angle_depth = 0usize;
-        let mut i = 0usize;
-        while i + 1 < bytes.len() {
-            match bytes[i] {
-                b'(' => paren_depth += 1,
-                b')' => paren_depth = paren_depth.saturating_sub(1),
-                b'[' => bracket_depth += 1,
-                b']' => bracket_depth = bracket_depth.saturating_sub(1),
-                b'{' => brace_depth += 1,
-                b'}' => brace_depth = brace_depth.saturating_sub(1),
-                b'<' => angle_depth += 1,
-                b'>' => angle_depth = angle_depth.saturating_sub(1),
-                b'=' if bytes[i + 1] == b'>'
-                    && paren_depth == 0
-                    && bracket_depth == 0
-                    && brace_depth == 0
-                    && angle_depth == 0 =>
-                {
-                    return Some(i);
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        None
-    }
-
-    fn split_top_level_commas(text: &str) -> Vec<&str> {
-        let mut parts = Vec::new();
-        let mut start = 0usize;
-        let mut paren_depth = 0usize;
-        let mut bracket_depth = 0usize;
-        let mut brace_depth = 0usize;
-        let mut angle_depth = 0usize;
-
-        for (idx, byte) in text.bytes().enumerate() {
-            match byte {
-                b'(' => paren_depth += 1,
-                b')' => paren_depth = paren_depth.saturating_sub(1),
-                b'[' => bracket_depth += 1,
-                b']' => bracket_depth = bracket_depth.saturating_sub(1),
-                b'{' => brace_depth += 1,
-                b'}' => brace_depth = brace_depth.saturating_sub(1),
-                b'<' => angle_depth += 1,
-                b'>' => angle_depth = angle_depth.saturating_sub(1),
-                b',' if paren_depth == 0
-                    && bracket_depth == 0
-                    && brace_depth == 0
-                    && angle_depth == 0 =>
-                {
-                    if let Some(part) = text.get(start..idx) {
-                        parts.push(part);
-                    }
-                    start = idx + 1;
-                }
-                _ => {}
-            }
-        }
-        if let Some(part) = text.get(start..) {
-            parts.push(part);
-        }
-        parts
-    }
-
-    fn find_top_level_byte(text: &str, target: u8) -> Option<usize> {
-        let mut paren_depth = 0usize;
-        let mut bracket_depth = 0usize;
-        let mut brace_depth = 0usize;
-        let mut angle_depth = 0usize;
-
-        for (idx, byte) in text.bytes().enumerate() {
-            match byte {
-                b'(' => paren_depth += 1,
-                b')' => paren_depth = paren_depth.saturating_sub(1),
-                b'[' => bracket_depth += 1,
-                b']' => bracket_depth = bracket_depth.saturating_sub(1),
-                b'{' => brace_depth += 1,
-                b'}' => brace_depth = brace_depth.saturating_sub(1),
-                b'<' => angle_depth += 1,
-                b'>' => angle_depth = angle_depth.saturating_sub(1),
-                byte if byte == target
-                    && paren_depth == 0
-                    && bracket_depth == 0
-                    && brace_depth == 0
-                    && angle_depth == 0 =>
-                {
-                    return Some(idx);
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
-    fn parenthesize_generic_function_type_argument(type_text: &str) -> String {
-        let trimmed = type_text.trim();
-        if trimmed.starts_with('<') && trimmed.contains("=>") {
-            format!("({trimmed})")
-        } else {
-            trimmed.to_string()
-        }
     }
 
     fn qualify_ambient_module_exported_names_in_text(
@@ -5363,6 +5186,11 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let body_node = self.arena.get(body_idx)?;
         let block = self.arena.get_block(body_node)?;
+        if let Some(type_text) =
+            self.function_body_numeric_literal_return_union_type_text(&block.statements)
+        {
+            return Some(type_text);
+        }
         let mut preferred = None;
         if self.collect_unique_return_type_text_from_block(&block.statements, &mut preferred) {
             preferred
@@ -5376,6 +5204,12 @@ impl<'a> DeclarationEmitter<'a> {
         source_type_text: &str,
         inferred_return_type: tsz_solver::types::TypeId,
     ) -> bool {
+        if Self::numeric_literal_union_widens_to_number(
+            source_type_text,
+            &self.print_type_id(inferred_return_type),
+        ) {
+            return true;
+        }
         if source_type_text.contains("{\n    new ")
             && source_type_text.contains(" & ")
             && self.print_type_id(inferred_return_type) != source_type_text
@@ -5392,6 +5226,22 @@ impl<'a> DeclarationEmitter<'a> {
                 && self.print_type_id(inferred_return_type) != source_type_text;
         }
         !self.print_type_id(inferred_return_type).contains("typeof ")
+    }
+
+    pub(in crate::declaration_emitter) fn source_return_type_is_function_type_param(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> bool {
+        let Some(ref type_params) = func.type_parameters else {
+            return false;
+        };
+        let Some(name) = Self::simple_type_reference_name(source_type_text) else {
+            return false;
+        };
+        self.collect_type_param_names(type_params)
+            .iter()
+            .any(|type_param| type_param == &name)
     }
 
     pub(in crate::declaration_emitter) fn function_return_type_text_for_declaration_scope(
@@ -5437,21 +5287,24 @@ impl<'a> DeclarationEmitter<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         source_type_text: &str,
     ) -> String {
+        let source_type_text = self
+            .simplify_uniform_object_keyof_index_access_text(source_type_text)
+            .unwrap_or_else(|| source_type_text.to_string());
         if !source_type_text.contains(": unknown;") {
-            return source_type_text.to_string();
+            return source_type_text;
         }
 
         let Some(class_expr_idx) = self.direct_returned_class_expression(func.body) else {
-            return source_type_text.to_string();
+            return source_type_text;
         };
         let Some(class_node) = self.arena.get(class_expr_idx) else {
-            return source_type_text.to_string();
+            return source_type_text;
         };
         let Some(class) = self.arena.get_class(class_node) else {
-            return source_type_text.to_string();
+            return source_type_text;
         };
 
-        let mut rewritten = source_type_text.to_string();
+        let mut rewritten = source_type_text;
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -5704,6 +5557,19 @@ impl<'a> DeclarationEmitter<'a> {
                     self.collect_unique_return_type_text_from_block(&clause.statements, preferred)
                 })
             }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                self.arena.get_switch(stmt_node).is_some_and(|switch_data| {
+                    self.arena
+                        .get(switch_data.case_block)
+                        .and_then(|case_block_node| self.arena.get_block(case_block_node))
+                        .is_some_and(|block| {
+                            self.collect_unique_return_type_text_from_block(
+                                &block.statements,
+                                preferred,
+                            )
+                        })
+                })
+            }
             _ => true,
         }
     }
@@ -5729,6 +5595,8 @@ impl<'a> DeclarationEmitter<'a> {
             }
             if let Some(type_text) = self
                 .preferred_expression_type_text(var_decl.initializer)
+                .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
+                .or_else(|| self.as_const_assertion_type_text(var_decl.initializer))
                 .or_else(|| self.infer_fallback_type_text_at(var_decl.initializer, 0))
             {
                 return Some(type_text);
@@ -6025,11 +5893,139 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 let data = self.arena.get_method_decl(member_node)?;
-                self.method_function_type_text(member_idx, data, depth)
-                    .map(|type_text| format!("{name}: {type_text}"))
+                if self.object_literal_method_uses_property_syntax(data) {
+                    self.method_function_type_text(member_idx, data, depth)
+                        .map(|type_text| format!("{name}: {type_text}"))
+                } else {
+                    self.method_signature_type_text_named_at(member_idx, data, name, depth)
+                }
             }
             _ => None,
         }
+    }
+
+    fn method_signature_type_text_named_at(
+        &self,
+        method_idx: NodeIndex,
+        method: &tsz_parser::parser::node::MethodDeclData,
+        name: &str,
+        depth: u32,
+    ) -> Option<String> {
+        let mut scratch = self.scratch_declaration_emitter();
+        scratch.indent_level = depth;
+        scratch.write(name);
+        if method.question_token {
+            scratch.write("?");
+        }
+
+        let jsdoc_template_params = if method
+            .type_parameters
+            .as_ref()
+            .is_none_or(|type_params| type_params.nodes.is_empty())
+        {
+            self.jsdoc_template_params_for_node(method_idx)
+        } else {
+            Vec::new()
+        };
+        if let Some(ref type_params) = method.type_parameters {
+            if !type_params.nodes.is_empty() {
+                scratch.emit_type_parameters(type_params);
+            } else if !jsdoc_template_params.is_empty() {
+                scratch.emit_jsdoc_template_parameters(&jsdoc_template_params);
+            }
+        } else if !jsdoc_template_params.is_empty() {
+            scratch.emit_jsdoc_template_parameters(&jsdoc_template_params);
+        }
+
+        scratch.write("(");
+        scratch.emit_parameters_with_body(&method.parameters, method.body);
+        scratch.write("): ");
+        scratch.emit_method_function_type_return(method_idx, method);
+        let type_text = scratch.writer.take_output();
+        (!type_text.trim().is_empty()).then_some(type_text)
+    }
+
+    fn object_literal_method_uses_property_syntax(
+        &self,
+        method: &tsz_parser::parser::node::MethodDeclData,
+    ) -> bool {
+        let Some(name_node) = self.arena.get(method.name) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        if self
+            .resolved_computed_property_name_text(method.name)
+            .is_some()
+            || self.computed_property_name_is_symbol_access(method.name)
+            || self.computed_property_name_is_literal_key(method.name)
+        {
+            return false;
+        }
+
+        let computed_key_requires_property_syntax = self
+            .arena
+            .get_computed_property(name_node)
+            .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
+            .is_none_or(|type_id| {
+                type_id == tsz_solver::types::TypeId::ANY
+                    || self.type_interner.is_some_and(|interner| {
+                        !tsz_solver::type_queries::is_type_usable_as_property_name(
+                            interner, type_id,
+                        )
+                    })
+            });
+
+        method.question_token || computed_key_requires_property_syntax
+    }
+
+    fn computed_property_name_is_literal_key(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NumericLiteral as u16
+            || expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+    }
+
+    fn computed_property_name_is_symbol_access(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        self.get_identifier_text(access.expression).as_deref() == Some("Symbol")
     }
 
     fn format_object_member_type_text(name: &str, type_text: &str, depth: u32) -> String {
@@ -6438,337 +6434,6 @@ impl<'a> DeclarationEmitter<'a> {
         idx
     }
 
-    pub(in crate::declaration_emitter) fn semantic_simple_enum_access(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
-        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
-        let expr_node = self.arena.get(expr_idx)?;
-        if !self.is_simple_enum_access(expr_node) {
-            return None;
-        }
-
-        let access = self.arena.get_access_expr(expr_node)?;
-        let base_name = self.get_identifier_text(access.expression)?;
-
-        if let Some(binder) = self.binder
-            && let Some(symbol_id) = binder.get_node_symbol(access.expression)
-            && let Some(symbol) = binder.symbols.get(symbol_id)
-            && symbol.flags & tsz_binder::symbol_flags::ENUM != 0
-            && symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0
-        {
-            return Some(expr_idx);
-        }
-
-        let source_file_idx = self.current_source_file_idx?;
-        let source_file_node = self.arena.get(source_file_idx)?;
-        let source_file = self.arena.get_source_file(source_file_node)?;
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
-                continue;
-            }
-            if let Some(enum_data) = self.arena.get_enum(stmt_node)
-                && self.get_identifier_text(enum_data.name).as_deref() == Some(base_name.as_str())
-            {
-                return Some(expr_idx);
-            }
-        }
-        None
-    }
-
-    pub(crate) fn simple_enum_access_member_text(&self, expr_idx: NodeIndex) -> Option<String> {
-        let expr_idx = self.semantic_simple_enum_access(expr_idx)?;
-        let expr_node = self.arena.get(expr_idx)?;
-        let access = self.arena.get_access_expr(expr_node)?;
-        let base_name = self.get_identifier_text(access.expression)?;
-        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let member_name = self.get_identifier_text(access.name_or_argument)?;
-            return Some(format!("{base_name}.{member_name}"));
-        }
-
-        if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            let member_node = self.arena.get(access.name_or_argument)?;
-            let member_text = self.get_source_slice(member_node.pos, member_node.end)?;
-            return Some(format!("{base_name}[{member_text}]"));
-        }
-
-        None
-    }
-
-    pub(crate) fn enum_member_access_initializer_text(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
-        let expr_node = self.arena.get(expr_idx)?;
-        let is_access = expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
-        if !is_access {
-            return None;
-        }
-
-        let binder = self.binder?;
-        let sym_id = self
-            .value_reference_symbol(expr_idx)
-            .or_else(|| self.entity_access_chain_symbol(expr_idx))?;
-        let symbol = binder.symbols.get(sym_id)?;
-        if symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0 {
-            return None;
-        }
-
-        self.get_source_slice_no_semi(expr_node.pos, expr_node.end)
-    }
-
-    fn entity_access_chain_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
-        let binder = self.binder?;
-        let (root_idx, parts) = self.entity_access_chain_parts(expr_idx)?;
-        let root_name = self.get_identifier_text(root_idx)?;
-        let root_sym_id = self.resolve_identifier_symbol(root_idx, &root_name)?;
-        let root_symbol = binder.symbols.get(root_sym_id)?;
-
-        if !parts.is_empty()
-            && root_symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-            && let Some(module_specifier) = root_symbol.import_module.as_deref()
-            && let Some(current_path) = self.current_file_path.as_deref()
-        {
-            for module_path in
-                self.matching_module_export_paths(binder, current_path, module_specifier)
-            {
-                let Some(exports) = binder.module_exports.get(module_path) else {
-                    continue;
-                };
-                let export_name = root_symbol.import_name.as_deref();
-                let (mut current, start_index) = match export_name {
-                    Some("*") | Some("export=") | None => {
-                        let Some(current) = exports.get(&parts[0]) else {
-                            continue;
-                        };
-                        (current, 1)
-                    }
-                    Some(name) => {
-                        let Some(current) = exports.get(name) else {
-                            continue;
-                        };
-                        (current, 0)
-                    }
-                };
-                let mut resolved_all_parts = true;
-                for part in parts.iter().skip(start_index) {
-                    let Some(next) = self.symbol_member(current, part, binder) else {
-                        resolved_all_parts = false;
-                        break;
-                    };
-                    current = next;
-                }
-                if !resolved_all_parts {
-                    continue;
-                }
-                return Some(current);
-            }
-        }
-
-        let mut current = self.resolve_portability_symbol(root_sym_id, binder);
-        for part in parts {
-            current = self.symbol_member(current, &part, binder)?;
-        }
-        Some(current)
-    }
-
-    fn entity_access_chain_parts(&self, expr_idx: NodeIndex) -> Option<(NodeIndex, Vec<String>)> {
-        let mut current = self.skip_parenthesized_non_null_and_comma(expr_idx);
-        let mut reversed_parts = Vec::new();
-
-        for _ in 0..32 {
-            let node = self.arena.get(current)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                reversed_parts.reverse();
-                return Some((current, reversed_parts));
-            }
-
-            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                let access = self.arena.get_access_expr(node)?;
-                reversed_parts.push(self.get_identifier_text(access.name_or_argument)?);
-                current = access.expression;
-                continue;
-            }
-
-            return None;
-        }
-
-        None
-    }
-
-    fn symbol_member(
-        &self,
-        sym_id: SymbolId,
-        member_name: &str,
-        binder: &BinderState,
-    ) -> Option<SymbolId> {
-        let resolved = self.resolve_portability_symbol(sym_id, binder);
-        let symbol = binder.symbols.get(resolved)?;
-        symbol
-            .exports
-            .as_ref()
-            .and_then(|exports| exports.get(member_name))
-            .or_else(|| {
-                symbol
-                    .members
-                    .as_ref()
-                    .and_then(|members| members.get(member_name))
-            })
-    }
-
-    pub(crate) fn simple_const_enum_access_member_text(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
-        let expr_node = self.arena.get(expr_idx)?;
-        if !self.is_simple_enum_access(expr_node) {
-            return None;
-        }
-        let access = self.arena.get_access_expr(expr_node)?;
-        let base_name = self.get_identifier_text(access.expression)?;
-        let is_const_enum = self
-            .current_source_file_idx
-            .and_then(|source_file_idx| self.arena.get(source_file_idx))
-            .and_then(|source_file_node| self.arena.get_source_file(source_file_node))
-            .is_some_and(|source_file| {
-                source_file
-                    .statements
-                    .nodes
-                    .iter()
-                    .any(|&stmt_idx| self.enum_declaration_is_const_named(stmt_idx, &base_name))
-            })
-            || self.arena.nodes.iter().enumerate().any(|(idx, node)| {
-                node.kind == syntax_kind_ext::ENUM_DECLARATION
-                    && self.enum_declaration_is_const_named(NodeIndex(idx as u32), &base_name)
-            });
-
-        if !is_const_enum {
-            return None;
-        }
-
-        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let member_name = self.get_identifier_text(access.name_or_argument)?;
-            return Some(format!("{base_name}.{member_name}"));
-        }
-
-        if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            let member_node = self.arena.get(access.name_or_argument)?;
-            let member_text = self.get_source_slice(member_node.pos, member_node.end)?;
-            return Some(format!("{base_name}[{member_text}]"));
-        }
-
-        None
-    }
-
-    fn enum_declaration_is_const_named(&self, stmt_idx: NodeIndex, base_name: &str) -> bool {
-        let Some(stmt_node) = self.arena.get(stmt_idx) else {
-            return false;
-        };
-        if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
-            return false;
-        }
-        let Some(enum_data) = self.arena.get_enum(stmt_node) else {
-            return false;
-        };
-        self.get_identifier_text(enum_data.name).as_deref() == Some(base_name)
-            && self
-                .arena
-                .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
-    }
-
-    pub(crate) fn simple_enum_access_base_name_text(&self, expr_idx: NodeIndex) -> Option<String> {
-        let expr_idx = self.semantic_simple_enum_access(expr_idx)?;
-        let expr_node = self.arena.get(expr_idx)?;
-        let access = self.arena.get_access_expr(expr_node)?;
-        let base_node = self.arena.get(access.expression)?;
-        self.get_source_slice(base_node.pos, base_node.end)
-    }
-
-    pub(crate) fn const_asserted_enum_access_member_text(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
-        let expr_node = self.arena.get(expr_idx)?;
-        let assertion = self.arena.get_type_assertion(expr_node)?;
-        let type_node = self.arena.get(assertion.type_node)?;
-        let type_text = self.get_source_slice(type_node.pos, type_node.end)?;
-        if type_text != "const" {
-            return None;
-        }
-
-        self.simple_enum_access_member_text(assertion.expression)
-    }
-
-    pub(in crate::declaration_emitter) fn invalid_const_enum_object_access(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> bool {
-        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
-        let Some(expr_node) = self.arena.get(expr_idx) else {
-            return false;
-        };
-        if expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            return false;
-        }
-
-        let Some(access) = self.arena.get_access_expr(expr_node) else {
-            return false;
-        };
-        let Some(base_name) = self.get_identifier_text(access.expression) else {
-            return false;
-        };
-
-        let is_const_enum = if let Some(binder) = self.binder
-            && let Some(symbol_id) = binder.get_node_symbol(access.expression)
-            && let Some(symbol) = binder.symbols.get(symbol_id)
-        {
-            symbol.flags & tsz_binder::symbol_flags::CONST_ENUM != 0
-        } else if let Some(source_file_idx) = self.current_source_file_idx
-            && let Some(source_file_node) = self.arena.get(source_file_idx)
-            && let Some(source_file) = self.arena.get_source_file(source_file_node)
-        {
-            source_file
-                .statements
-                .nodes
-                .iter()
-                .copied()
-                .any(|stmt_idx| {
-                    let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                        return false;
-                    };
-                    if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
-                        return false;
-                    }
-                    let Some(enum_data) = self.arena.get_enum(stmt_node) else {
-                        return false;
-                    };
-                    self.get_identifier_text(enum_data.name).as_deref() == Some(base_name.as_str())
-                        && self
-                            .arena
-                            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
-                })
-        } else {
-            false
-        };
-        if !is_const_enum {
-            return false;
-        }
-
-        let argument_idx = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(access.name_or_argument);
-        self.arena
-            .get(argument_idx)
-            .is_some_and(|arg| arg.kind != SyntaxKind::StringLiteral as u16)
-    }
-
     pub(in crate::declaration_emitter) fn object_literal_prefers_syntax_type_text(
         &self,
         initializer: NodeIndex,
@@ -7039,13 +6704,26 @@ impl<'a> DeclarationEmitter<'a> {
         let mut actual_insertions = 0usize;
         for (name_text, member_text) in computed_members {
             let line = format!("{indent}{member_text};");
+            let line_trimmed = line.trim();
+            if Self::object_literal_method_line_matches_name(line_trimmed, &name_text)
+                && lines.iter().any(|existing| {
+                    Self::object_literal_method_line_matches_name(existing.trim(), &name_text)
+                })
+            {
+                continue;
+            }
+            let exact_exists = lines.iter().any(|existing| existing.trim() == line_trimmed);
             if let Some(existing_idx) = lines.iter().position(|existing| {
-                Self::object_literal_property_line_matches(existing, &name_text, &line)
+                existing.trim() != line_trimmed
+                    && Self::object_literal_property_line_matches(existing, &name_text, &line)
             }) {
-                lines[existing_idx] = line;
+                if exact_exists {
+                    lines.remove(existing_idx);
+                } else {
+                    lines[existing_idx] = line;
+                }
             } else {
-                let line_trimmed = line.trim();
-                if !lines.iter().any(|existing| existing.trim() == line_trimmed) {
+                if !exact_exists {
                     lines.insert(insert_at + actual_insertions, line);
                     actual_insertions += 1;
                 }
@@ -7067,6 +6745,17 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some(lines.join("\n"))
+    }
+
+    fn object_literal_method_line_matches_name(existing: &str, name_text: &str) -> bool {
+        let without_readonly = existing
+            .strip_prefix("readonly ")
+            .unwrap_or(existing)
+            .trim_start();
+        without_readonly.starts_with(&format!("{name_text}("))
+            || without_readonly.starts_with(&format!("{name_text}<"))
+            || without_readonly.starts_with(&format!("{name_text}?("))
+            || without_readonly.starts_with(&format!("{name_text}?<"))
     }
 
     pub(in crate::declaration_emitter) fn object_literal_property_line_matches(
@@ -7283,233 +6972,5 @@ impl<'a> DeclarationEmitter<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::DeclarationEmitter;
-    use tsz_parser::parser::ParserState;
-
-    #[test]
-    fn simultaneous_word_replacement_does_not_rewrite_inserted_import_paths() {
-        let rewritten = DeclarationEmitter::replace_whole_words_in_text(
-            "A | B",
-            &[
-                ("A".to_string(), "import(\"./B\").A".to_string()),
-                ("B".to_string(), "import(\"./C\").B".to_string()),
-            ],
-        );
-
-        assert_eq!(rewritten, "import(\"./B\").A | import(\"./C\").B");
-    }
-
-    #[test]
-    fn simultaneous_word_replacement_does_not_chain_type_parameter_substitutions() {
-        let rewritten = DeclarationEmitter::replace_whole_words_in_text(
-            "T | U",
-            &[
-                ("T".to_string(), "Promise<U>".to_string()),
-                ("U".to_string(), "string".to_string()),
-            ],
-        );
-
-        assert_eq!(rewritten, "Promise<U> | string");
-    }
-
-    #[test]
-    fn word_replacement_skips_template_literal_text_segments() {
-        let rewritten = DeclarationEmitter::replace_whole_words_in_text(
-            "`Kind-${string}` | Kind | `${Kind}`",
-            &[("Kind".to_string(), "import(\"nested\").Kind".to_string())],
-        );
-
-        assert_eq!(
-            rewritten,
-            "`Kind-${string}` | import(\"nested\").Kind | `${import(\"nested\").Kind}`"
-        );
-    }
-
-    #[test]
-    fn word_search_skips_template_literal_text_segments() {
-        assert!(!DeclarationEmitter::contains_whole_word_in_text(
-            "`Kind-${string}`",
-            "Kind",
-        ));
-        assert!(DeclarationEmitter::contains_whole_word_in_text(
-            "`${Kind}`",
-            "Kind",
-        ));
-    }
-
-    #[test]
-    fn import_type_text_helpers_accept_single_quoted_specifiers() {
-        let parser = ParserState::new("test.ts".to_string(), String::new());
-        let emitter = DeclarationEmitter::new(&parser.arena);
-
-        assert!(DeclarationEmitter::type_text_starts_with_import_type(
-            "import('nested').NestedProps"
-        ));
-        assert!(DeclarationEmitter::type_text_contains_import_type(
-            "[import('nested').NestedProps]"
-        ));
-        assert_eq!(
-            emitter.parse_import_type_text("import('nested').NestedProps"),
-            Some(("nested".to_string(), "NestedProps".to_string()))
-        );
-    }
-
-    #[test]
-    fn empty_object_union_arm_expands_missing_quoted_property() {
-        let mut types = vec!["{\n    \"a-b\": string;\n}".to_string(), "{}".to_string()];
-
-        DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
-
-        assert_eq!(
-            types,
-            vec![
-                "{\n    \"a-b\": string;\n}".to_string(),
-                "{\n    \"a-b\"?: undefined;\n}".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn empty_object_union_arm_expands_with_mixed_non_object_arm() {
-        let mut types = vec![
-            "{\n    foo: number;\n}".to_string(),
-            "{}".to_string(),
-            "number".to_string(),
-        ];
-
-        DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
-
-        assert_eq!(
-            types,
-            vec![
-                "{\n    foo: number;\n}".to_string(),
-                "{\n    foo?: undefined;\n}".to_string(),
-                "number".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn object_union_arms_expand_missing_sibling_properties_and_methods() {
-        let mut types = vec![
-            "{\n    foo: number;\n    m(): void;\n}".to_string(),
-            "{\n    bar: number;\n}".to_string(),
-        ];
-
-        DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
-
-        assert_eq!(
-            types,
-            vec![
-                "{\n    foo: number;\n    m(): void;\n    bar?: undefined;\n}".to_string(),
-                "{\n    bar: number;\n    foo?: undefined;\n    m?: undefined;\n}".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn optional_method_triggers_object_union_sibling_expansion() {
-        let mut types = vec![
-            "{\n    m?(): void;\n}".to_string(),
-            "{\n    value: number;\n}".to_string(),
-            "string".to_string(),
-        ];
-
-        DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
-
-        assert_eq!(
-            types,
-            vec![
-                "{\n    m?(): void;\n    value?: undefined;\n}".to_string(),
-                "{\n    value: number;\n    m?: undefined;\n}".to_string(),
-                "string".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn object_union_arms_without_methods_are_not_expanded() {
-        let mut types = vec![
-            "{\n    a: number;\n}".to_string(),
-            "{\n    a: number;\n    b: string;\n}".to_string(),
-        ];
-
-        DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
-
-        assert_eq!(
-            types,
-            vec![
-                "{\n    a: number;\n}".to_string(),
-                "{\n    a: number;\n    b: string;\n}".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn object_union_property_scan_ignores_nested_members() {
-        assert_eq!(
-            DeclarationEmitter::object_type_top_level_member_names(
-                "{\n    outer: {\n        inner: string;\n    };\n}",
-                true,
-            ),
-            vec!["outer".to_string()]
-        );
-    }
-
-    #[test]
-    fn object_type_property_name_scan_handles_quoted_colons_and_skips_methods() {
-        assert_eq!(
-            DeclarationEmitter::object_type_property_name_from_line("\"a:b\": string;"),
-            Some("\"a:b\"".to_string())
-        );
-        assert_eq!(
-            DeclarationEmitter::object_type_property_name_from_line("foo(x: number): void;"),
-            None
-        );
-        assert_eq!(
-            DeclarationEmitter::object_type_property_name_from_line("readonly \"a:b\"?: string;"),
-            Some("\"a:b\"".to_string())
-        );
-    }
-
-    #[test]
-    fn node_modules_package_path_match_accepts_root_declaration_files() {
-        let mut parser = ParserState::new("test.ts".to_string(), String::new());
-        parser.parse_source_file();
-        let emitter = DeclarationEmitter::new(&parser.arena);
-
-        assert!(emitter.node_modules_package_path_matches_import_specifier(
-            "/repo/node_modules/umd.d.ts",
-            "umd"
-        ));
-        assert!(emitter.node_modules_package_path_matches_import_specifier(
-            "/repo/node_modules/umd/index.d.ts",
-            "umd"
-        ));
-        assert!(emitter.node_modules_package_path_matches_import_specifier(
-            "/repo/node_modules/umd/sub/index.d.ts",
-            "umd/sub"
-        ));
-        assert!(!emitter.node_modules_package_path_matches_import_specifier(
-            "/repo/node_modules/umd/sub/index.d.ts",
-            "umd"
-        ));
-    }
-
-    #[test]
-    fn public_module_specifier_combines_relative_default_import_target() {
-        assert_eq!(
-            DeclarationEmitter::combine_public_module_specifier("@ts-bug/core/utils", "./SvgIcon"),
-            Some("@ts-bug/core/SvgIcon".to_string())
-        );
-        assert_eq!(
-            DeclarationEmitter::combine_public_module_specifier("pkg/sub/utils", "../Icon"),
-            Some("pkg/Icon".to_string())
-        );
-        assert_eq!(
-            DeclarationEmitter::combine_public_module_specifier("./utils", "./SvgIcon"),
-            None
-        );
-    }
-}
+#[path = "type_inference_tests.rs"]
+mod tests;

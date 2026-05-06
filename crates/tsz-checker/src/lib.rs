@@ -333,6 +333,9 @@ mod tuple_index_access_tests;
 #[path = "../tests/typeof_unique_symbol_source_display_tests.rs"]
 mod typeof_unique_symbol_source_display_tests;
 #[cfg(test)]
+#[path = "../tests/using_binding_pattern_diagnostics_tests.rs"]
+mod using_binding_pattern_diagnostics_tests;
+#[cfg(test)]
 #[path = "../tests/value_usage_tests.rs"]
 mod value_usage_tests;
 #[cfg(test)]
@@ -366,6 +369,9 @@ mod class_duplicate_extends_skip_resolution_tests;
 #[cfg(test)]
 #[path = "../tests/class_index_signature_compat_tests.rs"]
 mod class_index_signature_compat_tests;
+#[cfg(test)]
+#[path = "tests/class_static_init_self_new_tests.rs"]
+mod class_static_init_self_new_tests;
 #[cfg(test)]
 #[path = "tests/closure_destructuring_top_level_diagnostics_tests.rs"]
 mod closure_destructuring_top_level_diagnostics_tests;
@@ -490,6 +496,9 @@ mod member_access_architecture_boundary_tests;
 #[path = "../tests/module_resolution_guard_tests.rs"]
 mod module_resolution_guard_tests;
 #[cfg(test)]
+#[path = "tests/mutable_binding_widening_from_const_literal_tests.rs"]
+mod mutable_binding_widening_from_const_literal_tests;
+#[cfg(test)]
 #[path = "../tests/never_returning_narrowing_tests.rs"]
 mod never_returning_narrowing_tests;
 #[cfg(test)]
@@ -555,6 +564,9 @@ mod union_multi_overload_unified_sig_tests;
 #[cfg(test)]
 #[path = "../tests/variadic_tuple_elaboration_tests.rs"]
 mod variadic_tuple_elaboration_tests;
+#[cfg(test)]
+#[path = "../tests/variadic_tuple_readonly_relation_tests.rs"]
+mod variadic_tuple_readonly_relation_tests;
 #[cfg(test)]
 #[path = "../tests/void_param_optionality_tests.rs"]
 mod void_param_optionality_tests;

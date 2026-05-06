@@ -68,7 +68,6 @@ class Bar extends Foo {
 /// type should be displayed structurally, while named members are displayed
 /// by name.
 #[test]
-#[ignore = "regression from remote commits"]
 fn override_intersection_mixed_named_and_anonymous() {
     let diags = get_diagnostics(
         r#"
@@ -90,11 +89,14 @@ class B extends Mixed {
 
     assert!(!ts4113_msgs.is_empty(), "Expected TS4113, got: {diags:?}");
 
-    // Should show intersection form with "A" and structural part
     for msg in &ts4113_msgs {
         assert!(
-            msg.contains(" & "),
-            "Expected intersection display with ' & ', got: {msg}"
+            msg.contains("A & { context: string; }"),
+            "Expected mixed base display 'A & {{ context: string; }}', got: {msg}"
+        );
+        assert!(
+            !msg.contains("'Mixed'"),
+            "Should not display the value alias as the base class, got: {msg}"
         );
     }
 }

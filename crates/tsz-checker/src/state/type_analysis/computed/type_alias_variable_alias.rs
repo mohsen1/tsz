@@ -1507,8 +1507,10 @@ impl<'a> CheckerState<'a> {
                         .module_namespace_resolution_set
                         .insert(module_name.to_string());
 
-                    if let Some(exports_table) = self.resolve_effective_module_exports(module_name)
-                    {
+                    if let Some(exports_table) = self.resolve_effective_module_exports_from_file(
+                        module_name,
+                        Some(self.ctx.current_file_idx),
+                    ) {
                         let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
                         if exports_table.has("export=")
                             && let Some(export_eq_sym) = exports_table.get("export=")
@@ -1560,6 +1562,38 @@ impl<'a> CheckerState<'a> {
                         }
                         Self::normalize_namespace_export_declaration_order(&mut props);
                         let module_type = factory.object(props);
+                        self.ctx.namespace_module_names.insert(
+                            module_type,
+                            self.imported_namespace_display_module_name(module_name),
+                        );
+                        self.ctx.module_namespace_resolution_set.remove(module_name);
+                        return (module_type, Vec::new());
+                    }
+
+                    if is_node_esm_importing_cjs
+                        && let Some(default_sym_id) = self.resolve_cross_file_export_from_file(
+                            module_name,
+                            "default",
+                            Some(self.ctx.current_file_idx),
+                        )
+                    {
+                        use tsz_solver::PropertyInfo;
+                        let default_type = self.get_type_of_symbol(default_sym_id);
+                        let module_type = factory.object(vec![PropertyInfo {
+                            name: self.ctx.types.intern_string("default"),
+                            type_id: default_type,
+                            write_type: default_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                            declaration_order: 1,
+                            is_string_named: false,
+                            is_symbol_named: false,
+                            single_quoted_name: false,
+                        }]);
                         self.ctx.namespace_module_names.insert(
                             module_type,
                             self.imported_namespace_display_module_name(module_name),

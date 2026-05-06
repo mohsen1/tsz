@@ -107,7 +107,7 @@ declare const o: Outer;
 o.inner.bar(42);
 "#;
 
-    let diagnostics = compile_two_module_files("lib.ts", lib, "consumer.ts", consumer);
+    let diagnostics = compile_module_files(&[("consumer.ts", consumer), ("lib.ts", lib)], 0);
     let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
 
     // The checker correctly detects the argument type mismatch. The TS2345
@@ -205,17 +205,11 @@ cfg.workspace.toAbsolutePath(cfg.server);
 "#;
 
     let diagnostics = compile_two_module_files("lib.ts", lib, "consumer.ts", consumer);
-    let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
 
-    // TODO: tsc emits TS2345 because cfg.server is IServer | undefined (optional)
-    // but toAbsolutePath expects IServer. Currently we emit TS2339 instead
-    // because cross-module interface method resolution loses the method
-    // signature for deeply nested interface chains. This is a known bug
-    // tracked by the conformance test visibilityOfCrossModuleTypeUsage.ts.
     assert!(
-        has_error(&diagnostics, 2339) || has_error(&diagnostics, 2345),
-        "Should emit TS2339 or TS2345 for cross-module optional→required \
-         argument mismatch. Got: {codes:?}"
+        has_error(&diagnostics, 2345),
+        "Should emit TS2345 for cross-module optional→required \
+         argument mismatch. Got: {diagnostics:?}"
     );
 }
 

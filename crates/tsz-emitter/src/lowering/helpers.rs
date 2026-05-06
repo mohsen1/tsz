@@ -322,6 +322,22 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
+    /// Get the property-name node of a class member, when the member has one.
+    fn get_member_name(&self, member_node: &tsz_parser::parser::node::Node) -> Option<NodeIndex> {
+        match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                self.arena.get_method_decl(member_node).map(|m| m.name)
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                self.arena.get_property_decl(member_node).map(|p| p.name)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                self.arena.get_accessor(member_node).map(|a| a.name)
+            }
+            _ => None,
+        }
+    }
+
     /// Check if a property access expression accesses a private identifier.
     fn is_private_field_access(&self, node_idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(node_idx) else {
@@ -395,6 +411,11 @@ impl<'a> LoweringPass<'a> {
                 }
                 continue;
             }
+            if let Some(name) = self.get_member_name(member_node)
+                && self.subtree_has_private_field_read(name)
+            {
+                return true;
+            }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_field_read(body)
             {
@@ -420,6 +441,11 @@ impl<'a> LoweringPass<'a> {
                 }
                 continue;
             }
+            if let Some(name) = self.get_member_name(member_node)
+                && self.subtree_has_private_field_write(name)
+            {
+                return true;
+            }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_field_write(body)
             {
@@ -443,6 +469,11 @@ impl<'a> LoweringPass<'a> {
                     return true;
                 }
                 continue;
+            }
+            if let Some(name) = self.get_member_name(member_node)
+                && self.subtree_has_private_in_expression(name)
+            {
+                return true;
             }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_in_expression(body)
@@ -1161,10 +1192,28 @@ impl<'a> LoweringPass<'a> {
                     member.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
                 })
             });
-        let has_private_comma_expr =
-            self.ctx.needs_es2022_lowering && self.class_has_private_members(class);
-
-        has_static_field_comma_expr || has_static_block_comma_expr || has_private_comma_expr
+        // Static *private* fields are lowered into `_C_x = { value: void 0 }`
+        // entries inside the same comma wrapper, so they count as static
+        // state for the naming-helper decision even though
+        // `has_static_field_comma_expr` skips them above (they go through the
+        // private-field lowering path, not the static-field path).
+        let has_static_private_member = needs_private_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member| {
+                    member.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self.arena.get_property_decl(member).is_some_and(|prop| {
+                            self.arena.is_static(&prop.modifiers)
+                                && is_private_identifier(self.arena, prop.name)
+                        })
+                })
+            });
+        // tsc only emits `__setFunctionName` when the comma wrapper carries
+        // *static* state (a static field initializer, a static private
+        // field, or a static block). Pure instance-private comma forms
+        // — e.g. `(_a = class { #x; }, _C_x = new WeakMap(), _a)` — keep
+        // the engine's automatic assignment-based naming and do not need
+        // the helper.
+        has_static_field_comma_expr || has_static_block_comma_expr || has_static_private_member
     }
 
     pub(super) fn get_module_root_name(&self, name_idx: NodeIndex) -> Option<IdentifierId> {

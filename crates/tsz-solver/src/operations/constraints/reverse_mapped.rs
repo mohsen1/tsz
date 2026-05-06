@@ -1172,6 +1172,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let source = unwrap_readonly(source);
         let target = unwrap_readonly(target);
 
+        if self.array_like_element_for_constraint(source).is_some()
+            && self.array_like_element_for_constraint(target).is_some()
+        {
+            return true;
+        }
+
         if self.checker.promise_like_type_argument(source).is_some()
             && self.checker.promise_like_type_argument(target).is_some()
         {
@@ -1208,6 +1214,49 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | (TypeData::Array(_), TypeData::Array(_)) => true,
             _ => false,
         }
+    }
+
+    pub(super) fn array_like_element_for_constraint(&mut self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(elem) = crate::type_queries::get_array_element_type(self.interner, type_id) {
+            return Some(elem);
+        }
+
+        if let Some(elem) = self.named_array_object_element_for_constraint(type_id) {
+            return Some(elem);
+        }
+
+        let evaluated = self.checker.evaluate_type(type_id);
+        (evaluated != type_id)
+            .then(|| self.named_array_object_element_for_constraint(evaluated))
+            .flatten()
+    }
+
+    fn named_array_object_element_for_constraint(&self, type_id: TypeId) -> Option<TypeId> {
+        let shape_id = match self.interner.lookup(type_id) {
+            Some(TypeData::ObjectWithIndex(shape_id)) => shape_id,
+            _ => return None,
+        };
+        let shape = self.interner.object_shape(shape_id);
+        if shape.symbol.is_none() || shape.number_index.is_none() {
+            return None;
+        }
+
+        let length = self.interner.intern_string("length");
+        if !shape.properties.iter().any(|prop| prop.name == length) {
+            return None;
+        }
+
+        let array_methods =
+            ["slice", "concat", "join"].map(|name| self.interner.intern_string(name));
+        if !shape
+            .properties
+            .iter()
+            .any(|prop| array_methods.contains(&prop.name))
+        {
+            return None;
+        }
+
+        shape.number_index.as_ref().map(|index| index.value_type)
     }
 
     fn type_has_own_then_property_for_constraint(&mut self, type_id: TypeId) -> bool {

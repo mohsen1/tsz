@@ -4,7 +4,7 @@
 //! outlining spans, brace matching, refactoring stubs, and related commands.
 
 use super::{Server, TsServerRequest, TsServerResponse};
-use tsz::emitter::Printer;
+use tsz::emitter::{ModuleKind, Printer, PrinterOptions};
 
 /// `projectInfo`-only view of inferred-project lib/target/noLib settings.
 /// Kept parallel to `Server.inferred_check_options` so we can surface the
@@ -15,6 +15,43 @@ pub(crate) struct InferredProjectInfoOptions {
     pub lib: Option<Vec<String>>,
     pub target: Option<String>,
     pub no_lib: bool,
+}
+
+struct CompileOnSaveProject {
+    config_path: String,
+    config_dir: std::path::PathBuf,
+    enabled: bool,
+    file_names: Vec<String>,
+    uses_out_file: bool,
+    out_dir: Option<String>,
+    module: ModuleKind,
+}
+
+impl CompileOnSaveProject {
+    fn output_path_for(&self, file: &str) -> std::path::PathBuf {
+        let input = std::path::Path::new(file);
+        let mut relative = input
+            .strip_prefix(&self.config_dir)
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|_| {
+                input
+                    .file_name()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from(file))
+            });
+        relative.set_extension("js");
+        if let Some(out_dir) = self.out_dir.as_deref() {
+            let out_dir = std::path::Path::new(out_dir);
+            let out_dir = if out_dir.is_absolute() {
+                out_dir.to_path_buf()
+            } else {
+                self.config_dir.join(out_dir)
+            };
+            out_dir.join(relative)
+        } else {
+            input.with_extension("js")
+        }
+    }
 }
 use tsz::lsp::code_actions::CodeActionProvider;
 use tsz::lsp::editor_decorations::inlay_hints::{InlayHintKind, InlayHintsProvider};
@@ -288,7 +325,14 @@ impl Server {
             let file = request.arguments.get("file")?.as_str()?;
             let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
 
-            let mut printer = Printer::with_source_text_len(&arena, source_text.len());
+            let mut printer = Printer::with_source_text_len_and_options(
+                &arena,
+                source_text.len(),
+                PrinterOptions {
+                    module: self.emit_output_module_kind(),
+                    ..Default::default()
+                },
+            );
             printer.set_source_text(&source_text);
             printer.emit(root);
             let output = printer.take_output();
@@ -313,6 +357,167 @@ impl Server {
             request,
             Some(result.unwrap_or(serde_json::json!({"outputFiles": [], "emitSkipped": true}))),
         )
+    }
+
+    pub(crate) fn handle_compile_on_save_affected_file_list(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let project = self.compile_on_save_project(file)?;
+            if !project.enabled {
+                return Some(serde_json::json!([]));
+            }
+            Some(serde_json::json!([{
+                "projectFileName": project.config_path,
+                "fileNames": project.file_names,
+                "projectUsesOutFile": project.uses_out_file,
+            }]))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    pub(crate) fn handle_compile_on_save_emit_file(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let rich_response = request
+            .arguments
+            .get("richResponse")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let emitted = (|| -> Option<bool> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let project = self.compile_on_save_project(file)?;
+            if !project.enabled {
+                return Some(false);
+            }
+            self.emit_compile_on_save_file(file, &project).ok()?;
+            Some(true)
+        })()
+        .unwrap_or(false);
+        let body = if rich_response {
+            serde_json::json!({
+                "emitSkipped": !emitted,
+                "diagnostics": [],
+            })
+        } else {
+            serde_json::json!(emitted)
+        };
+        self.stub_response(seq, request, Some(body))
+    }
+
+    fn emit_output_module_kind(&self) -> ModuleKind {
+        self.inferred_check_options
+            .module
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .map(|module| match module.as_str() {
+                "none" => ModuleKind::None,
+                "commonjs" => ModuleKind::CommonJS,
+                "amd" => ModuleKind::AMD,
+                "umd" => ModuleKind::UMD,
+                "system" => ModuleKind::System,
+                "es2015" => ModuleKind::ES2015,
+                "es2020" => ModuleKind::ES2020,
+                "es2022" => ModuleKind::ES2022,
+                "node16" => ModuleKind::Node16,
+                "node18" => ModuleKind::Node18,
+                "node20" => ModuleKind::Node20,
+                "nodenext" => ModuleKind::NodeNext,
+                "preserve" => ModuleKind::Preserve,
+                _ => ModuleKind::ESNext,
+            })
+            .unwrap_or(ModuleKind::ESNext)
+    }
+
+    fn module_kind_from_config(config_json: &serde_json::Value) -> ModuleKind {
+        config_json
+            .get("compilerOptions")
+            .and_then(|opts| opts.get("module"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_ascii_lowercase)
+            .map(|module| match module.as_str() {
+                "none" => ModuleKind::None,
+                "commonjs" => ModuleKind::CommonJS,
+                "amd" => ModuleKind::AMD,
+                "umd" => ModuleKind::UMD,
+                "system" => ModuleKind::System,
+                "es2015" | "es6" => ModuleKind::ES2015,
+                "es2020" => ModuleKind::ES2020,
+                "es2022" => ModuleKind::ES2022,
+                "node16" => ModuleKind::Node16,
+                "node18" => ModuleKind::Node18,
+                "node20" => ModuleKind::Node20,
+                "nodenext" => ModuleKind::NodeNext,
+                "preserve" => ModuleKind::Preserve,
+                _ => ModuleKind::ESNext,
+            })
+            .unwrap_or(ModuleKind::ESNext)
+    }
+
+    fn compile_on_save_project(&self, file: &str) -> Option<CompileOnSaveProject> {
+        let config_path = self.find_project_config_file(file)?;
+        let config_json = self.read_config_json(&config_path)?;
+        let enabled = config_json
+            .get("compileOnSave")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let compiler_options = config_json.get("compilerOptions");
+        let uses_out_file = compiler_options
+            .and_then(|opts| opts.get("outFile").or_else(|| opts.get("out")))
+            .and_then(serde_json::Value::as_str)
+            .is_some();
+        let out_dir = compiler_options
+            .and_then(|opts| opts.get("outDir"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let config_dir = std::path::Path::new(&config_path)
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from("/"));
+        let (_, _, mut file_names) = self.parse_tsconfig_for_project_info(&config_path);
+        if file_names.is_empty() {
+            file_names.push(Self::normalize_path_string(std::path::Path::new(file)));
+        }
+        Some(CompileOnSaveProject {
+            config_path,
+            config_dir,
+            enabled,
+            file_names,
+            uses_out_file,
+            out_dir,
+            module: Self::module_kind_from_config(&config_json),
+        })
+    }
+
+    fn emit_compile_on_save_file(
+        &self,
+        file: &str,
+        project: &CompileOnSaveProject,
+    ) -> std::io::Result<()> {
+        let (arena, _binder, root, source_text) = self
+            .parse_and_bind_file(file)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, file.to_string()))?;
+        let mut printer = Printer::with_source_text_len_and_options(
+            &arena,
+            source_text.len(),
+            PrinterOptions {
+                module: project.module,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(&source_text);
+        printer.emit(root);
+        let output = printer.take_output();
+        let out_path = project.output_path_for(file);
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(out_path, output)
     }
 
     pub(crate) fn handle_get_applicable_refactors(
@@ -350,10 +555,28 @@ impl Server {
             if provider.extract_variable(root, range).is_some() {
                 refactors.push(serde_json::json!({
                     "name": "Extract Symbol",
-                    "description": "Extract expression to variable",
+                    "description": "Extract function",
                     "actions": [{
-                        "name": "constant_extractedConstant",
-                        "description": "Extract to constant in enclosing scope"
+                        "name": "function_scope_0",
+                        "description": "Extract to function in enclosing scope",
+                        "kind": "refactor.extract.function"
+                    }, {
+                        "name": "function_scope_1",
+                        "description": "Extract to function in global scope",
+                        "kind": "refactor.extract.function"
+                    }]
+                }));
+                refactors.push(serde_json::json!({
+                    "name": "Extract Symbol",
+                    "description": "Extract constant",
+                    "actions": [{
+                        "name": "constant_scope_0",
+                        "description": "Extract to constant in enclosing scope",
+                        "kind": "refactor.extract.constant"
+                    }, {
+                        "name": "constant_scope_1",
+                        "description": "Extract to constant in global scope",
+                        "kind": "refactor.extract.constant"
                     }]
                 }));
             }
@@ -567,13 +790,14 @@ impl Server {
     }
 
     fn normalize_module_path(path: &std::path::Path) -> String {
-        let s = path.to_string_lossy();
+        let normalized = Self::normalize_path_string(path);
+        let s = normalized.as_str();
         let s = s
             .strip_suffix(".ts")
             .or_else(|| s.strip_suffix(".tsx"))
             .or_else(|| s.strip_suffix(".js"))
             .or_else(|| s.strip_suffix(".jsx"))
-            .unwrap_or(&s);
+            .unwrap_or(s);
         s.to_string()
     }
 
@@ -987,31 +1211,155 @@ impl Server {
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|| std::path::PathBuf::from("/"));
 
-        let mut project_files: Vec<String> = Vec::new();
+        let project_files = self.tsconfig_project_files(&config_json, &config_dir);
+
+        (lib_names, no_lib, project_files)
+    }
+
+    fn tsconfig_project_files(
+        &self,
+        config_json: &serde_json::Value,
+        config_dir: &std::path::Path,
+    ) -> Vec<String> {
         if let Some(files) = config_json
             .get("files")
             .and_then(serde_json::Value::as_array)
         {
-            for entry in files {
-                let Some(name) = entry.as_str() else {
-                    continue;
-                };
-                let absolute = if std::path::Path::new(name).is_absolute() {
-                    std::path::PathBuf::from(name)
-                } else {
-                    config_dir.join(name)
-                };
-                let absolute_str = Self::normalize_path_string(&absolute);
-                // tsserver excludes files that don't physically exist.
-                if self.open_files.contains_key(&absolute_str)
-                    || std::path::Path::new(&absolute_str).exists()
-                {
-                    project_files.push(absolute_str);
+            return self.explicit_tsconfig_files(files, config_dir);
+        }
+
+        let includes = config_json
+            .get("include")
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|arr| !arr.is_empty())
+            .unwrap_or_else(|| vec!["**/*"]);
+        let excludes = config_json
+            .get("exclude")
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| vec!["node_modules", "bower_components", "jspm_packages"]);
+
+        let Some(include_set) = Self::tsconfig_glob_set(&includes, true) else {
+            return Vec::new();
+        };
+        let exclude_set = Self::tsconfig_glob_set(&excludes, false);
+
+        let mut candidates: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for file in self.open_files.keys() {
+            if Self::path_is_under(file, config_dir) && Self::is_supported_project_source_file(file)
+            {
+                candidates.insert(file.clone());
+            }
+        }
+
+        if config_dir.exists() {
+            for entry in walkdir::WalkDir::new(config_dir)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_file())
+            {
+                let normalized = Self::normalize_path_string(entry.path());
+                if Self::is_supported_project_source_file(&normalized) {
+                    candidates.insert(normalized);
                 }
             }
         }
 
-        (lib_names, no_lib, project_files)
+        candidates
+            .into_iter()
+            .filter(|path| {
+                let relative = Self::relative_slash_path(config_dir, path);
+                include_set.is_match(&relative)
+                    && !exclude_set
+                        .as_ref()
+                        .is_some_and(|exclude_set| exclude_set.is_match(&relative))
+            })
+            .collect()
+    }
+
+    fn explicit_tsconfig_files(
+        &self,
+        files: &[serde_json::Value],
+        config_dir: &std::path::Path,
+    ) -> Vec<String> {
+        let mut project_files = Vec::new();
+        for entry in files {
+            let Some(name) = entry.as_str() else {
+                continue;
+            };
+            let absolute = if std::path::Path::new(name).is_absolute() {
+                std::path::PathBuf::from(name)
+            } else {
+                config_dir.join(name)
+            };
+            let absolute_str = Self::normalize_path_string(&absolute);
+            // tsserver excludes files that don't physically exist.
+            if self.open_files.contains_key(&absolute_str)
+                || std::path::Path::new(&absolute_str).exists()
+            {
+                project_files.push(absolute_str);
+            }
+        }
+        project_files
+    }
+
+    fn tsconfig_glob_set(patterns: &[&str], include: bool) -> Option<globset::GlobSet> {
+        let mut builder = globset::GlobSetBuilder::new();
+        for pattern in patterns {
+            let normalized = pattern.trim().trim_start_matches("./").replace('\\', "/");
+            if normalized.is_empty() {
+                continue;
+            }
+            let has_wildcard = normalized.contains('*') || normalized.contains('?');
+            let expanded = if has_wildcard {
+                normalized
+            } else if include || !Self::is_supported_project_source_file(&normalized) {
+                format!("{normalized}/**/*")
+            } else {
+                normalized
+            };
+            let glob = globset::GlobBuilder::new(&expanded)
+                .literal_separator(true)
+                .build()
+                .ok()?;
+            builder.add(glob);
+        }
+        builder.build().ok()
+    }
+
+    fn relative_slash_path(config_dir: &std::path::Path, file: &str) -> String {
+        let file_path = std::path::Path::new(file);
+        file_path
+            .strip_prefix(config_dir)
+            .map(Self::normalize_path_string)
+            .unwrap_or_else(|_| file.trim_start_matches('/').to_string())
+    }
+
+    fn path_is_under(path: &str, dir: &std::path::Path) -> bool {
+        std::path::Path::new(path).starts_with(dir)
+    }
+
+    fn is_supported_project_source_file(path: &str) -> bool {
+        path.ends_with(".ts")
+            || path.ends_with(".tsx")
+            || path.ends_with(".d.ts")
+            || path.ends_with(".mts")
+            || path.ends_with(".cts")
+            || path.ends_with(".d.mts")
+            || path.ends_with(".d.cts")
+            || path.ends_with(".js")
+            || path.ends_with(".jsx")
+            || path.ends_with(".mjs")
+            || path.ends_with(".cjs")
     }
 
     /// For an inferred project (no tsconfig), produce (libs, noLib, [`active+transitive_deps`]).
@@ -1286,7 +1634,48 @@ impl Server {
         self.lib_cache.clear();
         self.unified_lib_cache = None;
 
-        // Re-read open files from disk
+        let reload_finished = if let Some(file) = request
+            .arguments
+            .get("file")
+            .and_then(|value| value.as_str())
+        {
+            let source_path = request
+                .arguments
+                .get("tmpfile")
+                .and_then(|value| value.as_str())
+                .unwrap_or(file);
+            if let Ok(content) = std::fs::read_to_string(source_path) {
+                self.open_files.insert(file.to_string(), content);
+                true
+            } else {
+                false
+            }
+        } else {
+            // Re-read all open files for reload-project style requests.
+            let paths: Vec<String> = self.open_files.keys().cloned().collect();
+            for path in &paths {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    self.open_files.insert(path.clone(), content);
+                }
+            }
+            true
+        };
+
+        self.stub_response(
+            seq,
+            request,
+            Some(serde_json::json!({ "reloadFinished": reload_finished })),
+        )
+    }
+
+    pub(crate) fn handle_reload_projects(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        self.lib_cache.clear();
+        self.unified_lib_cache = None;
+
         let paths: Vec<String> = self.open_files.keys().cloned().collect();
         for path in &paths {
             if let Ok(content) = std::fs::read_to_string(path) {
@@ -1294,7 +1683,7 @@ impl Server {
             }
         }
 
-        self.stub_response(seq, request, Some(serde_json::json!(true)))
+        self.stub_response(seq, request, None)
     }
 
     pub(crate) fn handle_compiler_options_for_inferred(
@@ -1425,6 +1814,56 @@ impl Server {
         self.stub_response(seq, request, None)
     }
 
+    pub(crate) fn handle_synchronize_project_list(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let include_redirect_info = request
+            .arguments
+            .get("includeProjectReferenceRedirectInfo")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let mut projects: Vec<(&String, &Vec<String>)> =
+            self.external_project_files.iter().collect();
+        projects.sort_by_key(|(left, _)| *left);
+
+        let body: Vec<serde_json::Value> = projects
+            .into_iter()
+            .map(|(project_name, files)| {
+                let files: Vec<serde_json::Value> = if include_redirect_info {
+                    files
+                        .iter()
+                        .map(|file_name| {
+                            serde_json::json!({
+                                "fileName": file_name,
+                                "isSourceOfProjectReferenceRedirect": false,
+                            })
+                        })
+                        .collect()
+                } else {
+                    files
+                        .iter()
+                        .map(|file_name| serde_json::json!(file_name))
+                        .collect()
+                };
+                serde_json::json!({
+                    "info": {
+                        "projectName": project_name,
+                        "isInferred": false,
+                        "version": 1,
+                        "options": {},
+                        "languageServiceDisabled": false,
+                    },
+                    "files": files,
+                    "projectErrors": [],
+                })
+            })
+            .collect();
+
+        self.stub_response(seq, request, Some(serde_json::json!(body)))
+    }
+
     pub(crate) fn handle_inlay_hints(
         &mut self,
         seq: u64,
@@ -1444,52 +1883,70 @@ impl Server {
                 file.to_string(),
             );
 
-            // Extract the range from arguments, default to entire file
-            let start = match request
+            let protocol_span = request
                 .arguments
                 .get("start")
                 .and_then(serde_json::Value::as_u64)
-            {
-                Some(_) => {
-                    let line = request
+                .zip(
+                    request
                         .arguments
-                        .get("startLine")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(1) as u32;
-                    let offset = request
-                        .arguments
-                        .get("startOffset")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(1) as u32;
-                    Self::tsserver_to_lsp_position(line, offset)
-                }
-                None => Position::new(0, 0),
+                        .get("length")
+                        .and_then(serde_json::Value::as_u64),
+                )
+                .map(|(start, length)| {
+                    let source_len = source_text.len() as u64;
+                    let start = start.min(source_len) as u32;
+                    let end = start
+                        .saturating_add(length.min(u32::MAX as u64) as u32)
+                        .min(source_text.len() as u32);
+                    (start, end)
+                });
+
+            let range = if let Some((start, end)) = protocol_span {
+                Range::new(
+                    line_map.offset_to_position(start, &source_text),
+                    line_map.offset_to_position(end, &source_text),
+                )
+            } else {
+                let start = request
+                    .arguments
+                    .get("startLine")
+                    .and_then(serde_json::Value::as_u64)
+                    .zip(
+                        request
+                            .arguments
+                            .get("startOffset")
+                            .and_then(serde_json::Value::as_u64),
+                    )
+                    .map_or(Position::new(0, 0), |(line, offset)| {
+                        Self::tsserver_to_lsp_position(line as u32, offset as u32)
+                    });
+                let end = request
+                    .arguments
+                    .get("endLine")
+                    .and_then(serde_json::Value::as_u64)
+                    .zip(
+                        request
+                            .arguments
+                            .get("endOffset")
+                            .and_then(serde_json::Value::as_u64),
+                    )
+                    .map_or(Position::new(u32::MAX, u32::MAX), |(line, offset)| {
+                        Self::tsserver_to_lsp_position(line as u32, offset as u32)
+                    });
+                Range::new(start, end)
             };
-            let end = match request
-                .arguments
-                .get("end")
-                .and_then(serde_json::Value::as_u64)
-            {
-                Some(_) => {
-                    let line = request
-                        .arguments
-                        .get("endLine")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(u32::MAX as u64) as u32;
-                    let offset = request
-                        .arguments
-                        .get("endOffset")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(u32::MAX as u64) as u32;
-                    Self::tsserver_to_lsp_position(line, offset)
-                }
-                None => Position::new(u32::MAX, u32::MAX),
-            };
-            let range = Range::new(start, end);
 
             let hints = provider.provide_inlay_hints(root, range);
             let body: Vec<serde_json::Value> = hints
                 .iter()
+                .filter(|hint| {
+                    protocol_span.is_none_or(|(start, end)| {
+                        line_map
+                            .position_to_offset(hint.position, &source_text)
+                            .is_some_and(|position| position >= start && position < end)
+                    })
+                })
                 .map(|hint| {
                     let kind = match hint.kind {
                         InlayHintKind::Parameter => "Parameter",
@@ -1894,12 +2351,29 @@ impl Server {
         request: &TsServerRequest,
     ) -> TsServerResponse {
         let result = (|| -> Option<bool> {
-            // If copiedFromFile is provided and we know that file, we can offer paste edits
+            if let Some(copied_text_span) = request
+                .arguments
+                .get("copiedTextSpan")
+                .and_then(|value| value.as_array())
+            {
+                let file = request
+                    .arguments
+                    .get("file")
+                    .and_then(|value| value.as_str())?;
+                let has_source =
+                    self.open_files.contains_key(file) || std::path::Path::new(file).exists();
+                let has_non_empty_span = copied_text_span.iter().any(|span| {
+                    span.get("length")
+                        .and_then(|value| value.as_u64())
+                        .is_some_and(|length| length > 0)
+                });
+                return Some(has_source && has_non_empty_span);
+            }
+
             let copied_from = request
                 .arguments
                 .get("copiedFromFile")
                 .and_then(|v| v.as_str())?;
-            // Check if we have the source file open or can read it
             if self.open_files.contains_key(copied_from)
                 || std::path::Path::new(copied_from).exists()
             {
@@ -1930,8 +2404,18 @@ impl Server {
                 .arguments
                 .get("pastedText")
                 .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|v| v.as_str())?;
+                .and_then(|arr| {
+                    let texts = arr
+                        .iter()
+                        .filter_map(|value| value.as_str())
+                        .collect::<Vec<_>>();
+                    (!texts.is_empty()).then_some(texts)
+                })?;
+            let pasted_text_joined = pasted_text.join("\n");
+            let paste_locations = request
+                .arguments
+                .get("pasteLocations")
+                .and_then(|value| value.as_array());
 
             let copied_from = request
                 .arguments
@@ -1996,7 +2480,7 @@ impl Server {
             let mut names_to_import: Vec<String> = Vec::new();
             for export_name in &source_exports {
                 // Check if the export name appears in pasted code
-                if !pasted_text.contains(export_name.as_str()) {
+                if !pasted_text_joined.contains(export_name.as_str()) {
                     continue;
                 }
                 // Check if the target already imports/declares it
@@ -2026,17 +2510,11 @@ impl Server {
             names_to_import.dedup();
 
             // Compute relative import path from target to source
-            let import_path = Self::compute_relative_import(
-                std::path::Path::new(target_file),
-                std::path::Path::new(copied_from),
-            );
-
-            // Build import statement
-            let import_text = format!(
-                "import {{ {} }} from \"{}\";\n",
-                names_to_import.join(", "),
-                import_path
-            );
+            let target_dir = std::path::Path::new(target_file)
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(""));
+            let import_path =
+                Self::compute_relative_import(target_dir, std::path::Path::new(copied_from));
 
             // Find insertion point: after last import line, or at top of file
             let mut insert_line = 0u32;
@@ -2047,18 +2525,55 @@ impl Server {
                 }
             }
 
-            let text_change = serde_json::json!({
-                "start": { "line": insert_line + 1, "offset": 1 },
-                "end": { "line": insert_line + 1, "offset": 1 },
+            // Build import statement
+            let import_suffix = if insert_line == 0 { "\n\n" } else { "\n" };
+            let import_text = format!(
+                "import {{ {} }} from \"{}\";{}",
+                names_to_import.join(", "),
+                import_path,
+                import_suffix
+            );
+            let line_map = LineMap::build(&target_content);
+            let import_offset = line_map.position_to_offset(
+                Position {
+                    line: insert_line,
+                    character: 0,
+                },
+                &target_content,
+            )?;
+            let mut text_changes = vec![serde_json::json!({
+                "span": { "start": import_offset, "length": 0 },
                 "newText": import_text
-            });
+            })];
+
+            if let Some(paste_locations) = paste_locations {
+                for (index, location) in paste_locations.iter().enumerate() {
+                    let start = location.get("start")?;
+                    let start_line = start.get("line")?.as_u64()? as u32;
+                    let start_offset = start.get("offset")?.as_u64()? as u32;
+                    let start_pos = Position {
+                        line: start_line.saturating_sub(1),
+                        character: start_offset.saturating_sub(1),
+                    };
+                    let start_offset = line_map.position_to_offset(start_pos, &target_content)?;
+                    let new_text = pasted_text
+                        .get(index)
+                        .or_else(|| pasted_text.first())
+                        .copied()
+                        .unwrap_or("");
+                    text_changes.push(serde_json::json!({
+                        "span": { "start": start_offset, "length": 0 },
+                        "newText": new_text
+                    }));
+                }
+            }
 
             Some(serde_json::json!({
                 "edits": [{
                     "fileName": target_file,
-                    "textChanges": [text_change]
+                    "textChanges": text_changes
                 }],
-                "fixId": "paste"
+                "fixId": "providePostPasteEdits"
             }))
         })();
 

@@ -591,6 +591,56 @@ const foo: Union = {
 }
 
 #[test]
+fn discriminated_union_object_literal_expands_literal_alias_property_target() {
+    let source = r#"
+interface LinearAxis { type: "linear"; }
+interface CategoricalAxis { type: "categorical"; }
+
+type Axis = LinearAxis | CategoricalAxis;
+type AxisType = "linear" | "categorical";
+
+const objectTarget: Axis = { type: undefined };
+const directTarget: AxisType = undefined;
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "expected object-property and direct-alias TS2322 diagnostics, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag.message_text.contains(
+            "Type 'undefined' is not assignable to type '\"linear\" | \"categorical\"'."
+        )),
+        "object literal property diagnostic should expand the contextual literal-union alias, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("Type 'undefined' is not assignable to type 'AxisType'.")),
+        "direct alias annotation diagnostic should keep the alias display, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn discriminated_tuple_union_accepts_literal_union_tuple_elements() {
+    let source = r#"
+type A = ["a", number] | ["b", number] | ["c", string];
+declare const value: ["a" | "b", 1] | ["c", ""];
+
+const ok: A = value;
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "tuple discriminant assignment should not emit TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn nondiscriminated_union_object_literal_reports_whole_object_mismatch() {
     let source = r#"
 declare var str: string;
@@ -838,6 +888,69 @@ let tup: [number, number, number] = [1, 2, 3, "string"];
             .message_text
             .contains("Type 'string' is not assignable to type 'number'"),
         "tuple arity mismatch should not collapse to the extra element mismatch, got: {diag:?}"
+    );
+}
+
+#[test]
+fn array_literal_tuple_assignment_ignores_later_tuple_length_alias_display() {
+    let source = r#"
+let tup: [number, string];
+tup = [1];
+type B = Pick<[number], "length">;
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+
+    assert!(
+        diag.message_text
+            .contains("Type '[number]' is not assignable to type '[number, string]'."),
+        "TS2322 should display the array literal source as a tuple, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Type 'B' is not assignable"),
+        "later tuple-length aliases must not repaint array literal source display, got: {diag:?}"
+    );
+}
+
+#[test]
+fn tuple_spread_assignment_satisfies_numeric_object_properties() {
+    let source = r#"
+var temp2: [number[], string[]] = [[1, 2, 3], ["hello", "string"]];
+
+interface TupLike {
+    0: number[] | string[];
+    1: number[] | string[];
+}
+
+var c0: TupLike = [...temp2];
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2739),
+        "tuple spreads should satisfy numeric object properties without TS2739: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "tuple spread assignment should match tsc without extra diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn optional_tuple_length_assignment_accepts_minimum_length_literal() {
+    let source = r#"
+declare const tuple: [number?];
+tuple.length = 0;
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "`[number?]` length should be `0 | 1`, so assigning 0 must not emit TS2322: {diagnostics:?}"
     );
 }
 

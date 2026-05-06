@@ -217,9 +217,14 @@ impl<'a> CheckerState<'a> {
         let (module_specifier, member_name) = Self::parse_jsdoc_import_type(type_expr)?;
 
         if let Some(member_name) = member_name {
-            let sym_id = self.resolve_jsdoc_import_member(&module_specifier, &member_name)?;
-            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
-            return (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved);
+            if let Some(sym_id) = self.resolve_jsdoc_import_member(&module_specifier, &member_name)
+            {
+                let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+                if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                    return Some(resolved);
+                }
+            }
+            return self.resolve_import_type_jsdoc_typedef(&module_specifier, &member_name, None);
         }
 
         self.commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx))
@@ -1476,11 +1481,17 @@ impl<'a> CheckerState<'a> {
 
         if symbol.has_any_flags(symbol_flags::FUNCTION) && symbol.value_declaration.is_some() {
             let constructor_type = self.get_type_of_symbol(sym_id);
-            if let Some(instance_type) = self.synthesize_js_constructor_instance_type(
+            if !self.ctx.class_instance_resolution_set.insert(sym_id) {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                return self.ctx.types.factory().lazy(def_id);
+            }
+            let instance_type = self.synthesize_js_constructor_instance_type(
                 symbol.value_declaration,
                 constructor_type,
                 &[],
-            ) {
+            );
+            self.ctx.class_instance_resolution_set.remove(&sym_id);
+            if let Some(instance_type) = instance_type {
                 return instance_type;
             }
         }

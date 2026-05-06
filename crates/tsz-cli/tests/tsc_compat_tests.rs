@@ -45,6 +45,133 @@ fn write_file(path: &Path, contents: &str) {
 }
 
 #[test]
+fn list_files_only_accepts_bare_relative_project_config_path() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("listfiles_bare_relative_project").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"include":["src/**/*"],"compilerOptions":{"noEmit":true,"noLib":true}}"#,
+    );
+    write_file(&temp.path.join("src/a.ts"), "const a = 1;\n");
+
+    let output = Command::new(tsz_bin)
+        .args([
+            "-p",
+            "tsconfig.json",
+            "--pretty",
+            "false",
+            "--listFilesOnly",
+        ])
+        .current_dir(&temp.path)
+        .output()
+        .expect("run tsz --listFilesOnly");
+
+    let stdout = normalize_output(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize_output(&String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "tsz --listFilesOnly should accept a bare relative project config path.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("src/a.ts"),
+        "expected discovered source file in stdout, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn list_files_only_resolve_json_module_does_not_list_unimported_json_roots() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("listfiles_resolve_json_no_json_roots").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true,"noLib":true,"resolveJsonModule":true,"module":"node16","moduleResolution":"node16","types":[]},"include":["**/*"]}"#,
+    );
+    write_file(&temp.path.join("app.ts"), "export const x = 1;\n");
+    write_file(&temp.path.join("data.json"), "{ not valid json }\n");
+
+    let output = Command::new(tsz_bin)
+        .args(["--pretty", "false", "--listFilesOnly"])
+        .current_dir(&temp.path)
+        .output()
+        .expect("run tsz --listFilesOnly");
+
+    let stdout = normalize_output(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize_output(&String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "tsz --listFilesOnly should succeed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("app.ts"),
+        "expected discovered TS file in stdout, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("data.json"),
+        "unimported JSON matched by include should not be listed, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn trace_resolution_prints_relative_import_resolution() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("trace_resolution_relative_import").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true,"moduleResolution":"node","ignoreDeprecations":"6.0"},"files":["index.ts"]}"#,
+    );
+    write_file(&temp.path.join("dep.ts"), "export const dep = 2;\n");
+    write_file(
+        &temp.path.join("index.ts"),
+        "import { dep } from \"./dep\";\nexport const value = dep;\n",
+    );
+
+    let output = Command::new(tsz_bin)
+        .args([
+            "-p",
+            "tsconfig.json",
+            "--traceResolution",
+            "--pretty",
+            "false",
+        ])
+        .current_dir(&temp.path)
+        .output()
+        .expect("run tsz --traceResolution");
+
+    let stdout = normalize_output(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize_output(&String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "tsz --traceResolution should compile successfully.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("======== Resolving module './dep' from '"),
+        "expected trace to include module resolution start, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Explicitly specified module resolution kind: 'Node10'."),
+        "expected trace to include effective module resolution kind, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("File '") && stdout.contains("dep.ts' exists"),
+        "expected trace to include successful file probe, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("======== Module name './dep' was successfully resolved to '")
+            && stdout.contains("dep.ts'. ========"),
+        "expected trace to include successful module resolution, got:\n{stdout}"
+    );
+}
+
+#[test]
 fn declaration_emit_expands_foreign_import_mapped_keys_from_nested_package() {
     let temp = TempDir::new("foreign_mapped_keys").expect("temp dir");
 
@@ -1259,6 +1386,8 @@ fn tsc_compat_double_digit_line_number_pretty() {
 // CLI error format tests (TS5023, TS5025, TS6369, build mode flag remapping)
 // ===========================================================================
 
+const TS5112_COMMAND_LINE_FILES_OUTPUT: &str = "error TS5112: tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error.\n";
+
 #[test]
 fn unknown_flag_ts5023_format() {
     let temp = TempDir::new("unknown_flag_ts5023").expect("temp dir");
@@ -1298,6 +1427,124 @@ fn unknown_flag_exit_code_is_1_not_2() {
     assert_eq!(
         code, 1,
         "Expected exit code 1 for unknown flag (not clap's default 2), got {code}"
+    );
+}
+
+#[test]
+fn bare_optional_boolean_flags_apply_to_following_input_file() {
+    let temp = TempDir::new("bare_optional_boolean_flags").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "function f(value) { return value; }\nconst text: string = null;\n",
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--ignoreConfig",
+            "--noEmit",
+            "--pretty",
+            "false",
+            "--noImplicitAny",
+            "--strictNullChecks",
+            "test.ts",
+        ],
+    )
+    .expect("tsz binary not found");
+
+    assert_ne!(code, 0, "Expected diagnostics exit code, got {code}");
+    assert!(
+        !output.contains("TS6044"),
+        "Bare optional boolean flags should not require explicit values:\n{output}"
+    );
+    assert!(
+        output.contains("TS7006") && output.contains("TS2322"),
+        "Expected both bare boolean flags to affect test.ts, got:\n{output}"
+    );
+}
+
+#[test]
+fn command_line_files_with_discovered_tsconfig_report_ts5112() {
+    let temp = TempDir::new("command_line_files_ts5112").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true}}"#,
+    );
+    write_file(&temp.path.join("src/a.ts"), "const a = 1;\n");
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--pretty", "false", "--noLib", "src/a.ts"])
+            .expect("tsz binary not found");
+
+    assert_eq!(code, 1, "Expected exit code 1 for TS5112, got {code}");
+    assert_eq!(output, TS5112_COMMAND_LINE_FILES_OUTPUT);
+}
+
+#[test]
+fn list_files_only_with_discovered_tsconfig_reports_ts5112() {
+    let temp = TempDir::new("list_files_only_ts5112").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true}}"#,
+    );
+    write_file(&temp.path.join("src/a.ts"), "const a = 1;\n");
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--pretty",
+            "false",
+            "--noLib",
+            "--listFilesOnly",
+            "src/a.ts",
+        ],
+    )
+    .expect("tsz binary not found");
+
+    assert_eq!(code, 1, "Expected exit code 1 for TS5112, got {code}");
+    assert_eq!(output, TS5112_COMMAND_LINE_FILES_OUTPUT);
+}
+
+#[test]
+fn ignore_config_skips_ts5112_for_command_line_files() {
+    let temp = TempDir::new("ignore_config_skips_ts5112").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true}}"#,
+    );
+    write_file(&temp.path.join("src/a.ts"), "const a = 1;\n");
+
+    let (_code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--pretty", "false", "--noLib", "--ignoreConfig", "src/a.ts"],
+    )
+    .expect("tsz binary not found");
+
+    assert!(
+        !output.contains("TS5112"),
+        "--ignoreConfig should skip TS5112, got:\n{output}"
+    );
+
+    let (list_code, list_output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--pretty",
+            "false",
+            "--noLib",
+            "--ignoreConfig",
+            "--listFilesOnly",
+            "src/a.ts",
+        ],
+    )
+    .expect("tsz binary not found");
+
+    assert_eq!(
+        list_code, 0,
+        "--listFilesOnly with --ignoreConfig should succeed, got:\n{list_output}"
+    );
+    assert!(
+        !list_output.contains("TS5112") && list_output.contains("src/a.ts"),
+        "--listFilesOnly with --ignoreConfig should list the explicit file, got:\n{list_output}"
     );
 }
 
@@ -1696,6 +1943,68 @@ fn tsc_parity_show_config_node16_resolve_json_false() {
         output.contains("\"resolveJsonModule\": false"),
         "node16 showConfig should include resolveJsonModule false: {output}"
     );
+}
+
+#[test]
+fn show_config_rejects_tsconfig_only_cli_options() {
+    let temp = TempDir::new("show_config_tsconfig_only_cli_options").expect("temp dir");
+    write_file(&temp.path.join("index.ts"), "export {};\n");
+
+    for (flag, value) in [("--paths", "@/*=src/*"), ("--plugins", "foo")] {
+        let (code, output) = run_tsz_with_exit_code(
+            &temp.path,
+            &["--showConfig", "--ignoreConfig", flag, value, "index.ts"],
+        )
+        .expect("tsz should run");
+        assert_eq!(code, 1, "expected failure for {flag}, got: {output}");
+        assert!(
+            output.contains("error TS6064:"),
+            "expected TS6064 for {flag}, got: {output}"
+        );
+    }
+}
+
+#[test]
+fn invalid_top_level_config_array_types_emit_ts5024() {
+    let temp = TempDir::new("top_level_config_array_types").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "export {};\n");
+
+    for (key, value) in [
+        ("include", r#""*.ts""#),
+        ("exclude", r#""dist""#),
+        ("references", r#""./lib""#),
+    ] {
+        write_file(
+            &temp.path.join("tsconfig.json"),
+            &format!(
+                r#"{{
+  "{key}": {value},
+  "compilerOptions": {{ "noEmit": true }},
+  "files": ["a.ts"]
+}}
+"#
+            ),
+        );
+
+        let (code, output) =
+            run_tsz_with_exit_code(&temp.path, &["-p", "tsconfig.json", "--pretty", "false"])
+                .expect("tsz should run");
+
+        assert_ne!(
+            code, 0,
+            "expected config diagnostic for {key}, got: {output}"
+        );
+        assert!(
+            !output.contains("failed to parse tsconfig"),
+            "invalid {key} should recover through TS5024, got:\n{output}"
+        );
+        assert!(
+            output.contains(&format!(
+                "error TS5024: Compiler option '{key}' requires a value of type Array."
+            )),
+            "expected TS5024 for {key}, got:\n{output}"
+        );
+    }
 }
 
 #[test]

@@ -5,6 +5,7 @@
 //! (Object contract, generic index access).
 
 use crate::def::resolver::TypeResolver;
+use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::{
     AnyPropagationMode, INTERSECTION_OBJECT_FAST_PATH_THRESHOLD, SubtypeChecker, SubtypeResult,
 };
@@ -13,8 +14,8 @@ use crate::types::{
     TypeId, Visibility,
 };
 use crate::visitor::{
-    callable_shape_id, function_shape_id, index_access_parts, literal_string, object_shape_id,
-    object_with_index_shape_id, type_param_info, union_list_id,
+    callable_shape_id, function_shape_id, index_access_parts, keyof_inner_type, literal_string,
+    mapped_type_id, object_shape_id, object_with_index_shape_id, type_param_info, union_list_id,
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
@@ -62,7 +63,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     pub(crate) fn can_use_object_intersection_fast_path(&self, members: &[TypeId]) -> bool {
-        if members.len() < INTERSECTION_OBJECT_FAST_PATH_THRESHOLD {
+        let has_finite_mapped_member = members.iter().any(|&member| {
+            let resolved = self.resolve_lazy_type(member);
+            mapped_type_id(self.interner, resolved).is_some_and(|mapped_id| {
+                crate::type_queries::collect_finite_mapped_property_names(self.interner, mapped_id)
+                    .is_some()
+            })
+        });
+
+        if members.len() < INTERSECTION_OBJECT_FAST_PATH_THRESHOLD && !has_finite_mapped_member {
             return false;
         }
 
@@ -75,6 +84,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 || function_shape_id(self.interner, resolved).is_some()
             {
                 return false;
+            }
+
+            if mapped_type_id(self.interner, resolved).is_some_and(|mapped_id| {
+                crate::type_queries::collect_finite_mapped_property_names(self.interner, mapped_id)
+                    .is_some()
+            }) {
+                continue;
             }
 
             let Some(shape_id) = object_shape_id(self.interner, resolved)
@@ -465,6 +481,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        if self.index_key_is_constrained_to_keyof_object(key_type, object_type)
+            && let Some(value_union) = self.collect_keyof_index_value_union(object_type)
+            && value_union != original
+            && !candidates.contains(&value_union)
+        {
+            candidates.push(value_union);
+        }
+
         if let Some(intersection_id) =
             crate::visitor::intersection_list_id(self.interner, object_type)
         {
@@ -474,6 +498,73 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     member, key_type, original, candidates,
                 );
             }
+        }
+    }
+
+    fn index_key_is_constrained_to_keyof_object(
+        &mut self,
+        key_type: TypeId,
+        object_type: TypeId,
+    ) -> bool {
+        let key_constraint = type_param_info(self.interner, key_type)
+            .and_then(|info| info.constraint)
+            .unwrap_or(key_type);
+        let Some(keyof_object) = keyof_inner_type(self.interner, key_constraint) else {
+            return false;
+        };
+
+        self.same_after_evaluation(keyof_object, object_type)
+    }
+
+    fn same_after_evaluation(&mut self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+        let evaluated_left = self.evaluate_type(left);
+        let evaluated_right = self.evaluate_type(right);
+        evaluated_left == right || left == evaluated_right || evaluated_left == evaluated_right
+    }
+
+    fn collect_keyof_index_value_union(&mut self, object_type: TypeId) -> Option<TypeId> {
+        let collected = match collect_properties(object_type, self.interner, self.resolver) {
+            PropertyCollectionResult::Properties {
+                properties,
+                string_index,
+                number_index,
+            } => (properties, string_index, number_index),
+            PropertyCollectionResult::Any => return Some(TypeId::ANY),
+            PropertyCollectionResult::NonObject => {
+                let evaluated = self.evaluate_type(object_type);
+                if evaluated == object_type {
+                    return None;
+                }
+                match collect_properties(evaluated, self.interner, self.resolver) {
+                    PropertyCollectionResult::Properties {
+                        properties,
+                        string_index,
+                        number_index,
+                    } => (properties, string_index, number_index),
+                    PropertyCollectionResult::Any => return Some(TypeId::ANY),
+                    PropertyCollectionResult::NonObject => return None,
+                }
+            }
+        };
+
+        let (properties, string_index, number_index) = collected;
+        let mut values: Vec<TypeId> = properties
+            .into_iter()
+            .map(|property| property.type_id)
+            .collect();
+        if let Some(index) = string_index {
+            values.push(index.value_type);
+        }
+        if let Some(index) = number_index {
+            values.push(index.value_type);
+        }
+        if values.is_empty() {
+            None
+        } else {
+            Some(crate::utils::union_or_single(self.interner, values))
         }
     }
 }

@@ -15,5 +15,17 @@ mod error_emission;
 mod call_errors_binding_patterns;
 
 #[cfg(test)]
+#[path = "../call_errors_optional_parameter_tests.rs"]
+mod optional_parameter_tests;
+
+#[cfg(test)]
+#[path = "../call_errors_array_literal_tests.rs"]
+mod call_errors_array_literal_tests;
+
+#[cfg(test)]
 #[path = "../call_errors_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../call_errors_overload_tests.rs"]
+mod overload_tests;
