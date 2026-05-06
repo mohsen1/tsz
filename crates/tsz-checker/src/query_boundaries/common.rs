@@ -25,8 +25,8 @@ pub(crate) use tsz_solver::TypeInstantiator;
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::TypeInterner;
 pub(crate) use tsz_solver::type_queries::{
-    RemappedMappedIndexAccessResult, is_remapped_mapped_index_access,
-    remapped_mapped_index_access_result,
+    RemappedMappedIndexAccessResult, constraint_allows_mutable_array_like,
+    is_remapped_mapped_index_access, remapped_mapped_index_access_result,
 };
 
 pub(crate) use tsz_solver::AssignabilityChecker;

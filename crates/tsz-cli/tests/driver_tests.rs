@@ -407,7 +407,7 @@ fn compile_empty_triple_slash_reference_path_reports_ts6231() {
     assert!(
         diagnostic
             .message_text
-            .contains(&base.to_string_lossy().as_ref()),
+            .contains(base.to_string_lossy().as_ref()),
         "TS6231 should report the containing directory for an empty path: {}",
         diagnostic.message_text
     );
@@ -9952,6 +9952,88 @@ fn compile_missing_file_in_include_pattern_returns_error() {
     assert!(
         compilation.diagnostics.iter().any(|d| d.code == 18003),
         "Should contain TS18003 diagnostic when no input files found, got: {:?}",
+        compilation
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn compile_inherited_include_resolves_from_base_config_dir() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("base/tsconfig.base.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("base/src/a.ts"),
+        "export const baseOnly: string = 1;",
+    );
+    write_file(
+        &base.join("app/tsconfig.json"),
+        r#"{
+          "extends": "../base/tsconfig.base.json"
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(PathBuf::from("app"));
+    let compilation = compile(&args, base).expect("compile should return diagnostics");
+
+    assert!(
+        compilation.diagnostics.iter().any(|d| d.code == 2322),
+        "expected inherited include to check base/src/a.ts and report TS2322, got {:?}",
+        compilation
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn compile_inherited_files_resolves_from_base_config_dir() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("base/tsconfig.base.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["src/a.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("base/src/a.ts"),
+        "export const baseFileOnly: string = 1;",
+    );
+    write_file(
+        &base.join("app/tsconfig.json"),
+        r#"{
+          "extends": "../base/tsconfig.base.json"
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(PathBuf::from("app"));
+    let compilation = compile(&args, base).expect("compile should return diagnostics");
+
+    assert!(
+        compilation.diagnostics.iter().any(|d| d.code == 2322),
+        "expected inherited files entry to check base/src/a.ts and report TS2322, got {:?}",
         compilation
             .diagnostics
             .iter()

@@ -251,6 +251,29 @@ fn classic_spread_child_unwraps_plain_parentheses() {
     );
 }
 
+#[test]
+fn preserve_jsx_reopened_namespace_qualifies_exported_var_tags() {
+    let source = r#"namespace M {
+    export var X: any;
+}
+namespace M {
+    var y = <X></X>;
+}
+"#;
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: ModuleKind::AMD,
+        jsx: JsxEmit::Preserve,
+        ..Default::default()
+    };
+    let output = emit_jsx_with_printer_options(source, opts);
+
+    assert!(
+        output.contains("var y = <M.X></M.X>;"),
+        "Reopened namespace JSX tags must qualify exported values.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // moduleDetection=legacy + JSX automatic runtime
 // =============================================================================
