@@ -1794,6 +1794,10 @@ impl QueryDatabase for QueryCache<'_> {
         Some(result)
     }
 
+    fn insert_type_param_variance(&self, def_id: DefId, variance: Arc<[Variance]>) {
+        self.variance_cache.borrow_mut().insert(def_id, variance);
+    }
+
     fn canonical_id(&self, type_id: TypeId) -> TypeId {
         // Check cache first
         let cached = self.canonical_cache.borrow().get(&type_id).copied();
