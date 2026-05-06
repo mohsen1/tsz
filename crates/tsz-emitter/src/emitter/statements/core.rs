@@ -849,6 +849,7 @@ impl<'a> Printer<'a> {
             }
             self.map_trailing_semicolon(node);
             self.write_semicolon();
+            self.emit_recovered_class_keyword_variable_statement_tail(node);
         }
 
         // Emit trailing comments (e.g., var x = 1; // comment).
