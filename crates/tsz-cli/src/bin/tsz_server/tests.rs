@@ -826,6 +826,26 @@ fn test_reload_uses_tmpfile_for_requested_open_file() {
 }
 
 #[test]
+fn test_reload_projects_returns_no_body() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let file_path = dir.path().join("a.ts");
+    std::fs::write(&file_path, "const value = 2;\n").expect("write disk file");
+
+    let file = file_path.to_string_lossy().to_string();
+    let mut server = make_server();
+    server
+        .open_files
+        .insert(file.clone(), "const value = 1;\n".to_string());
+
+    let response =
+        server.handle_tsserver_request(make_request("reloadProjects", serde_json::json!({})));
+
+    assert!(response.success);
+    assert_eq!(response.body, None);
+    assert_eq!(server.open_files[&file], "const value = 2;\n");
+}
+
+#[test]
 fn test_inferred_auto_imports_blocked_for_module_none_es5() {
     let options = serde_json::json!({
         "module": "none",
