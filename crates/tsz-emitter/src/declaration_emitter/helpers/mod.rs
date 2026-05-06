@@ -188,6 +188,7 @@ mod comments_source;
 mod computed_declarations;
 mod emit_node;
 mod function_analysis;
+mod generic_call_literal;
 mod js_exports;
 mod jsdoc;
 mod late_bound_function_analysis;

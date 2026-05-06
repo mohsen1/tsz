@@ -1678,19 +1678,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                             let Some(other_constraint) = other_tp.constraint else {
                                                 continue;
                                             };
-                                            if crate::type_param_info(
-                                                self.interner.as_type_database(),
-                                                other_constraint,
-                                            )
-                                            .is_some_and(|info| info.name == tp.name)
+                                            let direct_constraint_on_current =
+                                                crate::type_param_info(
+                                                    self.interner.as_type_database(),
+                                                    other_constraint,
+                                                )
+                                                .is_some_and(|info| info.name == tp.name);
+                                            if !direct_constraint_on_current
+                                                && !crate::visitors::visitor_predicates::contains_type_parameter_named(
+                                                    self.interner,
+                                                    other_constraint,
+                                                    tp.name,
+                                                )
                                             {
-                                                continue;
-                                            }
-                                            if !crate::visitors::visitor_predicates::contains_type_parameter_named(
-                                                self.interner,
-                                                other_constraint,
-                                                tp.name,
-                                            ) {
                                                 continue;
                                             }
                                             let Some(other_constraints) =
