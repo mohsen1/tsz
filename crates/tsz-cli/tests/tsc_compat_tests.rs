@@ -1302,6 +1302,39 @@ fn unknown_flag_exit_code_is_1_not_2() {
 }
 
 #[test]
+fn bare_optional_boolean_flags_apply_to_following_input_file() {
+    let temp = TempDir::new("bare_optional_boolean_flags").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "function f(value) { return value; }\nconst text: string = null;\n",
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--ignoreConfig",
+            "--noEmit",
+            "--pretty",
+            "false",
+            "--noImplicitAny",
+            "--strictNullChecks",
+            "test.ts",
+        ],
+    )
+    .expect("tsz binary not found");
+
+    assert_ne!(code, 0, "Expected diagnostics exit code, got {code}");
+    assert!(
+        !output.contains("TS6044"),
+        "Bare optional boolean flags should not require explicit values:\n{output}"
+    );
+    assert!(
+        output.contains("TS7006") && output.contains("TS2322"),
+        "Expected both bare boolean flags to affect test.ts, got:\n{output}"
+    );
+}
+
+#[test]
 fn build_mode_v_means_verbose() {
     let temp = TempDir::new("build_v_verbose").expect("temp dir");
     // With -b -v, -v should map to --build-verbose, NOT --version.

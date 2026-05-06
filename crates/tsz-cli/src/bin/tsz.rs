@@ -385,6 +385,7 @@ fn run_batch_mode() -> Result<()> {
 ///   `-v` maps to `--build-verbose`, `-d` maps to `--dry`, `-f` maps to `--force`
 /// - Case-insensitive flag names: `--NoEmit` → `--noEmit` (tsc v6 compat)
 /// - Boolean flag values: `--strict false` → strip the flag (tsc v6 compat)
+/// - Optional boolean flags: `--strictNullChecks file.ts` → `--strictNullChecks=true file.ts`
 /// - Duplicate flags: `--strict --strict` → deduplicated (tsc v6 compat)
 fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
     let flag_lookup = build_flag_lookup();
@@ -597,15 +598,13 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 let next_lower = next_str.to_lowercase();
                 if next_lower == "false" {
                     if option_bool_flags.contains(flag_name.as_str()) {
-                        // Option<bool> flag: emit --flag=false so clap gets the value
-                        let combined = format!("{flag_name}=false");
-                        if let Some(&prev_idx) = flag_positions.get(&flag_name) {
-                            skip_positions[prev_idx] = true;
-                        }
-                        let current_idx = final_result.len();
-                        flag_positions.insert(flag_name, current_idx);
-                        final_result.push(OsString::from(combined));
-                        skip_positions.push(false);
+                        push_option_bool_arg(
+                            &mut final_result,
+                            &mut skip_positions,
+                            &mut flag_positions,
+                            &flag_name,
+                            false,
+                        );
                         i += 2;
                         continue;
                     }
@@ -618,21 +617,34 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                     continue;
                 } else if next_lower == "true" {
                     if option_bool_flags.contains(flag_name.as_str()) {
-                        // Option<bool> flag: emit --flag=true so clap gets the value
-                        let combined = format!("{flag_name}=true");
-                        if let Some(&prev_idx) = flag_positions.get(&flag_name) {
-                            skip_positions[prev_idx] = true;
-                        }
-                        let current_idx = final_result.len();
-                        flag_positions.insert(flag_name, current_idx);
-                        final_result.push(OsString::from(combined));
-                        skip_positions.push(false);
+                        push_option_bool_arg(
+                            &mut final_result,
+                            &mut skip_positions,
+                            &mut flag_positions,
+                            &flag_name,
+                            true,
+                        );
                         i += 2;
                         continue;
                     }
                     // Plain bool flag: keep the flag, skip the "true" token
                     i += 1;
                 }
+            }
+
+            if is_boolean
+                && !arg_str.contains('=')
+                && option_bool_flags.contains(flag_name.as_str())
+            {
+                push_option_bool_arg(
+                    &mut final_result,
+                    &mut skip_positions,
+                    &mut flag_positions,
+                    &flag_name,
+                    true,
+                );
+                i += 1;
+                continue;
             }
 
             // Deduplicate: if we've seen this flag before, mark old position for skip
@@ -671,6 +683,23 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
         .zip(skip_positions)
         .filter_map(|(arg, skip)| if skip { None } else { Some(arg) })
         .collect()
+}
+
+fn push_option_bool_arg(
+    final_result: &mut Vec<OsString>,
+    skip_positions: &mut Vec<bool>,
+    flag_positions: &mut FxHashMap<String, usize>,
+    flag_name: &str,
+    value: bool,
+) {
+    if let Some(&prev_idx) = flag_positions.get(flag_name) {
+        skip_positions[prev_idx] = true;
+    }
+
+    let current_idx = final_result.len();
+    flag_positions.insert(flag_name.to_string(), current_idx);
+    final_result.push(OsString::from(format!("{flag_name}={value}")));
+    skip_positions.push(false);
 }
 
 /// Build a lookup table from lowercase flag names (without `--`) to their canonical
