@@ -1798,8 +1798,19 @@ impl<'a> TypeFormatter<'a> {
             return;
         }
 
+        let formatted = self.format(type_id);
+        let formatted = formatted.as_ref();
+        if formatted.len() >= 2
+            && formatted.starts_with('"')
+            && formatted.ends_with('"')
+            && !formatted[1..formatted.len() - 1].contains('"')
+        {
+            Self::push_template_literal_text(result, &formatted[1..formatted.len() - 1]);
+            return;
+        }
+
         result.push_str("${");
-        result.push_str(&self.format(type_id));
+        result.push_str(formatted);
         result.push('}');
     }
 

@@ -2744,6 +2744,17 @@ impl<'a> CheckerState<'a> {
             result = CallResult::Success(fallback_return);
         }
 
+        if self.ctx.in_const_assertion
+            && is_generic_call
+            && args.len() == 1
+            && let (CallResult::Success(return_type), Some(&arg_type)) =
+                (result.clone(), arg_types.first())
+            && return_type == common::widen_literal_type(self.ctx.types, arg_type)
+            && return_type != arg_type
+        {
+            result = CallResult::Success(arg_type);
+        }
+
         if let CallResult::Success(return_type) = result {
             for (index, &actual) in arg_types.iter().enumerate() {
                 let expected = finalized_contextual_param_types

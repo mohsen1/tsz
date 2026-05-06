@@ -190,8 +190,8 @@ impl TypeInterner {
             }
         }
 
-        self.sort_union_members(&mut flat);
-        flat.dedup();
+        let mut seen = FxHashSet::default();
+        flat.retain(|id| seen.insert(*id));
         flat.retain(|id| *id != TypeId::NEVER);
 
         if flat.is_empty() {
