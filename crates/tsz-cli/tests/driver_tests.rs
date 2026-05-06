@@ -9876,6 +9876,81 @@ export const x = foo();
 }
 
 #[test]
+fn declaration_emit_skips_file_with_ts4023_but_writes_unaffected_files() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("type.ts"),
+        r#"export namespace Foo {
+    export const sym = Symbol();
+}
+
+export type Type = { x?: { [Foo.sym]: 0 } };
+"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"import { type Type } from "./type";
+
+export const foo = { ...({} as Type) };
+"#,
+    );
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--ignoreConfig",
+        "--target",
+        "es2015",
+        "--strict",
+        "--lib",
+        "esnext",
+        "--declaration",
+        "--emitDeclarationOnly",
+        "--listEmittedFiles",
+        "--outDir",
+        "dist",
+        "--pretty",
+        "false",
+        "index.ts",
+        "type.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::EXPORTED_VARIABLE_HAS_OR_IS_USING_NAME_FROM_EXTERNAL_MODULE_BUT_CANNOT_BE_NAMED),
+        "expected TS4023 diagnostic, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        !base.join("dist/index.d.ts").exists(),
+        "Declaration output for file with TS4023 should not be written"
+    );
+    assert!(
+        base.join("dist/type.d.ts").is_file(),
+        "Unaffected declaration output should still be written"
+    );
+    assert!(
+        !result
+            .emitted_files
+            .iter()
+            .any(|path| path.ends_with("dist/index.d.ts")),
+        "emitted files should not include blocked declaration: {:?}",
+        result.emitted_files
+    );
+    assert!(
+        result
+            .emitted_files
+            .iter()
+            .any(|path| path.ends_with("dist/type.d.ts")),
+        "emitted files should include unaffected declaration: {:?}",
+        result.emitted_files
+    );
+}
+
+#[test]
 fn compile_emit_declaration_only_from_cli_suppresses_js_output() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
