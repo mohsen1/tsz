@@ -5807,17 +5807,13 @@ function foo() {
             .filter(|diag| diag.code == diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE)
             .count();
 
-        // Known regression: merging `Node.kind: SyntaxKind` introduces a small
-        // cascade of TS2344 errors at lib.dom.d.ts call sites that constrain
-        // `HTMLElementTagNameMap[K]` against `Element` / `Node`. The constraint
-        // satisfaction breaks because the augmented `Node` shape is no longer
-        // structurally satisfied by the un-narrowed indexed-access type. The
-        // root fix lives in solver constraint resolution and is tracked
-        // separately; we lock in the current count as a ratchet so it cannot
-        // grow without notice.
-        assert!(
-            ts2344_count <= 5,
-            "TS2344 cascade in lib.dom.d.ts grew past the known floor of 5 after merging Node.kind, got: {ts2344_count}: {diagnostics:?}"
+        // tsc reports three TS2344 diagnostics here: the apparent
+        // `HTMLElementTagNameMap[K]` value union includes `HTMLTrackElement`,
+        // whose existing `kind: string` property conflicts with the merged
+        // `Node.kind: SyntaxKind` property.
+        assert_eq!(
+            ts2344_count, 3,
+            "Expected three TS2344 diagnostics from lib.dom.d.ts after merging Node.kind, got: {diagnostics:?}"
         );
         assert_eq!(
             ts2430_count, 1,

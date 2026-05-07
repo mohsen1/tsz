@@ -1710,21 +1710,69 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn member_extends_constraint_heritage(&mut self, member: TypeId, constraint: TypeId) -> bool {
+    pub(crate) fn member_extends_constraint_heritage(
+        &mut self,
+        member: TypeId,
+        constraint: TypeId,
+    ) -> bool {
         let db = self.ctx.types.as_type_database();
-        let member_sym = self.ctx.resolve_type_to_symbol_id(member).or_else(|| {
-            query::lazy_def_id(db, member)
-                .and_then(|def| self.ctx.def_to_symbol_id_with_fallback(def))
-        });
-        let constraint_sym = self.ctx.resolve_type_to_symbol_id(constraint).or_else(|| {
-            query::lazy_def_id(db, constraint)
-                .and_then(|def| self.ctx.def_to_symbol_id_with_fallback(def))
-        });
+        let member_sym = self
+            .ctx
+            .resolve_type_to_symbol_id(member)
+            .or_else(|| {
+                query::lazy_def_id(db, member)
+                    .and_then(|def| self.ctx.def_to_symbol_id_with_fallback(def))
+            })
+            .or_else(|| self.symbol_id_for_heritage_type_name(member));
+        let constraint_sym = self
+            .ctx
+            .resolve_type_to_symbol_id(constraint)
+            .or_else(|| {
+                query::lazy_def_id(db, constraint)
+                    .and_then(|def| self.ctx.def_to_symbol_id_with_fallback(def))
+            })
+            .or_else(|| self.symbol_id_for_heritage_type_name(constraint));
         let (Some(member_sym), Some(constraint_sym)) = (member_sym, constraint_sym) else {
             return false;
         };
         self.interface_extends_symbol(member_sym, constraint_sym)
             && !self.member_has_conflicting_constraint_property(member, constraint)
+    }
+
+    fn symbol_id_for_heritage_type_name(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<tsz_binder::SymbolId> {
+        let name = self.format_type_diagnostic(type_id);
+        let name = name.strip_prefix("globalThis.").unwrap_or(&name);
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        {
+            return None;
+        }
+
+        if let Some(index) = &self.ctx.global_file_locals_index
+            && let Some(candidates) = index.get(name)
+        {
+            for &(file_idx, sym_id) in candidates {
+                if self
+                    .ctx
+                    .get_binder_for_file(file_idx)
+                    .and_then(|binder| binder.get_symbol(sym_id))
+                    .is_some()
+                {
+                    self.ctx.register_symbol_file_target(sym_id, file_idx);
+                    return Some(sym_id);
+                }
+            }
+        }
+
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .get_global_type_with_libs(name, &lib_binders)
     }
 
     fn member_has_conflicting_constraint_property(
@@ -1756,7 +1804,23 @@ impl<'a> CheckerState<'a> {
                     let member_type = self.evaluate_type_for_assignability(member_type);
                     let constraint_type = self.resolve_lazy_type(constraint_prop.type_id);
                     let constraint_type = self.evaluate_type_for_assignability(constraint_type);
-                    !self.is_assignable_to(member_type, constraint_type)
+                    if crate::query_boundaries::assignability::are_types_structurally_identical(
+                        self.ctx.types,
+                        &self.ctx,
+                        member_type,
+                        constraint_type,
+                    ) {
+                        return false;
+                    }
+                    if self.is_assignable_to(member_type, constraint_type) {
+                        return false;
+                    }
+                    // Some recursive DOM property types are interned through
+                    // different paths and can miss both relation and canonical
+                    // identity checks while still rendering identically. They
+                    // are not genuine merge conflicts.
+                    self.format_type_diagnostic(member_type)
+                        != self.format_type_diagnostic(constraint_type)
                 })
         })
     }
