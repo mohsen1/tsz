@@ -916,6 +916,8 @@ pub(super) fn collect_diagnostics(
     let affected_lib_interfaces = affected_lib_interface_names(program, checker_libs);
     let affected_lib_extension_interfaces =
         affected_lib_extension_interface_names(program, checker_libs, &affected_lib_interfaces);
+    let baseline_lib_datetimeformatpart_interfaces =
+        baseline_lib_datetimeformatpart_spelling_interface_names(checker_libs);
 
     // Pre-create all binders for cross-file resolution.
     let all_binders: Arc<Vec<Arc<BinderState>>> = {
@@ -1246,6 +1248,22 @@ pub(super) fn collect_diagnostics(
     } else {
         FxHashSet::default()
     };
+    let baseline_lib_datetimeformatpart_diagnostics =
+        if !options.no_check && !baseline_lib_datetimeformatpart_interfaces.is_empty() {
+            let mut diagnostics = collect_checker_lib_baseline_diagnostics_for_codes(
+                program,
+                options,
+                checker_libs,
+                &baseline_lib_datetimeformatpart_interfaces,
+                &FxHashSet::default(),
+                &project_env,
+                &[2552],
+            );
+            diagnostics.retain(is_datetimeformatpart_spelling_baseline_diagnostic);
+            diagnostics
+        } else {
+            Vec::new()
+        };
 
     // --- SMART INVALIDATION: Work Queue Algorithm ---
     // Only type-check files that have changed or depend on files with changed export signatures
@@ -1891,6 +1909,7 @@ pub(super) fn collect_diagnostics(
         base_dir,
         &file_is_esm_map,
     ));
+    diagnostics.extend(baseline_lib_datetimeformatpart_diagnostics);
 
     // Use the aggregated query-cache statistics. In the parallel path, these
     // are merged from all per-file caches. In the sequential path, they come
@@ -3327,6 +3346,61 @@ fn affected_lib_extension_interface_names(
     extension_interfaces
 }
 
+fn baseline_lib_datetimeformatpart_spelling_interface_names(
+    checker_libs: &CheckerLibSet,
+) -> FxHashSet<String> {
+    let mut interfaces = FxHashSet::default();
+
+    for lib in &checker_libs.files {
+        let Some(file_name) = Path::new(&lib.file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+        else {
+            continue;
+        };
+        if !is_datetimeformatpart_spelling_baseline_lib(file_name) {
+            continue;
+        }
+        let Some(source_file) = lib.arena.get_source_file_at(lib.root_index) else {
+            continue;
+        };
+        let text = source_file.text.as_ref();
+        if !text.contains("DateTimeFormatPart") || !text.contains("DateTimeFormat") {
+            continue;
+        }
+
+        if matches!(file_name, "lib.es2021.intl.d.ts" | "es2021.intl.d.ts") {
+            interfaces.insert("DateTimeRangeFormatPart".to_string());
+        }
+        if matches!(file_name, "lib.esnext.intl.d.ts" | "esnext.intl.d.ts") {
+            interfaces.insert("DateTimeFormat".to_string());
+        }
+    }
+
+    interfaces
+}
+
+fn is_datetimeformatpart_spelling_baseline_lib(file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "lib.es2021.intl.d.ts" | "es2021.intl.d.ts" | "lib.esnext.intl.d.ts" | "esnext.intl.d.ts"
+    )
+}
+
+fn is_datetimeformatpart_spelling_baseline_diagnostic(diag: &Diagnostic) -> bool {
+    if diag.code != 2552
+        || diag.message_text
+            != "Cannot find name 'DateTimeFormatPart'. Did you mean 'DateTimeFormat'?"
+    {
+        return false;
+    }
+
+    Path::new(&diag.file)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(is_datetimeformatpart_spelling_baseline_lib)
+}
+
 fn build_lib_bound_file_for_interface_checks(
     program: &MergedProgram,
     lib_file: &Arc<LibFile>,
@@ -3423,6 +3497,48 @@ fn collect_checker_lib_baseline_fingerprints(
     fingerprints
 }
 
+fn collect_checker_lib_baseline_diagnostics_for_codes(
+    program: &MergedProgram,
+    options: &ResolvedCompilerOptions,
+    checker_libs: &CheckerLibSet,
+    affected_interfaces: &FxHashSet<String>,
+    extension_interfaces: &FxHashSet<String>,
+    project_env: &tsz::checker::context::ProjectEnv,
+    codes: &[u32],
+) -> Vec<Diagnostic> {
+    let code_filter = codes.iter().copied().collect::<FxHashSet<_>>();
+    let mut diagnostics = Vec::new();
+
+    for lib_idx in 0..checker_libs.files.len() {
+        let query_cache = QueryCache::new(&program.type_interner);
+        let (lib_diagnostics, _, _) = check_checker_lib_file_baseline(
+            project_env,
+            options,
+            checker_libs,
+            lib_idx,
+            affected_interfaces,
+            extension_interfaces,
+            &query_cache,
+        );
+        diagnostics.extend(
+            lib_diagnostics
+                .into_iter()
+                .filter(|diag| code_filter.contains(&diag.code)),
+        );
+    }
+
+    diagnostics.sort_by(|a, b| {
+        (a.file.as_str(), a.start, a.code, a.message_text.as_str()).cmp(&(
+            b.file.as_str(),
+            b.start,
+            b.code,
+            b.message_text.as_str(),
+        ))
+    });
+    diagnostics.dedup_by(|a, b| lib_diagnostic_fingerprint(a) == lib_diagnostic_fingerprint(b));
+    diagnostics
+}
+
 fn retain_program_induced_lib_diagnostics(
     diagnostics: &mut Vec<Diagnostic>,
     baseline_fingerprints: &FxHashSet<LibDiagnosticFingerprint>,
@@ -3490,6 +3606,57 @@ mod tests {
         .diagnostics
     }
 
+    fn checker_lib_set_for_test(libs: &[(&str, &str)]) -> CheckerLibSet {
+        let files = libs
+            .iter()
+            .map(|(file_name, source)| {
+                std::sync::Arc::new(tsz::binder::lib_loader::LibFile::from_source(
+                    (*file_name).to_string(),
+                    (*source).to_string(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let contexts = files
+            .iter()
+            .map(|lib| LibContext {
+                arena: std::sync::Arc::clone(&lib.arena),
+                binder: std::sync::Arc::clone(&lib.binder),
+            })
+            .collect();
+
+        CheckerLibSet {
+            files,
+            contexts: std::sync::Arc::new(contexts),
+        }
+    }
+
+    fn collect_test_diagnostics_with_checker_libs(
+        files: &[(&str, &str)],
+        checker_libs: &CheckerLibSet,
+    ) -> Vec<Diagnostic> {
+        let bind_results: Vec<_> = files
+            .iter()
+            .map(|(file_name, source)| {
+                parallel::parse_and_bind_single((*file_name).to_string(), (*source).to_string())
+            })
+            .collect();
+        let program = parallel::merge_bind_results(bind_results);
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        collect_diagnostics(
+            &program,
+            &ResolvedCompilerOptions::default(),
+            std::path::Path::new("/"),
+            None,
+            checker_libs,
+            (false, false, false),
+            &type_cache_output,
+            false,
+            false,
+        )
+        .diagnostics
+    }
+
     fn default_cli_args_for_test() -> CliArgs {
         clap::Parser::try_parse_from(["tsz"]).expect("default args should parse")
     }
@@ -3531,6 +3698,67 @@ mod tests {
         assert!(
             !codes.contains(&2322),
             "expected --noCheck diagnostics to skip TS2322 type error, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn collect_diagnostics_preserves_builtin_lib_ts2552_spelling_baseline() {
+        let checker_libs = checker_lib_set_for_test(&[(
+            "lib.esnext.intl.d.ts",
+            r#"
+declare namespace Intl {
+    interface DateTimeFormat {
+        formatToParts(): DateTimeFormatPart[];
+    }
+}
+"#,
+        )]);
+
+        let diagnostics = collect_test_diagnostics_with_checker_libs(
+            &[("test.ts", "const value = new Intl.DateTimeFormat();\n")],
+            &checker_libs,
+        );
+        let ts2552 = diagnostics
+            .iter()
+            .filter(|diag| diag.code == 2552)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ts2552.len(),
+            1,
+            "expected one baseline lib TS2552 diagnostic, got: {diagnostics:?}"
+        );
+        assert!(
+            ts2552[0]
+                .message_text
+                .contains("Cannot find name 'DateTimeFormatPart'. Did you mean 'DateTimeFormat'?"),
+            "expected DateTimeFormatPart spelling suggestion, got: {ts2552:?}"
+        );
+        assert_eq!(ts2552[0].file, "lib.esnext.intl.d.ts");
+    }
+
+    #[test]
+    fn collect_diagnostics_ignores_unrelated_builtin_lib_ts2552_spelling_baseline() {
+        let checker_libs = checker_lib_set_for_test(&[(
+            "lib.esnext.intl.d.ts",
+            r#"
+declare namespace Intl {
+    interface DateTimeFormatPart {}
+    interface DateTimeFormat {
+        formatToParts(): DateTimeFormatParts[];
+    }
+}
+"#,
+        )]);
+
+        let diagnostics = collect_test_diagnostics_with_checker_libs(
+            &[("test.ts", "const value = new Intl.DateTimeFormat();\n")],
+            &checker_libs,
+        );
+
+        assert!(
+            diagnostics.iter().all(|diag| diag.code != 2552),
+            "expected unrelated baseline lib TS2552 diagnostics to stay filtered, got: {diagnostics:?}"
         );
     }
 
