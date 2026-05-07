@@ -1068,6 +1068,7 @@ impl Server {
             }
             "synchronizeProjectList" => self.handle_synchronize_project_list(seq, &request),
             "updateOpen" => self.handle_update_open(seq, &request),
+            "applyChangedToOpenFiles" => self.handle_apply_changed_to_open_files(seq, &request),
             "encodedSemanticClassifications-full" => {
                 self.handle_encoded_semantic_classifications_full(seq, &request)
             }
