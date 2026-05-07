@@ -2646,6 +2646,7 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
+        let is_legacy_completions = request.command == "completions";
         let result = (|| -> Option<serde_json::Value> {
             let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
@@ -2654,6 +2655,9 @@ impl Server {
             if let Some(base_offset) = line_map.position_to_offset(position, &source_text)
                 && Self::is_line_comment_position(&source_text, base_offset)
             {
+                if is_legacy_completions {
+                    return Some(serde_json::json!([]));
+                }
                 return Some(serde_json::json!({
                     "isGlobalCompletion": false,
                     "isMemberCompletion": false,
@@ -2853,6 +2857,10 @@ impl Server {
             let default_commit_characters =
                 (!is_new_identifier_location).then_some(serde_json::json!([".", ",", ";"]));
 
+            if is_legacy_completions {
+                return Some(serde_json::Value::Array(entries));
+            }
+
             let mut response = serde_json::json!({
                 "isGlobalCompletion": completion_result.as_ref().map(|r| r.is_global_completion).unwrap_or(false),
                 "isMemberCompletion": completion_result.as_ref().map(|r| r.is_member_completion).unwrap_or(false),
@@ -2865,16 +2873,17 @@ impl Server {
 
             Some(response)
         })();
-        self.stub_response(
-            seq,
-            request,
-            Some(result.unwrap_or(serde_json::json!({
+        let fallback = if is_legacy_completions {
+            serde_json::json!([])
+        } else {
+            serde_json::json!({
                 "isGlobalCompletion": false,
                 "isMemberCompletion": false,
                 "isNewIdentifierLocation": false,
                 "entries": []
-            }))),
-        )
+            })
+        };
+        self.stub_response(seq, request, Some(result.unwrap_or(fallback)))
     }
 
     pub(crate) fn handle_completion_details(

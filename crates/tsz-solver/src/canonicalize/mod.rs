@@ -35,6 +35,7 @@
 use crate::TypeDatabase;
 use crate::def::DefId;
 use crate::def::DefKind;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::recursion::{RecursionGuard, RecursionProfile, RecursionResult};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
@@ -198,12 +199,18 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 // Generic type application (e.g., Box<string>)
                 TypeData::Application(app_id) => {
                     let app = self.interner.type_application(app_id);
-                    // Canonicalize base type
-                    let c_base = self.canonicalize(app.base);
-                    // Canonicalize all generic arguments
-                    let c_args: Vec<TypeId> =
-                        app.args.iter().map(|&arg| self.canonicalize(arg)).collect();
-                    self.interner.application(c_base, c_args)
+                    if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base)
+                        && self.resolver.get_def_kind(def_id) == Some(DefKind::TypeAlias)
+                    {
+                        self.canonicalize_type_alias_application(def_id, &app.args)
+                    } else {
+                        // Canonicalize base type
+                        let c_base = self.canonicalize(app.base);
+                        // Canonicalize all generic arguments
+                        let c_args: Vec<TypeId> =
+                            app.args.iter().map(|&arg| self.canonicalize(arg)).collect();
+                        self.interner.application(c_base, c_args)
+                    }
                 }
 
                 TypeData::Function(shape_id) => {
@@ -416,7 +423,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
         // Enter new scope if generic
         let params = self.resolver.get_lazy_type_params(def_id);
-        let pushed_scope = if let Some(ps) = params {
+        let pushed_scope = if let Some(ps) = params.as_ref() {
             let param_names: Vec<Atom> = ps.iter().map(|p| p.name).collect();
             self.param_stack.push(param_names);
             true
@@ -432,6 +439,47 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         let canonical_body = self.canonicalize(body);
 
         // Pop scope and def_stack
+        if pushed_scope {
+            self.param_stack.pop();
+        }
+        self.def_stack.pop();
+
+        canonical_body
+    }
+
+    fn canonicalize_type_alias_application(&mut self, def_id: DefId, args: &[TypeId]) -> TypeId {
+        if let Some(depth) = self.get_recursion_depth(def_id) {
+            let recursive = self.interner.recursive(depth);
+            if args.is_empty() {
+                return recursive;
+            }
+            let c_args = args.iter().map(|&arg| self.canonicalize(arg)).collect();
+            return self.interner.application(recursive, c_args);
+        }
+
+        self.def_stack.push(def_id);
+
+        let params = self.resolver.get_lazy_type_params(def_id);
+        let pushed_scope = if let Some(ps) = params.as_ref() {
+            let param_names: Vec<Atom> = ps.iter().map(|p| p.name).collect();
+            self.param_stack.push(param_names);
+            true
+        } else {
+            false
+        };
+
+        let body = self
+            .resolver
+            .resolve_lazy(def_id, self.interner)
+            .unwrap_or(TypeId::ERROR);
+        let instantiated = if let Some(ps) = params {
+            let subst = TypeSubstitution::from_args(self.interner, &ps, args);
+            instantiate_type(self.interner, body, &subst)
+        } else {
+            body
+        };
+        let canonical_body = self.canonicalize(instantiated);
+
         if pushed_scope {
             self.param_stack.pop();
         }
