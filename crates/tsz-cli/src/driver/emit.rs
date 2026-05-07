@@ -26,6 +26,13 @@ pub(crate) struct OutputFile {
     pub(crate) source_path: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone)]
+struct DeclarationBundleChunk {
+    path_key: String,
+    referenced_path_keys: Vec<String>,
+    contents: String,
+}
+
 pub(crate) struct EmitOutputsContext<'a> {
     pub(crate) program: &'a MergedProgram,
     pub(crate) options: &'a ResolvedCompilerOptions,
@@ -85,6 +92,7 @@ pub(crate) fn emit_outputs(
         .enumerate()
         .map(|(idx, file)| (idx as u32, file.file_name.clone()))
         .collect();
+    let file_lookup = build_program_file_lookup(context.program);
 
     // Use the MergedProgram's global symbol-to-arena mapping.
     // This enables the declaration emitter's portability check to resolve
@@ -557,11 +565,20 @@ pub(crate) fn emit_outputs(
                             bundled_module_name(context.base_dir, context.root_dir, &input_path)
                         })
                         .flatten();
-                    declaration_bundle_chunks.push(bundle_declaration_output(
-                        &contents,
-                        context.options.printer.module,
-                        declaration_module_name.as_deref(),
-                    ));
+                    declaration_bundle_chunks.push(DeclarationBundleChunk {
+                        path_key: normalized_file_key(&file.file_name),
+                        referenced_path_keys: declaration_bundle_reference_path_keys(
+                            &file.file_name,
+                            &file.arena,
+                            file.source_file,
+                            &file_lookup,
+                        ),
+                        contents: bundle_declaration_output(
+                            &contents,
+                            context.options.printer.module,
+                            declaration_module_name.as_deref(),
+                        ),
+                    });
                 } else {
                     outputs.push(OutputFile {
                         path: dts_path,
@@ -1108,6 +1125,55 @@ fn module_resolution_candidates(base: &Path) -> Vec<PathBuf> {
     ]
 }
 
+fn declaration_bundle_reference_path_keys(
+    containing_file: &str,
+    arena: &NodeArena,
+    source_file_idx: NodeIndex,
+    file_lookup: &FxHashMap<String, String>,
+) -> Vec<String> {
+    let Some(source_text) = arena
+        .get(source_file_idx)
+        .and_then(|node| arena.get_source_file(node))
+        .map(|source| source.text.as_ref())
+    else {
+        return Vec::new();
+    };
+
+    tsz::checker::triple_slash_validator::extract_reference_paths(source_text)
+        .into_iter()
+        .filter_map(|(reference_path, _, _)| {
+            resolve_declaration_reference_path_file(containing_file, &reference_path, file_lookup)
+        })
+        .collect()
+}
+
+fn resolve_declaration_reference_path_file(
+    containing_file: &str,
+    reference_path: &str,
+    file_lookup: &FxHashMap<String, String>,
+) -> Option<String> {
+    if reference_path.is_empty() {
+        return None;
+    }
+
+    let containing = Path::new(containing_file);
+    let base_dir = containing.parent().unwrap_or_else(|| Path::new(""));
+    let direct_reference = base_dir.join(reference_path);
+    let mut candidates = vec![direct_reference];
+    if !reference_path.contains('.') {
+        for ext in tsz::checker::triple_slash_validator::reference_path_probe_extensions(true) {
+            candidates.push(base_dir.join(format!("{reference_path}{ext}")));
+        }
+    }
+
+    candidates.into_iter().find_map(|candidate| {
+        let key = normalize_path(&candidate)
+            .to_string_lossy()
+            .replace('\\', "/");
+        file_lookup.get(&key).cloned()
+    })
+}
+
 fn normalize_ts2883_diagnostics(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
     let mut exact_seen: FxHashMap<(u32, String, u32, u32, String), usize> = FxHashMap::default();
     let mut unique: Vec<(Diagnostic, bool)> = Vec::new();
@@ -1404,9 +1470,14 @@ fn declaration_bundle_output_path(
     Some(output)
 }
 
-fn join_declaration_bundle_chunks(chunks: &[String], new_line: &str) -> String {
+fn join_declaration_bundle_chunks(chunks: &[DeclarationBundleChunk], new_line: &str) -> String {
+    let ordered_indices = declaration_bundle_chunk_order(chunks);
     let mut bundled = String::new();
-    for chunk in chunks {
+    for chunk in ordered_indices
+        .into_iter()
+        .filter_map(|idx| chunks.get(idx))
+        .map(|chunk| chunk.contents.as_str())
+    {
         if !bundled.is_empty() && !bundled.ends_with(new_line) {
             bundled.push_str(new_line);
         }
@@ -1417,6 +1488,54 @@ fn join_declaration_bundle_chunks(chunks: &[String], new_line: &str) -> String {
         bundled.truncate(bundled.len() - new_line.len());
     }
     bundled
+}
+
+fn declaration_bundle_chunk_order(chunks: &[DeclarationBundleChunk]) -> Vec<usize> {
+    let by_path: FxHashMap<&str, usize> = chunks
+        .iter()
+        .enumerate()
+        .map(|(idx, chunk)| (chunk.path_key.as_str(), idx))
+        .collect();
+    let mut ordered = Vec::with_capacity(chunks.len());
+    let mut emitted = FxHashSet::default();
+    let mut visiting = FxHashSet::default();
+
+    fn visit(
+        idx: usize,
+        chunks: &[DeclarationBundleChunk],
+        by_path: &FxHashMap<&str, usize>,
+        emitted: &mut FxHashSet<usize>,
+        visiting: &mut FxHashSet<usize>,
+        ordered: &mut Vec<usize>,
+    ) {
+        if emitted.contains(&idx) || !visiting.insert(idx) {
+            return;
+        }
+
+        for referenced_path in &chunks[idx].referenced_path_keys {
+            if let Some(&referenced_idx) = by_path.get(referenced_path.as_str()) {
+                visit(referenced_idx, chunks, by_path, emitted, visiting, ordered);
+            }
+        }
+
+        visiting.remove(&idx);
+        if emitted.insert(idx) {
+            ordered.push(idx);
+        }
+    }
+
+    for idx in 0..chunks.len() {
+        visit(
+            idx,
+            chunks,
+            &by_path,
+            &mut emitted,
+            &mut visiting,
+            &mut ordered,
+        );
+    }
+
+    ordered
 }
 
 fn bundle_declaration_output(
