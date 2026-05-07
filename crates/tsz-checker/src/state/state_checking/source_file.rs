@@ -385,7 +385,7 @@ impl<'a> CheckerState<'a> {
 
         // Check for export assignment with other exports (2309)
         self.check_export_assignment(&sf.statements.nodes);
-        self.check_import_alias_duplicate_followups(&sf.statements.nodes);
+        self.check_import_alias_duplicates(&sf.statements.nodes);
         self.check_import_declaration_duplicate_bindings(&sf.statements.nodes);
 
         // TS4094: exported `export default <call-returning-anonymous-class>` patterns.
