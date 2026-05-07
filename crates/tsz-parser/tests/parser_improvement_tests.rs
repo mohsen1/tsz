@@ -382,8 +382,8 @@ namespace N {
         "Expected only the missing-expression TS1109 for recovered arrow body, got {diagnostics:?}"
     );
     assert_eq!(
-        ts1128_count, 0,
-        "Recovered expression-bodied arrows should consume their synthetic close brace: {diagnostics:?}"
+        ts1128_count, 1,
+        "Recovered expression-bodied arrows should report one trailing close-brace diagnostic: {diagnostics:?}"
     );
 }
 
@@ -627,6 +627,24 @@ fn test_regex_hyphen_after_range_is_literal() {
             .iter()
             .all(|d| d.code != diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
         "Hyphen after an already-consumed range should be literal: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_unicode_regex_trailing_hyphen_class_does_not_report_ts1508() {
+    let source = r#"
+const unicode = /[a-]/u;
+const unicode_sets = /[a-]/v;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.iter().all(
+            |d| d.code != diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH
+        ),
+        "Trailing hyphen before a class close should be a literal, got {diagnostics:?}"
     );
 }
 

@@ -10,6 +10,15 @@ use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
+    fn regex_literal_follows_invalid_shebang(&self, start_pos: u32) -> bool {
+        let source = self.scanner.source_text().as_bytes();
+        let start = start_pos as usize;
+        start >= 2
+            && source.get(start - 2) == Some(&b'#')
+            && source.get(start - 1) == Some(&b'!')
+            && start != 2
+    }
+
     /// Parse regex literal: /pattern/flags
     pub(crate) fn parse_regex_literal(&mut self) -> NodeIndex {
         fn regex_body_end(raw_text: &str) -> Option<usize> {
@@ -736,6 +745,7 @@ impl ParserState {
                     *pos += 1;
 
                     if *pos < body_end && body[*pos] == b']' {
+                        *pos += 1;
                         break;
                     }
 
@@ -1397,20 +1407,22 @@ impl ParserState {
         }
 
         // Emit errors for all regex flag issues detected by scanner
-        for error in flag_errors {
-            let (message, code) = match error.kind {
-                tsz_scanner::scanner_impl::RegexFlagErrorKind::Duplicate => {
-                    ("Duplicate regular expression flag.", 1500)
-                }
-                tsz_scanner::scanner_impl::RegexFlagErrorKind::InvalidFlag => {
-                    ("Unknown regular expression flag.", 1499)
-                }
-                tsz_scanner::scanner_impl::RegexFlagErrorKind::IncompatibleFlags => (
-                    "The Unicode 'u' flag and the Unicode Sets 'v' flag cannot be set simultaneously.",
-                    1502,
-                ),
-            };
-            self.parse_error_at(self.u32_from_usize(error.pos), 1, message, code);
+        if !self.regex_literal_follows_invalid_shebang(start_pos) {
+            for error in flag_errors {
+                let (message, code) = match error.kind {
+                    tsz_scanner::scanner_impl::RegexFlagErrorKind::Duplicate => {
+                        ("Duplicate regular expression flag.", 1500)
+                    }
+                    tsz_scanner::scanner_impl::RegexFlagErrorKind::InvalidFlag => {
+                        ("Unknown regular expression flag.", 1499)
+                    }
+                    tsz_scanner::scanner_impl::RegexFlagErrorKind::IncompatibleFlags => (
+                        "The Unicode 'u' flag and the Unicode Sets 'v' flag cannot be set simultaneously.",
+                        1502,
+                    ),
+                };
+                self.parse_error_at(self.u32_from_usize(error.pos), 1, message, code);
+            }
         }
         for (pos, len) in extended_unicode_escape_errors {
             self.parse_error_at(
