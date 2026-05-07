@@ -36,6 +36,38 @@ impl<'a> Printer<'a> {
         self.write("yield");
         let after_yield_pos = keyword_pos.saturating_add(5);
 
+        if self.ctx.emit_await_as_yield_await {
+            if unary.asterisk_token {
+                if self.arena.get(unary.expression).is_none() {
+                    self.write("* ");
+                    return;
+                }
+
+                self.write(" ");
+                self.write_helper("__await");
+                self.write("(yield* ");
+                self.write_helper("__asyncDelegator");
+                self.write("(");
+                self.write_helper("__asyncValues");
+                self.write("(");
+                self.emit_expression(unary.expression);
+                self.write(")))");
+                return;
+            }
+
+            if self.arena.get(unary.expression).is_none() {
+                self.write(" ");
+                return;
+            }
+
+            self.write(" yield ");
+            self.write_helper("__await");
+            self.write("(");
+            self.emit_expression(unary.expression);
+            self.write(")");
+            return;
+        }
+
         if unary.asterisk_token {
             let Some(expr_node) = self.arena.get(unary.expression) else {
                 // TypeScript emits `yield* ;` (with space) when yield* has no expression
