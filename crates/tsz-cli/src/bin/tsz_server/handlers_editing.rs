@@ -147,17 +147,12 @@ impl Server {
 
                         let tag_name = &source_text[tag_start..tag_end];
 
-                        // Don't auto-close void HTML elements
-                        let void_elements = [
-                            "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
-                            "meta", "param", "source", "track", "wbr",
-                        ];
-                        if void_elements
-                            .iter()
-                            .any(|&v| v.eq_ignore_ascii_case(tag_name))
-                        {
-                            return None;
-                        }
+                        // Issue #3731: tsserver's jsxClosingTag returns a
+                        // closing tag for any JSX element — including
+                        // intrinsic HTML void elements like `<input>` —
+                        // because the JSX runtime requires explicit
+                        // close tags. The previous void-suppression list
+                        // was hand-built and didn't match tsc.
 
                         // Don't auto-close if the closing tag already follows the cursor
                         let expected_close = format!("</{tag_name}>");
@@ -165,8 +160,13 @@ impl Server {
                             return None;
                         }
 
+                        // tsserver's protocol shape is `TextInsertion`:
+                        // `{ newText, caretOffset }` (issue #3731).
+                        // The previous `$0` snippet syntax was a VS Code
+                        // editor convention, not tsserver's wire format.
                         return Some(serde_json::json!({
-                            "newText": format!("$0</{}>", tag_name)
+                            "newText": format!("</{tag_name}>"),
+                            "caretOffset": 0,
                         }));
                     }
                     b'>' => depth += 1,
