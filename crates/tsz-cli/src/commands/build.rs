@@ -221,9 +221,22 @@ pub fn get_build_info_path(project: &ResolvedProject) -> Option<PathBuf> {
         return Some(project.root_dir.join(explicit_path));
     }
 
-    // Use the same logic as incremental.rs
+    // Use the same logic as incremental.rs. rootDir from compilerOptions is
+    // resolved relative to the project's tsconfig directory so we can pass an
+    // absolute path that matches `tsc`'s `getTsBuildInfoEmitOutputFilePath`.
     let out_dir = project.out_dir.as_deref();
-    Some(default_build_info_path(&project.config_path, out_dir))
+    let root_dir = project
+        .config
+        .base
+        .compiler_options
+        .as_ref()
+        .and_then(|opts| opts.root_dir.as_ref())
+        .map(|rd| project.root_dir.join(rd));
+    Some(default_build_info_path(
+        &project.config_path,
+        out_dir,
+        root_dir.as_deref(),
+    ))
 }
 
 #[cfg(test)]

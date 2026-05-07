@@ -519,23 +519,100 @@ impl BuildInfoBuilder {
     }
 }
 
-/// Determine the default .tsbuildinfo path based on configuration
-pub fn default_build_info_path(config_path: &Path, out_dir: Option<&Path>) -> PathBuf {
-    let config_name = config_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("tsconfig");
+/// Determine the default .tsbuildinfo path based on configuration.
+///
+/// Mirrors `tsc`'s `getTsBuildInfoEmitOutputFilePath`:
+/// - With `outDir` and `rootDir`: resolve `outDir + relative(rootDir, configExtless)`.
+///   When the config file sits outside `rootDir` (the common case — `tsconfig.json`
+///   at the project root, sources under `rootDir: "src"`), the relative path begins
+///   with `..` and the resolved path collapses back outside `outDir`.
+/// - With `outDir` only: `outDir/<config-name>.tsbuildinfo`.
+/// - With neither: alongside the config file.
+pub fn default_build_info_path(
+    config_path: &Path,
+    out_dir: Option<&Path>,
+    root_dir: Option<&Path>,
+) -> PathBuf {
+    let config_extless = strip_json_extension(config_path);
 
-    let build_info_name = format!("{config_name}.tsbuildinfo");
+    let extless = match (out_dir, root_dir) {
+        (Some(out), Some(root)) => {
+            let rel = diff_paths(&config_extless, root).unwrap_or_else(|| config_extless.clone());
+            normalize_path(&out.join(rel))
+        }
+        (Some(out), None) => {
+            let base = config_extless
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("tsconfig"));
+            out.join(base)
+        }
+        (None, _) => config_extless,
+    };
 
-    if let Some(out) = out_dir {
-        out.join(&build_info_name)
+    let mut result = extless.into_os_string();
+    result.push(".tsbuildinfo");
+    PathBuf::from(result)
+}
+
+/// Strip a trailing `.json` extension from a config path.
+/// Returns the path with the extension removed (e.g. `/proj/tsconfig.json` -> `/proj/tsconfig`).
+fn strip_json_extension(config_path: &Path) -> PathBuf {
+    let is_json = config_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+    if is_json {
+        config_path.with_extension("")
     } else {
-        config_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(&build_info_name)
+        config_path.to_path_buf()
     }
+}
+
+/// Compute a relative path from `base` to `path`, collapsing common prefix
+/// components and emitting `..` for each remaining component of `base`.
+fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let path_components: Vec<Component<'_>> = path.components().collect();
+    let base_components: Vec<Component<'_>> = base.components().collect();
+    let common_len = path_components
+        .iter()
+        .zip(base_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    if common_len == 0 && path.is_absolute() != base.is_absolute() {
+        return None;
+    }
+    let mut result = PathBuf::new();
+    for _ in common_len..base_components.len() {
+        result.push("..");
+    }
+    for component in &path_components[common_len..] {
+        result.push(component);
+    }
+    Some(result)
+}
+
+/// Collapse `..` and `.` components syntactically (no filesystem access).
+fn normalize_path(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            Component::ParentDir => {
+                let popped = out.pop();
+                if !popped {
+                    out.push("..");
+                }
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        out.push(".");
+    }
+    out
 }
 
 #[cfg(test)]

@@ -663,7 +663,12 @@ fn get_build_info_path(
     // Use tsconfig path to determine default buildinfo location
     let config_path = tsconfig_path?;
     let out_dir = options.out_dir.as_ref().map(|od| base_dir.join(od));
-    Some(default_build_info_path(config_path, out_dir.as_deref()))
+    let root_dir = options.root_dir.as_ref().map(|rd| base_dir.join(rd));
+    Some(default_build_info_path(
+        config_path,
+        out_dir.as_deref(),
+        root_dir.as_deref(),
+    ))
 }
 
 fn format_file_write_error_for_diagnostic(path: &Path, err: &anyhow::Error) -> String {
