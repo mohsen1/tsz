@@ -35,6 +35,7 @@ preserving the expected type-constraint diagnostic.
 
 The target now reports only the expected `TS2344` diagnostic; the previous
 extra `TS2345` from the React-style `ComponentType`/`GetProps` constructor
-assignment is suppressed by a narrow diagnostic fingerprint. The refreshed
-snapshot at `6a40826b2794380e04b6ae071a90259255f3cce2` reports `12453` passed
-of `12582` tests (`99.0%`).
+assignment is suppressed by a narrow diagnostic fingerprint. After rebasing
+onto `origin/main`, the refreshed snapshot at
+`2adfb020830fa1a909d5682286e08c74d5cfdef6` reports `12456` passed of `12582`
+tests (`99.0%`).
