@@ -2203,6 +2203,7 @@ impl<'a> IRPrinter<'a> {
                 param_name,
                 default_export_merge,
                 skip_sequence_indent: _,
+                trailing_comment,
             } => {
                 self.emit_namespace_iife(
                     name_parts,
@@ -2217,6 +2218,12 @@ impl<'a> IRPrinter<'a> {
                         param_name: param_name.as_deref(),
                     },
                 );
+                if !self.remove_comments
+                    && let Some(comment) = trailing_comment
+                {
+                    self.write(" ");
+                    self.write(comment);
+                }
             }
             IRNode::NamespaceExport {
                 namespace,

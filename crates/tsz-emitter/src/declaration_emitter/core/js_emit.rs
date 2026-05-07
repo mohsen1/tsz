@@ -564,7 +564,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
             self.write("var ");
         }
-        self.emit_node(name_idx);
+        if let Some(export_name) = self.js_commonjs_export_name_text(name_idx) {
+            self.write(&export_name);
+        } else {
+            self.emit_node(name_idx);
+        }
         self.write(": ");
         self.write(&type_text);
         self.write(";");

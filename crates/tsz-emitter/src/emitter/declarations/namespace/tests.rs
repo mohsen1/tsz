@@ -223,3 +223,95 @@ fn dotted_namespace_reference_to_sibling_qualifies_parent_namespace() {
         "Sibling namespace reference should not be emitted as a bare identifier.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn dotted_namespace_reopen_qualifies_prior_value_exports() {
+    let source = "namespace X.Y {\n  class A {\n    m(Y: any) {\n      new B();\n    }\n  }\n}\nnamespace X.Y {\n  export class B {}\n}\nnamespace my.data {\n  export function buz() {}\n}\nnamespace my.data.foo {\n  function data(my, foo) {\n    buz();\n  }\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("new Y_1.B();"),
+        "Reopened dotted namespace should qualify prior class exports through the namespace object.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("data_1.buz();"),
+        "Nested dotted namespace should qualify parent exports through the renamed IIFE parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n            buz();"),
+        "Parent namespace export should not remain a bare identifier.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn reopened_dotted_namespace_qualifies_merged_exports_by_source_path() {
+    let source = "namespace my.data.foo {\n  export function child() {}\n}\nnamespace my.data {\n  export function buz() {}\n}\nnamespace my.data {\n  function data(my) {\n    foo.child();\n  }\n}\nnamespace my.data.foo {\n  function data(my, foo) {\n    buz();\n  }\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("data_1.foo.child();"),
+        "Reopened parent namespace should qualify dotted child namespace references.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("data_2.buz();"),
+        "Nested namespace should qualify merged parent exports through the parent IIFE parameter.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_namespace_does_not_qualify_own_leaf_name_from_parent_exports() {
+    let source = "namespace X.Y {\n  export namespace Point {\n    export var Origin = new Point(0, 0);\n  }\n}\nnamespace X.Y {\n  export class Point {}\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("Point.Origin = new Point(0, 0);"),
+        "Nested namespace should keep references to its own IIFE parameter bare.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Point.Origin = new Y.Point(0, 0);"),
+        "Parent exports must not reintroduce the current namespace leaf as a qualifier.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_namespace_uses_parent_current_class_lexically() {
+    let source = "namespace A {\n  export class Point {\n    constructor(public x: number, public y: number) {}\n  }\n\n  export namespace B {\n    export var Origin: Point = new Point(0, 0);\n  }\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("B.Origin = new Point(0, 0);"),
+        "Nested namespace should use parent current-block classes through lexical scope.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("B.Origin = new A.Point(0, 0);"),
+        "Current-block parent class should not be treated as a prior namespace-object export.\nOutput:\n{output}"
+    );
+}

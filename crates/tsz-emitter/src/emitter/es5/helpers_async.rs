@@ -718,6 +718,10 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn is_type_only_declaration_name(&self, name: &str) -> bool {
+        if self.ctx.module_state.value_declaration_names.contains(name) {
+            return false;
+        }
+
         self.arena.nodes.iter().any(|node| {
             if node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION {
                 self.arena.get_type_alias(node).is_some_and(|alias| {
