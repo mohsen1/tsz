@@ -1040,14 +1040,28 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Single-rest tuples (`[...T[]]`) collapse to the array type `T[]` in
+        // tsc's diagnostic display, except when the rest element is a type
+        // parameter (which keeps the bracketed `[...T]` form). The canonical
+        // type formatter already implements this rule, so defer to it instead
+        // of building a per-element display that would produce `[...T[]]`.
+        if elements.len() == 1 && elements[0].rest {
+            return None;
+        }
+
         let mut parts = Vec::with_capacity(elements.len());
         for element in elements {
+            // Rest element `type_id` is the array type itself (e.g.
+            // `number[]`), not the element type. The canonical tuple printer
+            // renders rest elements as `...{type_id}` — a bare `...` prefix —
+            // so do the same here. Wrapping `part` with `[]` produced
+            // `...number[][]` instead of `...number[]`.
             let mut part = self.format_type_for_assignability_message(element.type_id);
             if element.optional {
                 part.push('?');
             }
             if element.rest {
-                part = format!("...{part}[]");
+                part = format!("...{part}");
             }
             parts.push(part);
         }
