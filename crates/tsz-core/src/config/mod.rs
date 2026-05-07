@@ -2180,25 +2180,51 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             ("reactNamespace", "jsxFactory"),
             ("allowJs", "isolatedDeclarations"),
         ];
+        // `checkJs: true` implies `allowJs: true` unless `allowJs` is
+        // explicitly set to `false`. tsc takes that implied enablement into
+        // account when validating the (allowJs, isolatedDeclarations)
+        // conflict; tsz used to miss the implied enablement and skipped the
+        // diagnostic. See #3732.
+        let allow_js_implied_by_check_js = option_is_truthy(compiler_opts.get("checkJs"))
+            && !matches!(
+                compiler_opts.get("allowJs"),
+                Some(serde_json::Value::Bool(false))
+            );
+        let allow_js_effective =
+            option_is_truthy(compiler_opts.get("allowJs")) || allow_js_implied_by_check_js;
         for &(opt_a, opt_b) in conflicting_pairs {
-            if option_is_truthy(compiler_opts.get(opt_a))
-                && option_is_truthy(compiler_opts.get(opt_b))
-            {
-                // Emit at opt_a's position
-                let start = find_key_offset_in_source(&stripped, opt_a);
-                let key_len = opt_a.len() as u32 + 2;
+            // Special-case the implied-allowJs path: if `checkJs` is
+            // enabling `allowJs` via implication and `isolatedDeclarations`
+            // is set, emit TS5053 even though `allowJs` itself isn't a
+            // literal key. The diagnostic still points at `allowJs` /
+            // `isolatedDeclarations` per tsc; when `allowJs` isn't present
+            // we anchor at `checkJs`'s position instead.
+            let a_truthy = if opt_a == "allowJs" {
+                allow_js_effective
+            } else {
+                option_is_truthy(compiler_opts.get(opt_a))
+            };
+            if a_truthy && option_is_truthy(compiler_opts.get(opt_b)) {
                 let msg = format_message(
                     diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
                     &[opt_a, opt_b],
                 );
-                diagnostics.push(Diagnostic::error(
-                    file_path,
-                    start,
-                    key_len,
-                    msg.clone(),
-                    diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
-                ));
-                // Emit at opt_b's position (same message, different location)
+                let opt_a_present = compiler_opts.contains_key(opt_a);
+                if opt_a_present {
+                    // Emit at opt_a's position
+                    let start = find_key_offset_in_source(&stripped, opt_a);
+                    let key_len = opt_a.len() as u32 + 2;
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key_len,
+                        msg.clone(),
+                        diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
+                    ));
+                }
+                // Emit at opt_b's position (same message, different location).
+                // When opt_a was implied (e.g. checkJs implies allowJs), this
+                // is the only diagnostic — matching tsc's single-emit shape.
                 let start_b = find_key_offset_in_source(&stripped, opt_b);
                 let key_len_b = opt_b.len() as u32 + 2;
                 diagnostics.push(Diagnostic::error(
@@ -7887,5 +7913,52 @@ mod tests {
             .expect("merged compiler options");
         assert_eq!(opts.no_unchecked_indexed_access, Some(true));
         assert_eq!(opts.strict, Some(true));
+    }
+
+    fn ts5053_count_for(source: &str) -> usize {
+        let parsed =
+            parse_tsconfig_with_diagnostics(source, "tsconfig.json").expect("tsconfig must parse");
+        parsed.diagnostics.iter().filter(|d| d.code == 5053).count()
+    }
+
+    #[test]
+    fn ts5053_fires_when_checkjs_implies_allowjs_with_isolated_declarations() {
+        // #3732 repro: `checkJs: true` + `isolatedDeclarations: true` must
+        // surface TS5053 even though `allowJs` is not literally present.
+        let source = r#"{"compilerOptions":{"checkJs":true,"isolatedDeclarations":true,"declaration":true},"include":["*.js"]}"#;
+        assert!(
+            ts5053_count_for(source) >= 1,
+            "expected TS5053 when checkJs implies allowJs alongside isolatedDeclarations"
+        );
+    }
+
+    #[test]
+    fn ts5053_suppressed_when_allowjs_explicitly_false_overrides_checkjs() {
+        // tsc treats `allowJs: false` as overriding `checkJs`'s implication.
+        let source = r#"{"compilerOptions":{"checkJs":true,"allowJs":false,"isolatedDeclarations":true,"declaration":true}}"#;
+        assert_eq!(
+            ts5053_count_for(source),
+            0,
+            "explicit allowJs=false must suppress TS5053 even with checkJs=true"
+        );
+    }
+
+    #[test]
+    fn ts5053_still_fires_for_explicit_allowjs() {
+        let source = r#"{"compilerOptions":{"allowJs":true,"isolatedDeclarations":true,"declaration":true}}"#;
+        assert!(
+            ts5053_count_for(source) >= 1,
+            "explicit allowJs=true must still fire TS5053"
+        );
+    }
+
+    #[test]
+    fn ts5053_no_diagnostic_without_isolated_declarations() {
+        let source = r#"{"compilerOptions":{"checkJs":true}}"#;
+        assert_eq!(
+            ts5053_count_for(source),
+            0,
+            "checkJs alone must not emit TS5053"
+        );
     }
 }
