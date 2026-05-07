@@ -490,6 +490,11 @@ impl<'a> DeclarationEmitter<'a> {
                 let selected_type_text =
                     self.qualify_current_namespace_self_type_text(selected_type_text);
                 let selected_type_text = if has_initializer {
+                    self.imported_call_public_type_text(initializer, &selected_type_text)
+                } else {
+                    selected_type_text
+                };
+                let selected_type_text = if has_initializer {
                     self.add_returned_object_member_comments_to_type_text(
                         initializer,
                         &selected_type_text,
