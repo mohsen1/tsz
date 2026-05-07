@@ -4131,3 +4131,59 @@ fn union_multiple_named_types_sorted_then_literals_in_source_order() {
     // Literals follow in the order they appeared in the input.
     assert_eq!(result, "Alpha | Beta | \"x\" | \"y\"");
 }
+
+/// Regression: tsc renders the eight `typeof` result string literals in
+/// JS-spec order regardless of how the interner pre-sorted them. The
+/// interner can put `"symbol"` ahead of `"string"` whenever lib processing
+/// of `Symbol.toPrimitive` allocates the literal first; without the
+/// canonical-order carve-out, that allocation history leaks into TS2367
+/// overlap diagnostics.
+#[test]
+fn typeof_result_union_renders_in_canonical_order() {
+    let db = TypeInterner::new();
+    // Build the union with `"symbol"` first so the interner's
+    // allocation order (and any input-order-based sort) can't satisfy the
+    // expected output by accident.
+    let members = vec![
+        db.literal_string("symbol"),
+        db.literal_string("function"),
+        db.literal_string("object"),
+        db.literal_string("undefined"),
+        db.literal_string("boolean"),
+        db.literal_string("bigint"),
+        db.literal_string("number"),
+        db.literal_string("string"),
+    ];
+    let union_id = db.union_preserve_members(members);
+
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(union_id);
+    assert_eq!(
+        result,
+        "\"string\" | \"number\" | \"bigint\" | \"boolean\" | \"symbol\" | \"undefined\" | \"object\" | \"function\""
+    );
+}
+
+/// Anti-regression: a SUBSET of the typeof literals must NOT be reordered
+/// — only the exact eight-member set is the JS-spec `typeof` vocabulary,
+/// and reordering arbitrary string-literal subsets would break legitimate
+/// declaration-order display elsewhere.
+#[test]
+fn typeof_result_carve_out_does_not_apply_to_subset() {
+    let db = TypeInterner::new();
+    let members = vec![
+        db.literal_string("symbol"),
+        db.literal_string("string"),
+        db.literal_string("number"),
+    ];
+    let union_id = db.union_preserve_members(members);
+
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(union_id);
+    // Three-element subset must keep the input order — not reordered to
+    // tsc's typeof canonical order (which would put "string" first).
+    assert!(
+        !result.starts_with("\"string\""),
+        "Three-literal subset `symbol | string | number` must NOT be reordered to tsc's typeof canonical order; got: {result}"
+    );
+}
