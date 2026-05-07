@@ -393,6 +393,25 @@ jobs:
       - name: Aggregate conformance results
         run: scripts/ci/github-suite.sh conformance-aggregate
 
+  conformance-snapshot-gate:
+    name: conformance-snapshot-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Compare conformance snapshots with PR base
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          python3 scripts/conformance/check-snapshot-regression.py \
+            --base-ref FETCH_HEAD \
+            --head-ref HEAD
+      - name: Skip snapshot comparison
+        if: github.event_name != 'pull_request'
+        run: echo "Conformance snapshot gate is enforced for pull_request events."
+
   emit:
     name: emit
     needs: [gate, dist-binaries, node-harness-prep]
@@ -512,6 +531,7 @@ jobs:
       - node-harness-prep
       - unit
       - conformance-aggregate
+      - conformance-snapshot-gate
       - emit
       - fourslash-aggregate
     if: always()
@@ -535,13 +555,18 @@ jobs:
               print(f"gate did not pass: {gate.get('result')}")
               sys.exit(1)
 
+          snapshot_gate = needs["conformance-snapshot-gate"]
+          if snapshot_gate.get("result") != "success":
+              print(f"conformance-snapshot-gate did not pass: {snapshot_gate.get('result')}")
+              sys.exit(1)
+
           if not should_run:
               print("CI gated off; summary passes because heavy jobs were intentionally skipped.")
               sys.exit(0)
 
           failures = []
           for name, data in needs.items():
-              if name == "gate":
+              if name in {"gate", "conformance-snapshot-gate"}:
                   continue
               if data.get("result") != "success":
                   failures.append(f"{name}: {data.get('result')}")
