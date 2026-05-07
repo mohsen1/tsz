@@ -8,7 +8,7 @@
 //! comparisons, which is significantly faster.
 
 use rustc_hash::{FxHashMap, FxHasher};
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
@@ -16,7 +16,9 @@ use std::sync::{Arc, RwLock};
 ///
 /// Atoms are cheap to copy (just a u32) and can be compared with == in O(1).
 /// To get the actual string, use `Interner::resolve(atom)`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Default, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default, PartialOrd, Ord,
+)]
 pub struct Atom(pub u32);
 
 impl Atom {
@@ -288,6 +290,35 @@ impl Interner {
         }
 
         size
+    }
+}
+
+// Custom serde for Interner: serialize only the `strings` Vec (the canonical
+// data); reconstruct the string→Atom `map` on deserialize. This keeps the
+// snapshot format minimal and stable: it's just a list of strings, atom
+// indices match positions, and the empty-string-at-index-0 invariant is
+// preserved by the existing `Vec` content rather than a special header.
+impl Serialize for Interner {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // Emit the strings as a Vec<&str>; serde's `&str` serialization is just
+        // the bytes, no Arc<str> overhead in the wire format.
+        let as_strs: Vec<&str> = self.strings.iter().map(AsRef::as_ref).collect();
+        as_strs.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Interner {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let strings_vec: Vec<String> = Deserialize::deserialize(deserializer)?;
+        let mut strings: Vec<Arc<str>> = Vec::with_capacity(strings_vec.len());
+        let mut map: FxHashMap<Arc<str>, Atom> = FxHashMap::default();
+        for (idx, s) in strings_vec.into_iter().enumerate() {
+            let arc: Arc<str> = Arc::from(s.into_boxed_str());
+            let atom = Atom(u32::try_from(idx).unwrap_or(Atom::NONE.0));
+            strings.push(Arc::clone(&arc));
+            map.insert(arc, atom);
+        }
+        Ok(Self { map, strings })
     }
 }
 
