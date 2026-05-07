@@ -847,10 +847,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         let source_shape = self.interner.object_shape(source_shape_id);
 
-        let (has_string_index, has_number_index) = self.check_index_signatures(target);
+        let (string_index_types, has_number_index) = self.check_index_signatures(target);
 
-        // If target has string index signature, skip excess property check entirely
-        if has_string_index {
+        // If target has a string index signature that accepts all strings,
+        // skip excess-property checks entirely.
+        if string_index_types
+            .iter()
+            .any(|&key_type| self.subtype.is_subtype_of(TypeId::STRING, key_type))
+        {
             return true;
         }
 
@@ -858,8 +862,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let target_properties = self.collect_target_properties(target);
 
         // TypeScript forgives excess properties when the target type is completely empty
-        // (like `{}`, an empty interface, or an empty class) because it accepts any non-primitive.
-        if target_properties.is_empty() && !has_number_index {
+        // (like `{}`, an empty interface, or an empty class) because it accepts any
+        // non-primitive and has no string-index-style constraints.
+        if target_properties.is_empty() && !has_number_index && string_index_types.is_empty() {
             return true;
         }
 
@@ -870,6 +875,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 if has_number_index {
                     let name_str = self.interner.resolve_atom(prop_info.name);
                     if name_str.parse::<f64>().is_ok() {
+                        continue;
+                    }
+                }
+                if !string_index_types.is_empty() {
+                    let prop_name_type = self.interner.literal_string_atom(prop_info.name);
+                    let matches_string_index = string_index_types
+                        .iter()
+                        .any(|&index_key| self.subtype.is_subtype_of(prop_name_type, index_key));
+
+                    if matches_string_index {
                         continue;
                     }
                 }
@@ -918,10 +933,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             _ => target,
         };
 
-        let (has_string_index, has_number_index) = self.check_index_signatures(resolved_target);
+        let (string_index_types, has_number_index) = self.check_index_signatures(resolved_target);
 
-        // If target has string index signature, skip excess property check entirely
-        if has_string_index {
+        // If target has a string index signature that accepts all strings,
+        // skip excess-property checks entirely.
+        if string_index_types
+            .iter()
+            .any(|&key_type| self.subtype.is_subtype_of(TypeId::STRING, key_type))
+        {
             return None;
         }
 
@@ -929,7 +948,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let target_properties = self.collect_target_properties(resolved_target);
 
         // TypeScript forgives excess properties when the target type is completely empty
-        if target_properties.is_empty() && !has_number_index {
+        // (like `{}`, an empty interface, or an empty class) because it accepts any
+        // non-primitive and has no string-index-style constraints.
+        if target_properties.is_empty() && !has_number_index && string_index_types.is_empty() {
             return None;
         }
 
@@ -940,6 +961,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 if has_number_index {
                     let name_str = self.interner.resolve_atom(prop_info.name);
                     if name_str.parse::<f64>().is_ok() {
+                        continue;
+                    }
+                }
+                if !string_index_types.is_empty() {
+                    let prop_name_type = self.interner.literal_string_atom(prop_info.name);
+                    let matches_string_index = string_index_types
+                        .iter()
+                        .any(|&index_key| self.subtype.is_subtype_of(prop_name_type, index_key));
+
+                    if matches_string_index {
                         continue;
                     }
                 }
@@ -957,32 +988,36 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// This matches tsc's `isKnownProperty` semantics for excess property checking.
     ///
     /// Check if a type or any of its composite members has a string or numeric index signature.
-    /// Returns `(has_string_index, has_number_index)`.
-    fn check_index_signatures(&mut self, type_id: TypeId) -> (bool, bool) {
+    ///
+    /// Returns `(string_index_key_types, has_number_index)` where
+    /// `string_index_key_types` contains the key type(s) for all string index
+    /// signatures discovered in the structure. If empty, there are no string
+    /// index signatures.
+    fn check_index_signatures(&mut self, type_id: TypeId) -> (Vec<TypeId>, bool) {
         if type_id == TypeId::ANY
             || type_id == TypeId::UNKNOWN
             || is_error_type(self.interner, type_id)
         {
-            return (true, true);
+            return (vec![TypeId::STRING], true);
         }
 
         // The `object` type (like `{}`) conceptually accepts any properties —
         // when it appears in a union, excess property checking should be suppressed.
         if type_id == TypeId::OBJECT {
-            return (true, false);
+            return (vec![TypeId::STRING], false);
         }
 
         // The global `Object` interface (capital O from lib.d.ts) also accepts any
         // properties, just like `object`/`{}`. When it appears as a union member
         // (e.g., `Object | string`), excess property checking should be suppressed.
         if self.is_global_object_interface_target(type_id) {
-            return (true, false);
+            return (vec![TypeId::STRING], false);
         }
 
         // Other intrinsics (STRING/NUMBER/BOOLEAN/...) resolve to TypeData::Intrinsic
         // and never have index signatures — skip both dyn lookups below.
         if type_id.is_intrinsic() {
-            return (false, false);
+            return (Vec::new(), false);
         }
 
         let type_id = match self.interner.lookup(type_id) {
@@ -1001,24 +1036,28 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             || type_id == TypeId::UNKNOWN
             || is_error_type(self.interner, type_id)
         {
-            return (true, true);
+            return (vec![TypeId::STRING], true);
         }
 
         match self.interner.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
-                (shape.string_index.is_some(), shape.number_index.is_some())
+                let mut string_index_types = Vec::new();
+                if let Some(string_index) = shape.string_index {
+                    string_index_types.push(string_index.key_type);
+                }
+                (string_index_types, shape.number_index.is_some())
             }
             Some(TypeData::Intersection(members_id)) | Some(TypeData::Union(members_id)) => {
                 let members = self.interner.type_list(members_id);
-                let mut has_str = false;
+                let mut string_index_types = Vec::new();
                 let mut has_num = false;
                 for &member in members.iter() {
                     let (s, n) = self.check_index_signatures(member);
-                    has_str |= s;
+                    string_index_types.extend(s);
                     has_num |= n;
                 }
-                (has_str, has_num)
+                (string_index_types, has_num)
             }
             Some(TypeData::Conditional(cond_id)) => {
                 // For unresolved conditional types, check both branches for index
@@ -1026,9 +1065,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 let cond = self.interner.get_conditional(cond_id);
                 let (ts, tn) = self.check_index_signatures(cond.true_type);
                 let (fs, fn_) = self.check_index_signatures(cond.false_type);
-                (ts || fs, tn || fn_)
+                let string_index_types = ts.into_iter().chain(fs).collect();
+                (string_index_types, tn || fn_)
             }
-            _ => (false, false),
+            _ => (Vec::new(), false),
         }
     }
 
