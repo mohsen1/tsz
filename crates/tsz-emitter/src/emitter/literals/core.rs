@@ -472,6 +472,11 @@ impl<'a> Printer<'a> {
             }
             if end > i {
                 let mut raw = text[i..end].to_string();
+                if !broke_on_line_terminator && j >= bytes.len() && raw.len() == 1 {
+                    // tsc leaves a separator before the synthesized semicolon for
+                    // EOF-terminated strings, even when trailing source trivia was trimmed.
+                    raw.push(' ');
+                }
                 let mut appended_source_semicolon = false;
                 if broke_on_line_terminator
                     && end < bytes.len()
@@ -1008,7 +1013,7 @@ mod tests {
     fn recovered_multiline_string_literals_preserve_source_semicolon_and_eof_space() {
         use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
 
-        let source = "var es1 = \"line 1\n\";\nvar es13 = \" ";
+        let source = "var es1 = \"line 1\n\";\nvar es13 = \" \nvar es14 = \"";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let mut printer = EmitterPrinter::with_options(&parser.arena, PrinterOptions::default());
@@ -1023,6 +1028,10 @@ mod tests {
         assert!(
             output.contains("var es13 = \" ;"),
             "EOF-terminated string literal recovery should preserve trailing source text.\nGot: {output}"
+        );
+        assert!(
+            output.contains("var es14 = \" ;"),
+            "EOF-terminated string literal recovery should synthesize tsc's separator space.\nGot: {output}"
         );
     }
 
