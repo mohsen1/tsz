@@ -4546,12 +4546,12 @@ let mixedText = <Blah3>Hello unexpected text!</Blah3>;
         .find("let mixed =")
         .expect("test source should contain the mixed declaration");
     let mixed_child_start = source[mixed_start..]
-        .find("{{x => x")
+        .find("{x => x")
         .map(|offset| mixed_start + offset)
         .expect("test source should contain the mixed child expression")
         as u32;
     let mixed_child_end = source[mixed_start..]
-        .find("}}</Blah3>")
+        .find("}</Blah3>")
         .map(|offset| mixed_start + offset)
         .expect("test source should contain the mixed child close")
         as u32;
