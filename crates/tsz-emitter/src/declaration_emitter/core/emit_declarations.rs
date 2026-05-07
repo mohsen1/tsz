@@ -321,6 +321,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        let mut deferred_js_import_declarations = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {
             if let Some(members) = nested_module_export_namespaces.get(&stmt_idx) {
                 if let Some((root_name, _)) = self.js_module_exports_property_assignment(stmt_idx) {
@@ -378,6 +379,20 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 continue;
             }
+            if self.source_is_js_file
+                && self
+                    .arena
+                    .get(stmt_idx)
+                    .is_some_and(|stmt_node| stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION)
+                && self
+                    .arena
+                    .get(stmt_idx)
+                    .and_then(|stmt_node| self.arena.get_import_decl(stmt_node))
+                    .is_some_and(|import| import.import_clause.is_some())
+            {
+                deferred_js_import_declarations.push(stmt_idx);
+                continue;
+            }
             self.emit_statement(stmt_idx);
         }
         for &stmt_idx in &source_file.statements.nodes {
@@ -385,6 +400,11 @@ impl<'a> DeclarationEmitter<'a> {
                 && !self.js_namespace_object_stmt_emits_in_source_order(stmt_idx)
             {
                 self.emit_statement(stmt_idx);
+            }
+        }
+        for import_idx in deferred_js_import_declarations {
+            if self.emit_deferred_js_import_declaration(import_idx) {
+                self.emitted_module_indicator = true;
             }
         }
 
