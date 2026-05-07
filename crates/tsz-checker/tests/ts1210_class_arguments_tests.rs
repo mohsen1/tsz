@@ -3,6 +3,7 @@
 use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
+use tsz_checker::test_utils::check_source_code_messages;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -64,5 +65,23 @@ function f() {
     assert!(
         !codes.contains(&1210),
         "did not expect TS1210 outside class body, got: {codes:?}"
+    );
+}
+
+#[test]
+fn static_block_local_eval_and_arguments_do_not_emit_ts1210() {
+    let source = r#"
+class C {
+  static {
+    let eval = 1;
+    let arguments = 1;
+  }
+}
+"#;
+    let diags = check_source_code_messages(source);
+    let ts1210: Vec<_> = diags.iter().filter(|(code, _)| *code == 1210).collect();
+    assert!(
+        ts1210.is_empty(),
+        "did not expect TS1210 for static-block local `eval`/`arguments`, got: {diags:#?}"
     );
 }

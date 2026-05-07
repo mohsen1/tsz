@@ -11,7 +11,7 @@ use crate::navigation::references::FindReferences;
 use crate::rename::{RenameProvider, TextEdit, WorkspaceEdit};
 use crate::resolver::ScopeCacheStats;
 use crate::utils::find_node_at_offset;
-use tsz_common::position::{Location, Position};
+use tsz_common::position::{Location, Position, Range};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -22,6 +22,84 @@ use super::{
 };
 
 impl Project {
+    pub fn find_file_references(&self, file_name: &str) -> Vec<Location> {
+        let mut locations = Vec::new();
+
+        for file in self.files.values() {
+            let arena = file.arena();
+            let Some(source_file) = arena.get_source_file_at(file.root()) else {
+                continue;
+            };
+
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = arena.get(stmt_idx) else {
+                    continue;
+                };
+
+                let module_specifier = if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION
+                    || stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                {
+                    arena
+                        .get_import_decl(stmt_node)
+                        .map(|import| import.module_specifier)
+                } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                    arena
+                        .get_export_decl(stmt_node)
+                        .map(|export| export.module_specifier)
+                } else {
+                    None
+                };
+                let Some(module_specifier) = module_specifier else {
+                    continue;
+                };
+                if module_specifier.is_none() {
+                    continue;
+                }
+
+                let Some(module_text) = arena.get_literal_text(module_specifier) else {
+                    continue;
+                };
+                let Some(resolved) = self.resolve_module_specifier(file.file_name(), module_text)
+                else {
+                    continue;
+                };
+                if resolved != file_name {
+                    continue;
+                }
+
+                let Some(spec_node) = arena.get(module_specifier) else {
+                    continue;
+                };
+                let source_text = file.parser.get_source_text();
+                let start_offset = spec_node.pos.saturating_add(1);
+                let end_offset = spec_node.end.saturating_sub(1);
+                if start_offset > end_offset || end_offset as usize > source_text.len() {
+                    continue;
+                }
+                let range = Range::new(
+                    file.line_map.offset_to_position(start_offset, source_text),
+                    file.line_map.offset_to_position(end_offset, source_text),
+                );
+                locations.push(Location::new(file.file_name().to_string(), range));
+            }
+        }
+
+        locations.sort_by(|a, b| {
+            a.file_path
+                .cmp(&b.file_path)
+                .then_with(|| {
+                    (a.range.start.line, a.range.start.character)
+                        .cmp(&(b.range.start.line, b.range.start.character))
+                })
+                .then_with(|| {
+                    (a.range.end.line, a.range.end.character)
+                        .cmp(&(b.range.end.line, b.range.end.character))
+                })
+        });
+        locations.dedup_by(|a, b| a.file_path == b.file_path && a.range == b.range);
+        locations
+    }
+
     fn symbol_text(
         arena: &tsz_parser::parser::node::NodeArena,
         node_idx: NodeIndex,
