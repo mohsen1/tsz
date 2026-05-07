@@ -249,6 +249,41 @@ impl<'a> CheckerState<'a> {
         });
     }
 
+    pub(super) fn prune_speculative_callback_body_diagnostics_for_accepted_overload(
+        &mut self,
+        args: &[NodeIndex],
+        snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) {
+        let callback_spans: Vec<(u32, u32)> = args
+            .iter()
+            .flat_map(|&arg_idx| {
+                let Some(_) = self.ctx.arena.get(arg_idx) else {
+                    return Vec::new();
+                };
+                if !self.is_callback_like_argument(arg_idx) {
+                    return Vec::new();
+                }
+                self.callback_body_spans(arg_idx)
+            })
+            .collect();
+        self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+            if Self::should_preserve_speculative_call_diagnostic(diag) {
+                return true;
+            }
+            let in_callback_body = callback_spans
+                .iter()
+                .any(|(start, end)| diag.start >= *start && diag.start < *end);
+            if !in_callback_body {
+                return true;
+            }
+            matches!(
+                diag.code,
+                diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                    | diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+            )
+        });
+    }
+
     pub(super) fn callback_body_failure_span(
         &self,
         args: &[NodeIndex],
