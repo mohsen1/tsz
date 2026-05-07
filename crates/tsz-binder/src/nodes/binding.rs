@@ -1524,6 +1524,40 @@ impl BinderState {
 
             let can_merge = Self::can_merge_flags(existing_flags, flags);
 
+            // Alias declarations conflict with other aliases in TypeScript's
+            // symbol model. Keep the duplicate declaration as a distinct symbol
+            // and make it the visible binding for later references, rather than
+            // appending it to the first alias symbol. This preserves duplicate
+            // diagnostics while allowing later value-bearing aliases like
+            // `import M = Z.M` to shadow an earlier type-only alias
+            // `import M = Z.I` in expression resolution.
+            if !can_merge
+                && (existing_flags & symbol_flags::ALIAS) != 0
+                && (flags & symbol_flags::ALIAS) != 0
+            {
+                let owned_name = name.to_string();
+                let sym_id = self.symbols.alloc(flags, owned_name.clone());
+                let container_sym = self
+                    .scope_chain
+                    .get(self.current_scope_idx)
+                    .and_then(|ctx| self.get_node_symbol(ctx.container_node));
+                if let Some(sym) = self.symbols.get_mut(sym_id) {
+                    let span = Self::declaration_span(arena, declaration);
+                    sym.add_declaration(declaration, span);
+                    if (flags & symbol_flags::VALUE) != 0 {
+                        sym.set_value_declaration(declaration, span);
+                    }
+                    sym.is_exported = is_exported;
+                    if let Some(parent_id) = container_sym {
+                        sym.parent = parent_id;
+                    }
+                }
+                self.current_scope.set(owned_name.clone(), sym_id);
+                Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
+                self.declare_in_persistent_scope(owned_name, sym_id);
+                return sym_id;
+            }
+
             let combined_flags = if can_merge {
                 existing_flags | flags
             } else {
