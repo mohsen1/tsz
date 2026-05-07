@@ -581,6 +581,9 @@ impl<'a> CheckerState<'a> {
         let display_target = self
             .strip_nullish_for_assignability_display(target, source)
             .unwrap_or(target);
+        if let Some(display) = self.static_schema_array_structural_display(display_target, source) {
+            return display;
+        }
 
         let target_expr = self
             .assignment_target_expression(anchor_idx)

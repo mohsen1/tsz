@@ -201,14 +201,6 @@ impl<'a> CheckerState<'a> {
                     let is_bare_type_param =
                         query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg);
                     if !is_bare_type_param {
-                        if self.type_arg_evaluates_to_infer_result_conditional(type_arg)
-                            && query::contains_index_access_with_type_parameter_object(
-                                self.ctx.types.as_type_database(),
-                                type_arg,
-                            )
-                        {
-                            continue;
-                        }
                         // Composite type with type parameters (e.g., `T[K]`, `GetProps<C>`,
                         // `Parameters<Target[K]>`). Prefer checking against its resolved
                         // base constraint when one exists; otherwise defer to instantiation
