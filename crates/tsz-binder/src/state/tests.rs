@@ -5769,6 +5769,78 @@ interface Stable extends Extra { b: number }
     );
 }
 
+#[test]
+fn semantic_defs_namespace_then_interface_merge_promotes_to_interface() {
+    // When a Namespace declaration is followed by an Interface declaration
+    // with the same name, the merged kind must promote to Interface so that
+    // type-position references render as `B`, not `typeof B`.
+    let binder = bind_source(
+        "
+namespace B { export const x = 1; }
+interface B { name: string; }
+",
+    );
+    let sym_id = binder.file_locals.get("B").expect("expected B");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for B");
+    assert_eq!(entry.kind, super::SemanticDefKind::Interface);
+}
+
+#[test]
+fn semantic_defs_namespace_then_class_merge_promotes_to_class() {
+    let binder = bind_source(
+        "
+namespace C { export const helper = 1; }
+class C { method() {} }
+",
+    );
+    let sym_id = binder.file_locals.get("C").expect("expected C");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for C");
+    assert_eq!(entry.kind, super::SemanticDefKind::Class);
+}
+
+#[test]
+fn semantic_defs_namespace_then_type_alias_merge_promotes_to_type_alias() {
+    let binder = bind_source(
+        "
+namespace T { export const v = 1; }
+type T = string;
+",
+    );
+    let sym_id = binder.file_locals.get("T").expect("expected T");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for T");
+    assert_eq!(entry.kind, super::SemanticDefKind::TypeAlias);
+}
+
+#[test]
+fn semantic_defs_function_then_namespace_merge_keeps_function() {
+    // Function-namespace declaration merging is the namespace-on-callable
+    // pattern; the value side is the function. The kind-promotion rule
+    // only fires for type-side declarations (Interface/Class/TypeAlias/Enum)
+    // merging into a Namespace, so a Function entry must remain unchanged
+    // when a Namespace declaration merges in.
+    let binder = bind_source(
+        "
+function f() {}
+namespace f { export const helper = 1; }
+",
+    );
+    let sym_id = binder.file_locals.get("f").expect("expected f");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for f");
+    assert_eq!(entry.kind, super::SemanticDefKind::Function);
+}
+
 // =============================================================================
 // BinderFileSummary tests
 // =============================================================================

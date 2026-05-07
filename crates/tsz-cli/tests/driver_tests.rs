@@ -14997,6 +14997,65 @@ fn ts2688_resolved_types_no_error() {
 }
 
 #[test]
+fn tsconfig_types_resolves_node_modules_package_subpath_declaration() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": false,
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "target": "es2022",
+            "types": ["vite/client"],
+            "noEmit": true
+          },
+          "files": ["src/main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/vite/package.json"),
+        r#"{ "name": "vite", "version": "1.0.0" }"#,
+    );
+    write_file(
+        &base.join("node_modules/vite/client.d.ts"),
+        r#"declare module "*.css" {}
+declare module "*.svg" {
+  const src: string;
+  export default src;
+}
+declare module "*.png" {
+  const src: string;
+  export default src;
+}
+"#,
+    );
+    write_file(
+        &base.join("src/main.ts"),
+        r#"import "./style.css";
+import viteLogo from "./assets/vite.svg";
+import heroImg from "./assets/hero.png";
+
+viteLogo;
+heroImg;
+"#,
+    );
+    write_file(&base.join("src/style.css"), "");
+    write_file(&base.join("src/assets/vite.svg"), "<svg></svg>");
+    write_file(&base.join("src/assets/hero.png"), "");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected vite/client type subpath and asset modules to resolve, got: {result:?}"
+    );
+}
+
+#[test]
 fn ts2688_types_entry_still_loads_node_modules_package_globals() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
@@ -18864,6 +18923,54 @@ before.toFixed();
 }
 
 #[test]
+fn new_target_uses_enclosing_function_or_constructor_type() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true,
+            "target": "es2020"
+          },
+          "files": ["repro.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("repro.ts"),
+        r#"function f() {
+    const n: number = new.target;
+}
+
+class C {
+    constructor() {
+        const s: string = new.target;
+    }
+}
+"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected TS2322 for function and constructor new.target assignments, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn labeled_tuple_optional_marker_after_type_reports_ts5086() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -18886,10 +18993,10 @@ fn labeled_tuple_optional_marker_after_type_reports_ts5086() {
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
-        result
-            .diagnostics
-            .iter()
-            .any(|diag| diag.code == diagnostic_codes::A_LABELED_TUPLE_ELEMENT_IS_DECLARED_AS_OPTIONAL_WITH_A_QUESTION_MARK_AFTER_THE_N),
+        result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::A_LABELED_TUPLE_ELEMENT_IS_DECLARED_AS_OPTIONAL_WITH_A_QUESTION_MARK_AFTER_THE_N
+        }),
         "Expected TS5086 for optional marker after labeled tuple type, got {:?}",
         result.diagnostics
     );
