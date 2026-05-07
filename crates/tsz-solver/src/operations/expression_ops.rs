@@ -505,6 +505,7 @@ fn template_substitution_constraint_is_dependent(
         Some(
             TypeData::TypeParameter(_)
             | TypeData::Infer(_)
+            | TypeData::Application(_)
             | TypeData::KeyOf(_)
             | TypeData::IndexAccess(_, _),
         ) => true,

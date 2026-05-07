@@ -107,6 +107,43 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .all(|prop| prop.type_id == TypeId::ANY && prop.write_type == TypeId::ANY)
     }
 
+    fn raw_instantiated_constraint_may_satisfy(&self, constraint: TypeId) -> bool {
+        match self.interner.lookup(constraint) {
+            Some(
+                TypeData::Application(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::KeyOf(_)
+                | TypeData::Mapped(_)
+                | TypeData::StringIntrinsic { .. },
+            ) => true,
+            Some(TypeData::Union(members) | TypeData::Intersection(members)) => self
+                .interner
+                .type_list(members)
+                .iter()
+                .any(|&member| self.raw_instantiated_constraint_may_satisfy(member)),
+            Some(
+                TypeData::Array(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner),
+            ) => self.raw_instantiated_constraint_may_satisfy(inner),
+            _ => false,
+        }
+    }
+
+    fn satisfies_raw_instantiated_constraint(
+        &mut self,
+        source: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        if !self.raw_instantiated_constraint_may_satisfy(constraint) {
+            return false;
+        }
+        if self.checker.is_assignable_to(source, constraint) {
+            return true;
+        }
+        self.checker
+            .expand_type_alias_application(constraint)
+            .is_some_and(|expanded| self.checker.is_assignable_to(source, expanded))
+    }
+
     pub(crate) fn top_rest_any_callable_constraint(&self, constraint: TypeId) -> bool {
         if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(constraint)
             && let Some(constraint) = tp.constraint
@@ -2149,7 +2186,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Strip freshness before constraint check: inferred types should not
                 // trigger excess property checking against type parameter constraints.
                 let ty_for_check = crate::relations::freshness::widen_freshness(self.interner, ty);
+                let raw_constraint_satisfied = constraint_ty_raw != constraint_ty
+                    && self.satisfies_raw_instantiated_constraint(ty_for_check, constraint_ty_raw);
                 if !self.checker.is_assignable_to(ty_for_check, constraint_ty)
+                    && !raw_constraint_satisfied
                     && !self.callable_satisfies_top_rest_any_constraint(ty_for_check, constraint_ty)
                 {
                     // When the inferred type is a TypeParameter whose own constraint
@@ -2218,7 +2258,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         } else {
                             self.interner.union(un_widened)
                         };
-                        if self.checker.is_assignable_to(candidate_type, constraint_ty) {
+                        let candidate_satisfies_raw = constraint_ty_raw != constraint_ty
+                            && self.satisfies_raw_instantiated_constraint(
+                                candidate_type,
+                                constraint_ty_raw,
+                            );
+                        if self.checker.is_assignable_to(candidate_type, constraint_ty)
+                            || candidate_satisfies_raw
+                        {
                             Some(candidate_type)
                         } else {
                             None
