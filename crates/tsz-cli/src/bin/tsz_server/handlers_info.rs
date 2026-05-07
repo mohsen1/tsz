@@ -473,6 +473,74 @@ impl Server {
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
+    pub(crate) fn handle_type_definition(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let full = request.command.ends_with("-full");
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, _binder, _root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let raw_offset = line_map.position_to_offset(position, &source_text)?;
+            let offset = Self::adjusted_quoted_specifier_offset(&arena, &source_text, raw_offset);
+            let position = line_map.offset_to_position(offset, &source_text);
+            if Self::is_offset_inside_comment(&source_text, offset) {
+                return None;
+            }
+
+            let project = self.build_project_for_file(&file)?;
+            let locs = project.get_type_definition(&file, position)?;
+            if locs.is_empty() {
+                return None;
+            }
+
+            let body: Vec<serde_json::Value> = locs
+                .iter()
+                .filter_map(|loc| {
+                    if full {
+                        let target_text = if loc.file_path == file {
+                            source_text.clone()
+                        } else {
+                            self.open_files
+                                .get(&loc.file_path)
+                                .cloned()
+                                .or_else(|| std::fs::read_to_string(&loc.file_path).ok())
+                                .unwrap_or_else(|| source_text.clone())
+                        };
+                        let target_map = LineMap::build(&target_text);
+                        let span_start =
+                            target_map.position_to_offset(loc.range.start, &target_text)?;
+                        let span_end =
+                            target_map.position_to_offset(loc.range.end, &target_text)?;
+                        Some(serde_json::json!({
+                            "fileName": loc.file_path,
+                            "textSpan": {
+                                "start": span_start,
+                                "length": span_end.saturating_sub(span_start),
+                            },
+                        }))
+                    } else {
+                        Some(serde_json::json!({
+                            "file": loc.file_path,
+                            "start": Self::lsp_to_tsserver_position(loc.range.start),
+                            "end": Self::lsp_to_tsserver_position(loc.range.end),
+                        }))
+                    }
+                })
+                .collect();
+
+            if body.is_empty() {
+                return None;
+            }
+
+            Some(serde_json::json!(body))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
     pub(crate) fn handle_definition_and_bound_span(
         &mut self,
         seq: u64,

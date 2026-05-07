@@ -15,10 +15,10 @@ use tsz_parser::{
     syntax_kind_ext::{
         ARRAY_TYPE, ARROW_FUNCTION, CLASS_DECLARATION, CONDITIONAL_TYPE, ENUM_DECLARATION,
         FUNCTION_DECLARATION, FUNCTION_TYPE, INDEXED_ACCESS_TYPE, INTERFACE_DECLARATION,
-        INTERSECTION_TYPE, LITERAL_TYPE, MAPPED_TYPE, METHOD_DECLARATION, PARAMETER,
-        PARENTHESIZED_TYPE, PROPERTY_DECLARATION, PROPERTY_SIGNATURE, TEMPLATE_LITERAL_TYPE,
-        TUPLE_TYPE, TYPE_ALIAS_DECLARATION, TYPE_LITERAL, TYPE_QUERY, TYPE_REFERENCE, UNION_TYPE,
-        VARIABLE_DECLARATION,
+        INTERSECTION_TYPE, LITERAL_TYPE, MAPPED_TYPE, METHOD_DECLARATION, NEW_EXPRESSION,
+        PARAMETER, PARENTHESIZED_TYPE, PROPERTY_DECLARATION, PROPERTY_SIGNATURE,
+        TEMPLATE_LITERAL_TYPE, TUPLE_TYPE, TYPE_ALIAS_DECLARATION, TYPE_LITERAL, TYPE_QUERY,
+        TYPE_REFERENCE, UNION_TYPE, VARIABLE_DECLARATION,
     },
 };
 use tsz_scanner::SyntaxKind;
@@ -31,6 +31,10 @@ impl<'a> TypeDefinitionProvider<'a> {
     /// Returns the location(s) where the type is defined. For primitive types
     /// (number, string, boolean, etc.), returns None since they have no
     /// user-defined declaration.
+    ///
+    /// Limited inference support is intentionally included for declarationless
+    /// initializers such as `const x = new Foo()`, where we can resolve the
+    /// constructor callee to a type declaration.
     pub fn get_type_definition(
         &self,
         root: NodeIndex,
@@ -105,9 +109,76 @@ impl<'a> TypeDefinitionProvider<'a> {
         root: NodeIndex,
         decl_idx: NodeIndex,
     ) -> Option<Vec<Location>> {
-        // Look for type annotation child
-        let type_node = self.find_type_annotation_child(decl_idx)?;
-        self.resolve_type_to_location(root, type_node)
+        let type_node = self.find_type_annotation_child(decl_idx);
+        if let Some(type_node) = type_node {
+            return self.resolve_type_to_location(root, type_node);
+        }
+
+        let decl_node = self.arena.get(decl_idx)?;
+        let decl = self.arena.get_variable_declaration(decl_node)?;
+        if decl.initializer.is_none() {
+            return None;
+        }
+
+        self.resolve_inferred_type_from_expression(root, decl.initializer)
+    }
+
+    /// Resolve types from limited inference, currently focused on `new`
+    /// expression initializers and direct identifier expressions.
+    fn resolve_inferred_type_from_expression(
+        &self,
+        root: NodeIndex,
+        expr_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let expr_idx = self.arena.skip_parenthesized(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+
+        let target_expr = if expr_node.kind == NEW_EXPRESSION {
+            self.arena.get_call_expr(expr_node)?.expression
+        } else {
+            expr_idx
+        };
+
+        self.resolve_value_symbol_declarations_as_types(root, target_expr)
+    }
+
+    /// Resolve a value position to declarations that are type-like declarations.
+    fn resolve_value_symbol_declarations_as_types(
+        &self,
+        root: NodeIndex,
+        node_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let symbol_id = walker.resolve_node(root, node_idx)?;
+        let symbol = self.binder.symbols.get(symbol_id)?;
+
+        let locations: Vec<Location> = symbol
+            .declarations
+            .iter()
+            .filter_map(|&decl_idx| {
+                let decl_node = self.arena.get(decl_idx)?;
+
+                if !self.is_type_declaration(decl_node.kind) {
+                    return None;
+                }
+
+                Some(Location {
+                    file_path: self.file_name.clone(),
+                    range: Range::new(
+                        self.line_map
+                            .offset_to_position(decl_node.pos, self.source_text),
+                        self.line_map
+                            .offset_to_position(decl_node.end, self.source_text),
+                    ),
+                })
+            })
+            .collect();
+
+        if locations.is_empty() {
+            None
+        } else {
+            Some(locations)
+        }
     }
 
     /// Find type from a parameter's type annotation.

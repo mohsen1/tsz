@@ -1022,11 +1022,10 @@ impl Server {
             "reset" | "tsz/reset" => self.handle_reset(seq, &request),
             "configure" => self.handle_configure(seq, &request),
             "quickinfo" | "quickinfo-full" => self.handle_quickinfo(seq, &request),
-            "definition"
-            | "typeDefinition"
-            | "definition-full"
-            | "typeDefinition-full"
-            | "findSourceDefinition" => self.handle_definition(seq, &request),
+            "definition" | "definition-full" | "findSourceDefinition" => {
+                self.handle_definition(seq, &request)
+            }
+            "typeDefinition" | "typeDefinition-full" => self.handle_type_definition(seq, &request),
             "definitionAndBoundSpan" | "definitionAndBoundSpan-full" => {
                 self.handle_definition_and_bound_span(seq, &request)
             }
