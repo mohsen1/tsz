@@ -2614,6 +2614,16 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         for key in ["include", "exclude", "files", "references"] {
             validate_top_level_array_option(obj, &mut diagnostics, &stripped, file_path, key);
         }
+        // `compilerOptions` must be a JSON object; a scalar bypasses every
+        // nested option validator and would otherwise surface as a generic
+        // serde `invalid type` failure instead of TS5024.
+        validate_top_level_object_option(
+            obj,
+            &mut diagnostics,
+            &stripped,
+            file_path,
+            "compilerOptions",
+        );
     }
 
     let mut config: TsConfig =
@@ -2774,6 +2784,42 @@ fn validate_top_level_array_option(
     ));
 
     obj.insert(key.to_string(), serde_json::Value::Null);
+}
+
+fn validate_top_level_object_option(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+    source: &str,
+    file_path: &str,
+    key: &str,
+) {
+    let Some(value) = obj.get(key) else {
+        return;
+    };
+    if value.is_null() || value.is_object() {
+        return;
+    }
+
+    let value_start = find_top_level_value_offset_in_source(source, key);
+    let value_len = estimate_json_value_len(value);
+    let msg = format_message(
+        diagnostic_messages::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+        &[key, "object"],
+    );
+    diagnostics.push(Diagnostic::error(
+        file_path,
+        value_start,
+        value_len,
+        msg,
+        diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+    ));
+
+    // Replace the scalar with an empty object so serde can still deserialize
+    // the rest of the config; the diagnostic above is what surfaces to users.
+    obj.insert(
+        key.to_string(),
+        serde_json::Value::Object(serde_json::Map::new()),
+    );
 }
 
 /// Estimate the display length of a JSON value for diagnostic span.
@@ -5131,6 +5177,47 @@ mod tests {
         assert!(
             codes.contains(&5024),
             "Expected TS5024 for libReplacement string value, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5024_emitted_for_scalar_compiler_options() {
+        // Issue #3882: a top-level scalar `compilerOptions` would bypass every
+        // nested option validator and trip serde's `invalid type` error
+        // instead of the user-facing TS5024 diagnostic.
+        let source = r#"{"compilerOptions":"bad","files":["a.ts"]}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let diag = parsed
+            .diagnostics
+            .iter()
+            .find(|d| d.code == 5024 && d.message_text.contains("compilerOptions"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected TS5024 mentioning compilerOptions, got: {:?}",
+                    parsed
+                        .diagnostics
+                        .iter()
+                        .map(|d| (d.code, d.message_text.clone()))
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert!(
+            diag.message_text.contains("object"),
+            "TS5024 message should mention expected type 'object': {}",
+            diag.message_text
+        );
+    }
+
+    #[test]
+    fn test_scalar_compiler_options_does_not_break_files_array() {
+        // The recovery path replaces the invalid scalar with `{}` so the
+        // rest of the config (e.g. `files`) still parses cleanly.
+        let source = r#"{"compilerOptions":42,"files":["a.ts"]}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert_eq!(
+            parsed.config.files.as_deref(),
+            Some(&["a.ts".to_string()][..]),
+            "files array must still parse after compilerOptions recovery"
         );
     }
 
