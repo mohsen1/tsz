@@ -94,6 +94,10 @@ impl Server {
             .get("includeCompletionsWithClassMemberSnippets")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        self.include_inlay_parameter_name_hints = preferences
+            .get("includeInlayParameterNameHints")
+            .and_then(|v| v.as_str())
+            .map(std::string::ToString::to_string);
         if let Some(format_options) = request
             .arguments
             .get("formatOptions")

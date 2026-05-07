@@ -34,6 +34,7 @@ fn make_server() -> Server {
         inferred_module_is_none_for_projects: false,
         auto_import_specifier_exclude_regexes: Vec::new(),
         include_completions_with_class_member_snippets: false,
+        include_inlay_parameter_name_hints: None,
         new_line_character: None,
         plugin_configs: FxHashMap::default(),
         native_ts_worker: None,
@@ -125,6 +126,13 @@ fn test_provide_inlay_hints_respects_protocol_start_length_span() {
     server
         .open_files
         .insert("/a.ts".to_string(), source.to_string());
+    // Parameter hints require explicit opt-in via configure (#3793).
+    server.handle_tsserver_request(make_request(
+        "configure",
+        serde_json::json!({
+            "preferences": { "includeInlayParameterNameHints": "all" }
+        }),
+    ));
 
     let empty_response = server.handle_tsserver_request(make_request(
         "provideInlayHints",
@@ -183,6 +191,100 @@ fn test_provide_inlay_hints_respects_protocol_start_length_span() {
             .and_then(|position| position.get("offset"))
             .and_then(serde_json::Value::as_u64),
         Some(3)
+    );
+}
+
+#[test]
+fn test_provide_inlay_hints_default_off_for_parameters() {
+    // Parameter hints are off by default in tsserver — clients must opt in via
+    // `includeInlayParameterNameHints`. Regression for #3793 (and the issue's
+    // first repro: configure "none" then request hints → empty array).
+    let mut server = make_server();
+    let source = "function f(value: number) {}\nf(1);\n";
+    server
+        .open_files
+        .insert("/a.ts".to_string(), source.to_string());
+
+    // Default: no configure → no parameter hints.
+    let response = server.handle_tsserver_request(make_request(
+        "provideInlayHints",
+        serde_json::json!({"file": "/a.ts", "start": 0, "length": source.len()}),
+    ));
+    let body = response
+        .body
+        .and_then(|b| b.as_array().cloned())
+        .unwrap_or_default();
+    assert!(
+        body.iter()
+            .all(|h| h.get("kind").and_then(|k| k.as_str()) != Some("Parameter")),
+        "default config must not emit parameter hints, got {body:?}"
+    );
+
+    // Explicit "none" → still empty.
+    server.handle_tsserver_request(make_request(
+        "configure",
+        serde_json::json!({
+            "preferences": { "includeInlayParameterNameHints": "none" }
+        }),
+    ));
+    let none_response = server.handle_tsserver_request(make_request(
+        "provideInlayHints",
+        serde_json::json!({"file": "/a.ts", "start": 0, "length": source.len()}),
+    ));
+    let none_body = none_response
+        .body
+        .and_then(|b| b.as_array().cloned())
+        .unwrap_or_default();
+    assert!(
+        none_body
+            .iter()
+            .all(|h| h.get("kind").and_then(|k| k.as_str()) != Some("Parameter")),
+        "includeInlayParameterNameHints=\"none\" must produce no parameter hints, got {none_body:?}"
+    );
+}
+
+#[test]
+fn test_provide_inlay_hints_parameter_label_has_no_trailing_space_or_whitespace_before() {
+    // tsc's parameter inlay hints carry `text: "value:"` (no trailing space)
+    // and omit `whitespaceBefore` (it's implicitly false). Regression for
+    // #3793.
+    let mut server = make_server();
+    let source = "function f(value: number) {}\nf(1);\n";
+    server
+        .open_files
+        .insert("/a.ts".to_string(), source.to_string());
+    server.handle_tsserver_request(make_request(
+        "configure",
+        serde_json::json!({
+            "preferences": { "includeInlayParameterNameHints": "all" }
+        }),
+    ));
+
+    let response = server.handle_tsserver_request(make_request(
+        "provideInlayHints",
+        serde_json::json!({"file": "/a.ts", "start": 0, "length": source.len()}),
+    ));
+    let body = response
+        .body
+        .and_then(|b| b.as_array().cloned())
+        .expect("provideInlayHints body should be an array");
+    let parameter = body
+        .iter()
+        .find(|h| h.get("kind").and_then(|k| k.as_str()) == Some("Parameter"))
+        .expect("expected one parameter hint");
+    assert_eq!(
+        parameter.get("text").and_then(|t| t.as_str()),
+        Some("value:"),
+        "parameter text must not contain a trailing space, got {parameter:?}"
+    );
+    assert!(
+        parameter.get("whitespaceBefore").is_none(),
+        "whitespaceBefore must be omitted for parameter hints, got {parameter:?}"
+    );
+    assert_eq!(
+        parameter.get("whitespaceAfter").and_then(|v| v.as_bool()),
+        Some(true),
+        "whitespaceAfter must remain true, got {parameter:?}"
     );
 }
 

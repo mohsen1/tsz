@@ -2103,9 +2103,20 @@ impl Server {
             };
 
             let hints = provider.provide_inlay_hints(root, range);
+            // tsserver default for `includeInlayParameterNameHints` is `"none"`:
+            // parameter hints are suppressed unless the client explicitly opts
+            // in via `configure`. Type/Generic hints are unaffected by this
+            // preference. See #3793.
+            let parameter_hints_enabled = matches!(
+                self.include_inlay_parameter_name_hints.as_deref(),
+                Some("literals") | Some("all")
+            );
             let body: Vec<serde_json::Value> = hints
                 .iter()
                 .filter(|hint| {
+                    if matches!(hint.kind, InlayHintKind::Parameter) && !parameter_hints_enabled {
+                        return false;
+                    }
                     protocol_span.is_none_or(|(start, end)| {
                         line_map
                             .position_to_offset(hint.position, &source_text)
@@ -2118,11 +2129,18 @@ impl Server {
                         InlayHintKind::Type => "Type",
                         InlayHintKind::Generic => "Enum",
                     };
+                    // tsserver-shape parameter hints carry no trailing space in
+                    // `text` and don't include `whitespaceBefore` (the default
+                    // is `false`, so the field is omitted). See #3793.
+                    let text = if matches!(hint.kind, InlayHintKind::Parameter) {
+                        hint.label.trim_end_matches(' ').to_string()
+                    } else {
+                        hint.label.clone()
+                    };
                     serde_json::json!({
-                        "text": hint.label,
+                        "text": text,
                         "position": Self::lsp_to_tsserver_position(hint.position),
                         "kind": kind,
-                        "whitespaceBefore": false,
                         "whitespaceAfter": true,
                     })
                 })
