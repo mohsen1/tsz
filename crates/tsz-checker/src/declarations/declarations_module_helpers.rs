@@ -109,15 +109,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // sets are still scanned as a fallback for tests/standalone callers
         // without a `ProjectEnv`.
         if let Some(ref dm) = self.ctx.global_declared_modules {
-            for pattern in &dm.patterns {
-                let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
-                if let Ok(glob) = globset::GlobBuilder::new(pattern)
-                    .literal_separator(false)
-                    .build()
-                    && glob.compile_matcher().is_match(module_name)
-                {
-                    return true;
-                }
+            if dm.matches_wildcard(module_name) {
+                return true;
             }
         } else {
             for patterns in [

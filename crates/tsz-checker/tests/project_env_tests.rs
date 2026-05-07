@@ -111,6 +111,24 @@ fn apply_to_populates_skeleton_declared_modules() {
 }
 
 #[test]
+fn global_declared_modules_matches_vite_style_asset_patterns() {
+    let dm = GlobalDeclaredModules::from_skeleton(
+        FxHashSet::default(),
+        vec![
+            "*.css".to_string(),
+            "*.svg".to_string(),
+            "*.module.css".to_string(),
+        ],
+    );
+
+    assert!(dm.pattern_set.is_some());
+    assert!(dm.matches_wildcard("./style.css"));
+    assert!(dm.matches_wildcard("./assets/logo.svg"));
+    assert!(dm.matches_wildcard("components/button.module.css"));
+    assert!(!dm.matches_wildcard("./main.ts"));
+}
+
+#[test]
 fn apply_to_populates_symbol_file_targets_fallback() {
     // Without global_symbol_file_index, entries go into the local overlay.
     let interner = TypeInterner::new();

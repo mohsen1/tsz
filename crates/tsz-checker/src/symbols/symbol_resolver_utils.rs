@@ -542,12 +542,7 @@ impl<'a> CheckerState<'a> {
             if declared.exact.contains(normalized) {
                 return true;
             }
-            for pattern in &declared.patterns {
-                if Self::module_name_matches_pattern(pattern, module_name) {
-                    return true;
-                }
-            }
-            return false;
+            return declared.matches_wildcard(module_name);
         }
 
         // Fallback: scan all binders

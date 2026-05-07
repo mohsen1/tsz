@@ -68,30 +68,8 @@ use tsz_parser::parser::node::NodeArena;
 /// nested namespace exports). Matches `MAX_INSTANTIATION_DEPTH` (50).
 pub(crate) const MAX_SYMBOL_RESOLUTION_DEPTH: u32 = 50;
 
-/// Pre-built global index of all declared/ambient module names across all binders.
-///
-/// Separates exact module names (O(1) `HashSet` lookup) from wildcard patterns
-/// (small linear scan). Built once in `set_all_binders` and shared via `Arc`.
-#[derive(Debug, Default)]
-pub struct GlobalDeclaredModules {
-    /// Exact module names from `declared_modules`, `shorthand_ambient_modules`,
-    /// and `module_exports` keys (normalized: quotes stripped).
-    pub exact: FxHashSet<String>,
-    /// Wildcard patterns (e.g., `*.css`, `*/theme`) that require glob matching.
-    pub patterns: Vec<String>,
-}
-
-impl GlobalDeclaredModules {
-    /// Build from pre-computed skeleton sets.
-    ///
-    /// `skeleton_exact` and `skeleton_patterns` come from
-    /// `SkeletonIndex::build_declared_module_sets()`. The patterns must already
-    /// be sorted and deduplicated (the skeleton builder guarantees this).
-    #[must_use]
-    pub const fn from_skeleton(exact: FxHashSet<String>, patterns: Vec<String>) -> Self {
-        Self { exact, patterns }
-    }
-}
+mod global_declared_modules;
+pub use global_declared_modules::GlobalDeclaredModules;
 
 /// Info about the enclosing class for static member suggestions and abstract property checks.
 #[derive(Clone, Debug)]
@@ -1766,6 +1744,7 @@ impl ProjectEnv {
                     Default::default(),
                 ),
                 patterns: Vec::new(),
+                pattern_set: None,
             })
         };
         let arena_to_file_idx: FxHashMap<usize, usize> = self
@@ -1903,6 +1882,7 @@ impl ProjectEnv {
         if let Some(mut dm) = declared_modules {
             dm.patterns.sort();
             dm.patterns.dedup();
+            dm.finalize();
             self.skeleton_declared_modules = Some(Arc::new(dm));
         }
 

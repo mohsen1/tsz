@@ -532,6 +532,7 @@ impl<'a> CheckerContext<'a> {
                 }
                 dm.patterns.sort();
                 dm.patterns.dedup();
+                dm.finalize();
                 self.global_declared_modules = Some(Arc::new(dm));
             }
             if self.global_expando_index.is_none() {
@@ -638,6 +639,7 @@ impl<'a> CheckerContext<'a> {
         if let Some(mut dm) = declared_modules {
             dm.patterns.sort();
             dm.patterns.dedup();
+            dm.finalize();
             self.global_declared_modules = Some(Arc::new(dm));
         }
 

@@ -4,17 +4,13 @@ impl<'a> CheckerState<'a> {
     pub(super) fn any_ambient_module_declared(&self, module_name: &str) -> bool {
         let normalized = module_name.trim_matches('"').trim_matches('\'');
 
-        // Use the pre-built global index for O(1) exact lookup + small pattern scan.
+        // Use the pre-built global index for O(1) exact lookup + pre-compiled
+        // GlobSet match.
         if let Some(declared) = &self.ctx.global_declared_modules {
             if declared.exact.contains(normalized) {
                 return true;
             }
-            for pattern in &declared.patterns {
-                if Self::module_name_matches_pattern_for_imports(pattern, normalized) {
-                    return true;
-                }
-            }
-            return false;
+            return declared.matches_wildcard(normalized);
         }
 
         let Some(all_binders) = &self.ctx.all_binders else {
@@ -39,10 +35,7 @@ impl<'a> CheckerState<'a> {
         let normalized = module_name.trim_matches('"').trim_matches('\'');
 
         if let Some(declared) = &self.ctx.global_declared_modules {
-            return declared
-                .patterns
-                .iter()
-                .any(|pattern| Self::module_name_matches_pattern_for_imports(pattern, normalized));
+            return declared.matches_wildcard(normalized);
         }
 
         let Some(all_binders) = &self.ctx.all_binders else {
