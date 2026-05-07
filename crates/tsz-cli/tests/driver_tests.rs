@@ -20420,3 +20420,145 @@ console.log(assets.join(","));
         result.diagnostics
     );
 }
+
+// TS5011: outDir set, rootDir omitted, inferred common source dir differs
+// from tsconfig dir. Mirrors the issue #3822 repro.
+#[test]
+fn ts5011_emitted_when_out_dir_without_root_dir_and_inferred_subdir() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "declaration": true
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/collections.ts"),
+        "export class Stack<T> { private items: T[] = []; push(i: T): void { this.items.push(i); } }",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&5011),
+        "Should emit TS5011 when outDir is set without rootDir and the inferred common source dir differs, got: {codes:?}"
+    );
+    let ts5011 = result
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 5011)
+        .expect("TS5011 diagnostic");
+    assert!(
+        ts5011.message_text.contains("./src"),
+        "TS5011 message should reference the inferred common source dir, got: {}",
+        ts5011.message_text
+    );
+}
+
+#[test]
+fn ts5011_not_emitted_when_root_dir_set() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "rootDir": "src"
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/main.ts"), "export const x = 1;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&5011),
+        "Should NOT emit TS5011 when rootDir is set explicitly, got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts5011_not_emitted_when_common_source_dir_equals_config_dir() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist"
+          },
+          "include": ["*.ts"]
+        }"#,
+    );
+    write_file(&base.join("a.ts"), "export const a = 1;");
+    write_file(&base.join("b.ts"), "export const b = 2;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&5011),
+        "Should NOT emit TS5011 when common source dir equals config dir, got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts5011_not_emitted_when_no_out_dir() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {},
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/main.ts"), "export const x = 1;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&5011),
+        "Should NOT emit TS5011 when outDir is not set, got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts5011_not_emitted_with_no_emit() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "noEmit": true
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/main.ts"), "export const x = 1;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&5011),
+        "Should NOT emit TS5011 when noEmit is true, got: {codes:?}"
+    );
+}

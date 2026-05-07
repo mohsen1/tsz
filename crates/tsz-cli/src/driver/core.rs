@@ -1370,6 +1370,28 @@ fn compile_inner(
                 diagnostic_codes::FILE_IS_NOT_UNDER_ROOTDIR_ROOTDIR_IS_EXPECTED_TO_CONTAIN_ALL_SOURCE_FILES,
             ));
         }
+    } else if !resolved.no_emit
+        && (out_dir.is_some() || declaration_dir.is_some())
+        && let Some(tsconfig) = tsconfig_path.as_deref()
+    {
+        // TS5011: outDir/declarationDir is set without rootDir, and the inferred
+        // common source directory differs from the tsconfig directory, so emit
+        // would land in an unexpected layout. tsc reports this so the user can
+        // pin rootDir explicitly.
+        if let Some(common) = implicit_common_source_directory(&root_file_paths, &base_dir, &cwd) {
+            let tsconfig_display = display_relative_to_dir(tsconfig, &cwd);
+            let common_display = display_relative_to_dir(&common, &base_dir);
+            let message = format!(
+                "The common source directory of '{tsconfig_display}' is '{common_display}'. The 'rootDir' setting must be explicitly set to this or another path to adjust your output's file layout."
+            );
+            config_diagnostics.push(Diagnostic::error(
+                tsconfig.to_string_lossy().into_owned(),
+                0,
+                0,
+                message,
+                diagnostic_codes::THE_COMMON_SOURCE_DIRECTORY_OF_IS_THE_ROOTDIR_SETTING_MUST_BE_EXPLICITLY_SET_TO,
+            ));
+        }
     }
 
     // Update dependencies in the cache
@@ -3756,3 +3778,86 @@ fn is_valid_jsx_factory_expression(s: &str) -> bool {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+/// Compute the implicit common source directory for emit-eligible source
+/// files when `rootDir` is not set. Returns `Some(canonical_dir)` only when
+/// the inferred common directory differs from the tsconfig directory; in
+/// that case TS5011 should fire because `outDir` would land output in a
+/// layout the user did not anchor explicitly. Returns `None` when there are
+/// no emit-eligible files or when the inferred common directory equals the
+/// tsconfig directory.
+fn implicit_common_source_directory(
+    file_paths: &[PathBuf],
+    base_dir: &Path,
+    cwd: &Path,
+) -> Option<PathBuf> {
+    let mut file_dirs: Vec<PathBuf> = file_paths
+        .iter()
+        .filter(|p| !is_declaration_file(p))
+        .map(|p| {
+            let abs = if p.is_absolute() {
+                p.clone()
+            } else {
+                cwd.join(p)
+            };
+            canonicalize_or_owned(&abs)
+        })
+        .filter_map(|p| p.parent().map(Path::to_path_buf))
+        .collect();
+
+    if file_dirs.is_empty() {
+        return None;
+    }
+
+    file_dirs.sort();
+    let mut common = file_dirs[0].clone();
+    for dir in &file_dirs[1..] {
+        common = longest_common_directory(&common, dir);
+        if common.as_os_str().is_empty() {
+            return None;
+        }
+    }
+
+    let canonical_base = canonicalize_or_owned(base_dir);
+    if common == canonical_base {
+        None
+    } else {
+        Some(common)
+    }
+}
+
+fn longest_common_directory(a: &Path, b: &Path) -> PathBuf {
+    let a_components: Vec<_> = a.components().collect();
+    let b_components: Vec<_> = b.components().collect();
+    let common_len = a_components
+        .iter()
+        .zip(b_components.iter())
+        .take_while(|(ac, bc)| ac == bc)
+        .count();
+    a_components[..common_len].iter().collect()
+}
+
+/// Format `path` for display relative to `dir`, using forward slashes and a
+/// leading `./` when the result is a non-parent relative path. Falls back to
+/// the path's own string representation when it cannot be expressed under
+/// `dir`.
+fn display_relative_to_dir(path: &Path, dir: &Path) -> String {
+    let rel = path.strip_prefix(dir).map(Path::to_path_buf).or_else(|_| {
+        let cdir = canonicalize_or_owned(dir);
+        let cpath = canonicalize_or_owned(path);
+        cpath.strip_prefix(&cdir).map(Path::to_path_buf)
+    });
+
+    match rel {
+        Ok(rel) if rel.as_os_str().is_empty() => "./".to_string(),
+        Ok(rel) => {
+            let s = rel.to_string_lossy().replace('\\', "/");
+            if s.starts_with("./") || s.starts_with("../") {
+                s
+            } else {
+                format!("./{s}")
+            }
+        }
+        Err(_) => path.to_string_lossy().replace('\\', "/"),
+    }
+}
