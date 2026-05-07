@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-07
 - **Branch**: `fix/jsx-cr-line-break-normalization`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #4375
+- **Status**: ready
 - **Workstream**: emitter parity (issue #3903)
 
 ## Intent
