@@ -140,6 +140,14 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     // before tsconfig was loaded, so projects with `declaration: true`
     // in their config were incorrectly rejected.
 
+    // Issue #3860: tsc honors output-only `compilerOptions` flags
+    // (`listFiles`, `listEmittedFiles`, `explainFiles`, `diagnostics`,
+    // `extendedDiagnostics`, `traceResolution`) from tsconfig. tsz only
+    // checked the CLI-flag side. OR the tsconfig-side values into `args`
+    // before the CLI gates further down inspect them.
+    let mut args = args;
+    merge_output_only_options_from_tsconfig(&mut args, &cwd);
+
     if let Some(profile_path) = args.generate_cpu_profile.as_ref() {
         println!(
             "error: --generateCpuProfile is not supported by tsz; requested profile '{}' was not created. Use --generateTrace for native trace output.",
@@ -1413,6 +1421,124 @@ fn find_closest_option(unknown: &str) -> Option<&'static str> {
         let threshold = (max_len * 2 / 5).max(1); // ~40% of the longer name
         if dist <= threshold { Some(name) } else { None }
     })
+}
+
+/// Read the discovered tsconfig and OR its output-only `compilerOptions`
+/// flags into `args`. tsc honors `listFiles`, `listEmittedFiles`,
+/// `explainFiles`, `diagnostics`, `extendedDiagnostics`, and
+/// `traceResolution` from tsconfig; tsz used to ignore them. See #3860.
+///
+/// This is a best-effort merge: the full config resolver runs later
+/// (with extends-resolution, JSONC, etc.). For these output-only flags,
+/// reading the literal top-level `compilerOptions` is sufficient because
+/// their values aren't redefined in extends chains in practice.
+fn merge_output_only_options_from_tsconfig(args: &mut CliArgs, cwd: &std::path::Path) {
+    if args.ignore_config {
+        return;
+    }
+    // Resolve tsconfig path the same way handle_show_config does, falling
+    // back to upward search from cwd.
+    let tsconfig_path = args
+        .project
+        .as_ref()
+        .map(|p| {
+            let resolved = if p.is_relative() {
+                cwd.join(p)
+            } else {
+                p.clone()
+            };
+            if resolved.is_dir() {
+                resolved.join("tsconfig.json")
+            } else {
+                resolved
+            }
+        })
+        .or_else(|| driver::find_tsconfig(cwd));
+    let Some(path) = tsconfig_path else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    // Tolerate JSONC: strip line/block comments before parsing. tsconfig
+    // permits both. We don't need the full extends chain here — only the
+    // top-level compilerOptions block.
+    let stripped = strip_jsonc_minimal(&text);
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&stripped) else {
+        return;
+    };
+    let Some(opts) = json.get("compilerOptions").and_then(|v| v.as_object()) else {
+        return;
+    };
+
+    let take_bool = |key: &str, current: &mut bool| {
+        if !*current
+            && opts
+                .get(key)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        {
+            *current = true;
+        }
+    };
+    take_bool("listFiles", &mut args.list_files);
+    take_bool("listEmittedFiles", &mut args.list_emitted_files);
+    take_bool("explainFiles", &mut args.explain_files);
+    take_bool("diagnostics", &mut args.diagnostics);
+    take_bool("extendedDiagnostics", &mut args.extended_diagnostics);
+    take_bool("traceResolution", &mut args.trace_resolution);
+}
+
+/// Strip line and block comments from JSONC. Single-pass; respects string
+/// literals. Sufficient for top-level tsconfig parsing.
+fn strip_jsonc_minimal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    let mut in_string = false;
+    let mut string_quote = b'"';
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_string {
+            out.push(b as char);
+            if b == b'\\' && i + 1 < bytes.len() {
+                out.push(bytes[i + 1] as char);
+                i += 2;
+                continue;
+            }
+            if b == string_quote {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if b == b'"' || b == b'\'' {
+            in_string = true;
+            string_quote = b;
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
+        if b == b'/' && i + 1 < bytes.len() {
+            if bytes[i + 1] == b'/' {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if bytes[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i += 2;
+                continue;
+            }
+        }
+        out.push(b as char);
+        i += 1;
+    }
+    out
 }
 
 fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {
