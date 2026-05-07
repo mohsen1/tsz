@@ -1554,6 +1554,28 @@ let result = map([1, 2, 3], x => String(x));
 }
 
 #[test]
+fn overloaded_generic_call_keeps_inner_callback_argument_errors() {
+    let source = r#"
+type FuncType = (x: <T>(p: T) => T) => typeof x;
+
+declare function fun<T>(f: FuncType, x: T): T;
+declare function fun<T>(f: FuncType, g: FuncType, x: T): T;
+
+fun(x => { x<number>(undefined); return x; }, 10);
+"#;
+    let diagnostics = get_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains(
+                    "Argument of type 'undefined' is not assignable to parameter of type 'number'.",
+                )
+        }),
+        "contextually typed overloaded callback should keep inner TS2345, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn generic_function_return_arrow_gets_contextual_parameter_type() {
     let source = r#"
 const f = <F extends (...args: any[]) => <G>(x: G) => void>(_: F): F => _;

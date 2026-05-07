@@ -834,7 +834,10 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    self.prune_callback_body_diagnostics(args, &overload_snap.diag);
+                    self.prune_speculative_callback_body_diagnostics_for_accepted_overload(
+                        args,
+                        &overload_snap.diag,
+                    );
                     return Some(OverloadResolution {
                         arg_types: final_arg_types,
                         result: CallResult::Success(final_return_type),
