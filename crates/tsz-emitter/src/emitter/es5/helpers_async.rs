@@ -6,7 +6,10 @@
 
 use super::super::*;
 use super::helpers::ArraySegment;
+use crate::emitter::core::PropertyNameEmit;
+use crate::emitter::declarations::class::replace_identifier;
 use crate::transforms::emit_utils;
+use std::sync::Arc;
 
 impl<'a> Printer<'a> {
     fn next_arguments_capture_name(&mut self) -> String {
@@ -69,6 +72,174 @@ impl<'a> Printer<'a> {
         }
 
         None
+    }
+
+    fn es5_static_field_comma_inits(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> Vec<(PropertyNameEmit, NodeIndex)> {
+        let mut inits = Vec::new();
+
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if prop.initializer.is_none()
+                || !self.has_effective_static_modifier_js(&prop.modifiers)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                || self
+                    .arena
+                    .get(prop.name)
+                    .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+            {
+                continue;
+            }
+
+            if let Some(name_emit) = self.get_property_name_emit(prop.name) {
+                inits.push((name_emit, prop.initializer));
+            }
+        }
+
+        inits
+    }
+
+    fn es5_class_iife_expression_from_var(output: &str, class_name: &str) -> Option<String> {
+        let prefix = format!("var {class_name} = ");
+        let output = output.trim_end();
+        let output = output.strip_suffix(';').unwrap_or(output);
+        output.strip_prefix(&prefix).map(str::to_string)
+    }
+
+    fn write_multiline_fragment(&mut self, text: &str) {
+        let extra_indent = if self.writer.indent_level() > 0 {
+            " ".repeat(self.writer.indent_width() as usize)
+        } else {
+            String::new()
+        };
+        let mut lines = text.lines();
+        if let Some(first) = lines.next() {
+            self.write(first);
+        }
+        for line in lines {
+            self.write_line();
+            if !line.is_empty() {
+                self.write(&extra_indent);
+                self.write(line);
+            }
+        }
+    }
+
+    fn emit_es5_static_class_expression_comma(
+        &mut self,
+        class_node: NodeIndex,
+        class_name: &str,
+        class_iife_expr: &str,
+        static_field_inits: &[(PropertyNameEmit, NodeIndex)],
+    ) {
+        let temp = if self.class_expression_is_in_loop_body(class_node) {
+            let temp = self.make_unique_name();
+            self.block_scoped_private_temps.push(temp.clone());
+            temp
+        } else {
+            self.make_unique_name_hoisted()
+        };
+
+        self.write("(");
+        self.write(&temp);
+        self.write(" = ");
+        self.write_multiline_fragment(class_iife_expr);
+
+        for (name_emit, init_idx) in static_field_inits {
+            self.write(",");
+            self.write_line();
+            self.increase_indent();
+            self.write(&temp);
+            match name_emit {
+                PropertyNameEmit::Dot(name) => {
+                    self.write(".");
+                    self.write(name);
+                }
+                PropertyNameEmit::Bracket(name) | PropertyNameEmit::BracketNumeric(name) => {
+                    self.write("[");
+                    self.write(name);
+                    self.write("]");
+                }
+            }
+            self.write(" = ");
+
+            let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+            if !class_name.is_empty() && class_name != temp {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name),
+                    Arc::<str>::from(temp.as_str()),
+                ));
+            }
+            let before = self.writer.len();
+            self.with_scoped_static_initializer_context_cleared(|this| {
+                this.emit_expression(*init_idx);
+            });
+            let after = self.writer.len();
+            self.scoped_class_expression_self_alias = prev_self_alias;
+
+            if !class_name.is_empty() && class_name != temp {
+                let full = self.writer.get_output().to_string();
+                let segment = &full[before..after];
+                let replaced = replace_identifier(segment, class_name, &temp);
+                if replaced != segment {
+                    self.writer.truncate(before);
+                    self.write(&replaced);
+                }
+            }
+            self.decrease_indent();
+        }
+
+        self.write(",");
+        self.write_line();
+        self.increase_indent();
+        self.write(&temp);
+        self.write(")");
+        self.decrease_indent();
+    }
+
+    fn emit_es5_static_class_expression_statements(
+        &mut self,
+        class_name: &str,
+        static_field_inits: &[(PropertyNameEmit, NodeIndex)],
+    ) {
+        for (name_emit, init_idx) in static_field_inits {
+            self.write(class_name);
+            match name_emit {
+                PropertyNameEmit::Dot(name) => {
+                    self.write(".");
+                    self.write(name);
+                }
+                PropertyNameEmit::Bracket(name) | PropertyNameEmit::BracketNumeric(name) => {
+                    self.write("[");
+                    self.write(name);
+                    self.write("]");
+                }
+            }
+            self.write(" = ");
+            self.with_scoped_static_initializer_context_cleared(|this| {
+                this.emit_expression(*init_idx);
+            });
+            self.write(";");
+            self.write_line();
+        }
     }
 
     /// Emit an async generator function lowered to `__asyncGenerator` wrapper.
@@ -928,6 +1099,8 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let static_field_inits = self.es5_static_field_comma_inits(class_data);
+
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         es5_emitter.set_indent_level(0);
@@ -946,6 +1119,12 @@ impl<'a> Printer<'a> {
             es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        let use_static_comma = !static_field_inits.is_empty()
+            && !self.ctx.options.use_define_for_class_fields
+            && class_data.name.is_some();
+        if use_static_comma {
+            es5_emitter.set_skip_static_members(true);
+        }
 
         let (class_name, es5_output) = if class_data.name.is_some() {
             let candidate = emit_utils::identifier_text_or_empty(self.arena, class_data.name);
@@ -969,6 +1148,19 @@ impl<'a> Printer<'a> {
         self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
         let es5_mappings = es5_emitter.take_mappings();
 
+        if use_static_comma
+            && let Some(class_iife_expr) =
+                Self::es5_class_iife_expression_from_var(&es5_output, &class_name)
+        {
+            self.emit_es5_static_class_expression_comma(
+                class_node,
+                &class_name,
+                &class_iife_expr,
+                &static_field_inits,
+            );
+            return;
+        }
+
         self.write("(function () {");
         self.write_line();
         self.increase_indent();
@@ -988,6 +1180,9 @@ impl<'a> Printer<'a> {
                 self.write(line);
             }
             self.write_line();
+        }
+        if use_static_comma {
+            self.emit_es5_static_class_expression_statements(&class_name, &static_field_inits);
         }
 
         self.write("return ");
