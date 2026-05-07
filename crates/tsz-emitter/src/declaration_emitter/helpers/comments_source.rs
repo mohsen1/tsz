@@ -19,7 +19,7 @@ use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 #[allow(unused_imports)]
 use tsz_parser::parser::ParserState;
 #[allow(unused_imports)]
-use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
+use tsz_parser::parser::node::{Node, NodeAccess, NodeArena, ParameterData};
 #[allow(unused_imports)]
 use tsz_parser::parser::syntax_kind_ext;
 #[allow(unused_imports)]
@@ -334,6 +334,14 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|comment| {
                 text[comment.pos as usize..comment.end as usize].contains(needle)
             })
+    }
+
+    pub(crate) fn parameter_semantic_end(&self, param_node_end: u32, param: &ParameterData) -> u32 {
+        self.arena
+            .get(param.initializer)
+            .or_else(|| self.arena.get(param.type_annotation))
+            .or_else(|| self.arena.get(param.name))
+            .map_or(param_node_end, |node| node.end)
     }
 
     pub(crate) fn emit_strip_internal_constructor_parameter_comment(

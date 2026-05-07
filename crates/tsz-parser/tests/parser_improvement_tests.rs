@@ -631,6 +631,24 @@ fn test_regex_hyphen_after_range_is_literal() {
 }
 
 #[test]
+fn test_unicode_regex_trailing_hyphen_class_does_not_report_ts1508() {
+    let source = r#"
+const unicode = /[a-]/u;
+const unicode_sets = /[a-]/v;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.iter().all(
+            |d| d.code != diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH
+        ),
+        "Trailing hyphen before a class close should be a literal, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_character_class_escape_does_not_report_ts1517() {
     let source = r#"
 /(#?-?\d*\.\d\w*%?)|(@?#?[\w-?]+%?)/g;
