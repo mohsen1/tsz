@@ -2270,11 +2270,13 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        let resolved = self.resolve_named_export_via_export_equals_tracked_uncached(
-            module_specifier,
-            export_name,
-            visited_aliases,
-        );
+        let resolved = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.resolve_named_export_via_export_equals_tracked_uncached(
+                module_specifier,
+                export_name,
+                visited_aliases,
+            )
+        });
         if resolved.is_some() || cache_miss {
             self.ctx
                 .export_equals_named_cache
