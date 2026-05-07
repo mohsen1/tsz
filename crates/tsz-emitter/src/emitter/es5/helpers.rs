@@ -707,31 +707,25 @@ impl<'a> Printer<'a> {
                 ObjectSegment::Spread(spread_idx),
             ] => {
                 // Elements then spread: { a: 1, ...b } → __assign({ a: 1 }, b)
+                // Issue #3968: when the elements contain a computed property,
+                // tsc lowers them with a comma-separated temp-var assignment
+                // such as `(_a = {}, _a[k] = 1, _a)` so that ES5 has no
+                // computed-property literal. Reuse
+                // `emit_object_literal_without_spread_es5` which already
+                // implements that lowering and writes its own outer parens.
                 let has_computed = elems
                     .iter()
                     .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
+                self.write_helper("__assign");
+                self.write("(");
                 if has_computed {
-                    // Need temp var for computed properties
-                    let temp_var = self.make_unique_name_hoisted();
-                    self.write_helper("__assign");
-                    self.write("((");
-                    self.write(&temp_var);
-                    self.write(" = ");
-                    self.emit_object_literal_entries_es5(elems);
-                    self.write(", ");
-                    self.write(&temp_var);
-                    self.write("), ");
+                    self.emit_object_literal_without_spread_es5(elems, source_range, false);
                 } else {
-                    self.write_helper("__assign");
-                    self.write("(");
                     self.emit_object_literal_entries_es5(elems);
-                    self.write(", ");
                 }
+                self.write(", ");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
                     self.emit_spread_expression(spread_node);
-                }
-                if has_computed {
-                    self.write(")");
                 }
                 self.write(")");
             }
