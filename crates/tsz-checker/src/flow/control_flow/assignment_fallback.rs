@@ -769,7 +769,10 @@ impl<'a> FlowAnalyzer<'a> {
             let left_type = self.resolve_operand_type(left)?;
             let right_type = self.resolve_operand_type(right)?;
             let non_nullish_left = self.interner.remove_nullish(left_type);
-            return Some(self.interner.union2(non_nullish_left, right_type));
+            let result = self.interner.union2(non_nullish_left, right_type);
+            self.interner
+                .replace_union_origin_for_display(result, vec![right_type, non_nullish_left]);
+            return Some(result);
         }
         if operator == SyntaxKind::BarBarToken as u16 {
             // x || y -> typeof y | NonNullable<typeof x>

@@ -1394,6 +1394,10 @@ impl TypeInterner {
                 || self.union_origin_overrides_canonical_application_sort(
                     current.as_ref(),
                     &origin_members,
+                )
+                || self.union_origin_overrides_canonical_generic_display_sort(
+                    current.as_ref(),
+                    &origin_members,
                 );
             if !needs_origin {
                 return;
@@ -1553,6 +1557,33 @@ impl TypeInterner {
         same_application_base(self, origin, &mut expected_base)
             && same_application_base(self, current, &mut expected_base)
             && expected_base.is_some()
+    }
+
+    /// Preserve source-written order for generic display unions whose canonical
+    /// member sort is not the order tsc prints in diagnostics.
+    fn union_origin_overrides_canonical_generic_display_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != origin.len() || current == origin {
+            return false;
+        }
+
+        let mut current_sorted = current.to_vec();
+        let mut origin_sorted = origin.to_vec();
+        current_sorted.sort_unstable_by_key(|id| id.0);
+        origin_sorted.sort_unstable_by_key(|id| id.0);
+        if current_sorted != origin_sorted {
+            return false;
+        }
+
+        origin.iter().any(|&id| {
+            matches!(
+                self.lookup(id),
+                Some(TypeData::KeyOf(_) | TypeData::IndexAccess(_, _) | TypeData::Literal(_))
+            )
+        })
     }
 
     /// Look up the as-written origin members for a flattened Union TypeId.
