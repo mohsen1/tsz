@@ -190,6 +190,52 @@ let x2 = <MyComp a="hi" />;
 }
 
 #[test]
+fn jsx_concrete_prop_rejects_unconstrained_generic_attr_value() {
+    // tsc emits TS2322 for `<Comp s={x} />` when `Comp` expects `s: string`
+    // and `x: T` is an unconstrained outer type parameter. The expected prop
+    // type is concrete (no type parameters), so per-attribute checking must
+    // run even though the actual value type contains a type parameter.
+    // Re-tests with a different type-parameter name to ensure the rule is
+    // structural and not a hardcoded `T`.
+    for type_param_name in ["T", "K"] {
+        let source = format!(
+            r#"
+{JSX_PREAMBLE}
+declare function Comp(props: {{ s: string }}): JSX.Element;
+function f<{type_param_name}>(x: {type_param_name}) {{
+    return <Comp s={{x}} />;
+}}
+"#
+        );
+        let diags = jsx_diagnostics(&source);
+        assert!(
+            has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "Expected TS2322 for unconstrained generic attribute value (param `{type_param_name}` -> string), got: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn jsx_concrete_prop_accepts_constrained_generic_attr_value() {
+    // Counterpart to the unconstrained case: when the type parameter's
+    // constraint satisfies the expected prop type, no TS2322 should fire.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare function Comp(props: {{ s: string }}): JSX.Element;
+function f<T extends string>(x: T) {{
+    return <Comp s={{x}} />;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Constrained `T extends string` should be assignable to a `string` prop, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_sfc_type_mismatch_emits_ts2322() {
     let source = format!(
         r#"
