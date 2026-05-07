@@ -672,18 +672,24 @@ impl<'a> CheckerState<'a> {
         instantiated_params: &[tsz_solver::ParamInfo],
         arg_count: usize,
     ) -> Vec<Option<TypeId>> {
-        let normalize_contextual_param = |this: &mut Self, ty: TypeId| {
+        let normalize_contextual_param = |this: &mut Self, param: &tsz_solver::ParamInfo| {
+            let ty = param.type_id;
             let evaluated = this.evaluate_type_with_env(ty);
-            if crate::query_boundaries::checkers::call::get_contextual_signature(
-                this.ctx.types,
-                evaluated,
-            )
-            .is_some()
-            {
-                this.normalize_contextual_signature_with_env(evaluated)
-            } else {
-                evaluated
+            let mut contextual =
+                if crate::query_boundaries::checkers::call::get_contextual_signature(
+                    this.ctx.types,
+                    evaluated,
+                )
+                .is_some()
+                {
+                    this.normalize_contextual_signature_with_env(evaluated)
+                } else {
+                    evaluated
+                };
+            if param.optional && contextual != TypeId::ANY && contextual != TypeId::UNKNOWN {
+                contextual = common::union_with_undefined(this.ctx.types, contextual);
             }
+            contextual
         };
         let unpacked_params: Vec<_> = instantiated_params
             .iter()
@@ -700,13 +706,13 @@ impl<'a> CheckerState<'a> {
                 if index < rest_start {
                     unpacked_params
                         .get(index)
-                        .map(|param| normalize_contextual_param(self, param.type_id))
+                        .map(|param| normalize_contextual_param(self, param))
                 } else {
                     unpacked_params
                         .last()
                         .filter(|param| param.rest)
                         .map(|param| {
-                            let rest_type = normalize_contextual_param(self, param.type_id);
+                            let rest_type = normalize_contextual_param(self, param);
                             self.rest_argument_element_type_with_env(rest_type)
                         })
                 }
