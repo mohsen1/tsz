@@ -1303,6 +1303,71 @@ fn test_apply_change_delete() {
 }
 
 #[test]
+fn test_line_offset_to_byte_cr_only_second_line() {
+    // tsserver treats `\r` as a line terminator. "hello" is 5 bytes, so the
+    // start of line 2 is byte 6.
+    assert_eq!(Server::line_offset_to_byte("hello\rworld\r", 2, 1), 6);
+}
+
+#[test]
+fn test_line_offset_to_byte_cr_only_mid_second_line() {
+    // Line 2, offset 3 -> 2 UTF-16 units past the start of line 2 (byte 6).
+    assert_eq!(Server::line_offset_to_byte("hello\rworld\r", 2, 3), 8);
+}
+
+#[test]
+fn test_line_offset_to_byte_cr_only_end_of_line() {
+    // Offset just past "hello" should land on the `\r` (byte 5), not advance
+    // into the next line.
+    assert_eq!(Server::line_offset_to_byte("hello\rworld", 1, 6), 5);
+}
+
+#[test]
+fn test_line_offset_to_byte_crlf_second_line() {
+    // `\r\n` counts as a single terminator; line 2 starts after both bytes.
+    assert_eq!(Server::line_offset_to_byte("hello\r\nworld\r\n", 2, 1), 7);
+}
+
+#[test]
+fn test_line_offset_to_byte_crlf_third_line() {
+    // Three lines separated by `\r\n` -> line 3 starts after the second
+    // terminator, at byte 14.
+    assert_eq!(
+        Server::line_offset_to_byte("aaa\r\nbbb\r\nccc\r\n", 3, 1),
+        10
+    );
+}
+
+#[test]
+fn test_line_offset_to_byte_mixed_line_terminators() {
+    // Mixed `\n`, `\r`, and `\r\n` sequences each advance exactly one line.
+    let content = "aaa\nbbb\rccc\r\nddd";
+    assert_eq!(Server::line_offset_to_byte(content, 1, 1), 0);
+    assert_eq!(Server::line_offset_to_byte(content, 2, 1), 4);
+    assert_eq!(Server::line_offset_to_byte(content, 3, 1), 8);
+    assert_eq!(Server::line_offset_to_byte(content, 4, 1), 13);
+}
+
+#[test]
+fn test_apply_change_cr_only_replace_second_line() {
+    // Regression for #3933: edit on line 2 of a CR-only file must land on
+    // line 2, not at EOF.
+    assert_eq!(
+        Server::apply_change("const a = 1;\rconst b = 2;\r", 2, 11, 2, 12, "3"),
+        "const a = 1;\rconst b = 3;\r"
+    );
+}
+
+#[test]
+fn test_apply_change_crlf_replace_second_line() {
+    // CRLF line endings: edits on line 2 must land on line 2.
+    assert_eq!(
+        Server::apply_change("const a = 1;\r\nconst b = 2;\r\n", 2, 11, 2, 12, "3"),
+        "const a = 1;\r\nconst b = 3;\r\n"
+    );
+}
+
+#[test]
 fn test_handle_change_updates_file() {
     let mut server = make_server();
     server
