@@ -381,7 +381,7 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use rustc_hash::FxHashMap;
         use tsz_common::interner::Atom;
-        use tsz_solver::PropertyInfo;
+        use tsz_solver::{IndexSignature, PropertyInfo};
         let mut contextual_type = request.contextual_type;
 
         // Strip nullish types from contextual type for object literals.
@@ -443,8 +443,8 @@ impl<'a> CheckerState<'a> {
         // Index signatures inherited from spread sources (kept separate because
         // they should only be included when the literal has no explicit properties —
         // tsc drops spread index signatures when explicit properties exist).
-        let mut spread_string_index_types: Vec<TypeId> = Vec::new();
-        let mut spread_number_index_types: Vec<TypeId> = Vec::new();
+        let mut spread_string_index_signatures: Vec<IndexSignature> = Vec::new();
+        let mut spread_number_index_signatures: Vec<IndexSignature> = Vec::new();
         let mut has_spread = false;
         let mut has_any_spread = false;
         let mut has_union_spread = false;
@@ -2760,15 +2760,30 @@ impl<'a> CheckerState<'a> {
                         {
                             use crate::query_boundaries::common::IndexSignatureResolver;
                             let resolver = IndexSignatureResolver::new(self.ctx.types);
-                            if let Some(string_index_value) =
-                                resolver.resolve_string_index(resolved_spread)
-                            {
-                                spread_string_index_types.push(string_index_value);
+                            let index_info = resolver.get_index_info(resolved_spread);
+                            if let Some(string_index) = index_info.string_index.or_else(|| {
+                                resolver.resolve_string_index(resolved_spread).map(|value_type| {
+                                    IndexSignature {
+                                        key_type: TypeId::STRING,
+                                        value_type,
+                                        readonly: false,
+                                        param_name: None,
+                                    }
+                                })
+                            }) {
+                                spread_string_index_signatures.push(string_index);
                             }
-                            if let Some(number_index_value) =
-                                resolver.resolve_number_index(resolved_spread)
-                            {
-                                spread_number_index_types.push(number_index_value);
+                            if let Some(number_index) = index_info.number_index.or_else(|| {
+                                resolver.resolve_number_index(resolved_spread).map(|value_type| {
+                                    IndexSignature {
+                                        key_type: TypeId::NUMBER,
+                                        value_type,
+                                        readonly: false,
+                                        param_name: None,
+                                    }
+                                })
+                            }) {
+                                spread_number_index_signatures.push(number_index);
                             }
                         }
 
@@ -2829,9 +2844,25 @@ impl<'a> CheckerState<'a> {
         // Merge spread-contributed index signatures only when the object literal
         // has no explicit (non-spread) properties. In tsc, `{ ...indexedObj, b: 1 }`
         // drops the index signature, but `{ ...indexedObj }` preserves it.
+        let mut string_index_param_name = None;
+        let mut number_index_param_name = None;
         if explicit_property_names.is_empty() {
-            string_index_types.extend(spread_string_index_types);
-            number_index_types.extend(spread_number_index_types);
+            string_index_param_name = spread_string_index_signatures
+                .iter()
+                .find_map(|idx| idx.param_name);
+            number_index_param_name = spread_number_index_signatures
+                .iter()
+                .find_map(|idx| idx.param_name);
+            string_index_types.extend(
+                spread_string_index_signatures
+                    .into_iter()
+                    .map(|idx| idx.value_type),
+            );
+            number_index_types.extend(
+                spread_number_index_signatures
+                    .into_iter()
+                    .map(|idx| idx.value_type),
+            );
         }
 
         let object_type = self.finalize_object_literal_type(
@@ -2839,6 +2870,8 @@ impl<'a> CheckerState<'a> {
             display_type_overrides,
             string_index_types,
             number_index_types,
+            string_index_param_name,
+            number_index_param_name,
             has_spread,
             has_any_spread,
             has_union_spread,

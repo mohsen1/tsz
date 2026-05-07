@@ -294,6 +294,8 @@ impl<'a> CheckerState<'a> {
         display_type_overrides: FxHashMap<Atom, TypeId>,
         mut string_index_types: Vec<TypeId>,
         number_index_types: Vec<TypeId>,
+        string_index_param_name: Option<Atom>,
+        number_index_param_name: Option<Atom>,
         has_spread: bool,
         has_any_spread: bool,
         has_union_spread: bool,
@@ -374,7 +376,7 @@ impl<'a> CheckerState<'a> {
                         key_type: TypeId::STRING,
                         value_type,
                         readonly: false,
-                        param_name: None,
+                        param_name: string_index_param_name,
                     })
                 } else {
                     None
@@ -390,7 +392,7 @@ impl<'a> CheckerState<'a> {
                         key_type: TypeId::NUMBER,
                         value_type,
                         readonly: false,
-                        param_name: None,
+                        param_name: number_index_param_name,
                     })
                 } else {
                     None
