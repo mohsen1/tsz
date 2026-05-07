@@ -1214,6 +1214,46 @@ class Board {
 }
 
 #[test]
+fn test_recursive_alias_interface_preserves_array_method_surface() {
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+interface Box<T> { value: T }
+type Box2 = Box<Box2 | number>;
+
+interface HTMLHeadingElement {
+    id: string;
+    tagName: string;
+    textContent: string | null;
+}
+
+type Tree = [HTMLHeadingElement, Tree][];
+
+function parse(node: Tree, index: number[] = []): string[] {
+    return node.map(([el, children], i) => {
+        const idx = [...index, i + 1];
+        return `${el.id}:${idx.join(".")}:${children.length}`;
+    });
+}
+
+function cons(hs: HTMLHeadingElement[]): Tree {
+    return hs.reduce<Tree>((node, _h) => node, []);
+}
+"#,
+    );
+    let array_surface_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2339 || *c == 7006 || *c == 7031)
+        .collect();
+    assert!(
+        array_surface_errors.is_empty(),
+        "Recursive interface aliases should not overwrite the registered Array<T> base.\nDiagnostics: {array_surface_errors:#?}"
+    );
+}
+
+#[test]
 fn test_array_base_display_properties_preserve_lib_order() {
     if !lib_files_available() {
         return;

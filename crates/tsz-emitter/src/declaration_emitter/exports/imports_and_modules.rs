@@ -15,6 +15,112 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_import_declaration(import_idx);
     }
 
+    pub(crate) fn emit_deferred_js_import_declaration(&mut self, import_idx: NodeIndex) -> bool {
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return false;
+        };
+        let Some(import) = self.arena.get_import_decl(import_node) else {
+            return false;
+        };
+
+        if import.import_clause.is_none() {
+            let before = self.writer.len();
+            self.emit_import_declaration(import_idx);
+            return self.writer.len() > before;
+        }
+
+        let (default_used, named_used) = self.count_used_imports(import);
+        if default_used == 0 && named_used == 0 {
+            if self.is_import_required_by_augmentation(import.module_specifier) {
+                self.write_indent();
+                self.write("import ");
+                self.emit_node(import.module_specifier);
+                self.write(";");
+                self.write_line();
+                return true;
+            }
+            return false;
+        }
+
+        let Some(clause_node) = self.arena.get(import.import_clause) else {
+            return false;
+        };
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return false;
+        };
+
+        let mut emitted = false;
+        if clause.name.is_some() && default_used > 0 {
+            self.write_indent();
+            self.write("import ");
+            if clause.is_type_only {
+                self.write("type ");
+            }
+            if clause.is_deferred {
+                self.write("defer ");
+            }
+            self.emit_node(clause.name);
+            self.write(" from ");
+            self.emit_node(import.module_specifier);
+            self.emit_declaration_import_attributes(import.attributes);
+            self.write(";");
+            self.write_line();
+            emitted = true;
+        }
+
+        if clause.named_bindings.is_some() && named_used > 0 {
+            let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+                return emitted;
+            };
+            let Some(bindings) = self.arena.get_named_imports(bindings_node) else {
+                return emitted;
+            };
+
+            if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
+                self.write_indent();
+                self.write("import ");
+                if clause.is_type_only {
+                    self.write("type ");
+                }
+                if clause.is_deferred {
+                    self.write("defer ");
+                }
+                self.write("* as ");
+                self.emit_node(bindings.name);
+                self.write(" from ");
+                self.emit_node(import.module_specifier);
+                self.emit_declaration_import_attributes(import.attributes);
+                self.write(";");
+                self.write_line();
+                emitted = true;
+            } else {
+                for &spec_idx in &bindings.elements.nodes {
+                    if !self.should_emit_import_specifier(spec_idx) {
+                        continue;
+                    }
+                    self.write_indent();
+                    self.write("import ");
+                    if clause.is_type_only {
+                        self.write("type ");
+                    }
+                    if clause.is_deferred {
+                        self.write("defer ");
+                    }
+                    self.write("{ ");
+                    self.emit_specifier(spec_idx, !clause.is_type_only);
+                    self.write(" } from ");
+                    self.emit_node(import.module_specifier);
+                    self.emit_declaration_import_attributes(import.attributes);
+                    self.write(";");
+                    self.write_line();
+                    emitted = true;
+                }
+            }
+        }
+
+        emitted
+    }
+
     pub(crate) fn emit_import_declaration(&mut self, import_idx: NodeIndex) {
         let Some(import_node) = self.arena.get(import_idx) else {
             return;

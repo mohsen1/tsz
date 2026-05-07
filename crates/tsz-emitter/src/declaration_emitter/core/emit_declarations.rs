@@ -321,6 +321,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        let mut deferred_js_import_declarations = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {
             if let Some(members) = nested_module_export_namespaces.get(&stmt_idx) {
                 if let Some((root_name, _)) = self.js_module_exports_property_assignment(stmt_idx) {
@@ -378,6 +379,20 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 continue;
             }
+            if self.source_is_js_file
+                && self
+                    .arena
+                    .get(stmt_idx)
+                    .is_some_and(|stmt_node| stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION)
+                && self
+                    .arena
+                    .get(stmt_idx)
+                    .and_then(|stmt_node| self.arena.get_import_decl(stmt_node))
+                    .is_some_and(|import| import.import_clause.is_some())
+            {
+                deferred_js_import_declarations.push(stmt_idx);
+                continue;
+            }
             self.emit_statement(stmt_idx);
         }
         for &stmt_idx in &source_file.statements.nodes {
@@ -385,6 +400,11 @@ impl<'a> DeclarationEmitter<'a> {
                 && !self.js_namespace_object_stmt_emits_in_source_order(stmt_idx)
             {
                 self.emit_statement(stmt_idx);
+            }
+        }
+        for import_idx in deferred_js_import_declarations {
+            if self.emit_deferred_js_import_declaration(import_idx) {
+                self.emitted_module_indicator = true;
             }
         }
 
@@ -448,7 +468,81 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
         }
+        output = Self::prune_unused_named_import_specifiers_from_output(&output);
         output
+    }
+
+    fn prune_unused_named_import_specifiers_from_output(output: &str) -> String {
+        let lines = output.lines().collect::<Vec<_>>();
+        let mut changed = false;
+        let mut rewritten = Vec::with_capacity(lines.len());
+
+        for (line_idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            let Some(rest) = trimmed.strip_prefix("import { ") else {
+                rewritten.push((*line).to_string());
+                continue;
+            };
+            let Some((named, module_part)) = rest.split_once(" } from ") else {
+                rewritten.push((*line).to_string());
+                continue;
+            };
+            let module_part = module_part.trim_end_matches(';');
+            if module_part.is_empty() {
+                rewritten.push((*line).to_string());
+                continue;
+            }
+
+            let body = lines
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, body_line)| (idx != line_idx).then_some(*body_line))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let kept = named
+                .split(',')
+                .filter_map(|specifier| {
+                    let specifier = specifier.trim();
+                    if specifier.is_empty() {
+                        return None;
+                    }
+                    let local_name = specifier
+                        .split_once(" as ")
+                        .map_or(specifier, |(_, alias)| alias.trim());
+                    Self::contains_whole_word_in_text(&body, local_name).then_some(specifier)
+                })
+                .collect::<Vec<_>>();
+
+            if kept.len()
+                == named
+                    .split(',')
+                    .filter(|part| !part.trim().is_empty())
+                    .count()
+            {
+                rewritten.push((*line).to_string());
+                continue;
+            }
+            changed = true;
+            if !kept.is_empty() {
+                let indent_len = line.len() - trimmed.len();
+                rewritten.push(format!(
+                    "{}import {{ {} }} from {};",
+                    &line[..indent_len],
+                    kept.join(", "),
+                    module_part
+                ));
+            }
+        }
+
+        if changed {
+            let mut text = rewritten.join("\n");
+            if output.ends_with('\n') {
+                text.push('\n');
+            }
+            text
+        } else {
+            output.to_string()
+        }
     }
 
     pub(in crate::declaration_emitter) fn emit_statement(&mut self, stmt_idx: NodeIndex) {
