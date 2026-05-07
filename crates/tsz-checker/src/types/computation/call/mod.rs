@@ -283,15 +283,26 @@ impl<'a> CheckerState<'a> {
             return true;
         };
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) {
+            // `const foo = (a) => { … }` with `@returns {asserts a is B}` is a
+            // valid assertion target in JS files: tsc treats the JSDoc
+            // `@returns` predicate as the explicit annotation. Without this
+            // arm, every JS-file arrow-bound assertion function fires a
+            // spurious TS2775 at the call site. The function/method/accessor
+            // arms below already include the same check; this mirrors them
+            // for arrow-/function-expression initializers bound through a
+            // variable declaration.
             return var_decl.type_annotation.is_some()
-                || self.declaration_has_jsdoc_type_tag(decl_idx);
+                || self.declaration_has_jsdoc_type_tag(decl_idx)
+                || self.declaration_has_jsdoc_assertion_return(decl_idx);
         }
         if let Some(param) = self.ctx.arena.get_parameter(decl_node) {
             return param.type_annotation.is_some()
                 || self.declaration_has_jsdoc_type_tag(decl_idx);
         }
         if let Some(prop) = self.ctx.arena.get_property_decl(decl_node) {
-            return prop.type_annotation.is_some() || self.declaration_has_jsdoc_type_tag(decl_idx);
+            return prop.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_tag(decl_idx)
+                || self.declaration_has_jsdoc_assertion_return(decl_idx);
         }
         if let Some(method) = self.ctx.arena.get_method_decl(decl_node) {
             return method.type_annotation.is_some()

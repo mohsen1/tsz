@@ -103,11 +103,15 @@ impl<'a> DeclarationEmitter<'a> {
         let after_as = after_number.strip_prefix("as")?.trim_start();
         let after_as = after_as.strip_prefix("Item[")?;
         let attr_end = after_as.find(']')?;
-        let attr_name = after_as
+        let mut attr_name = after_as
             .get(..attr_end)?
             .trim()
             .trim_matches('"')
-            .trim_matches('\'');
+            .trim_matches('\'')
+            .to_string();
+        if attr_name == "string" {
+            attr_name = Self::tuple_items_common_string_literal_property(tuple_inner)?;
+        }
         let value_suffix = after_as.get(attr_end + 1..)?.trim_start();
         if !value_suffix.starts_with("]: Item") {
             return None;
@@ -118,14 +122,41 @@ impl<'a> DeclarationEmitter<'a> {
             if item.is_empty() {
                 continue;
             }
-            let key = if attr_name == "string" {
-                Self::first_type_literal_string_property_value(item)?
-            } else {
-                Self::type_literal_property_string_literal_value(item, attr_name)?
-            };
+            let key = Self::type_literal_property_string_literal_value(item, &attr_name)?;
             members.push(Self::format_mapped_tuple_member(&key, item));
         }
         (!members.is_empty()).then(|| format!("{{\n{}\n}}", members.join("\n")))
+    }
+
+    fn tuple_items_common_string_literal_property(tuple_inner: &str) -> Option<String> {
+        let mut candidates: Option<Vec<String>> = None;
+        for item in Self::split_top_level_commas(tuple_inner) {
+            let names = Self::type_literal_string_literal_property_names(item.trim());
+            if names.is_empty() {
+                return None;
+            }
+            if let Some(existing) = &mut candidates {
+                existing.retain(|name| names.iter().any(|candidate| candidate == name));
+            } else {
+                candidates = Some(names);
+            }
+        }
+        let candidates = candidates?;
+        (candidates.len() == 1).then(|| candidates[0].clone())
+    }
+
+    fn type_literal_string_literal_property_names(type_text: &str) -> Vec<String> {
+        type_text
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim().trim_end_matches(';').trim();
+                let trimmed = trimmed.strip_prefix("readonly ").unwrap_or(trimmed);
+                let (name, value) = trimmed.split_once(':')?;
+                let value = value.trim();
+                (value.starts_with('"') && value.ends_with('"') && value.len() >= 2)
+                    .then(|| name.trim().trim_matches('"').trim_matches('\'').to_string())
+            })
+            .collect()
     }
 
     fn type_literal_property_string_literal_value(
@@ -141,21 +172,6 @@ impl<'a> DeclarationEmitter<'a> {
                 if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
                     return Some(value.trim_matches('"').to_string());
                 }
-            }
-        }
-        None
-    }
-
-    fn first_type_literal_string_property_value(type_text: &str) -> Option<String> {
-        for line in type_text.lines() {
-            let trimmed = line.trim().trim_end_matches(';').trim();
-            let trimmed = trimmed.strip_prefix("readonly ").unwrap_or(trimmed);
-            let Some((_, value)) = trimmed.split_once(':') else {
-                continue;
-            };
-            let value = value.trim();
-            if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-                return Some(value.trim_matches('"').to_string());
             }
         }
         None

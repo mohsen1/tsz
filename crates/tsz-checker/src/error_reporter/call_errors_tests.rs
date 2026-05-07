@@ -43,6 +43,43 @@ foo(c);
 }
 
 #[test]
+fn mapped_parameter_property_mismatch_displays_instantiated_property_slice() {
+    let mut parser = tsz_parser::parser::ParserState::new("test.ts".to_string(), String::new());
+    let root = parser.parse_source_file();
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let property_name = checker.ctx.types.intern_string("y");
+    let target_property_type = checker
+        .ctx
+        .types
+        .union2(tsz_solver::TypeId::NUMBER, tsz_solver::TypeId::UNDEFINED);
+    let reason = tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
+        property_name,
+        source_property_type: tsz_solver::TypeId::STRING,
+        target_property_type,
+        nested_reason: None,
+    };
+
+    let display = checker
+        .mapped_property_mismatch_parameter_display(
+            "{ [x in K]?: Lower<T>[] | undefined; }",
+            Some(&reason),
+        )
+        .expect("expected mapped property display rewrite");
+
+    assert_eq!(display, "{ y?: number | undefined; }");
+}
+
+#[test]
 fn emits_ts2721_for_calling_null() {
     let diagnostics = check_source_with_strict_null("null();");
     assert!(

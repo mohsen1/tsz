@@ -431,9 +431,13 @@ pub fn check_application_variance<R: TypeResolver>(
         .get_type_param_variance(def_id)
         .or_else(|| query_db.and_then(|qdb| QueryDatabase::get_type_param_variance(qdb, def_id)))
         .or_else(|| {
-            crate::relations::variance::compute_type_param_variances_with_resolver(
+            let computed = crate::relations::variance::compute_type_param_variances_with_resolver(
                 db, resolver, def_id,
-            )
+            );
+            if let (Some(qdb), Some(variances)) = (query_db, computed.as_ref()) {
+                qdb.insert_type_param_variance(def_id, variances.clone());
+            }
+            computed
         });
 
     let variances = variances?;

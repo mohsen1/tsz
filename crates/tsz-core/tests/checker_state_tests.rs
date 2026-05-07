@@ -5151,6 +5151,48 @@ class NoError {
 }
 
 #[test]
+fn test_new_expression_property_used_before_initialization_2729() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+class CtorTyped {
+    value: { new (): object };
+    copy = new this.value();
+}
+
+class CtorGeneric {
+    value: { new <T>(): T };
+    copy = new this.value<string>();
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let count_2729 = codes.iter().filter(|&&c| c == 2729).count();
+    assert_eq!(
+        count_2729, 2,
+        "Expected TS2729 for new this.value() and new this.value<T>(), got {count_2729} in: {codes:?}"
+    );
+}
+
+#[test]
 fn test_static_block_property_used_before_initialization_2729() {
     // Error 2729: Property used before initialization in static blocks
     // Static blocks referencing later-declared static properties via C.X or this.X

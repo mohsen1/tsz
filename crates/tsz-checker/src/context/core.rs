@@ -263,8 +263,8 @@ impl<'a> CheckerContext<'a> {
         // Build module specifiers map from arena file names.
         // Each file (other than the current file) gets its name stem as the module specifier.
         // This enables import-qualified type display like `import("a").F`.
-        self.module_specifiers = Self::build_module_specifiers(&arenas);
-        self.module_path_specifiers = Self::build_module_path_specifiers(&arenas);
+        self.module_specifiers = Arc::new(Self::build_module_specifiers(&arenas));
+        self.module_path_specifiers = Arc::new(Self::build_module_path_specifiers(&arenas));
         self.all_arenas = Some(arenas);
     }
 
@@ -509,7 +509,7 @@ impl<'a> CheckerContext<'a> {
             if self.global_declared_modules.is_none() {
                 let mut dm = super::GlobalDeclaredModules::default();
                 for binder in binders.iter() {
-                    for (module_spec, _) in binder.module_exports.iter() {
+                    for module_spec in binder.module_exports.keys() {
                         let normalized = module_spec.trim_matches('"').trim_matches('\'');
                         if normalized.contains('*') {
                             dm.patterns.push(normalized.to_string());

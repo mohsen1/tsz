@@ -11,9 +11,9 @@ permalink: /benchmarks/micro/index.html
   <span>Micro benchmarks</span>
 </nav>
 
-# Micro Benchmarks
+# Micro Timings
 
-Focused single-file, generated, and solver stress cases for isolating compiler hot spots after the full-project pass.
+Focused single-file, generated, and solver stress timings for isolating compiler hot spots after the full-project pass. These rows are not product speedup claims; fixed startup, lib loading, and import-graph behavior can dominate small inputs.
 
 <div class="bench-legend">
   <span class="bench-legend-item"><span class="bench-legend-swatch tsz"></span> tsz</span>
