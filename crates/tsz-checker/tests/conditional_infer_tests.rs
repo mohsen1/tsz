@@ -79,9 +79,38 @@ type B3 = B2[0];
 "#;
 
     let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2589_count = diagnostics.iter().filter(|diag| diag.code == 2589).count();
+    assert_eq!(
+        ts2589_count, 1,
+        "recursive indexed access should emit one TS2589 at the index site. Actual diagnostics: {diagnostics:#?}"
+    );
     assert!(
         diagnostics.iter().all(|diag| diag.code != 2339),
         "recursive indexed access must not cascade into TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn recursive_awaited_application_emits_ts2589_at_outer_alias() {
+    let source = r#"
+interface Promise<T> {
+    then(onfulfilled: (value: T) => any): any;
+}
+
+type __Awaited<T> = T extends null | undefined ? T :
+    T extends object & { then(onfulfilled: infer F): any } ?
+        F extends ((value: infer V) => any) ? __Awaited<V> : never :
+    T;
+
+type DeeplyNested<T> = Promise<DeeplyNested<T>>;
+type A = __Awaited<DeeplyNested<number>>;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2589_count = diagnostics.iter().filter(|diag| diag.code == 2589).count();
+    assert_eq!(
+        ts2589_count, 1,
+        "recursive __Awaited alias application should emit exactly one TS2589. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -117,6 +146,119 @@ function foo2<T extends unknown[]>(value: T): Enumerate<T['length']> {
     assert!(
         diagnostics.iter().all(|diag| diag.code != 2344),
         "tuple-rest infer result should satisfy Array<unknown> and not emit TS2344. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.code != 2339 && diag.code != 2536),
+        "array-like length access should not cascade into TS2339/TS2536. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag
+                    .message_text
+                    .contains("Type 'number' is not assignable to type 'Enumerate<T[\"length\"]>'")
+        }),
+        "generic tuple length return should preserve Enumerate<T[\"length\"]> in TS2322. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn recursive_tuple_spread_length_index_access_is_valid() {
+    let source = r#"
+type NTuple<N extends number, Tup extends unknown[] = []> =
+    Tup['length'] extends N ? Tup : NTuple<N, [...Tup, unknown]>;
+
+type Add<A extends number, B extends number> =
+    [...NTuple<A>, ...NTuple<B>]['length'];
+
+let five: Add<2, 3>;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2536),
+        "tuple spread length indexed access should not emit TS2536. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn structurally_identical_recursive_conditionals_are_assignable() {
+    let source = r#"
+type Unpack1<T> = T extends (infer U)[] ? Unpack1<U> : T;
+type Unpack2<T> = T extends (infer U)[] ? Unpack2<U> : T;
+
+function f20<T>(x: Unpack1<T>, y: Unpack2<T>) {
+    x = y;
+    y = x;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "structurally identical recursive conditional aliases should be mutually assignable. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn recursive_tuple_alias_assignment_reports_both_directions() {
+    let source = r#"
+type TupleOf<T, N extends number> =
+    N extends N ? number extends N ? T[] : _TupleOf<T, N, []> : never;
+type _TupleOf<T, N extends number, R extends unknown[]> =
+    R['length'] extends N ? R : _TupleOf<T, N, [T, ...R]>;
+
+function f22<N extends number, M extends N>(tn: TupleOf<number, N>, tm: TupleOf<number, M>) {
+    tn = tm;
+    tm = tn;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag.message_text.contains(
+                    "Type 'TupleOf<number, M>' is not assignable to type 'TupleOf<number, N>'",
+                )
+        }),
+        "expected TupleOf<number, M> to TupleOf<number, N> assignment error. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag.message_text.contains(
+                    "Type 'TupleOf<number, N>' is not assignable to type 'TupleOf<number, M>'",
+                )
+        }),
+        "expected TupleOf<number, N> to TupleOf<number, M> assignment error. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn recursive_conditional_call_parameter_keeps_alias_display() {
+    let source = r#"
+type Grow1<T extends unknown[], N extends number> =
+    T['length'] extends N ? T : Grow1<[number, ...T], N>;
+type Grow2<T extends unknown[], N extends number> =
+    T['length'] extends N ? T : Grow2<[string, ...T], N>;
+
+function f21<T extends number>(x: Grow1<[], T>, y: Grow2<[], T>) {
+    f21(y, x);
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2345
+                && diag
+                    .message_text
+                    .contains("parameter of type 'Grow1<[], T>'")
+        }),
+        "recursive conditional parameter diagnostics should preserve the alias target. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
