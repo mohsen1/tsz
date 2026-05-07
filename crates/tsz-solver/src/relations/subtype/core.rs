@@ -10,6 +10,8 @@
 //! - `TypeResolver` trait for lazy symbol resolution
 //! - Tracer pattern for zero-cost diagnostic abstraction
 
+use std::sync::Arc;
+
 use crate::AssignabilityChecker;
 use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
@@ -241,6 +243,12 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// evaluated multiple times across different subtype checks.
     /// Key is (`TypeId`, `no_unchecked_indexed_access`) since that flag affects evaluation.
     pub(crate) eval_cache: FxHashMap<(TypeId, bool), TypeId>,
+    /// Apparent object shapes for primitive wrapper fallback.
+    ///
+    /// Primitive structural subtype checks can ask for the same wrapper shape
+    /// thousands of times. Cache the shape once per checker so those
+    /// checks avoid rebuilding method signatures and property vectors.
+    pub(crate) apparent_primitive_shapes: [Option<Arc<ObjectShape>>; 5],
     /// Optional tracer for collecting subtype failure diagnostics.
     /// When `Some`, enables detailed failure reason collection for error messages.
     /// When `None`, disables tracing for maximum performance (default).
@@ -313,6 +321,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             erase_generics: true,
             allow_erased_generic_signature_retry: false,
             eval_cache: FxHashMap::default(),
+            apparent_primitive_shapes: std::array::from_fn(|_| None),
             tracer: None,
             type_param_equivalences: Vec::new(),
         }
@@ -359,6 +368,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             erase_generics: true,
             allow_erased_generic_signature_retry: false,
             eval_cache: FxHashMap::default(),
+            apparent_primitive_shapes: std::array::from_fn(|_| None),
             tracer: None,
             type_param_equivalences: Vec::new(),
         }
