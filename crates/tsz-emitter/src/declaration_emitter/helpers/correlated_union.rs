@@ -252,7 +252,7 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(rest_arg_texts) = rest_args
                 .iter()
                 .copied()
-                .map(|arg_idx| self.call_argument_type_text_for_substitution(arg_idx))
+                .map(|arg_idx| self.call_argument_type_text_for_substitution(arg_idx, None))
                 .collect::<Option<Vec<_>>>()
             else {
                 continue;
