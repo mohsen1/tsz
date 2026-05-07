@@ -2732,6 +2732,8 @@ impl ScannerState {
             if let Some(c) = char::from_u32(ch) {
                 result.push(c);
             }
+            // Advance by the character's UTF-8 byte length so multi-byte chars
+            // are not re-decoded from a continuation-byte offset.
             self.pos += self.char_len_at(self.pos);
         }
 
@@ -3766,6 +3768,35 @@ mod tests {
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].0, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(tokens[0].1, "hello world");
+    }
+
+    // ── JSX attribute string literals ─────────────────────────────────
+
+    /// Regression for #3977: `scan_jsx_string_literal` advanced by one byte
+    /// after pushing a character, so multi-byte UTF-8 chars were re-decoded
+    /// from a continuation-byte offset and pushed again. The token value of
+    /// `"é"` became `"éé"`, breaking JSX attribute string-literal types.
+    #[test]
+    fn scan_jsx_attribute_value_preserves_non_ascii() {
+        // 2-byte UTF-8 (é = U+00E9, 0xC3 0xA9).
+        let mut s = ScannerState::new("\"é\"".to_string(), true);
+        assert_eq!(s.scan_jsx_attribute_value(), SyntaxKind::StringLiteral);
+        assert_eq!(s.get_token_value(), "é");
+
+        // 3-byte UTF-8 (中 = U+4E2D).
+        let mut s = ScannerState::new("\"中文\"".to_string(), true);
+        assert_eq!(s.scan_jsx_attribute_value(), SyntaxKind::StringLiteral);
+        assert_eq!(s.get_token_value(), "中文");
+
+        // 4-byte UTF-8 (😀 = U+1F600, surrogate-pair scalar).
+        let mut s = ScannerState::new("\"a😀b\"".to_string(), true);
+        assert_eq!(s.scan_jsx_attribute_value(), SyntaxKind::StringLiteral);
+        assert_eq!(s.get_token_value(), "a😀b");
+
+        // Mixed widths and single quotes also exercised by JSX attributes.
+        let mut s = ScannerState::new("'héllo 中 😀'".to_string(), true);
+        assert_eq!(s.scan_jsx_attribute_value(), SyntaxKind::StringLiteral);
+        assert_eq!(s.get_token_value(), "héllo 中 😀");
     }
 
     // ── Punctuation ───────────────────────────────────────────────────
