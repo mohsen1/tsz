@@ -40,7 +40,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn sanitized_type_node_display(&mut self, type_node: NodeIndex) -> Option<String> {
+    pub(crate) fn sanitized_type_node_display(&mut self, type_node: NodeIndex) -> Option<String> {
         self.node_text(type_node)
             .and_then(|text| self.sanitize_type_annotation_text_for_diagnostic(text, true))
             .map(|text| self.format_annotation_like_type(&text))
