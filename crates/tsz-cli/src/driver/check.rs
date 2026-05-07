@@ -181,6 +181,18 @@ fn keep_checker_diagnostic_when_program_has_real_syntax_errors(code: u32) -> boo
         || is_reserved_type_name_declaration_diagnostic(code)
 }
 
+/// `TS1xxx` codes that tsc routes through `getSemanticDiagnostics`. They are in
+/// the parser-grammar range numerically but are emitted from the checker, so
+/// unchecked JS files (no `checkJs`, or `// @ts-nocheck`) must not see them
+/// even though `code < 2000` would otherwise let them through. Issue #3693.
+const fn is_semantic_ts1xxx_suppressed_in_unchecked_js(code: u32) -> bool {
+    matches!(
+        code,
+        1192 // Module '{0}' has no default export.
+        | 1259 // Module '{0}' can only be default-imported using the '{1}' flag
+    )
+}
+
 fn post_process_checker_diagnostics(
     checker_diagnostics: &mut Vec<Diagnostic>,
     file: &BoundFile,
@@ -201,7 +213,15 @@ fn post_process_checker_diagnostics(
         // no-checkJs mode), also allow the `plainJSErrors` codes that tsc
         // surfaces even in unchecked JS files. When `checkJs: false` is
         // explicitly set, suppress ALL semantic errors.
+        //
+        // Issue #3693: a few TS1xxx codes are semantic checker diagnostics
+        // that tsc routes through `getSemanticDiagnostics`. Their numeric
+        // code is < 2000 but they must NOT survive unchecked-JS filtering,
+        // because tsc doesn't surface them in that mode either.
         checker_diagnostics.retain(|diag| {
+            if is_semantic_ts1xxx_suppressed_in_unchecked_js(diag.code) {
+                return false;
+            }
             diag.code < 2000
                 || tsz::checker::diagnostics::is_js_grammar_diagnostic(diag.code)
                 || (!options.explicit_check_js_false && is_plain_js_allowed_code(diag.code))
