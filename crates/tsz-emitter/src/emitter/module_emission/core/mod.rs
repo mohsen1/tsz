@@ -741,7 +741,9 @@ impl<'a> Printer<'a> {
             // filtering to skip type-only specifiers (interfaces, type aliases,
             // etc.). For re-exports (`export { x } from "mod"`), only use the
             // checker-based filtering (type_only_nodes).
-            let value_specs = if export.module_specifier.is_none() {
+            let value_specs = if export.module_specifier.is_none()
+                && self.recovered_module_syntax_block_depth == 0
+            {
                 self.collect_local_export_value_specifiers(&named_exports.elements)
             } else {
                 self.collect_value_specifiers(&named_exports.elements)
@@ -925,7 +927,9 @@ impl<'a> Printer<'a> {
         // (syntactically invalid position), tsc emits it verbatim — no
         // module-system transformation.
         if export_assign.is_export_equals
-            && (self.function_scope_depth > 0 || self.in_namespace_iife)
+            && (self.function_scope_depth > 0
+                || self.in_namespace_iife
+                || self.recovered_module_syntax_block_depth > 0)
         {
             self.write("export = ");
             self.emit_expression(export_assign.expression);

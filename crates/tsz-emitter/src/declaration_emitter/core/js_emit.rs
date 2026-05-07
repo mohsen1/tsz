@@ -576,6 +576,8 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some((export_name, local_name)) = reserved_export_alias {
             self.write(&local_name);
             self.js_cjs_export_aliases.push((export_name, local_name));
+        } else if let Some(export_name) = self.js_commonjs_export_name_text(name_idx) {
+            self.write(&export_name);
         } else {
             self.emit_node(name_idx);
         }

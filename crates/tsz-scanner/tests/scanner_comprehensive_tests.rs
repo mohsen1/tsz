@@ -2068,6 +2068,38 @@ mod jsx_scanning {
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "value");
     }
+
+    #[test]
+    fn jsx_attribute_double_quoted_two_byte_utf8() {
+        let mut scanner = ScannerState::new(r#""é""#.to_string(), true);
+        let token = scanner.scan_jsx_attribute_value();
+        assert_eq!(token, SyntaxKind::StringLiteral);
+        assert_eq!(scanner.get_token_value(), "é");
+    }
+
+    #[test]
+    fn jsx_attribute_single_quoted_three_byte_utf8() {
+        let mut scanner = ScannerState::new("'日本'".to_string(), true);
+        let token = scanner.scan_jsx_attribute_value();
+        assert_eq!(token, SyntaxKind::StringLiteral);
+        assert_eq!(scanner.get_token_value(), "日本");
+    }
+
+    #[test]
+    fn jsx_attribute_four_byte_utf8_supplementary_plane() {
+        let mut scanner = ScannerState::new("\"\u{1F600}\"".to_string(), true);
+        let token = scanner.scan_jsx_attribute_value();
+        assert_eq!(token, SyntaxKind::StringLiteral);
+        assert_eq!(scanner.get_token_value(), "\u{1F600}");
+    }
+
+    #[test]
+    fn jsx_attribute_mixed_ascii_and_unicode() {
+        let mut scanner = ScannerState::new(r#""café""#.to_string(), true);
+        let token = scanner.scan_jsx_attribute_value();
+        assert_eq!(token, SyntaxKind::StringLiteral);
+        assert_eq!(scanner.get_token_value(), "café");
+    }
 }
 
 // =============================================================================

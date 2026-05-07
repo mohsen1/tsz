@@ -81,6 +81,17 @@ impl<'a> CheckerState<'a> {
             module_name,
             Some(self.ctx.current_file_idx),
         ) {
+            // For CJS modules using `export = X`, an ESM `import x from 'cjs'`
+            // resolves to the type of X directly — the bare `module.exports`
+            // value — not a synthesized namespace wrapper. This matches tsc:
+            // CJS without an `__esModule` marker treats the whole
+            // `module.exports` as the default, and `export = X` sets
+            // `module.exports = X`. See
+            // `nodeNextEsmImportsOfPackagesWithExtensionlessMains.ts`.
+            if let Some(export_equals_sym_id) = exports_table.get("export=") {
+                return Some(self.get_type_of_symbol(export_equals_sym_id));
+            }
+
             let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
             let mut props = Vec::new();
             for &(name, export_sym_id) in &ordered_exports {
