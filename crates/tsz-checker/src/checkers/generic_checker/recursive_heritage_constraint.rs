@@ -77,47 +77,83 @@ impl<'a> CheckerState<'a> {
         interface_sym_id: tsz_binder::SymbolId,
         target_sym_id: tsz_binder::SymbolId,
     ) -> bool {
+        self.interface_extends_symbol_inner(interface_sym_id, target_sym_id, &mut Vec::new(), None)
+    }
+
+    fn interface_extends_symbol_inner(
+        &self,
+        interface_sym_id: tsz_binder::SymbolId,
+        target_sym_id: tsz_binder::SymbolId,
+        seen: &mut Vec<tsz_binder::SymbolId>,
+        preferred_binder: Option<&tsz_binder::BinderState>,
+    ) -> bool {
         if interface_sym_id == target_sym_id {
             return true;
         }
+        if seen.contains(&interface_sym_id) {
+            return false;
+        }
+        seen.push(interface_sym_id);
 
-        let Some(symbol) = self.ctx.binder.get_symbol(interface_sym_id) else {
+        let Some((owner_binder, symbol)) = preferred_binder
+            .and_then(|binder| {
+                binder
+                    .get_symbol(interface_sym_id)
+                    .map(|symbol| (binder, symbol))
+            })
+            .or_else(|| self.symbol_and_binder_for_heritage(interface_sym_id))
+        else {
             return false;
         };
 
         // Check each declaration's heritage clauses
         for &decl_idx in &symbol.declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
+            let arena =
+                owner_binder.arena_for_declaration_or(interface_sym_id, decl_idx, self.ctx.arena);
+            let Some(node) = arena.get(decl_idx) else {
                 continue;
             };
-            let Some(interface) = self.ctx.arena.get_interface(node) else {
+            let Some(interface) = arena.get_interface(node) else {
                 continue;
             };
             let Some(ref heritage_clauses) = interface.heritage_clauses else {
                 continue;
             };
             for &clause_idx in &heritage_clauses.nodes {
-                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                let Some(clause_node) = arena.get(clause_idx) else {
                     continue;
                 };
-                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                let Some(heritage) = arena.get_heritage_clause(clause_node) else {
                     continue;
                 };
                 if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
                     continue;
                 }
                 for &type_idx in &heritage.types.nodes {
-                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    let Some(type_node) = arena.get(type_idx) else {
                         continue;
                     };
                     // Extract the base expression (might be an ExpressionWithTypeArguments)
-                    let expr_idx = if let Some(eta) = self.ctx.arena.get_expr_type_args(type_node) {
+                    let expr_idx = if let Some(eta) = arena.get_expr_type_args(type_node) {
                         eta.expression
                     } else {
                         type_idx
                     };
-                    if let Some(base_sym) = self.resolve_heritage_symbol(expr_idx)
-                        && base_sym == target_sym_id
+                    if let Some(base_sym) = owner_binder
+                        .node_symbols
+                        .get(&expr_idx.0)
+                        .copied()
+                        .or_else(|| {
+                            self.resolve_heritage_symbol_with_binder(arena, owner_binder, expr_idx)
+                        })
+                        .or_else(|| self.resolve_heritage_symbol(expr_idx))
+                        && (base_sym == target_sym_id
+                            || self.interface_extends_symbol_inner(
+                                base_sym,
+                                target_sym_id,
+                                seen,
+                                Some(owner_binder),
+                            ))
                     {
                         return true;
                     }
@@ -125,5 +161,47 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    fn symbol_and_binder_for_heritage(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<(&tsz_binder::BinderState, &tsz_binder::Symbol)> {
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+            && let Some(symbol) = binder.get_symbol(sym_id)
+        {
+            return Some((binder, symbol));
+        }
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            return Some((self.ctx.binder, symbol));
+        }
+        if let Some((binder, symbol)) = self.ctx.lib_contexts.iter().find_map(|lib| {
+            lib.binder
+                .get_symbol(sym_id)
+                .map(|symbol| (lib.binder.as_ref(), symbol))
+        }) {
+            return Some((binder, symbol));
+        }
+        self.ctx.all_binders.as_ref().and_then(|binders| {
+            binders.iter().find_map(|binder| {
+                binder
+                    .get_symbol(sym_id)
+                    .map(|symbol| (binder.as_ref(), symbol))
+            })
+        })
+    }
+
+    fn resolve_heritage_symbol_with_binder(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        binder: &tsz_binder::BinderState,
+        expr_idx: tsz_parser::NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let node = arena.get(expr_idx)?;
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            return binder.resolve_identifier(arena, expr_idx);
+        }
+        None
     }
 }

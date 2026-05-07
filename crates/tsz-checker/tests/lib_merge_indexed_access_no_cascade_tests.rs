@@ -1,23 +1,19 @@
-//! Regressions for TS2344 cascades anchored inside `lib.dom.d.ts` after a
+//! Regressions for TS2344 checks anchored inside `lib.dom.d.ts` after a
 //! user file declaration-merges a global lib interface like `Node`.
 //!
 //! Before the fix, the post-merge re-validation pass (`check_checker_lib_file`
 //! in `tsz-cli`) re-resolved every type reference inside the lib's
 //! interface declarations, including
 //! `HTMLCollectionOf<HTMLElementTagNameMap[K]>`. Constraint validation
-//! against `T extends Element` would then run `is_assignable_to` on the
-//! still-Lazy `HTMLElementTagNameMap[K]` and fail, producing a wave of
-//! TS2344 errors anchored at lib lines like `13098:101`. tsc emits no
-//! errors here because user augmentation can only ADD members and the
-//! lib's original constraints are guaranteed to hold for the apparent
-//! type of `M[K]`.
+//! must check the apparent union of map values: compatible augmentations
+//! still pass, while conflicting augmentations should match tsc and report
+//! TS2344 at lib lines like `13098:101`.
 //!
 //! `error_type_constraint_not_satisfied` now suppresses these via
 //! `indexed_access_into_object_uniformly_satisfies_constraint`: the
 //! type-arg `M[K]` (with M a Lazy reference to a closed object shape) is
-//! considered to satisfy the constraint when the checker context is
-//! itself a builtin lib file, or when every value type in M's shape is
-//! structurally assignable to the constraint.
+//! considered to satisfy the constraint only when every value type in M's
+//! shape is structurally assignable to the constraint.
 
 use tsz_checker::context::CheckerOptions;
 
@@ -33,10 +29,9 @@ fn check_strict(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
-/// Direct case: declaration-merging `interface Node` causes a cascade
-/// of TS2344 errors inside lib.dom.d.ts at the
-/// `HTMLCollectionOf<HTMLElementTagNameMap[K]>` call sites unless the
-/// indexed-access carve-out fires.
+/// Direct case: declaration-merging a compatible `interface Node` member must
+/// not create TS2344 errors at the DOM
+/// `HTMLCollectionOf<HTMLElementTagNameMap[K]>` call sites.
 #[test]
 fn declaration_merge_of_lib_node_does_not_cascade_ts2344_inside_lib() {
     let source = r#"

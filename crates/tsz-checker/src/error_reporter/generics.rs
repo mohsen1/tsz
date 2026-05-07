@@ -524,7 +524,7 @@ impl<'a> CheckerState<'a> {
             type_str = format!("typeof {type_str}");
         }
         let constraint_str = self.format_type_diagnostic(constraint);
-        // Structural carve-out: `IndexedAccess(M, K)` where K is a bounded
+        // Structural check: `IndexedAccess(M, K)` where K is a bounded
         // type parameter satisfies any constraint that ALL of M's property
         // value types are assignable to. tsc's `getApparentType` reduces
         // the indexed access to the union of value types and checks that
@@ -532,13 +532,12 @@ impl<'a> CheckerState<'a> {
         // subtype of the target, the constraint is satisfied.
         //
         // This replaces the previous printer-string carve-out
-        // (`type_str.contains("HTMLElementDeprecatedTagNameMap[")`) — which
-        // misses the regular `HTMLElementTagNameMap[K]` cascade triggered
-        // when user code declaration-merges a lib interface like `Node`.
-        // Once the lib's checker re-runs constraint validation against the
-        // merged Node, every `HTMLCollectionOf<HTMLElementTagNameMap[K]>`
-        // call site emits a spurious TS2344 unless we recognize that the
-        // map's values are uniformly Element subtypes.
+        // (`type_str.contains("HTMLElementDeprecatedTagNameMap[")`) while
+        // still allowing real lib breakage through. For example, augmenting
+        // global `Node.kind` conflicts with `HTMLTrackElement.kind: string`;
+        // tsc reports TS2344 at the DOM `HTMLElementTagNameMap[K]` call sites
+        // because the apparent union is no longer uniformly an Element/Node
+        // subtype.
         if self.indexed_access_into_object_uniformly_satisfies_constraint(type_arg, constraint) {
             return;
         }
@@ -561,21 +560,17 @@ impl<'a> CheckerState<'a> {
     /// are assignable to `constraint`.
     ///
     /// tsc's `getApparentType` collapses `M[K]` (with K a bounded type
-    /// parameter) to the union of value types, which then satisfies any
-    /// constraint that uniformly covers those values. We mirror that here
-    /// so a generic call site like
+    /// parameter) to the union of value types, which satisfies any
+    /// constraint that uniformly covers those values and fails otherwise. We
+    /// mirror that here so a generic call site like
     /// `function f<K extends keyof Map>(): HTMLCollectionOf<Map[K]>`
     /// is accepted whenever every `Map[k]` is structurally compatible with
     /// the target's `T extends Element` bound.
     ///
-    /// This is the structural form of the previous printer-string carve-out
-    /// for `HTMLElementDeprecatedTagNameMap[K]` and prevents a TS2344
-    /// cascade inside `lib.dom.d.ts` whenever user code declaration-merges
-    /// a lib interface (e.g. `interface Node { ... }`) — the lib re-check
-    /// triggers constraint validation on every
-    /// `HTMLCollectionOf<HTMLElementTagNameMap[K]>` even though the
-    /// collapsed `HTMLElement` subtype union is plainly assignable to
-    /// `Element`.
+    /// This is the structural form of the previous printer-string carve-out:
+    /// compatible declaration merges still avoid TS2344, while incompatible
+    /// merges such as `interface Node { kind: SyntaxKind }` are allowed to
+    /// report the same lib diagnostics as tsc.
     fn indexed_access_into_object_uniformly_satisfies_constraint(
         &mut self,
         type_arg: TypeId,
@@ -647,30 +642,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Fast path: when this checker run is itself a builtin lib file
-        // (i.e. the post-merge re-validation pass inside
-        // `check_checker_lib_file`), honor tsc's `getApparentType`
-        // reduction of `M[K]` to the union of value types and trust that
-        // the lib's original declarations satisfied the constraint.
-        // User declaration merging into a lib interface
-        // (`interface Node { extra(): void }`) only ADDS members, so it
-        // cannot break a subtype relation that held in the un-augmented
-        // lib. This skips a per-property assignability sweep that would
-        // otherwise fire on `HTMLElementTagNameMap` (112 props) and
-        // friends every time the lib re-check encounters their indexed
-        // accesses.
-        if crate::state_type_analysis::cross_file_direct::is_builtin_lib_file_name(
-            &self.ctx.file_name,
-        ) {
-            return true;
-        }
-
-        // Outside the lib re-check, do the strict per-property assignability
-        // check. This is the right path for user code that builds an
-        // indexed access over its own object map — the shape is finite and
-        // the per-property cost is bounded by user intent.
+        // Do the strict per-property assignability check for both user code
+        // and post-merge lib re-checks. Lib maps such as
+        // `HTMLElementTagNameMap` are finite, and checking the apparent union
+        // is what lets genuine conflicting merges surface as TS2344.
         let resolved_constraint = self.evaluate_type_for_assignability(constraint);
         for prop in shape.properties.iter() {
+            if self.member_extends_constraint_heritage(prop.type_id, constraint) {
+                continue;
+            }
             let prop_value = self.evaluate_type_for_assignability(prop.type_id);
             if !self.is_assignable_to(prop_value, resolved_constraint)
                 && !self.is_assignable_to(prop.type_id, constraint)
