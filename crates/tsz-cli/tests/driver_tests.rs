@@ -18827,6 +18827,54 @@ before.toFixed();
 }
 
 #[test]
+fn new_target_uses_enclosing_function_or_constructor_type() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true,
+            "target": "es2020"
+          },
+          "files": ["repro.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("repro.ts"),
+        r#"function f() {
+    const n: number = new.target;
+}
+
+class C {
+    constructor() {
+        const s: string = new.target;
+    }
+}
+"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts2322: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected TS2322 for function and constructor new.target assignments, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn labeled_tuple_optional_marker_after_type_reports_ts5086() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -18849,10 +18897,10 @@ fn labeled_tuple_optional_marker_after_type_reports_ts5086() {
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
-        result
-            .diagnostics
-            .iter()
-            .any(|diag| diag.code == diagnostic_codes::A_LABELED_TUPLE_ELEMENT_IS_DECLARED_AS_OPTIONAL_WITH_A_QUESTION_MARK_AFTER_THE_N),
+        result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::A_LABELED_TUPLE_ELEMENT_IS_DECLARED_AS_OPTIONAL_WITH_A_QUESTION_MARK_AFTER_THE_N
+        }),
         "Expected TS5086 for optional marker after labeled tuple type, got {:?}",
         result.diagnostics
     );
