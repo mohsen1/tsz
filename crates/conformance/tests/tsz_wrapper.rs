@@ -1089,6 +1089,26 @@ fn test_normalize_message_paths_normalizes_ts5057_not_found() {
 }
 
 #[test]
+fn test_normalize_message_paths_normalizes_ts5057_specified_directory() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    let raw = "Cannot find a tsconfig.json file at the specified directory: 'empty-dir'.";
+    assert_eq!(
+        normalize_message_paths(raw, root),
+        "Cannot find a tsconfig.json file at the specified directory: ''."
+    );
+}
+
+#[test]
+fn test_normalize_message_paths_normalizes_ts5058_path_does_not_exist() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    let raw = "The specified path does not exist: 'missing/tsconfig.json'.";
+    assert_eq!(
+        normalize_message_paths(raw, root),
+        "The specified path does not exist: ''."
+    );
+}
+
+#[test]
 fn test_normalize_message_paths_preserves_virtual_absolute_root_dir_prefix() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let raw = "File 'packages/search/lib/index.d.ts' is not under 'rootDir' 'packages/search-prefix/src'. 'rootDir' is expected to contain all source files.";

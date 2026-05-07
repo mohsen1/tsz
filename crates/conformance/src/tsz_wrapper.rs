@@ -1040,6 +1040,9 @@ fn normalize_message_paths(message: &str, project_root: &Path) -> String {
     if message.starts_with("Cannot find a tsconfig.json file at the specified directory:") {
         return "Cannot find a tsconfig.json file at the specified directory: ''.".to_string();
     }
+    if message.starts_with("The specified path does not exist:") {
+        return "The specified path does not exist: ''.".to_string();
+    }
     if message.starts_with("tsconfig not found at ") {
         return "Cannot find a tsconfig.json file at the specified directory: ''.".to_string();
     }

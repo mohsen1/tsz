@@ -309,30 +309,78 @@ pub fn find_tsconfig(cwd: &Path) -> Option<PathBuf> {
     None
 }
 
-pub(crate) fn resolve_tsconfig_path(cwd: &Path, project: Option<&Path>) -> Result<Option<PathBuf>> {
+/// Failure modes for `--project` resolution. Distinguishes the two error
+/// codes tsc emits: TS5057 (existing directory missing tsconfig.json) and
+/// TS5058 (path does not exist on disk). The original user-supplied path is
+/// preserved so the diagnostic message matches tsc's relative-path rendering.
+#[derive(Debug)]
+pub(crate) enum ResolveTsconfigError {
+    /// User-supplied `--project` path does not exist on disk. Maps to TS5058.
+    PathDoesNotExist(PathBuf),
+    /// User-supplied `--project` path is an existing directory that does not
+    /// contain a `tsconfig.json`. Maps to TS5057.
+    NoConfigInDirectory(PathBuf),
+    /// User-supplied `--project` path exists but is neither a file nor a
+    /// directory (e.g., a broken symlink resolved by `exists()` but not by
+    /// `is_file()`). Falls back to TS5058.
+    NotAFile(PathBuf),
+}
+
+impl std::fmt::Display for ResolveTsconfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PathDoesNotExist(p) => {
+                write!(f, "The specified path does not exist: '{}'.", p.display())
+            }
+            Self::NoConfigInDirectory(p) => write!(
+                f,
+                "Cannot find a tsconfig.json file at the specified directory: '{}'.",
+                p.display()
+            ),
+            Self::NotAFile(p) => {
+                write!(f, "The specified path does not exist: '{}'.", p.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for ResolveTsconfigError {}
+
+pub(crate) fn resolve_tsconfig_path(
+    cwd: &Path,
+    project: Option<&Path>,
+) -> std::result::Result<Option<PathBuf>, ResolveTsconfigError> {
     let Some(project) = project else {
         return Ok(find_tsconfig(cwd));
     };
 
-    let mut candidate = if project.is_absolute() {
+    let absolute = if project.is_absolute() {
         project.to_path_buf()
     } else {
         cwd.join(project)
     };
 
-    if candidate.is_dir() {
-        candidate = candidate.join("tsconfig.json");
+    if absolute.is_dir() {
+        let candidate = absolute.join("tsconfig.json");
+        if !candidate.is_file() {
+            return Err(ResolveTsconfigError::NoConfigInDirectory(
+                project.to_path_buf(),
+            ));
+        }
+        return Ok(Some(normalize_path(&candidate)));
     }
 
-    if !candidate.exists() {
-        bail!("tsconfig not found at {}", candidate.display());
+    if !absolute.exists() {
+        return Err(ResolveTsconfigError::PathDoesNotExist(
+            project.to_path_buf(),
+        ));
     }
 
-    if !candidate.is_file() {
-        bail!("project path is not a file: {}", candidate.display());
+    if !absolute.is_file() {
+        return Err(ResolveTsconfigError::NotAFile(project.to_path_buf()));
     }
 
-    Ok(Some(normalize_path(&candidate)))
+    Ok(Some(normalize_path(&absolute)))
 }
 
 pub(crate) fn load_config(path: Option<&Path>) -> Result<Option<TsConfig>> {
@@ -1580,6 +1628,93 @@ mod tests {
                 "/// <reference   no-default-lib   =   \"true\"   />"
             ),
             Some(true)
+        );
+    }
+
+    // ---------------- resolve_tsconfig_path ----------------
+
+    #[test]
+    fn resolve_tsconfig_path_missing_file_reports_path_does_not_exist() {
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        let result = resolve_tsconfig_path(cwd, Some(Path::new("missing/tsconfig.json")));
+        match result {
+            Err(ResolveTsconfigError::PathDoesNotExist(p)) => {
+                assert_eq!(p, Path::new("missing/tsconfig.json"));
+                assert_eq!(
+                    format!("{}", ResolveTsconfigError::PathDoesNotExist(p)),
+                    "The specified path does not exist: 'missing/tsconfig.json'."
+                );
+            }
+            other => panic!("expected PathDoesNotExist, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_tsconfig_path_missing_directory_reports_path_does_not_exist() {
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        let result = resolve_tsconfig_path(cwd, Some(Path::new("missing-dir")));
+        match result {
+            Err(ResolveTsconfigError::PathDoesNotExist(p)) => {
+                assert_eq!(p, Path::new("missing-dir"));
+            }
+            other => panic!("expected PathDoesNotExist, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_tsconfig_path_existing_dir_without_config_reports_no_config() {
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        std::fs::create_dir_all(cwd.join("empty-dir")).unwrap();
+        let result = resolve_tsconfig_path(cwd, Some(Path::new("empty-dir")));
+        match result {
+            Err(ResolveTsconfigError::NoConfigInDirectory(p)) => {
+                assert_eq!(p, Path::new("empty-dir"));
+                assert_eq!(
+                    format!("{}", ResolveTsconfigError::NoConfigInDirectory(p)),
+                    "Cannot find a tsconfig.json file at the specified directory: 'empty-dir'."
+                );
+            }
+            other => panic!("expected NoConfigInDirectory, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_tsconfig_path_existing_dir_with_config_returns_path() {
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        std::fs::create_dir_all(cwd.join("proj")).unwrap();
+        let tsconfig = cwd.join("proj/tsconfig.json");
+        std::fs::write(&tsconfig, "{}").unwrap();
+        let result = resolve_tsconfig_path(cwd, Some(Path::new("proj")));
+        let resolved = result.expect("expected success").expect("expected Some");
+        assert_eq!(resolved, normalize_path(&tsconfig));
+    }
+
+    #[test]
+    fn resolve_tsconfig_path_explicit_file_returns_path() {
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        let tsconfig = cwd.join("custom.json");
+        std::fs::write(&tsconfig, "{}").unwrap();
+        let result = resolve_tsconfig_path(cwd, Some(Path::new("custom.json")));
+        let resolved = result.expect("expected success").expect("expected Some");
+        assert_eq!(resolved, normalize_path(&tsconfig));
+    }
+
+    #[test]
+    fn resolve_tsconfig_path_preserves_user_supplied_path_in_error() {
+        // The diagnostic message must use the user-supplied (relative) path,
+        // not the absolute resolved path, so that messages match tsc parity.
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        let result = resolve_tsconfig_path(cwd, Some(Path::new("missing/tsconfig.json")));
+        let err = result.unwrap_err();
+        assert_eq!(
+            format!("{err}"),
+            "The specified path does not exist: 'missing/tsconfig.json'."
         );
     }
 }

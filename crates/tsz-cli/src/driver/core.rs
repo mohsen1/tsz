@@ -966,11 +966,16 @@ fn compile_inner(
         match resolve_tsconfig_path(&cwd, args.project.as_deref()) {
             Ok(path) => path,
             Err(err) => {
-                return Ok(config_error_result(
-                    None,
-                    err.to_string(),
-                    diagnostic_codes::CANNOT_FIND_A_TSCONFIG_JSON_FILE_AT_THE_SPECIFIED_DIRECTORY,
-                ));
+                let code = match err {
+                    ResolveTsconfigError::NoConfigInDirectory(_) => {
+                        diagnostic_codes::CANNOT_FIND_A_TSCONFIG_JSON_FILE_AT_THE_SPECIFIED_DIRECTORY
+                    }
+                    ResolveTsconfigError::PathDoesNotExist(_)
+                    | ResolveTsconfigError::NotAFile(_) => {
+                        diagnostic_codes::THE_SPECIFIED_PATH_DOES_NOT_EXIST
+                    }
+                };
+                return Ok(config_error_result(None, err.to_string(), code));
             }
         }
     };
@@ -2791,12 +2796,13 @@ mod sources;
 #[cfg(test)]
 pub(crate) use sources::has_no_types_and_symbols_directive;
 pub use sources::{FileReadResult, find_tsconfig, read_source_file};
+pub(crate) use sources::{
+    ResolveTsconfigError, config_base_dir, load_config, load_config_with_diagnostics,
+    resolve_tsconfig_path,
+};
 use sources::{
     SourceEntry, SourceReadResult, build_discovery_options, collect_type_root_files,
     read_source_files, sources_have_no_default_lib, sources_have_no_types_and_symbols,
-};
-pub(crate) use sources::{
-    config_base_dir, load_config, load_config_with_diagnostics, resolve_tsconfig_path,
 };
 
 #[path = "check.rs"]
