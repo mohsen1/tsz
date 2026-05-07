@@ -215,48 +215,6 @@ pub(super) fn has_no_default_lib_directive(source: &str) -> bool {
     false
 }
 
-pub(super) fn sources_have_no_types_and_symbols(sources: &[SourceEntry]) -> bool {
-    sources.iter().any(source_has_no_types_and_symbols)
-}
-
-pub(super) fn source_has_no_types_and_symbols(source: &SourceEntry) -> bool {
-    if let Some(text) = source.text.as_deref() {
-        return has_no_types_and_symbols_directive(text);
-    }
-    let Ok(text) = std::fs::read_to_string(&source.path) else {
-        return false;
-    };
-    has_no_types_and_symbols_directive(&text)
-}
-
-pub(crate) fn has_no_types_and_symbols_directive(source: &str) -> bool {
-    for line in source.lines().take(32) {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with("//") {
-            continue;
-        }
-
-        let lower = trimmed.to_ascii_lowercase();
-        let Some(idx) = lower.find("@notypesandsymbols") else {
-            continue;
-        };
-
-        let mut rest = &trimmed[idx + "@noTypesAndSymbols".len()..];
-        rest = rest.trim_start();
-        if !rest.starts_with(':') {
-            continue;
-        }
-        rest = rest[1..].trim_start();
-
-        let value = rest
-            .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
-            .find(|s| !s.is_empty())
-            .unwrap_or("");
-        return value.eq_ignore_ascii_case("true");
-    }
-    false
-}
-
 pub(super) fn parse_reference_no_default_lib_value(line: &str) -> Option<bool> {
     let needle = "no-default-lib";
     let lower = line.to_ascii_lowercase();
@@ -1485,66 +1443,6 @@ mod tests {
             "/// <reference path=\"./other.d.ts\" />\n"
         ));
         assert!(!has_no_default_lib_directive(""));
-    }
-
-    // ---------------- has_no_types_and_symbols_directive ----------------
-
-    #[test]
-    fn has_no_types_and_symbols_directive_canonical_true() {
-        let src = "// @noTypesAndSymbols: true\nexport {};\n";
-        assert!(has_no_types_and_symbols_directive(src));
-    }
-
-    #[test]
-    fn has_no_types_and_symbols_directive_case_insensitive_key() {
-        let src = "// @NOTYPESANDSYMBOLS: true\n";
-        assert!(has_no_types_and_symbols_directive(src));
-    }
-
-    #[test]
-    fn has_no_types_and_symbols_directive_case_insensitive_value() {
-        let src = "// @noTypesAndSymbols: TRUE\n";
-        assert!(has_no_types_and_symbols_directive(src));
-    }
-
-    #[test]
-    fn has_no_types_and_symbols_directive_false_when_value_false() {
-        let src = "// @noTypesAndSymbols: false\n";
-        assert!(!has_no_types_and_symbols_directive(src));
-    }
-
-    #[test]
-    fn has_no_types_and_symbols_directive_requires_colon() {
-        // No colon between key and value -> not honored.
-        let src = "// @noTypesAndSymbols true\n";
-        assert!(!has_no_types_and_symbols_directive(src));
-    }
-
-    #[test]
-    fn has_no_types_and_symbols_directive_only_first_32_lines_scanned() {
-        // 32 filler lines then the directive on line 33 -> not honored.
-        let mut src = String::new();
-        for _ in 0..32 {
-            src.push_str("// filler\n");
-        }
-        src.push_str("// @noTypesAndSymbols: true\n");
-        assert!(!has_no_types_and_symbols_directive(&src));
-
-        // Same directive on line 32 (within window) -> honored.
-        let mut src_in = String::new();
-        for _ in 0..31 {
-            src_in.push_str("// filler\n");
-        }
-        src_in.push_str("// @noTypesAndSymbols: true\n");
-        assert!(has_no_types_and_symbols_directive(&src_in));
-    }
-
-    #[test]
-    fn has_no_types_and_symbols_directive_false_when_absent() {
-        assert!(!has_no_types_and_symbols_directive(
-            "// some unrelated comment\nexport {};\n"
-        ));
-        assert!(!has_no_types_and_symbols_directive(""));
     }
 
     // ---------------- parse_reference_no_default_lib_value ----------------
