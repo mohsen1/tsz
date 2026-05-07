@@ -1,6 +1,27 @@
 use super::super::core::*;
 
 #[test]
+fn test_generic_function_argument_return_context_suppresses_inner_arrow_ts7006() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+const f = <F extends (...args: any[]) => <G>(x: G) => void>(_: F): F => _;
+const a = f(<K extends string>(_: K) => _ => ({}));
+        "#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Did not expect TS7006 for an inner arrow typed by a generic function return context. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts7022_not_emitted_for_destructured_parameter_with_concrete_default_source() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
