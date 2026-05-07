@@ -3355,10 +3355,33 @@ fn load_tsconfig_inner_with_diagnostics(
             // TSC checks the merged result and emits TS5102 at the child's key position
             // when removed options come from base configs via extends.
             collect_removed_options_from_config(&base_path, &mut base_removed_options);
-            let base_config = load_tsconfig_inner(&base_path, visited, true)?;
+            // Route base configs through the diagnostic path so TS5024 / TS5025
+            // fire on the *base* file (matching tsc's `base.json(L,C):` anchor)
+            // instead of the child's invalid option being silently coerced through
+            // the type-validating-free `load_tsconfig_inner`.
+            //
+            // TS5102 (removed compiler option) is filtered out of the base's
+            // diagnostics because tsc only re-anchors that one at the child's
+            // `compilerOptions` key (and only when the child opts into the
+            // `verbatimModuleSyntax` replacement). The post-merge block below
+            // owns that re-emission; letting the base's per-option TS5102
+            // through would double-report and anchor at the wrong file.
+            let base_parsed = load_tsconfig_inner_with_diagnostics(&base_path, visited, true)?;
+            parsed
+                .diagnostics
+                .extend(base_parsed.diagnostics.into_iter().filter(|d| {
+                    d.code
+                        != diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
+                }));
+            // Removed-but-honored flags are file-scoped semantics: once any file
+            // in the chain sets them, the merged config must honor them.
+            parsed.suppress_excess_property_errors |= base_parsed.suppress_excess_property_errors;
+            parsed.suppress_implicit_any_index_errors |=
+                base_parsed.suppress_implicit_any_index_errors;
+            parsed.no_implicit_use_strict |= base_parsed.no_implicit_use_strict;
             accumulated = Some(match accumulated {
-                Some(acc) => merge_configs(acc, base_config),
-                None => base_config,
+                Some(acc) => merge_configs(acc, base_parsed.config),
+                None => base_parsed.config,
             });
         }
         if let Some(base) = accumulated {
@@ -7729,5 +7752,140 @@ mod tests {
             names.iter().any(|n| n == "esnext.collection.d.ts"),
             "expected esnext.collection in resolved set, got {names:?}"
         );
+    }
+
+    /// Issue #3589 — base configs reached via `extends` must be validated by
+    /// the diagnostic loader so TS5024 surfaces on the base file rather than
+    /// being silently coerced through the non-diagnostic path.
+    #[test]
+    fn test_extends_base_invalid_boolean_string_emits_ts5024_anchored_at_base() {
+        let temp = tempdir().expect("create temp dir");
+        let base_path = temp.path().join("base.json");
+        std::fs::write(
+            &base_path,
+            r#"{
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": "true"
+  }
+}"#,
+        )
+        .expect("write base");
+
+        let child_path = temp.path().join("tsconfig.json");
+        std::fs::write(
+            &child_path,
+            r#"{
+  "extends": "./base.json",
+  "files": ["a.ts"]
+}"#,
+        )
+        .expect("write child");
+
+        let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load child");
+        let ts5024: Vec<&Diagnostic> = parsed
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE)
+            .collect();
+        assert!(
+            !ts5024.is_empty(),
+            "expected TS5024 from inherited base, got: {:?}",
+            parsed.diagnostics
+        );
+        let base_diag = ts5024
+            .iter()
+            .find(|d| d.message_text.contains("noUncheckedIndexedAccess"))
+            .expect("TS5024 for noUncheckedIndexedAccess");
+        // Normalize both sides to the canonical filename so platform path
+        // separators and intermediate `./` segments don't break the assert.
+        let base_file_name = std::path::Path::new(&base_diag.file)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        assert_eq!(
+            base_file_name, "base.json",
+            "TS5024 must anchor at the base file, got file={:?}",
+            base_diag.file
+        );
+        assert!(
+            !base_diag.file.contains("tsconfig.json"),
+            "TS5024 anchor must point at base.json, not the child tsconfig.json: {:?}",
+            base_diag.file
+        );
+        // The invalid coerced value must NOT survive into the merged config.
+        let opts = parsed
+            .config
+            .compiler_options
+            .as_ref()
+            .expect("merged compiler options");
+        assert_eq!(
+            opts.no_unchecked_indexed_access, None,
+            "invalidly-typed base option must be removed before merge"
+        );
+    }
+
+    /// Issue #3589 — the rule is structural, not keyed on a specific option.
+    /// Re-check with a different option (`allowJs`) to lock the parity for the
+    /// whole boolean-coercion family rather than one option name.
+    #[test]
+    fn test_extends_base_invalid_allowjs_string_emits_ts5024_anchored_at_base() {
+        let temp = tempdir().expect("create temp dir");
+        let base_path = temp.path().join("base.json");
+        std::fs::write(&base_path, r#"{"compilerOptions":{"allowJs":"true"}}"#)
+            .expect("write base");
+
+        let child_path = temp.path().join("tsconfig.json");
+        std::fs::write(&child_path, r#"{"extends":"./base.json","files":["a.ts"]}"#)
+            .expect("write child");
+
+        let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load child");
+        let _ = base_path; // path is captured for inspection on failure
+        assert!(
+            parsed.diagnostics.iter().any(|d| {
+                d.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE
+                    && std::path::Path::new(&d.file)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        == Some("base.json")
+                    && d.message_text.contains("allowJs")
+            }),
+            "expected TS5024 anchored at base for allowJs, got: {:?}",
+            parsed.diagnostics
+        );
+    }
+
+    /// A valid base config must not produce spurious TS5024 just because the
+    /// child loader now recurses through the diagnostic path. Regression guard
+    /// for the happy path of #3589's fix.
+    #[test]
+    fn test_extends_base_valid_options_emit_no_ts5024() {
+        let temp = tempdir().expect("create temp dir");
+        let base_path = temp.path().join("base.json");
+        std::fs::write(
+            &base_path,
+            r#"{"compilerOptions":{"strict":true,"noUncheckedIndexedAccess":true}}"#,
+        )
+        .expect("write base");
+
+        let child_path = temp.path().join("tsconfig.json");
+        std::fs::write(&child_path, r#"{"extends":"./base.json","files":["a.ts"]}"#)
+            .expect("write child");
+
+        let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load child");
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE),
+            "no TS5024 expected for valid base, got: {:?}",
+            parsed.diagnostics
+        );
+        let opts = parsed
+            .config
+            .compiler_options
+            .as_ref()
+            .expect("merged compiler options");
+        assert_eq!(opts.no_unchecked_indexed_access, Some(true));
+        assert_eq!(opts.strict, Some(true));
     }
 }
