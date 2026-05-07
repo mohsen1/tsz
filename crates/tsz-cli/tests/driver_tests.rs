@@ -17679,6 +17679,72 @@ fn cli_removed_target_es3_emits_ts5108() {
 }
 
 #[test]
+fn cli_removed_compiler_option_flags_emit_ts5102() {
+    // Issue #3558: removed compiler-option flags accepted by clap must
+    // surface TS5102 the same way they would from a tsconfig key.
+    let cases: &[(&[&str], &str)] = &[
+        (&["--noImplicitUseStrict"], "noImplicitUseStrict"),
+        (&["--keyofStringsOnly"], "keyofStringsOnly"),
+        (&["--charset", "utf8"], "charset"),
+        (
+            &["--suppressExcessPropertyErrors"],
+            "suppressExcessPropertyErrors",
+        ),
+        (
+            &["--suppressImplicitAnyIndexErrors"],
+            "suppressImplicitAnyIndexErrors",
+        ),
+        (
+            &["--importsNotUsedAsValues", "error"],
+            "importsNotUsedAsValues",
+        ),
+        (&["--preserveValueImports"], "preserveValueImports"),
+        (&["--noStrictGenericChecks"], "noStrictGenericChecks"),
+    ];
+
+    for (flag_args, option_name) in cases {
+        let temp = TempDir::new().expect("temp dir");
+        let base = &temp.path;
+        write_file(&base.join("main.ts"), "const ok = 1;\n");
+        std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+
+        let mut argv: Vec<&str> = vec![
+            "tsz",
+            "--noEmit",
+            "--pretty",
+            "false",
+            "--typeRoots",
+            "./empty-types",
+            "main.ts",
+        ];
+        argv.extend_from_slice(flag_args);
+        let args = CliArgs::try_parse_from(argv)
+            .unwrap_or_else(|err| panic!("CLI args should parse for {flag_args:?}: {err}"));
+        let result = compile(&args, base).expect("compile should succeed");
+        let removed_diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.code == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
+                    || d.code == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2
+            })
+            .collect();
+        assert!(
+            !removed_diags.is_empty(),
+            "expected TS5102 for removed flag {flag_args:?}, got: {:#?}",
+            result.diagnostics
+        );
+        assert!(
+            removed_diags
+                .iter()
+                .any(|d| d.message_text.contains(option_name)),
+            "TS5102 message must mention {option_name:?}, got: {:#?}",
+            removed_diags
+        );
+    }
+}
+
+#[test]
 fn cli_invalid_ignore_deprecations_emits_ts5103() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
