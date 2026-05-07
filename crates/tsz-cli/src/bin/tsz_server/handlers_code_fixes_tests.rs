@@ -2476,3 +2476,107 @@ fn get_code_fixes_returns_empty_when_span_misses_diagnostic() {
         "expected no code fixes when request span misses the diagnostic, got: {actions:?}"
     );
 }
+
+// Issue #3938: implement-interface codefix should generate stubs for method
+// signatures, not just property signatures. tsc emits a method body that
+// throws "Method not implemented." for each missing method.
+#[test]
+fn handle_get_code_fixes_implement_interface_method_signature() {
+    let mut server = make_server();
+    let content = "interface I { m(): void; }\nclass C implements I {}\n";
+    server
+        .open_files
+        .insert("/method_iface.ts".to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/method_iface.ts",
+            "startLine": 2,
+            "startOffset": 7,
+            "endLine": 2,
+            "endOffset": 8,
+            "errorCodes": [2420],
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let actions = body
+        .as_array()
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixClassIncorrectlyImplementsInterface")
+        })
+        .unwrap_or_else(|| {
+            panic!("expected implement-interface codefix for method signature, got: {actions:?}")
+        });
+    let new_text = action["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+    assert!(
+        new_text.contains("m(): void {"),
+        "expected method stub for missing method, got: {new_text}"
+    );
+    assert!(
+        new_text.contains("throw new Error(\"Method not implemented.\");"),
+        "expected throw stub in method body, got: {new_text}"
+    );
+}
+
+// Issue #3938: a property whose type is a function type (e.g.
+// `m: () => void;`) must continue to be rendered as a property assignment,
+// not as a method stub. The method-signature parse path must only fire when
+// the member name is followed directly by `(` or `<`, not by `:`.
+#[test]
+fn handle_get_code_fixes_implement_interface_function_typed_property() {
+    let mut server = make_server();
+    let content = "interface I { m: () => void; }\nclass C implements I {}\n";
+    server
+        .open_files
+        .insert("/fn_prop_iface.ts".to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/fn_prop_iface.ts",
+            "startLine": 2,
+            "startOffset": 7,
+            "endLine": 2,
+            "endOffset": 8,
+            "errorCodes": [2420],
+        }),
+    };
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let actions = body
+        .as_array()
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixClassIncorrectlyImplementsInterface")
+        })
+        .expect("expected implement-interface codefix for function-typed property");
+    let new_text = action["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+    assert!(
+        new_text.contains("m: () => void;"),
+        "expected property assignment for function-typed property, got: {new_text}"
+    );
+    assert!(
+        !new_text.contains("Method not implemented."),
+        "function-typed properties should not be rendered as throwing methods, got: {new_text}"
+    );
+}
