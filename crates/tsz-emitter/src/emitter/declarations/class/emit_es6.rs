@@ -98,7 +98,7 @@ fn collect_private_auto_accessors_with_reserved(
 }
 
 impl<'a> Printer<'a> {
-    fn class_expression_is_in_loop_body(&self, idx: NodeIndex) -> bool {
+    pub(in crate::emitter) fn class_expression_is_in_loop_body(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         while let Some(ext) = self.arena.get_extended(current) {
             let parent = ext.parent;

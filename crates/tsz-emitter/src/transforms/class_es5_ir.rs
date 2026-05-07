@@ -332,6 +332,8 @@ pub struct ES5ClassTransformer<'a> {
     current_static_class_alias: Option<String>,
     /// Alias used for class-name self references when class decorators can replace the binding.
     class_self_reference_alias: Option<String>,
+    /// Whether static field initializer assignments are emitted by the surrounding expression emitter.
+    skip_static_field_initializers: bool,
     use_define_for_class_fields: bool,
     commonjs_import_substitutions: FxHashMap<String, String>,
     /// Additional hoisted temp variable names collected from expression conversions
@@ -360,6 +362,7 @@ impl<'a> ES5ClassTransformer<'a> {
             computed_prop_temp_map: std::collections::HashMap::new(),
             current_static_class_alias: None,
             class_self_reference_alias: None,
+            skip_static_field_initializers: false,
             use_define_for_class_fields: false,
             commonjs_import_substitutions: FxHashMap::default(),
             extra_hoisted_temps: RefCell::new(Vec::new()),
@@ -368,6 +371,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
         self.use_define_for_class_fields = enable;
+    }
+
+    pub const fn set_skip_static_members(&mut self, skip: bool) {
+        self.skip_static_field_initializers = skip;
     }
 
     pub fn set_class_self_reference_alias(&mut self, alias: String) {

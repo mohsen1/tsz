@@ -1311,6 +1311,9 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 if is_static {
                     // --- Static property ---
+                    if self.skip_static_field_initializers {
+                        continue;
+                    }
                     if is_abstract || is_declare || is_private_field || is_accessor_keyword {
                         continue;
                     }
