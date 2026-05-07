@@ -10,12 +10,12 @@ on:
   workflow_dispatch:
 
 # Full benchmark runs are intentionally serialized across CI completions,
-# schedules, and manual dispatches. A newer commit must not cancel the running
-# benchmark, and a second workflow run must not compete for the same benchmark
-# runners.
+# schedules, and manual dispatches. Keep only the newest benchmark target active:
+# stale in-progress runs can otherwise spend the runner budget preparing and
+# sharding obsolete commits while the current main benchmark waits.
 concurrency:
   group: bench
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
