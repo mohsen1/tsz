@@ -100,9 +100,11 @@ const PROJECT_README_PATHS = {
   "large-ts-repo": [".target-bench/external/large-ts-repo/README.md"],
   nextjs: [".target-bench/external/next.js/README.md"],
   "nextjs-fresh-app": [".target-bench/external/next-app-live/README.md"],
+  "vite-vanilla-ts-app": [".target-bench/external/vite-vanilla-ts-live/README.md"],
   "rxjs-project": [".target-bench/external/rxjs/README.md"],
   "type-fest-project": [".target-bench/external/type-fest/readme.md", ".target-bench/external/type-fest/README.md"],
   "zod-project": [".target-bench/external/zod/README.md"],
+  "kysely-project": [".target-bench/external/kysely/README.md"],
   "utility-types-project": [".target-bench/external/utility-types/README.md"],
   "ts-toolbelt-project": [".target-bench/external/ts-toolbelt/README.md"],
   "ts-essentials-project": [".target-bench/external/ts-essentials/README.md"],
@@ -224,9 +226,11 @@ function categoryFor(name, lines) {
   if (name === "large-ts-repo") return "Projects: large-ts-repo";
   if (name === "nextjs") return "Projects: next.js";
   if (name === "nextjs-fresh-app") return "Projects: fresh Next.js app";
+  if (name === "vite-vanilla-ts-app") return "Projects: fresh Vite app";
   if (name === "rxjs-project") return "Projects: rxjs";
   if (name === "type-fest-project") return "Projects: type-fest";
   if (name === "zod-project") return "Projects: zod";
+  if (name === "kysely-project") return "Projects: kysely";
   if (name === "utility-types-project") return "Projects: utility-types";
   if (name === "ts-toolbelt-project") return "Projects: ts-toolbelt";
   if (name === "ts-essentials-project") return "Projects: ts-essentials";
@@ -285,6 +289,11 @@ function categoryMeta(category) {
     "Projects: fresh Next.js app": {
       title: "Fresh Next.js app",
     },
+    "Projects: fresh Vite app": {
+      title: "Fresh Vite app",
+      repo: "https://github.com/vitejs/vite",
+      repoLabel: "vitejs/vite",
+    },
     "Projects: rxjs": {
       title: "RxJS",
       repo: "https://github.com/ReactiveX/rxjs",
@@ -299,6 +308,11 @@ function categoryMeta(category) {
       title: "Zod",
       repo: "https://github.com/colinhacks/zod",
       repoLabel: "colinhacks/zod",
+    },
+    "Projects: kysely": {
+      title: "Kysely",
+      repo: "https://github.com/kysely-org/kysely",
+      repoLabel: "kysely-org/kysely",
     },
     "Projects: utility-types": {
       title: "utility-types",
@@ -360,6 +374,8 @@ function displayName(name) {
   if (name === "type-fest-project") return "type-fest project";
   if (name === "zod-project") return "Zod project";
   if (name === "nextjs-fresh-app") return "Fresh Next.js app";
+  if (name === "vite-vanilla-ts-app") return "Fresh Vite app";
+  if (name === "kysely-project") return "Kysely project";
 
   const cleaned = String(name || "")
     .replace(/^utility-types\//, "")
