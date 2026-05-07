@@ -1,3 +1,4 @@
+FAIL TypeScript/tests/cases/compiler/anyIndexedAccessArrayNoException.ts | expected:[TS2538] actual:[TS2538]
 FAIL TypeScript/tests/cases/compiler/arrayAssignmentTest1.ts | expected:[TS2322,TS2739,TS2740,TS2741] actual:[TS2322,TS2739,TS2741]
 FAIL TypeScript/tests/cases/compiler/arrayconcat.ts | expected:[TS2564,TS18048] actual:[TS2339,TS2564,TS7006]
 FAIL TypeScript/tests/cases/compiler/booleanFilterAnyArray.ts | expected:[] actual:[TS2339]
