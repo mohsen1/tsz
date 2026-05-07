@@ -2481,6 +2481,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type) {
+            return source != TypeId::ANY;
+        }
+
         let mut candidate_types = Vec::new();
         self.collect_deferred_index_access_candidate_types(object_type, &mut candidate_types);
 
