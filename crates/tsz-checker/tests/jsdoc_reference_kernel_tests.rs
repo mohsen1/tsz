@@ -98,6 +98,55 @@ var n = config.name;
     );
 }
 
+/// A @typedef may put the alias name on the line after the braced type.
+#[test]
+fn typedef_name_on_following_line_resolves_for_param_tags() {
+    let codes = check_js(
+        r#"
+/**
+ * @typedef {function(string): boolean}
+ * Predicate
+ */
+
+/**
+ * @param {Predicate} fn
+ */
+function use(fn) {
+    return fn("ok");
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2304),
+        "Expected wrapped typedef name to resolve without TS2304, got: {codes:?}"
+    );
+}
+
+/// A @typedef braced function type may wrap before the alias name.
+#[test]
+fn typedef_wrapped_function_type_resolves_for_param_tags() {
+    let codes = check_js(
+        r#"
+/**
+ * @typedef {function(boolean, string,
+ *    number):
+ *    (string|number)} StringOrNumber
+ */
+
+/**
+ * @param {StringOrNumber} fn
+ */
+function use(fn) {
+    return fn(true, "ok", 1);
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2304),
+        "Expected multiline typedef function type to resolve without TS2304, got: {codes:?}"
+    );
+}
+
 /// A @callback typedef should resolve through the kernel.
 #[test]
 fn callback_typedef_resolution_through_kernel() {
