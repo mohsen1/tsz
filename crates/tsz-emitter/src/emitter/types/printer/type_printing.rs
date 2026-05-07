@@ -666,8 +666,16 @@ impl<'a> TypePrinter<'a> {
         result
     }
 
-    pub(crate) fn print_union(&self, type_list_id: tsz_solver::types::TypeListId) -> String {
-        let types = self.interner.type_list(type_list_id);
+    pub(crate) fn print_union(
+        &self,
+        type_id: TypeId,
+        type_list_id: tsz_solver::types::TypeListId,
+    ) -> String {
+        let canonical_types = self.interner.type_list(type_list_id);
+        let origin_types = self.interner.get_union_origin(type_id);
+        let types = origin_types
+            .as_deref()
+            .map_or(canonical_types.as_ref(), Vec::as_slice);
         if types.is_empty() {
             return "never".to_string();
         }
