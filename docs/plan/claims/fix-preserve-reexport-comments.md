@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-07
 - **Branch**: `fix/preserve-reexport-comments`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #4378
+- **Status**: ready
 - **Workstream**: emitter parity (issue #3897)
 
 ## Intent
