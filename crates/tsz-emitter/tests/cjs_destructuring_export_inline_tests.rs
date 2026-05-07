@@ -65,3 +65,42 @@ fn cjs_inline_export_handles_object_destructuring_binding() {
         "Inline `exports.y = y;` must follow an object-destructuring declaration that binds `y`.\nOutput:\n{output}"
     );
 }
+
+/// Regression for `declarationEmitSimpleComputedNames1`: a computed property
+/// name on an *object-literal* method is a runtime expression and must pick
+/// up the inline `exports.X` rewrite for CJS-exported names. The same
+/// rewrite must NOT apply to class member names — those are key declarations
+/// and stay as the bare identifier.
+#[test]
+fn cjs_inline_export_rewrites_computed_method_name_in_object_literal() {
+    let source = "export const fieldName = \"f1\";\nexport const c = {\n    [fieldName]() { return \"r\"; }\n};\n";
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("[exports.fieldName]"),
+        "Computed method-name inside an object literal must qualify `fieldName` to `exports.fieldName`.\nOutput:\n{output}"
+    );
+}
+
+/// Same behavior for a different binding name — guards against accidental
+/// hardcoding of the identifier `fieldName` while fixing the original bug.
+#[test]
+fn cjs_inline_export_rewrites_computed_property_name_with_alternate_identifier() {
+    let source = "export const k = \"a\";\nexport const o = {\n    [k]: 1\n};\n";
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("[exports.k]"),
+        "Computed property-name inside an object literal must qualify `k` to `exports.k`.\nOutput:\n{output}"
+    );
+}

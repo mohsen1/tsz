@@ -513,9 +513,6 @@ impl<'a> Printer<'a> {
             self.write("\"use strict\";");
             self.write_line();
         }
-        let script_pre_header_hoist_byte_offset = self.writer.len();
-        let script_pre_header_hoist_line = self.writer.current_line();
-
         // Emit header comments AFTER "use strict" but BEFORE helpers.
         // Use skip_trivia_forward to find the actual token start since
         // node.pos may include leading trivia (where comments live).
@@ -948,6 +945,13 @@ impl<'a> Printer<'a> {
                 // emit_helpers() already adds newlines, no need to add more
             }
         }
+        // Capture the post-helpers position for script files. tsc places the
+        // `var _a, _Class_*_accessor_storage, ...` class-temp hoist AFTER the
+        // helpers (`__classPrivateFieldGet`/`__decorate`/etc.), not before.
+        // Without this, scripts with class private-field temps emit the
+        // hoisted `var` BEFORE the helpers and diff against the baseline.
+        let script_post_helpers_hoist_byte_offset = self.writer.len();
+        let script_post_helpers_hoist_line = self.writer.current_line();
 
         // For ESM with importHelpers, emit `import { __helper, ... } from "tslib";`.
         // tsc places the `var _a, ...` hoist for class private fields BEFORE
@@ -1361,14 +1365,14 @@ impl<'a> Printer<'a> {
         } else if emitted_inline_helpers {
             post_helpers_hoist_byte_offset
         } else {
-            script_pre_header_hoist_byte_offset
+            script_post_helpers_hoist_byte_offset
         };
         let mut hoisted_var_line = if is_file_module {
             self.writer.current_line()
         } else if emitted_inline_helpers {
             post_helpers_hoist_line
         } else {
-            script_pre_header_hoist_line
+            script_post_helpers_hoist_line
         };
 
         // Emit statements with their leading comments.
@@ -1808,6 +1812,7 @@ impl<'a> Printer<'a> {
             }
             let emitted_output = self.writer.len() > before_len;
             let mut handled_legacy_decorated_deferred_export = false;
+            let mut handled_deferred_enum_iife_export = false;
 
             if emitted_output
                 && is_top_level_cjs
@@ -1838,11 +1843,52 @@ impl<'a> Printer<'a> {
                 handled_legacy_decorated_deferred_export = true;
             }
 
+            if emitted_output
+                && is_top_level_cjs
+                && !cjs_deferred_export_bindings.is_empty()
+                && stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION
+                && let Some(enum_decl) = self.arena.get_enum(stmt_node)
+                && let Some(name) = self.get_identifier_text_opt(enum_decl.name)
+                && let Some(export_name) = cjs_deferred_export_bindings.get(&name)
+                && export_name == &name
+                && !self.ctx.module_state.iife_exported_names.contains(&name)
+            {
+                let full_output = self.writer.get_output().to_string();
+                let emitted = full_output[before_len..].to_string();
+                let from = format!("({name} || ({name} = {{}}))");
+                let to = format!("({name} || (exports.{name} = {name} = {{}}))");
+                if emitted.contains(&from) {
+                    let separate_assignment = format!("exports.{name} = {name};");
+                    let rewritten = emitted.replacen(&from, &to, 1);
+                    let had_trailing_newline = rewritten.ends_with('\n');
+                    let mut rewritten = rewritten
+                        .lines()
+                        .filter(|line| line.trim() != separate_assignment)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if had_trailing_newline {
+                        rewritten.push('\n');
+                    }
+                    self.writer.truncate(before_len);
+                    self.writer.write_raw_text(&rewritten);
+                    self.ctx
+                        .module_state
+                        .iife_exported_names
+                        .insert(name.clone());
+                    self.ctx
+                        .module_state
+                        .inline_exported_names
+                        .insert(export_name.clone());
+                    handled_deferred_enum_iife_export = true;
+                }
+            }
+
             // CJS: emit inline `exports.X = X;` right after var/class declarations
             // whose names appear in a later `export { X }` clause. This matches
             // tsc's interleaved ordering where exports follow their declarations.
             if emitted_output
                 && !handled_legacy_decorated_deferred_export
+                && !handled_deferred_enum_iife_export
                 && !cjs_deferred_export_names.is_empty()
             {
                 let names = self.get_declaration_export_names(stmt_node);

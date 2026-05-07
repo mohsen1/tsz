@@ -396,11 +396,32 @@ function parseSourceTest(content: string, defaultSourceFileName?: string): Parse
   flushCurrentFile();
 
   if (sourceFiles.length === 0 && defaultSourceFileName) {
+    // The first contiguous block of `// @directive` lines at the very top of
+    // the file is the test-harness header. Once any non-directive, non-empty
+    // line appears, subsequent `// @directive`-shaped comments are real source
+    // code (e.g. `// @internal` JSDoc-style annotations) and must be preserved
+    // verbatim. Without this, in-source `// @internal` comments get silently
+    // stripped and tests like `declarationEmitWorkWithInlineComments` see a
+    // different source than tsc did.
+    const directiveRegex = /^\/\/\s*@[\w-]+(?:\s*:\s*[^\r\n]*)?$/i;
     const singleFileContent: string[] = [];
+    let inHeader = true;
     for (const line of lines) {
       const trimmed = line.trim();
-      if (/^\/\/\s*@[\w-]+(?:\s*:\s*[^\r\n]*)?$/i.test(trimmed)) {
-        continue;
+      if (inHeader) {
+        if (
+          directiveRegex.test(trimmed)
+          && !/^\/\/\s*@internal\s*$/i.test(trimmed)
+        ) {
+          continue;
+        }
+        if (trimmed === '') {
+          // Blank lines inside the header zone are part of the header until
+          // the first real content line.
+          singleFileContent.push(line);
+          continue;
+        }
+        inHeader = false;
       }
       singleFileContent.push(line);
     }

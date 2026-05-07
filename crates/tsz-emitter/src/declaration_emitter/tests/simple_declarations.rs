@@ -145,10 +145,20 @@ export class Bar {
 "#;
     let output = emit_dts_strip_internal(source);
 
-    assert!(
-        !output.contains("    isInternal1: string;"),
-        "Expected @internal parameter properties to skip class fields: {output}"
-    );
+    for stripped_name in [
+        "isInternal1",
+        "isInternal2",
+        "isInternal3",
+        "isInternal4",
+        "isInternal5",
+        "isInternal6",
+        "isInternal7",
+    ] {
+        assert!(
+            !output.contains(&format!("    {stripped_name}: string;")),
+            "Expected @internal parameter property field {stripped_name} to be stripped: {output}"
+        );
+    }
     assert!(
         output.contains("notInternal1: string;")
             && output.contains("notInternal2: string;")
@@ -372,6 +382,31 @@ export interface I {
     assert!(
         output.contains("export {};"),
         "Expected empty export marker even with type exports: {output}"
+    );
+}
+
+#[test]
+fn test_asserted_class_property_initializer_retains_local_type_alias() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type N = 1;
+export class Bar {
+    c3? = 1 as N;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("type N = 1;"),
+        "Expected asserted initializer alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("c3?: N;"),
+        "Expected optional asserted property to use the alias without widening: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected module marker when local alias is retained: {output}"
     );
 }
 
@@ -1560,6 +1595,56 @@ function C() {
     assert!(
         !output.contains("export const k:"),
         "Did not expect void exports to synthesize declarations: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_keyword_named_exports_emit_aliases() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.class = 123;
+exports.for = "loop";
+"#,
+    );
+
+    assert!(
+        output.contains("declare const _class: 123;"),
+        "Expected reserved export name to use a local alias: {output}"
+    );
+    assert!(
+        output.contains("declare const _for: \"loop\";"),
+        "Expected reserved export name to use a local alias: {output}"
+    );
+    assert!(
+        output.contains("export { _class as class, _for as for };"),
+        "Expected reserved export aliases to be grouped: {output}"
+    );
+    assert!(
+        !output.contains("export const class"),
+        "Did not expect invalid keyword binding declaration: {output}"
+    );
+    assert!(
+        !output.contains("export const for"),
+        "Did not expect invalid keyword binding declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_bracket_string_exports_emit_named_declarations() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports["foo"] = 1;
+module.exports["bar"] = "x";
+"#,
+    );
+
+    assert!(
+        output.contains("export const foo: 1;"),
+        "Expected bracket string exports to emit named declarations: {output}"
+    );
+    assert!(
+        output.contains("export const bar: \"x\";"),
+        "Expected module.exports bracket string exports to emit named declarations: {output}"
     );
 }
 

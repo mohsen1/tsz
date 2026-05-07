@@ -55,15 +55,7 @@ impl Server {
                     .count();
             let content_end = line_end;
 
-            let start_pos = line_map.offset_to_position(content_start as u32, source_text);
-            let end_pos = line_map.offset_to_position(content_end as u32, source_text);
-
-            Some(serde_json::json!({
-                "textSpan": {
-                    "start": Self::lsp_to_tsserver_position(start_pos),
-                    "end": Self::lsp_to_tsserver_position(end_pos)
-                }
-            }))
+            Some(Self::text_span_body(content_start, content_end))
         })();
 
         self.stub_response(seq, request, result)
@@ -105,6 +97,18 @@ impl Server {
                 return None;
             }
 
+            // Pre-compute string and comment byte ranges so the backward scan
+            // can skip over `<`/`>` bytes that live inside attribute strings,
+            // JSX-expression strings, or comments. Without this, an attribute
+            // like `<div title="a>b">` corrupts the depth counter and the
+            // opening `<` is never found at depth 0.
+            let skip_ranges = collect_skip_ranges(bytes, byte_offset);
+            let in_skip_range = |idx: usize| -> bool {
+                skip_ranges
+                    .iter()
+                    .any(|&(start, end)| idx >= start && idx < end)
+            };
+
             // Scan backwards past attributes to find '<TagName'
             let mut i = byte_offset - 1; // skip the '>'
             let mut depth = 0;
@@ -112,6 +116,9 @@ impl Server {
             // Skip past attributes, strings, etc. to find the '<'
             while i > 0 {
                 i -= 1;
+                if in_skip_range(i) {
+                    continue;
+                }
                 match bytes[i] {
                     b'<' if depth == 0 => {
                         // Found the opening '<', now extract the tag name
@@ -201,7 +208,7 @@ impl Server {
             };
         }
 
-        let result = (|| -> Option<serde_json::Value> {
+        let result = (|| -> Option<Result<serde_json::Value, ()>> {
             let file = request.arguments.get("file")?.as_str()?;
             let line = request.arguments.get("line")?.as_u64()? as u32;
             let offset = request.arguments.get("offset")?.as_u64().unwrap_or(1) as u32;
@@ -266,6 +273,7 @@ impl Server {
                     }
                     if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
                         template_depth += 1;
+                        in_template = false;
                         i += 2;
                         continue;
                     }
@@ -301,21 +309,35 @@ impl Server {
                 i += 1;
             }
 
-            // Don't auto-complete braces inside strings, comments, or template literals
-            if in_string || in_line_comment || in_block_comment || in_template {
-                return Some(serde_json::json!(false));
+            let is_quote_like = matches!(opening_brace, "'" | "\"" | "`");
+
+            if is_quote_like && (in_line_comment || in_block_comment) {
+                return Some(Err(()));
+            }
+
+            // Don't auto-complete inside strings or template literals.
+            if in_string || in_template {
+                return Some(Ok(serde_json::json!(false)));
             }
 
             // All valid opening braces should be completed.
             let valid = matches!(opening_brace, "{" | "(" | "[" | "'" | "\"" | "`");
-            Some(serde_json::json!(valid))
+            Some(Ok(serde_json::json!(valid)))
         })();
 
-        self.stub_response(
-            seq,
-            request,
-            Some(result.unwrap_or(serde_json::json!(true))),
-        )
+        match result {
+            Some(Err(())) => TsServerResponse {
+                seq,
+                msg_type: "response".to_string(),
+                command: request.command.clone(),
+                request_seq: request.seq,
+                success: false,
+                message: Some("No content available.".to_string()),
+                body: None,
+            },
+            Some(Ok(body)) => self.stub_response(seq, request, Some(body)),
+            None => self.stub_response(seq, request, Some(serde_json::json!(true))),
+        }
     }
 
     pub(crate) fn handle_span_of_enclosing_comment(
@@ -367,16 +389,7 @@ impl Server {
                         let comment_start = i;
                         let comment_end = source_text[i..].find('\n').map_or(len, |j| i + j);
                         if byte_offset >= comment_start && byte_offset <= comment_end {
-                            let start_pos =
-                                line_map.offset_to_position(comment_start as u32, source_text);
-                            let end_pos =
-                                line_map.offset_to_position(comment_end as u32, source_text);
-                            return Some(serde_json::json!({
-                                "textSpan": {
-                                    "start": Self::lsp_to_tsserver_position(start_pos),
-                                    "end": Self::lsp_to_tsserver_position(end_pos)
-                                }
-                            }));
+                            return Some(Self::text_span_body(comment_start, comment_end));
                         }
                         i = comment_end;
                         continue;
@@ -393,16 +406,7 @@ impl Server {
                         }
                         let comment_end = i;
                         if byte_offset >= comment_start && byte_offset <= comment_end {
-                            let start_pos =
-                                line_map.offset_to_position(comment_start as u32, source_text);
-                            let end_pos =
-                                line_map.offset_to_position(comment_end as u32, source_text);
-                            return Some(serde_json::json!({
-                                "textSpan": {
-                                    "start": Self::lsp_to_tsserver_position(start_pos),
-                                    "end": Self::lsp_to_tsserver_position(end_pos)
-                                }
-                            }));
+                            return Some(Self::text_span_body(comment_start, comment_end));
                         }
                         continue;
                     }
@@ -414,6 +418,13 @@ impl Server {
         })();
 
         self.stub_response(seq, request, result)
+    }
+
+    fn text_span_body(start: usize, end: usize) -> serde_json::Value {
+        serde_json::json!({
+            "start": start,
+            "length": end.saturating_sub(start),
+        })
     }
 
     pub(crate) fn handle_todo_comments(
@@ -2419,4 +2430,65 @@ impl Server {
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
+}
+
+/// Forward-scan `bytes[..end]` and collect byte ranges that should be ignored
+/// when matching JSX angle brackets — namely string/template literals and
+/// `//` / `/* ... */` comments. The returned ranges are half-open `[start, end)`
+/// and include the surrounding quotes/comment delimiters.
+///
+/// This is intentionally a lightweight tokenizer rather than a full JSX
+/// scanner: it is sufficient to keep `<` and `>` inside attribute strings
+/// (and JSX-expression strings) from being treated as tag boundaries.
+pub(crate) fn collect_skip_ranges(bytes: &[u8], end: usize) -> Vec<(usize, usize)> {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let limit = end.min(bytes.len());
+    let mut j = 0;
+    while j < limit {
+        match bytes[j] {
+            quote @ (b'"' | b'\'' | b'`') => {
+                let start = j;
+                j += 1;
+                while j < limit && bytes[j] != quote {
+                    if bytes[j] == b'\\' && j + 1 < limit {
+                        j += 2;
+                    } else if bytes[j] == b'\n' && quote != b'`' {
+                        // Unterminated single/double-quoted string: stop at
+                        // newline so a stray quote does not swallow the rest
+                        // of the file.
+                        break;
+                    } else {
+                        j += 1;
+                    }
+                }
+                if j < limit {
+                    j += 1; // consume closing quote (or stop byte)
+                }
+                ranges.push((start, j));
+            }
+            b'/' if j + 1 < limit && bytes[j + 1] == b'/' => {
+                let start = j;
+                j += 2;
+                while j < limit && bytes[j] != b'\n' {
+                    j += 1;
+                }
+                ranges.push((start, j));
+            }
+            b'/' if j + 1 < limit && bytes[j + 1] == b'*' => {
+                let start = j;
+                j += 2;
+                while j + 1 < limit && !(bytes[j] == b'*' && bytes[j + 1] == b'/') {
+                    j += 1;
+                }
+                if j + 1 < limit {
+                    j += 2; // consume closing */
+                } else {
+                    j = limit;
+                }
+                ranges.push((start, j));
+            }
+            _ => j += 1,
+        }
+    }
+    ranges
 }

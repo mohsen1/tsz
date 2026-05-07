@@ -464,6 +464,46 @@ fn test_node16_pattern_exports_resolves_with_dts() {
 }
 
 #[test]
+fn test_bundler_package_exports_apply_module_suffixes_to_declaration_sidecars() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_exports_module_suffixes_dts");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{"./foo":"./foo.js"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/foo.native.d.ts"),
+        "export declare const value: number;",
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "import { value } from 'pkg/foo';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        module_suffixes: vec![".native".to_string(), String::new()],
+        resolve_package_json_exports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let result = resolver
+        .resolve("pkg/foo", &dir.join("src/index.ts"), Span::new(22, 29))
+        .expect("package exports target should resolve through suffixed declaration sidecar");
+    assert_eq!(
+        result.resolved_path,
+        dir.join("node_modules/pkg/foo.native.d.ts")
+    );
+    assert_eq!(result.extension, ModuleExtension::Dts);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_exports_pattern_key_is_not_treated_as_exact_match_for_literal_star_specifier() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_exports_literal_star_specifier");
@@ -1470,6 +1510,45 @@ fn test_resolver_relative_ts_file() {
             // Resolution might fail in some environments, that's OK for this test
         }
     }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_resolver_explicit_dts_import_probes_sibling_implementation() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_resolver_explicit_dts_import");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("types.d.ts"), "import {} from './a.d.ts';").unwrap();
+    fs::write(dir.join("a.ts"), "export {};").unwrap();
+    fs::write(dir.join("b.mts"), "export {};").unwrap();
+    fs::write(dir.join("c.cts"), "export = {};").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let dts = resolver
+        .resolve("./a.d.ts", &dir.join("types.d.ts"), Span::new(15, 25))
+        .expect("expected .d.ts specifier to resolve through sibling .ts");
+    assert_eq!(dts.resolved_path, dir.join("a.ts"));
+    assert_eq!(dts.extension, ModuleExtension::Ts);
+
+    let dmts = resolver
+        .resolve("./b.d.mts", &dir.join("types.d.ts"), Span::new(15, 26))
+        .expect("expected .d.mts specifier to resolve through sibling .mts");
+    assert_eq!(dmts.resolved_path, dir.join("b.mts"));
+    assert_eq!(dmts.extension, ModuleExtension::Mts);
+
+    let dcts = resolver
+        .resolve("./c.d.cts", &dir.join("types.d.ts"), Span::new(15, 26))
+        .expect("expected .d.cts specifier to resolve through sibling .cts");
+    assert_eq!(dcts.resolved_path, dir.join("c.cts"));
+    assert_eq!(dcts.extension, ModuleExtension::Cts);
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -2924,11 +3003,12 @@ fn test_lookup_untyped_js_module_no_implicit_any() {
         implied_classic_resolution: false,
     };
     let result = resolver.lookup(&request, |_, _| None, |_| false, None);
+    let outcome = result.classify();
     assert!(
-        result.treat_as_resolved,
-        "untyped JS should be treated as resolved"
+        outcome.is_resolved,
+        "untyped JS should be treated as resolved (no TS2307)"
     );
-    let error = result.error.expect("noImplicitAny should produce TS7016");
+    let error = outcome.error.expect("noImplicitAny should produce TS7016");
     assert_eq!(error.code, COULD_NOT_FIND_DECLARATION_FILE);
 
     // Without noImplicitAny: should be resolved with no error
@@ -2943,12 +3023,13 @@ fn test_lookup_untyped_js_module_no_implicit_any() {
         implied_classic_resolution: false,
     };
     let result2 = resolver.lookup(&request_no_strict, |_, _| None, |_| false, None);
+    let outcome2 = result2.classify();
     assert!(
-        result2.treat_as_resolved,
+        outcome2.is_resolved,
         "untyped JS should be resolved without error"
     );
     assert!(
-        result2.error.is_none(),
+        outcome2.error.is_none(),
         "without noImplicitAny, no error expected"
     );
 
@@ -3789,13 +3870,44 @@ fn test_classify_resolved_with_error() {
 
 #[test]
 fn test_classify_untyped_js_with_no_implicit_any() {
+    // tsc reports TS7016 for any *imported* JS module without declarations,
+    // regardless of whether the resolved path lives in `node_modules` or in
+    // the project. TS6504 is reserved for explicit JS *root* files (CLI path).
     let result = ModuleLookupResult::untyped_js(PathBuf::from("/tmp/foo.js"), true, "foo");
     let outcome = result.classify();
 
-    assert!(outcome.resolved_path.is_none());
+    assert!(
+        outcome.resolved_path.is_none(),
+        "untyped JS modules are not added to the program (CLI keeps TS6504 for root files only)"
+    );
     assert!(outcome.is_resolved, "untyped JS should suppress TS2307");
-    let error = outcome.error.expect("should have TS6504 error");
-    assert_eq!(error.code, FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS);
+    let error = outcome.error.expect("should have TS7016 error");
+    assert_eq!(error.code, COULD_NOT_FIND_DECLARATION_FILE);
+    assert!(
+        error
+            .message
+            .starts_with("Could not find a declaration file for module 'foo'."),
+        "expected TS7016 message form, got: {}",
+        error.message
+    );
+}
+
+#[test]
+fn test_classify_untyped_js_with_no_implicit_any_local_path() {
+    // Identical TS7016 behavior whether the JS file is in `node_modules`
+    // or in the user's project — covers the relative-import case from #3050.
+    let result = ModuleLookupResult::untyped_js(PathBuf::from("/project/dep.js"), true, "./dep.js");
+    let outcome = result.classify();
+
+    let error = outcome.error.expect("should have TS7016 error");
+    assert_eq!(error.code, COULD_NOT_FIND_DECLARATION_FILE);
+    assert!(
+        error
+            .message
+            .contains("Could not find a declaration file for module './dep.js'."),
+        "local-path JS should still emit TS7016, got: {}",
+        error.message
+    );
 }
 
 #[test]
@@ -3803,7 +3915,8 @@ fn test_classify_untyped_js_without_no_implicit_any() {
     let result = ModuleLookupResult::untyped_js(PathBuf::from("/tmp/foo.js"), false, "foo");
     let outcome = result.classify();
 
-    assert!(outcome.resolved_path.is_none());
+    // No noImplicitAny: silent. The specifier still classifies as resolved
+    // (suppressing TS2307) so the import binds as `any`.
     assert!(outcome.is_resolved);
     assert!(outcome.error.is_none(), "without noImplicitAny, no error");
 }
@@ -4601,13 +4714,12 @@ fn test_lookup_should_try_fallback_not_for_hard_failures() {
 
 #[test]
 fn test_lookup_classic_implied_resolution_upgrades_to_ts2792() {
-    // When implied_classic_resolution is true AND a node-style resolution
-    // would find the package (via ancestor `node_modules/<pkg>/`), lookup()
-    // upgrades TS2307 → TS2792 to suggest the nodenext hint.
-    //
-    // Without a matching node_modules entry the override MUST NOT fire — see
-    // `test_lookup_classic_implied_resolution_without_node_modules_keeps_ts2307`
-    // below for the gated case.
+    // Under classic-style resolution (module: amd|system|umd|none or
+    // explicit moduleResolution: classic — issue #3077), bare specifiers
+    // that fail to resolve always upgrade TS2307 → TS2792 to surface the
+    // "Did you mean to set the 'moduleResolution' option to 'nodenext'..."
+    // hint. The presence of an ancestor `node_modules/<pkg>/` directory is
+    // not required: tsc emits TS2792 for missing packages regardless.
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_lookup_classic_ts2792");
     let _ = fs::remove_dir_all(&dir);
@@ -4650,15 +4762,17 @@ fn test_lookup_classic_implied_resolution_upgrades_to_ts2792() {
 }
 
 #[test]
-fn test_lookup_classic_implied_resolution_without_node_modules_keeps_ts2307() {
-    // When implied_classic_resolution is true but there is NO matching
-    // node_modules/<pkg> ancestor, switching to nodenext wouldn't actually
-    // resolve the specifier — tsc emits plain TS2307 in this case. Matches
-    // the `typeRootsFromNodeModulesInParentDirectory.ts` conformance test
-    // where the only "matching" entry is an ambient module declaration
-    // inside an unrelated @types/<foo> package.
+fn test_lookup_classic_implied_resolution_without_node_modules_upgrades_to_ts2792() {
+    // Even without a matching `node_modules/<pkg>/` ancestor, classic-style
+    // resolution still upgrades TS2307 → TS2792 (issue #3077). Earlier
+    // versions of this resolver gated the upgrade on node-style lookahead;
+    // tsc 6.0.3 emits TS2792 unconditionally for bare specifiers under
+    // classic resolution, so we no longer probe.
+    //
+    // Relative specifiers stay on plain TS2307 — see
+    // `test_lookup_classic_implied_resolution_relative_keeps_ts2307` below.
     use std::fs;
-    let dir = std::env::temp_dir().join("tsz_lookup_classic_ts2307_no_node_modules");
+    let dir = std::env::temp_dir().join("tsz_lookup_classic_ts2792_no_node_modules");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("index.ts"), "import 'some-pkg';").unwrap();
@@ -4685,8 +4799,49 @@ fn test_lookup_classic_implied_resolution_without_node_modules_keeps_ts2307() {
     assert!(!outcome.is_resolved);
     let error = outcome.error.expect("Expected error for missing module");
     assert_eq!(
+        error.code, MODULE_RESOLUTION_MODE_MISMATCH,
+        "Expected TS2792 for bare specifier under classic resolution even without a node_modules entry, got TS{}",
+        error.code
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_classic_implied_resolution_relative_keeps_ts2307() {
+    // Relative specifiers stay on plain TS2307 — switching to a different
+    // `moduleResolution` would not help them, so the TS2792 hint is
+    // suppressed for the relative-import case (issue #3077).
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_classic_relative_ts2307");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("index.ts"), "import './missing';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "./missing",
+        containing_file: &dir.join("index.ts"),
+        specifier_span: Span::new(8, 19),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: true,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
+    let outcome = result.classify();
+
+    assert!(!outcome.is_resolved);
+    let error = outcome.error.expect("Expected error for missing module");
+    assert_eq!(
         error.code, CANNOT_FIND_MODULE,
-        "Expected TS2307 when no matching node_modules/<pkg> exists under any ancestor, got TS{}",
+        "Relative specifier under classic resolution should stay on TS2307, got TS{}",
         error.code
     );
 

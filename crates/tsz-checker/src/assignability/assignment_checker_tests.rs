@@ -10,6 +10,8 @@ use crate::test_utils::{check_js_source_diagnostics, check_source};
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 
+mod assignment_checker_typebox_tests;
+
 fn diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     check_source(source, "test.ts", CheckerOptions::default())
 }
@@ -1806,18 +1808,6 @@ function f() {
     );
 }
 
-// Regression: TS2322 must fire when a bare type parameter is assigned to a
-// template-literal pattern referencing the same type parameter.
-//
-// `tsc` reports TS2322 here because ``${T}`` is an opaque pattern type;
-// `T`'s instantiation could be a literal subtype that does not structurally
-// match the template, so the assignment is not statically sound. Without the
-// template-literal carve-out in `should_suppress_assignability_diagnostic`,
-// the generic "complex type" suppression would silently accept it because
-// ``${T}`` "contains" T but is not itself a type parameter.
-///
-/// Repros the missing fingerprint at
-/// `templateLiteralTypes5.ts(14,11)`.
 #[test]
 fn type_parameter_to_template_literal_of_self_emits_ts2322() {
     let source = r#"
@@ -1970,5 +1960,35 @@ function f({ show: showRename = v => v }: Show) {}
         diag.message_text.contains("'number'") && diag.message_text.contains("'string'"),
         "TS2322 should describe the body return-type mismatch (number vs string), got: {:?}",
         diag.message_text
+    );
+}
+
+#[test]
+fn recursive_mapped_alias_application_display_stays_at_application() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Id2<T> = { [K in keyof T]: Id2<Id2<T[K]>> };
+type Foo3 = Id2<{ x: { y: { z: { a: { b: { c: number } } } } } }>;
+type Foo4 = Id2<{ x: { y: { z: { a: { b: { c: string } } } } } }>;
+declare const foo3: Foo3;
+const foo4: Foo4 = foo3;
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 for recursive mapped alias mismatch");
+    assert!(
+        diag.message_text
+            .contains("Id2<{ x: { y: { z: { a: { b: { c: number; }; }; }; }; }; }>")
+            && diag
+                .message_text
+                .contains("Id2<{ x: { y: { z: { a: { b: { c: string; }; }; }; }; }; }>"),
+        "TS2322 should preserve the recursive alias application display, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("'Foo3'") && !diag.message_text.contains("'Foo4'"),
+        "TS2322 should not repaint the application as wrapper aliases, got: {diag:?}"
     );
 }

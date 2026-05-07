@@ -525,13 +525,20 @@ pub(crate) fn node16_extension_substitution(path: &Path, extension: &str) -> Opt
         "jsx" => &["tsx", "d.ts"],
         "mjs" => &["mts", "d.mts"],
         "cjs" => &["cts", "d.cts"],
+        "d.ts" => &["ts", "tsx"],
+        "d.mts" => &["mts"],
+        "d.cts" => &["cts"],
         _ => return None,
     };
+
+    let base = split_path_extension(path)
+        .map(|(base, _)| base)
+        .unwrap_or_else(|| path.to_path_buf());
 
     Some(
         replacements
             .iter()
-            .map(|ext| path.with_extension(ext))
+            .map(|ext| base.with_extension(ext))
             .collect(),
     )
 }
@@ -868,6 +875,24 @@ mod tests {
             split_path_extension(Path::new("pkg/index.d.ts")).expect("expected known extension");
         assert_eq!(base, PathBuf::from("pkg/index"));
         assert_eq!(extension, "d.ts");
+    }
+
+    #[test]
+    fn declaration_extension_substitution_probes_sibling_implementations() {
+        let dts = node16_extension_substitution(Path::new("pkg/a.d.ts"), "d.ts")
+            .expect("expected declaration extension substitution");
+        assert_eq!(
+            dts,
+            vec![PathBuf::from("pkg/a.ts"), PathBuf::from("pkg/a.tsx")]
+        );
+
+        let dmts = node16_extension_substitution(Path::new("pkg/a.d.mts"), "d.mts")
+            .expect("expected declaration module substitution");
+        assert_eq!(dmts, vec![PathBuf::from("pkg/a.mts")]);
+
+        let dcts = node16_extension_substitution(Path::new("pkg/a.d.cts"), "d.cts")
+            .expect("expected declaration commonjs substitution");
+        assert_eq!(dcts, vec![PathBuf::from("pkg/a.cts")]);
     }
 
     #[test]

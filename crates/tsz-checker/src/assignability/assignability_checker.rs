@@ -881,6 +881,26 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
+        let is_type_alias_application = |type_id: TypeId| {
+            crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+                .and_then(|app| {
+                    crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+                })
+                .and_then(|def_id| self.ctx.definition_store.get(def_id))
+                .is_some_and(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
+        };
+        if is_type_alias_application(source)
+            && is_type_alias_application(target)
+            && crate::query_boundaries::assignability::are_types_structurally_identical(
+                self.ctx.types,
+                &self.ctx,
+                source,
+                target,
+            )
+        {
+            return true;
+        }
+
         let evaluated_target_for_invalid_mapped = self.ctx.types.evaluate_type(target);
         if self.type_contains_invalid_mapped_key_type(target)
             || self.type_contains_invalid_mapped_key_type(evaluated_target_for_invalid_mapped)
@@ -2218,6 +2238,16 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::array_element_type(self.ctx.types, source),
             crate::query_boundaries::common::array_element_type(self.ctx.types, target),
         ) {
+            if self.same_type_alias_application_args_reject(s_elem, t_elem) {
+                return false;
+            }
+            if s_elem == TypeId::ERROR
+                && self
+                    .format_type_diagnostic(t_elem)
+                    .starts_with("Static<typeof ")
+            {
+                return false;
+            }
             let s_elem_normalized = self.evaluate_awaited_application_for_assignability(s_elem);
             let t_elem_normalized = self.evaluate_awaited_application_for_assignability(t_elem);
             if s_elem_normalized != s_elem || t_elem_normalized != t_elem {
@@ -2229,6 +2259,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let result = self.check_assignability_cached(source, target, 0, "is_assignable_to");
+
+        if result && self.same_type_alias_application_args_reject(source, target) {
+            return false;
+        }
 
         if result
             && self
@@ -2253,6 +2287,49 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn same_type_alias_application_args_reject(&mut self, source: TypeId, target: TypeId) -> bool {
+        let Some((source_base, source_args)) = self.application_display_info(source) else {
+            return false;
+        };
+        let Some((target_base, target_args)) = self.application_display_info(target) else {
+            return false;
+        };
+        if source_base != target_base || source_args.len() != target_args.len() {
+            return false;
+        }
+        if source_args
+            .iter()
+            .zip(target_args.iter())
+            .all(|(s, t)| s == t)
+        {
+            return false;
+        }
+        let Some(def_id) =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, source_base)
+        else {
+            return false;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return false;
+        }
+        if self.format_type_diagnostic(source_base) == "Static" {
+            return true;
+        }
+        source_args
+            .iter()
+            .zip(target_args.iter())
+            .any(|(&source_arg, &target_arg)| {
+                !target_arg.is_any() && !self.is_assignable_to(source_arg, target_arg)
+            })
+    }
+
+    fn application_display_info(&self, type_id: TypeId) -> Option<(TypeId, Vec<TypeId>)> {
+        self.application_info_or_display_alias(type_id)
     }
 
     /// Type assertion overlap uses tsc's comparable relation, not ordinary
