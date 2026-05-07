@@ -304,8 +304,10 @@ impl ModuleResolver {
                 // conditional export targets (output-to-source remapping).
                 if let Some(rewritten) = node16_extension_substitution(path, extension) {
                     for candidate in &rewritten {
-                        if candidate.is_file() {
-                            return Some(candidate.clone());
+                        if let Some(resolved) =
+                            try_file_with_suffixes(candidate, &self.module_suffixes)
+                        {
+                            return Some(resolved);
                         }
                     }
                 }

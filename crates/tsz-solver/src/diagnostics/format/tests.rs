@@ -3960,6 +3960,109 @@ fn typeof_prefix_for_namespace_and_class_constructor_defs() {
     assert_eq!(fmt.format(class_instance_obj), "Bar");
 }
 
+/// Regression: `T[]` (modeled as `TypeData::Array(T)`) should inherit its
+/// element type's source position when sorting union members. Without this,
+/// `Cover[]` falls through to the tier-2 sentinel and a union written as
+/// `Cover | Cover[]` displays out of order.
+#[test]
+fn union_array_inherits_element_source_position() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let cover = crate::def::DefinitionInfo::interface(
+        db.intern_string("Cover"),
+        vec![],
+        vec![PropertyInfo::new(db.intern_string("color"), TypeId::STRING)],
+    )
+    .with_file_id(0)
+    .with_span(100, 110);
+    let cover_def = def_store.register(cover);
+    let cover_ref = db.lazy(cover_def);
+    let cover_array = db.array(cover_ref);
+
+    // Source order: `Cover | Cover[]`.
+    let union_id = db.union_preserve_members(vec![cover_ref, cover_array]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(union_id),
+        "Cover | Cover[]",
+        "Array(T) should inherit T's position so `Cover | Cover[]` stays in source order"
+    );
+}
+
+#[test]
+fn union_array_of_intrinsic_stays_after_primitive_builtin() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let react_child = crate::def::DefinitionInfo::type_alias(
+        db.intern_string("ReactChild"),
+        vec![],
+        TypeId::STRING,
+    )
+    .with_file_id(0)
+    .with_span(100, 110);
+    let react_child_def = def_store.register(react_child);
+    let react_child_ref = db.lazy(react_child_def);
+    let any_array = db.array(TypeId::ANY);
+
+    let union_id = db.union_preserve_members(vec![react_child_ref, any_array, TypeId::BOOLEAN]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(union_id),
+        "boolean | any[] | ReactChild",
+        "Arrays of intrinsic element types should not inherit `any`'s low builtin key"
+    );
+}
+
+/// Regression: `Application(Container, [T])` should use the MAX position of
+/// the base and its arguments. This keeps generic instantiations sorted with
+/// the user-defined element type rather than with a built-in / lib base.
+#[test]
+fn union_application_uses_max_arg_position() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    // A built-in-like generic with a low source position.
+    let container = crate::def::DefinitionInfo::interface(
+        db.intern_string("Container"),
+        vec![TypeParamInfo {
+            name: db.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        vec![],
+    )
+    .with_file_id(0)
+    .with_span(0, 10);
+    let container_def = def_store.register(container);
+
+    // A user type with a much later source position.
+    let user_iface = crate::def::DefinitionInfo::interface(
+        db.intern_string("Item"),
+        vec![],
+        vec![PropertyInfo::new(db.intern_string("v"), TypeId::STRING)],
+    )
+    .with_file_id(0)
+    .with_span(500, 510);
+    let user_def = def_store.register(user_iface);
+    let user_ref = db.lazy(user_def);
+
+    let application = db.application(db.lazy(container_def), vec![user_ref]);
+
+    // Source order: `Item | Container<Item>`.
+    let union_id = db.union_preserve_members(vec![user_ref, application]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let result = fmt.format(union_id);
+    // `Container<Item>` inherits Item's position via the MAX rule, so the
+    // union preserves source order.
+    assert_eq!(result, "Item | Container<Item>");
+}
+
 /// Regression: a union mixing a named type (tier 1, has source position) with
 /// a literal type (tier 2, no source position) should display the named type
 /// first, matching tsc. Source order alone — `"foo" | Refrigerator` — is not

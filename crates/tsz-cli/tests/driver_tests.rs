@@ -378,6 +378,43 @@ n();
 }
 
 #[test]
+fn compile_public_break_modifier_recovery_suppresses_ts1105() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("repro.ts"), "public break;\n");
+
+    let args = parse_args(&[
+        "tsz",
+        "--target",
+        "es2015",
+        "--pretty",
+        "false",
+        "--noEmitOnError",
+        "repro.ts",
+    ]);
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "expected TS1128 for modifier recovery, got {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::A_BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_AN_ENCLOSING_ITERATION_OR_SWITCH_STATE
+        ),
+        "expected no downstream TS1105 after modifier recovery, got {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_for_of_unknown_expression_reports_ts18046() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -3167,6 +3204,69 @@ fn compile_allow_js_passthrough_emits_skipped_node_modules_js() {
         std::fs::read_to_string(base.join("out/node_modules/untyped/index.js"))
             .expect("read emitted skipped JS"),
         "module.exports = {}"
+    );
+}
+
+#[test]
+fn compile_checked_js_prototype_optional_chain_method_call_suppresses_ts2531() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "strict": true,
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true,
+            "pretty": false,
+            "types": []
+          },
+          "files": ["index.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"
+// @ts-check
+Element.prototype.remove = function () {
+  this.parentNode?.removeChild(document.body);
+};
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|diag| diag.code != diagnostic_codes::OBJECT_IS_POSSIBLY_NULL),
+        "optional chain should suppress TS2531, got diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    write_file(
+        &base.join("index.js"),
+        r#"
+// @ts-check
+Element.prototype.remove = function () {
+  this.parentNode.removeChild(document.body);
+};
+"#,
+    );
+
+    let control = compile(&args, base).expect("compile should succeed");
+    assert!(
+        control
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::OBJECT_IS_POSSIBLY_NULL),
+        "plain nullable receiver should still report TS2531, got diagnostics: {:?}",
+        control.diagnostics
     );
 }
 
@@ -6695,6 +6795,46 @@ fn compile_resolves_node_modules_exports_subpath() {
             .contains("node_modules/pkg/types/feature/widget.d.ts")
     }));
     assert!(!base.join("dist/src/index.js").is_file());
+}
+
+#[test]
+fn compile_bundler_exports_target_applies_module_suffixes_to_dts_sidecar() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "module": "preserve",
+            "moduleResolution": "bundler",
+            "moduleSuffixes": [".native"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        "import { value } from \"pkg/foo\";\nvalue satisfies number;\n",
+    );
+    write_file(
+        &base.join("node_modules/pkg/package.json"),
+        r#"{ "name": "pkg", "exports": { "./foo": "./foo.js" } }"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg/foo.native.d.ts"),
+        "export declare const value: number;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected package exports declaration sidecar to resolve with moduleSuffixes, got: {:#?}",
+        result.diagnostics
+    );
 }
 
 #[test]
@@ -17634,6 +17774,37 @@ void exact;
     assert!(
         result.diagnostics.iter().all(|d| d.code != 2305),
         "Did not expect TS2305 for JSON default import/re-export bindings, got diagnostics: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn ignore_config_explicit_file_mode_implies_resolve_json_module_for_bundler() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("index.ts"),
+        r#"import data from "./data.json";
+const answer: number = data.answer;
+void answer;
+"#,
+    );
+    write_file(&base.join("data.json"), r#"{ "answer": 42 }"#);
+
+    let args = parse_args(&[
+        "tsz",
+        "--ignoreConfig",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "index.ts",
+    ]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no TS2732 for JSON import in no-config explicit-file mode, got: {:#?}",
         result.diagnostics
     );
 }

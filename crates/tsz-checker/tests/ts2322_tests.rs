@@ -260,6 +260,32 @@ function test() {
 }
 
 #[test]
+fn symbol_primitive_methods_report_assignability_errors() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+declare const sym: symbol;
+const s: string = sym.valueOf();
+const n: number = sym.toString();
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("Type 'symbol' is not assignable to type 'string'.")
+        }),
+        "expected symbol.valueOf() to reject string assignment, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("Type 'string' is not assignable to type 'number'.")
+        }),
+        "expected symbol.toString() to reject number assignment, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_for_index_accesses_with_distinct_key_type_parameters() {
     let diagnostics = get_all_diagnostics(
         r#"
