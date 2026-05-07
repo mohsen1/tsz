@@ -131,16 +131,6 @@ impl Server {
                 );
             let add_missing_function_declaration_anywhere =
                 Self::apply_add_missing_function_declaration_fallback_anywhere(&content);
-            // Plain unresolved calls (`foo(1);`) are computed lazily — only
-            // used as a final fallback below when no real import fix is
-            // available, so that `useEffect()` etc. still get their import
-            // candidates.
-            let plain_call_function_declaration_candidate =
-                Self::apply_add_missing_function_declaration_for_plain_call_at_request(
-                    &content,
-                    &line_map,
-                    request_span,
-                );
             let add_missing_function_declaration_candidate =
                 add_missing_function_declaration_preview
                     .or_else(|| add_missing_function_declaration_anywhere.clone());
@@ -798,7 +788,12 @@ impl Server {
                 && response_actions
                     .iter()
                     .all(Self::action_has_no_text_changes)
-                && let Some((name, updated_content)) = plain_call_function_declaration_candidate
+                && let Some((name, updated_content)) =
+                    Self::apply_add_missing_function_declaration_for_plain_call_at_request(
+                        &content,
+                        &line_map,
+                        request_span,
+                    )
                 && let Some((start_off, end_off, replacement)) =
                     Self::compute_minimal_edit(&content, &updated_content)
             {
@@ -1667,6 +1662,14 @@ impl Server {
 
         let name = content.get(ident_start..ident_end)?.to_string();
 
+        // Keep this text fallback narrowly scoped. Fourslash has existing
+        // incomplete-call cases inside generic functions where tsserver infers
+        // type parameters from the call arguments; a simple text fallback would
+        // mask those richer fixes.
+        if !Self::is_top_level_offset(content, ident_start) {
+            return None;
+        }
+
         // Must be immediately followed (after whitespace) by `(`.
         let mut after = ident_end;
         while after < bytes.len() && (bytes[after] as char).is_ascii_whitespace() {
@@ -1687,6 +1690,18 @@ impl Server {
             "function {name}() {{\n    throw new Error(\"Function not implemented.\");\n}}\n"
         ));
         Some((name, updated))
+    }
+
+    fn is_top_level_offset(content: &str, offset: usize) -> bool {
+        let mut depth = 0usize;
+        for ch in content[..offset.min(content.len())].chars() {
+            match ch {
+                '{' => depth = depth.saturating_add(1),
+                '}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        depth == 0
     }
 
     fn apply_add_missing_function_declaration_fallback_anywhere(
