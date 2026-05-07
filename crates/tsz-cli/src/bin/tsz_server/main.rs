@@ -592,6 +592,11 @@ pub(crate) struct Server {
     pub(crate) auto_import_specifier_exclude_regexes: Vec<String>,
     /// Completion preference: include class member snippet completions.
     pub(crate) include_completions_with_class_member_snippets: bool,
+    /// User preference: parameter inlay hint mode. tsserver supports `"none"`,
+    /// `"literals"`, and `"all"`. `None` here means the user hasn't called
+    /// `configure` for this preference; in that case the tsserver default
+    /// (`"none"`) applies and parameter hints are suppressed. See #3793.
+    pub(crate) include_inlay_parameter_name_hints: Option<String>,
     /// Newline character preference from `configure` formatOptions. Used by
     /// import edits to respect `format.setOption("newLineCharacter", ...)`.
     pub(crate) new_line_character: Option<String>,
@@ -682,6 +687,7 @@ impl Server {
             auto_import_file_exclude_patterns: Vec::new(),
             auto_import_specifier_exclude_regexes: Vec::new(),
             include_completions_with_class_member_snippets: true,
+            include_inlay_parameter_name_hints: None,
             new_line_character: None,
             allow_importing_ts_extensions: false,
             inferred_check_options: CheckOptions::default(),
@@ -712,6 +718,7 @@ impl Server {
         self.auto_import_file_exclude_patterns.clear();
         self.auto_import_specifier_exclude_regexes.clear();
         self.include_completions_with_class_member_snippets = true;
+        self.include_inlay_parameter_name_hints = None;
         self.new_line_character = None;
         self.allow_importing_ts_extensions = false;
         self.inferred_check_options = CheckOptions::default();
