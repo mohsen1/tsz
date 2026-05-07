@@ -117,6 +117,75 @@ fn test_declaration_bundle_output_path_uses_out_file_name() {
 }
 
 #[test]
+fn test_js_output_path_ignores_out_dir_when_input_is_outside_root_dir() {
+    let path = js_output_path(
+        Path::new("/tmp/project/app"),
+        Some(Path::new("/tmp/project/base/src")),
+        Some(Path::new("/tmp/project/base/dist")),
+        None,
+        Path::new("/tmp/project/app/src/index.ts"),
+    );
+
+    assert_eq!(
+        path,
+        Some(Path::new("/tmp/project/app/src/index.js").into())
+    );
+}
+
+#[test]
+fn test_declaration_output_path_ignores_out_dir_when_input_is_outside_root_dir() {
+    let path = declaration_output_path(
+        Path::new("/tmp/project/app"),
+        Some(Path::new("/tmp/project/base/src")),
+        Some(Path::new("/tmp/project/base/types")),
+        Path::new("/tmp/project/app/src/index.ts"),
+    );
+
+    assert_eq!(
+        path,
+        Some(Path::new("/tmp/project/app/src/index.d.ts").into())
+    );
+}
+
+#[test]
+fn test_join_declaration_bundle_chunks_orders_reference_paths_first() {
+    let chunks = vec![
+        DeclarationBundleChunk {
+            path_key: "/project/a.ts".to_string(),
+            referenced_path_keys: Vec::new(),
+            contents: "declare class c {\n}".to_string(),
+        },
+        DeclarationBundleChunk {
+            path_key: "/project/b.js".to_string(),
+            referenced_path_keys: vec!["/project/c.js".to_string()],
+            contents: "declare function foo(): void;".to_string(),
+        },
+        DeclarationBundleChunk {
+            path_key: "/project/c.js".to_string(),
+            referenced_path_keys: Vec::new(),
+            contents: "declare function bar(): void;".to_string(),
+        },
+    ];
+
+    let output = join_declaration_bundle_chunks(&chunks, "\n");
+
+    assert_eq!(
+        output,
+        "declare class c {\n}\ndeclare function bar(): void;\ndeclare function foo(): void;"
+    );
+}
+
+#[test]
+fn test_resolve_declaration_reference_path_treats_bare_paths_as_relative() {
+    let mut file_lookup = rustc_hash::FxHashMap::default();
+    file_lookup.insert("/project/c.js".to_string(), "/project/c.js".to_string());
+
+    let resolved = resolve_declaration_reference_path_file("/project/b.js", "c.js", &file_lookup);
+
+    assert_eq!(resolved.as_deref(), Some("/project/c.js"));
+}
+
+#[test]
 fn test_bundle_declaration_output_wraps_named_amd_modules() {
     let input = r#"/// <amd-module name="mynamespace::SomeModuleA" />
 export declare class Foo {

@@ -956,9 +956,95 @@ impl<'a> Printer<'a> {
         let is_class_expression = node.kind == syntax_kind_ext::CLASS_EXPRESSION;
         let needs_private_comma_expr = is_class_expression && has_any_private_lowering;
 
+        // Computed property name hoisting for targets < ES2022.
+        // tsc hoists non-constant computed property name expressions to temp variables
+        // (e.g., `_a = n, _b = s + n`) so that the evaluation order is preserved and
+        // the class body can reference the temp instead of the original expression.
+        //
+        // Only PROPERTY DECLARATIONS with computed names participate in hoisting.
+        // Methods and accessors keep their computed names inline in ES6+.
+        // After the class body, a comma expression joins all assignments and side effects.
+        let needs_computed_prop_hoisting =
+            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+        // Each entry: (Option<temp_name>, expr_idx, member_idx) — None means side-effect only
+        let mut computed_prop_entries: Vec<(Option<String>, NodeIndex, NodeIndex)> = Vec::new();
+        if needs_computed_prop_hoisting {
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                // Only property declarations participate in computed property hoisting
+                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                    continue;
+                }
+                let Some(prop) = self.arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                let Some(name_node) = self.arena.get(prop.name) else {
+                    continue;
+                };
+                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    continue;
+                }
+                let Some(computed) = self.arena.get_computed_property(name_node) else {
+                    continue;
+                };
+                let Some(expr_node) = self.arena.get(computed.expression) else {
+                    continue;
+                };
+                // Check if expression is a constant that doesn't need hoisting
+                let is_constant = expr_node.kind == SyntaxKind::StringLiteral as u16
+                    || expr_node.kind == SyntaxKind::NumericLiteral as u16
+                    || expr_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16;
+                if is_constant {
+                    continue;
+                }
+                // Check if this property is erased (type-only, abstract, declared).
+                // `declare` fields have no runtime effect even when an
+                // initializer is present (the initializer is part of the
+                // declaration and is dropped). tsc still emits the computed
+                // expression for its side effects, but does not allocate a
+                // temp — see the `esDecorators-classDeclaration-fields-staticAmbient`
+                // baseline where `static declare [field3] = 3;` produces
+                // no `var _a; _a = field3;` pair.
+                let is_erased = if self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                    || self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    true
+                } else {
+                    let is_private = self
+                        .arena
+                        .get(prop.name)
+                        .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+                    let has_accessor = self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
+                    prop.initializer.is_none() && !is_private && !has_accessor
+                };
+                if is_erased {
+                    // Side-effect only: expression is emitted for its effects but no temp.
+                    let is_side_effect_free =
+                        self.is_computed_name_expr_side_effect_free(computed.expression);
+                    if !is_side_effect_free {
+                        computed_prop_entries.push((None, computed.expression, member_idx));
+                    }
+                } else {
+                    // Allocate a temp variable for this computed property name
+                    let temp = self.make_unique_name_hoisted();
+                    self.computed_prop_temp_map
+                        .insert(computed.expression, temp.clone());
+                    computed_prop_entries.push((Some(temp), computed.expression, member_idx));
+                }
+            }
+        }
+
         // For class expressions with static field initializers, we need to wrap
         // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`.
-        // Allocate the class-expression temp before any computed-name temps so the
+        // Allocate the class-expression temp after computed-name temps so the
         // generated `_a`, `_b`, `_c` ordering matches tsc.
         // Positive-form predicate reads more clearly than clippy's inverted De Morgan form.
         #[allow(clippy::nonminimal_bool)]
@@ -1045,92 +1131,6 @@ impl<'a> Printer<'a> {
                 None
             }
         });
-
-        // Computed property name hoisting for targets < ES2022.
-        // tsc hoists non-constant computed property name expressions to temp variables
-        // (e.g., `_a = n, _b = s + n`) so that the evaluation order is preserved and
-        // the class body can reference the temp instead of the original expression.
-        //
-        // Only PROPERTY DECLARATIONS with computed names participate in hoisting.
-        // Methods and accessors keep their computed names inline in ES6+.
-        // After the class body, a comma expression joins all assignments and side effects.
-        let needs_computed_prop_hoisting =
-            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
-        // Each entry: (Option<temp_name>, expr_idx, member_idx) — None means side-effect only
-        let mut computed_prop_entries: Vec<(Option<String>, NodeIndex, NodeIndex)> = Vec::new();
-        if needs_computed_prop_hoisting {
-            for &member_idx in &class.members.nodes {
-                let Some(member_node) = self.arena.get(member_idx) else {
-                    continue;
-                };
-                // Only property declarations participate in computed property hoisting
-                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                    continue;
-                }
-                let Some(prop) = self.arena.get_property_decl(member_node) else {
-                    continue;
-                };
-                let Some(name_node) = self.arena.get(prop.name) else {
-                    continue;
-                };
-                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    continue;
-                }
-                let Some(computed) = self.arena.get_computed_property(name_node) else {
-                    continue;
-                };
-                let Some(expr_node) = self.arena.get(computed.expression) else {
-                    continue;
-                };
-                // Check if expression is a constant that doesn't need hoisting
-                let is_constant = expr_node.kind == SyntaxKind::StringLiteral as u16
-                    || expr_node.kind == SyntaxKind::NumericLiteral as u16
-                    || expr_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16;
-                if is_constant {
-                    continue;
-                }
-                // Check if this property is erased (type-only, abstract, declared).
-                // `declare` fields have no runtime effect even when an
-                // initializer is present (the initializer is part of the
-                // declaration and is dropped). tsc still emits the computed
-                // expression for its side effects, but does not allocate a
-                // temp — see the `esDecorators-classDeclaration-fields-staticAmbient`
-                // baseline where `static declare [field3] = 3;` produces
-                // no `var _a; _a = field3;` pair.
-                let is_erased = if self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                    || self
-                        .arena
-                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                {
-                    true
-                } else {
-                    let is_private = self
-                        .arena
-                        .get(prop.name)
-                        .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
-                    let has_accessor = self
-                        .arena
-                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                    prop.initializer.is_none() && !is_private && !has_accessor
-                };
-                if is_erased {
-                    // Side-effect only: expression is emitted for its effects but no temp.
-                    let is_side_effect_free =
-                        self.is_computed_name_expr_side_effect_free(computed.expression);
-                    if !is_side_effect_free {
-                        computed_prop_entries.push((None, computed.expression, member_idx));
-                    }
-                } else {
-                    // Allocate a temp variable for this computed property name
-                    let temp = self.make_unique_name_hoisted();
-                    self.computed_prop_temp_map
-                        .insert(computed.expression, temp.clone());
-                    computed_prop_entries.push((Some(temp), computed.expression, member_idx));
-                }
-            }
-        }
 
         let mut computed_prop_entries_consumed_by_member_name: Vec<usize> = Vec::new();
         if needs_computed_prop_hoisting && !computed_prop_entries.is_empty() {

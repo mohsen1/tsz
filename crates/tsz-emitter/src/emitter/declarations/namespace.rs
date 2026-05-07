@@ -21,6 +21,14 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if self.emit_recovered_template_module_declaration(node, node.end) {
+            return;
+        }
+
+        if self.emit_recovered_anonymous_declare_module_declaration(node, module) {
+            return;
+        }
+
         // Skip ambient module declarations (declare namespace/module)
         if self.arena.is_declare(&module.modifiers) {
             self.skip_comments_for_erased_node(node);
@@ -250,6 +258,77 @@ impl<'a> Printer<'a> {
             self.skip_comments_for_erased_node(node);
         }
         wrote
+    }
+
+    fn emit_recovered_anonymous_declare_module_declaration(
+        &mut self,
+        node: &Node,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) -> bool {
+        if !self.is_recovered_anonymous_declare_module(module) {
+            return false;
+        }
+        if !self
+            .recovered_declare_module_name_starts_with(node, |byte| byte == b'{')
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        let Some(body_node) = self.arena.get(module.body) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return false;
+        };
+
+        self.write("declare;");
+        self.write_line();
+        self.write("module;");
+        self.write_line();
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+
+        if let Some(statements) = block.statements.as_ref() {
+            for &stmt_idx in &statements.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt_idx)
+                    && self.is_erased_statement(stmt_node)
+                {
+                    continue;
+                }
+                let before_len = self.writer.len();
+                self.emit(stmt_idx);
+                if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+                    self.write_line();
+                }
+            }
+        }
+
+        self.decrease_indent();
+        self.write("}");
+        self.skip_comments_for_erased_node(node);
+        true
+    }
+
+    fn recovered_declare_module_name_starts_with(
+        &self,
+        node: &Node,
+        pred: impl FnOnce(u8) -> bool,
+    ) -> Option<bool> {
+        let text = self.source_text?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let end = (node.end as usize).min(text.len());
+        let source = crate::safe_slice::slice(text, start, end).ok()?;
+        let module_pos = find_next_code_module_keyword(source, 0)?;
+        let name_start = module_pos + "module".len();
+        let rest = &source[name_start..];
+        let rest_trimmed = rest.trim_start_matches(|ch: char| ch.is_whitespace());
+        Some(
+            rest_trimmed
+                .as_bytes()
+                .first()
+                .is_some_and(|byte| pred(*byte)),
+        )
     }
 
     /// Emit a namespace/module as an IIFE for ES6+ targets.

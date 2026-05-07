@@ -3,6 +3,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::syntax::transform_utils::{contains_arguments_reference, contains_this_reference};
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -230,7 +231,11 @@ impl<'a> Printer<'a> {
             self.function_scope_depth += 1;
             self.arrow_function_scope_depth += 1;
             let prev_declared = std::mem::take(&mut self.declared_namespace_names);
-            self.emit(func.body);
+            if body_is_block
+                || !self.emit_arrow_concise_body_with_stripped_type_erasure_parens(func.body)
+            {
+                self.emit(func.body);
+            }
             self.declared_namespace_names = prev_declared;
             self.arrow_function_scope_depth -= 1;
             self.function_scope_depth -= 1;
@@ -241,6 +246,81 @@ impl<'a> Printer<'a> {
         self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.pop_temp_scope();
+    }
+
+    fn emit_arrow_concise_body_with_stripped_type_erasure_parens(
+        &mut self,
+        body: NodeIndex,
+    ) -> bool {
+        let Some(body_node) = self.arena.get(body) else {
+            return false;
+        };
+        if body_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return false;
+        };
+        let Some(paren) = self.arena.get_parenthesized(body_node) else {
+            return false;
+        };
+        let Some(inner) = self.arena.get(paren.expression) else {
+            return false;
+        };
+        if inner.kind != syntax_kind_ext::TYPE_ASSERTION
+            && inner.kind != syntax_kind_ext::AS_EXPRESSION
+            && inner.kind != syntax_kind_ext::SATISFIES_EXPRESSION
+        {
+            return false;
+        }
+
+        let unwrapped_kind = self.unwrap_type_assertion_kind(paren.expression);
+        let can_strip = matches!(
+            unwrapped_kind,
+            Some(k) if k == SyntaxKind::Identifier as u16
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || k == SyntaxKind::ThisKeyword as u16
+                || k == SyntaxKind::SuperKeyword as u16
+                || k == SyntaxKind::NullKeyword as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::BigIntLiteral as u16
+                || k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::RegularExpressionLiteral as u16
+                || k == syntax_kind_ext::TEMPLATE_EXPRESSION
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::NON_NULL_EXPRESSION
+                || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                || (k == syntax_kind_ext::CALL_EXPRESSION && !self.paren_in_new_callee)
+                || (k == syntax_kind_ext::NEW_EXPRESSION && !self.paren_in_access_position)
+                || ((k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION)
+                    && !self.ctx.flags.paren_leftmost_function_or_object
+                    && (!self.paren_in_access_position || self.paren_is_direct_call_callee))
+        );
+        if !can_strip {
+            return false;
+        }
+
+        let Some(actual_inner_start) = self
+            .source_text
+            .map(|_| self.skip_trivia_forward(inner.pos, inner.pos.saturating_add(2048)))
+        else {
+            return false;
+        };
+
+        let has_newline_comment = self.all_comments.iter().any(|comment| {
+            comment.pos >= body_node.pos
+                && comment.end <= actual_inner_start
+                && comment.has_trailing_new_line
+        });
+        if !has_newline_comment {
+            return false;
+        }
+
+        self.write_line();
+        self.emit(paren.expression);
+        true
     }
 
     fn emit_arrow_function_native_with_default_prologue(
@@ -1938,6 +2018,38 @@ mod tests {
         assert!(
             output.contains("async (x) =>"),
             "Async arrow with source parens should keep them.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn parenthesized_arrow_body_type_erasure_strips_parens_across_comment() {
+        let source = "const x = (a: any[]) => (\n    // comment\n    undefined as number\n);";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(
+            &parser.arena,
+            PrintOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("const x = (a) => \n// comment\nundefined;"),
+            "Arrow body type erasure should strip recovery parens and hoist the comment.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("=> ("),
+            "Arrow body type erasure should not preserve the opening paren.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("undefined);"),
+            "Arrow body type erasure should not preserve the closing paren.\nOutput:\n{output}"
         );
     }
 

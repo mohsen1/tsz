@@ -971,7 +971,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         app_id: TypeApplicationId,
     ) -> SubtypeResult {
         match self.try_expand_application(app_id) {
-            Some(expanded) => self.check_subtype(source, expanded),
+            Some(expanded) => {
+                let expanded_result = self.check_subtype(source, expanded);
+                if expanded_result.is_true() {
+                    expanded_result
+                } else {
+                    self.check_source_to_collected_application_properties(source, target)
+                        .unwrap_or(expanded_result)
+                }
+            }
             None => {
                 // Evaluation fallback: when try_expand_application fails
                 // (common for lib type aliases like Readonly<T>, Partial<T>
@@ -982,8 +990,44 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if t_eval != target {
                     self.check_subtype(source, t_eval)
                 } else {
-                    SubtypeResult::False
+                    self.check_source_to_collected_application_properties(source, target)
+                        .unwrap_or(SubtypeResult::False)
                 }
+            }
+        }
+    }
+
+    fn check_source_to_collected_application_properties(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeResult> {
+        use crate::objects::{PropertyCollectionResult, collect_properties};
+
+        match collect_properties(target, self.interner, self.resolver) {
+            PropertyCollectionResult::Properties {
+                properties,
+                string_index,
+                number_index,
+            } if !properties.is_empty() || string_index.is_some() || number_index.is_some() => {
+                let target_shape = crate::types::ObjectShape {
+                    flags: crate::types::ObjectFlags::empty(),
+                    properties,
+                    string_index,
+                    number_index,
+                    symbol: None,
+                };
+                let target_object =
+                    if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+                        self.interner.object_with_index(target_shape)
+                    } else {
+                        self.interner.object(target_shape.properties)
+                    };
+                Some(self.check_subtype(source, target_object))
+            }
+            PropertyCollectionResult::Any => Some(self.check_subtype(source, TypeId::ANY)),
+            PropertyCollectionResult::Properties { .. } | PropertyCollectionResult::NonObject => {
+                None
             }
         }
     }

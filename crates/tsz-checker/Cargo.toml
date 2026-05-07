@@ -86,6 +86,10 @@ name = "covariant_callbacks_tests"
 path = "tests/covariant_callbacks_tests.rs"
 
 [[test]]
+name = "unannotated_callback_arity_tests"
+path = "tests/unannotated_callback_arity_tests.rs"
+
+[[test]]
 name = "ts2449_parameter_decorator_no_tdz_tests"
 path = "tests/ts2449_parameter_decorator_no_tdz_tests.rs"
 
@@ -182,12 +186,20 @@ name = "destructuring_default_target_narrow_tests"
 path = "tests/destructuring_default_target_narrow_tests.rs"
 
 [[test]]
+name = "destructuring_spread_rest_tuple_source_display_tests"
+path = "tests/destructuring_spread_rest_tuple_source_display_tests.rs"
+
+[[test]]
 name = "destructuring_default_flow_assignment_tests"
 path = "tests/destructuring_default_flow_assignment_tests.rs"
 
 [[test]]
 name = "recursive_typeof_param_display_tests"
 path = "tests/recursive_typeof_param_display_tests.rs"
+
+[[test]]
+name = "interface_call_signature_typeof_param_tests"
+path = "tests/interface_call_signature_typeof_param_tests.rs"
 
 [[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"

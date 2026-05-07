@@ -75,13 +75,15 @@ impl<'a> Printer<'a> {
             }
             self.write(")]");
         } else {
+            let is_computed = self
+                .arena
+                .get(name)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
             // Suppress namespace/CJS-export qualification only when emitting a
-            // CLASS member name. For object-literal methods, computed property
-            // names are runtime expressions and must still pick up the
-            // `exports.X` rewrite for inline-exported variables. Without this
-            // gate, `export const fieldName = ...; export const o = { [fieldName]() {} }`
-            // emits `[fieldName]` instead of tsc's `[exports.fieldName]`.
-            let in_class_member = self.class_member_emit_depth > 0;
+            // non-computed class member name. Object-literal methods and
+            // computed class names are runtime expressions and must still pick
+            // up namespace/export rewrites.
+            let in_class_member = self.class_member_emit_depth > 0 && !is_computed;
             let prev_ns = self.suppress_ns_qualification;
             if in_class_member {
                 self.suppress_ns_qualification = true;

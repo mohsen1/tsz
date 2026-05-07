@@ -69,6 +69,23 @@ fn test_conditional_different_branches() {
 }
 
 #[test]
+fn test_conditional_preserves_unique_symbol_members() {
+    let interner = TypeInterner::new();
+    let left = interner.unique_symbol(crate::types::SymbolRef(1));
+    let right = interner.unique_symbol(crate::types::SymbolRef(2));
+
+    let result = compute_conditional_expression_type(&interner, TypeId::BOOLEAN, left, right);
+    let Some(TypeData::Union(list_id)) = interner.lookup(result) else {
+        panic!("expected unique symbol branches to remain a union, got {result:?}");
+    };
+    let members = interner.type_list(list_id);
+
+    assert_eq!(members.len(), 2);
+    assert!(members.contains(&left));
+    assert!(members.contains(&right));
+}
+
+#[test]
 fn test_conditional_error_propagation() {
     let interner = TypeInterner::new();
     // ERROR ? string : number -> ERROR

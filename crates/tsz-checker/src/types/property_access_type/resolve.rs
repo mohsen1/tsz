@@ -3081,16 +3081,20 @@ impl<'a> CheckerState<'a> {
         skip_flow_narrowing: bool,
     ) -> Option<TypeId> {
         let is_this_global = self.is_this_resolving_to_global(expression);
-        if !self.is_global_this_like_expression(expression) && !is_this_global {
+        let is_global_this = self.is_global_this_expression(expression);
+        let is_global_this_like = is_global_this || self.is_global_this_like_expression(expression);
+        let is_declared_window_global_this =
+            self.is_window_and_global_this_declared_expression(expression);
+        if !(is_global_this_like || is_this_global || is_declared_window_global_this) {
             return None;
         }
-        let base_display = if self.is_global_this_expression(expression) || is_this_global {
+        let base_display = if is_global_this || is_this_global {
             "typeof globalThis"
         } else {
             "Window & typeof globalThis"
         };
         let allow_unknown_property_fallback =
-            self.is_global_this_expression(expression) || is_this_global;
+            (is_global_this || is_this_global) && !is_declared_window_global_this;
         let property_type = self.resolve_global_this_property_type(
             property_name,
             name_or_argument,
@@ -3100,12 +3104,7 @@ impl<'a> CheckerState<'a> {
         if property_type == TypeId::ERROR {
             return Some(TypeId::ERROR);
         }
-        // TS7017: When noImplicitAny is enabled and the access target is
-        // `typeof globalThis` and the property is not found, emit the index
-        // signature error. Both `this.X` (when `this` resolves to global) and
-        // a direct `globalThis.X` access trigger this — tsc treats them
-        // identically because both bottom out in `typeof globalThis`, which
-        // has no index signature.
+        // TS7017 for missing `typeof globalThis` member access under noImplicitAny.
         let access_targets_global_this =
             is_this_global || self.is_global_this_expression(expression);
         if access_targets_global_this

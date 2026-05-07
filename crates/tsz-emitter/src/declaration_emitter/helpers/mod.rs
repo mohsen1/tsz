@@ -203,6 +203,7 @@ mod synthetic_dependencies;
 mod type_inference;
 mod type_inference_enum_access;
 mod type_inference_function_text;
+mod type_inference_imported_calls;
 mod type_inference_package_matching;
 mod type_inference_return_unions;
 mod type_param_rewrite;

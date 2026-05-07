@@ -69,6 +69,15 @@ fn parse_static_block_statement_is_supported() {
 }
 
 #[test]
+fn variable_annotation_with_window_and_typeof_globalthis_keeps_following_statements() {
+    let source = "let win: Window & typeof globalThis;\nglobalThis.hi\nconst n: number = \"x\";\n";
+    let (parser, root) = parse_source(source);
+    assert_eq!(parser.get_diagnostics().len(), 0);
+    let sf = parser.get_arena().get_source_file_at(root).unwrap();
+    assert_eq!(sf.statements.nodes.len(), 3);
+}
+
+#[test]
 fn parse_with_statement_with_recovery_when_expression_missing() {
     let (parser, _root) = parse_source("with () {}\nconst ok = 1;");
     assert!(!parser.get_diagnostics().is_empty());

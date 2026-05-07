@@ -386,10 +386,10 @@ pub struct CheckerContext<'a> {
     /// Keyed by (`namespace_name`, `member_name`) and stores both hits and misses.
     /// This avoids repeatedly rescanning all binders for hot qualified React lookups
     /// like `React.Component`, `React.ComponentClass`, `React.ReactNode`, etc.
-    pub namespace_member_resolution_cache: RefCell<FxHashMap<(String, String), Option<SymbolId>>>,
+    pub namespace_member_resolution_cache: RefCell<NamespaceMemberResolutionCache>,
 
-    /// Per-checker positive cache for named exports resolved through `export=`.
-    /// Misses are not cached because alias-cycle state can affect failed walks.
+    /// Per-checker cache for named exports resolved through `export=`.
+    /// Misses are cached only for lookups that enter without alias-cycle state.
     pub export_equals_named_cache: RefCell<ExportEqualsNamedCache>,
 
     /// Per-checker cache for nested namespace candidates found through namespace exports.
@@ -401,6 +401,10 @@ pub struct CheckerContext<'a> {
     /// Per-checker cache for same-name symbol candidates across the current binder
     /// and all cross-file binders.
     pub symbol_name_candidates_cache: RefCell<FxHashMap<String, Vec<SymbolId>>>,
+
+    /// True once `nested_namespace_candidates_cache` has been populated for every
+    /// nested namespace export name visible across all binders.
+    pub nested_namespace_candidates_cache_complete: Cell<bool>,
 
     /// Per-checker cache for text-based entity-name resolution used by lowering.
     /// Keyed by names like `React.ReactNode` / `JSX.Element` and stores both

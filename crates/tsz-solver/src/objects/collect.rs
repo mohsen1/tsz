@@ -7,8 +7,8 @@ use crate::relations::subtype::TypeResolver;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    IndexSignature, IntrinsicKind, MappedModifier, ObjectShape, PropertyInfo, TypeData, TypeId,
-    TypeListId, Visibility,
+    IndexSignature, IntrinsicKind, ObjectShape, PropertyInfo, TypeData, TypeId, TypeListId,
+    Visibility,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -173,6 +173,20 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                     self.collect(constraint);
                 }
             }
+            Some(TypeData::Application(_)) => {
+                let mut evaluator = crate::evaluation::evaluate::TypeEvaluator::with_resolver(
+                    self.interner,
+                    self.resolver,
+                );
+                let evaluated = evaluator.evaluate(resolved);
+                if evaluated != resolved {
+                    self.collect(evaluated);
+                } else if let Some(expanded) = self.expand_application_with_resolver(resolved)
+                    && expanded != resolved
+                {
+                    self.collect(expanded);
+                }
+            }
             // Conditional type: collect properties from its default constraint.
             // For Extract-like patterns (T extends U ? T : never), the constraint
             // is T & U, so we get U's properties. For general patterns, the
@@ -203,6 +217,29 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         }
     }
 
+    fn expand_application_with_resolver(&self, type_id: TypeId) -> Option<TypeId> {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) else {
+            return None;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) else {
+            return None;
+        };
+        let type_params = self.resolver.get_lazy_type_params(def_id)?;
+        let body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        if body == type_id || type_params.is_empty() {
+            return None;
+        }
+
+        let substitution =
+            crate::TypeSubstitution::from_args(self.interner, &type_params, &app.args);
+        let mut instantiated = crate::instantiate_type(self.interner, body, &substitution);
+        if crate::contains_this_type(self.interner, instantiated) {
+            instantiated = crate::substitute_this_type(self.interner, instantiated, type_id);
+        }
+        Some(instantiated)
+    }
+
     fn collect_finite_mapped_properties(&mut self, mapped_id: crate::types::MappedTypeId) {
         let Some(names) =
             crate::type_queries::collect_finite_mapped_property_names(self.interner, mapped_id)
@@ -211,8 +248,6 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         };
 
         let mapped = self.interner.mapped_type(mapped_id);
-        let optional = mapped.optional_modifier == Some(MappedModifier::Add);
-        let readonly = mapped.readonly_modifier == Some(MappedModifier::Add);
         let mut properties = Vec::with_capacity(names.len());
 
         for name in names {
@@ -224,6 +259,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             ) else {
                 continue;
             };
+            let (optional, readonly) = self.finite_mapped_property_modifiers(&mapped, name);
             properties.push(PropertyInfo {
                 name,
                 type_id,
@@ -249,6 +285,44 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             symbol: None,
         };
         self.merge_shape(&shape);
+    }
+
+    fn finite_mapped_property_modifiers(
+        &self,
+        mapped: &crate::types::MappedType,
+        property_name: Atom,
+    ) -> (bool, bool) {
+        let source_modifiers = self.finite_mapped_source_property_modifiers(mapped, property_name);
+        let (source_optional, source_readonly) = source_modifiers.unwrap_or((false, false));
+        let is_homomorphic = source_modifiers.is_some();
+        crate::type_queries::compute_mapped_modifiers(
+            mapped,
+            is_homomorphic,
+            source_optional,
+            source_readonly,
+        )
+    }
+
+    fn finite_mapped_source_property_modifiers(
+        &self,
+        mapped: &crate::types::MappedType,
+        property_name: Atom,
+    ) -> Option<(bool, bool)> {
+        let (source_type, key_type) =
+            crate::type_queries::get_index_access_types(self.interner, mapped.template)?;
+        let key_param = crate::type_param_info(self.interner, key_type)?;
+        if key_param.name != mapped.type_param.name {
+            return None;
+        }
+
+        let resolved_source = resolve_type(source_type, self.interner, self.resolver);
+        match collect_properties(resolved_source, self.interner, self.resolver) {
+            PropertyCollectionResult::Properties { properties, .. } => {
+                PropertyInfo::find_in_slice(&properties, property_name)
+                    .map(|prop| (prop.optional, prop.readonly))
+            }
+            _ => None,
+        }
     }
 
     /// Collect common properties from all union members.

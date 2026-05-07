@@ -2428,6 +2428,28 @@ fn check_checker_lib_file(
     RequestCacheCounters,
     tsz_solver::StoreStatistics,
 ) {
+    check_checker_lib_file_for_interfaces(
+        env,
+        lib_idx,
+        env.affected_interfaces,
+        env.extension_interfaces,
+        query_cache,
+        shared_lib_cache,
+    )
+}
+
+fn check_checker_lib_file_for_interfaces(
+    env: &CheckerLibFileCheckEnv<'_>,
+    lib_idx: usize,
+    interface_names: &FxHashSet<String>,
+    extension_interfaces: &FxHashSet<String>,
+    query_cache: &QueryCache,
+    shared_lib_cache: Option<Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>>,
+) -> (
+    Vec<Diagnostic>,
+    RequestCacheCounters,
+    tsz_solver::StoreStatistics,
+) {
     let program = env.program;
     let options = env.options;
     let checker_libs = env.checker_libs;
@@ -2441,7 +2463,7 @@ fn check_checker_lib_file(
     }
 
     let lib_bound_file =
-        build_lib_bound_file_for_interface_checks(program, lib_file, env.affected_interfaces);
+        build_lib_bound_file_for_interface_checks(program, lib_file, interface_names);
     let binder = create_binder_from_bound_file_with_augmentations(
         &lib_bound_file,
         program,
@@ -2483,8 +2505,8 @@ fn check_checker_lib_file(
     tsz::checker::reset_stack_overflow_flag();
     checker.check_source_file_interfaces_only_filtered_post_merge(
         lib_bound_file.source_file,
-        env.affected_interfaces,
-        env.extension_interfaces,
+        interface_names,
+        extension_interfaces,
     );
 
     let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
@@ -2575,6 +2597,7 @@ fn collect_lib_interface_node_symbols(
     arena: &NodeArena,
     statements: &[NodeIndex],
     globals: &SymbolTable,
+    fallback_node_symbols: &FxHashMap<u32, tsz::binder::SymbolId>,
     affected_interfaces: &FxHashSet<String>,
     node_symbols: &mut FxHashMap<u32, tsz::binder::SymbolId>,
 ) {
@@ -2587,7 +2610,9 @@ fn collect_lib_interface_node_symbols(
             if let Some(interface) = arena.get_interface(stmt_node)
                 && let Some(name) = arena.get_identifier_at(interface.name)
                 && affected_interfaces.contains(&name.escaped_text)
-                && let Some(sym_id) = globals.get(&name.escaped_text)
+                && let Some(sym_id) = globals
+                    .get(&name.escaped_text)
+                    .or_else(|| fallback_node_symbols.get(&stmt_idx.0).copied())
             {
                 node_symbols.insert(stmt_idx.0, sym_id);
                 node_symbols.insert(interface.name.0, sym_id);
@@ -2619,7 +2644,9 @@ fn collect_lib_interface_node_symbols(
                                 type_idx
                             };
                             if let Some(base_name) = entity_name_text_in_arena(arena, expr_idx)
-                                && let Some(base_sym_id) = globals.get(&base_name)
+                                && let Some(base_sym_id) = globals
+                                    .get(&base_name)
+                                    .or_else(|| fallback_node_symbols.get(&expr_idx.0).copied())
                             {
                                 node_symbols.insert(expr_idx.0, base_sym_id);
                             }
@@ -2656,6 +2683,7 @@ fn collect_lib_interface_node_symbols(
             arena,
             &inner.nodes,
             globals,
+            fallback_node_symbols,
             affected_interfaces,
             node_symbols,
         );
@@ -3265,6 +3293,7 @@ fn build_lib_bound_file_for_interface_checks(
             lib_file.arena.as_ref(),
             &source_file.statements.nodes,
             &program.globals,
+            lib_file.binder.node_symbols.as_ref(),
             affected_interfaces,
             &mut node_symbols,
         );
