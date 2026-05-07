@@ -143,6 +143,75 @@ mod tests {
     }
 
     #[test]
+    fn async_generator_yield_uses_async_helpers() {
+        let source =
+            "export async function* f() {\n    await 1;\n    yield 2;\n    yield* [3];\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            import_helpers: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("yield tslib_1.__await(1);"),
+            "await should be wrapped for lowered async generators.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("yield yield tslib_1.__await(2);"),
+            "yield should be wrapped for lowered async generators.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "yield tslib_1.__await(yield* tslib_1.__asyncDelegator(tslib_1.__asyncValues([3])));"
+            ),
+            "yield* should be delegated through async generator helpers.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn class_expression_static_comma_temp_follows_computed_name_temps() {
+        let source = "async function* test(x) {\n    return class {\n        [await x] = await x;\n        static [await x] = await x;\n        [yield 1] = yield 2;\n        static [yield 3] = yield 4;\n    };\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, _b, _c, _d, _e;"),
+            "Computed names should allocate temps before the class-expression temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return _e = class {"),
+            "Class-expression result temp should follow computed-name temps.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_a = await x,\n        _b = await x,\n        _c = yield 1,\n        _d = yield 3,\n        _e[_b] = await x,\n        _e[_d] = yield 4,\n        _e;"),
+            "Static computed field assignments should use the later class-expression temp.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn emit_class_with_accessor_members_preserves_leading_comments_in_ts_output() {
         let source = "// Regular class should still error when targeting ES5\n\
 class RegularClass {\n    accessor shouldError;\n}\n";

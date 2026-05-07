@@ -4,6 +4,7 @@
 //! variable declaration conversion, export rewriting, and parameter renaming.
 
 use super::*;
+use crate::transforms::ir::IRMethodName;
 
 // =============================================================================
 // Helper Functions
@@ -941,12 +942,26 @@ pub(super) fn rewrite_exported_var_refs(
         IRNode::NamespaceExport { value, .. } => {
             rewrite_exported_var_refs(value, ns_name, names);
         }
-        IRNode::PrototypeMethod { function, .. } | IRNode::StaticMethod { function, .. } => {
+        IRNode::PrototypeMethod {
+            method_name,
+            function,
+            ..
+        }
+        | IRNode::StaticMethod {
+            method_name,
+            function,
+            ..
+        } => {
+            rewrite_exported_var_refs_in_method_name(method_name, ns_name, names);
             rewrite_exported_var_refs(function, ns_name, names);
         }
         IRNode::DefineProperty {
-            target, descriptor, ..
+            target,
+            property_name,
+            descriptor,
+            ..
         } => {
+            rewrite_exported_var_refs_in_method_name(property_name, ns_name, names);
             rewrite_exported_var_refs(target, ns_name, names);
             if let Some(getter) = &mut descriptor.get {
                 rewrite_exported_var_refs(getter, ns_name, names);
@@ -963,6 +978,16 @@ pub(super) fn rewrite_exported_var_refs(
             }
         }
         _ => {}
+    }
+}
+
+fn rewrite_exported_var_refs_in_method_name(
+    method_name: &mut IRMethodName,
+    ns_name: &str,
+    names: &std::collections::HashSet<String>,
+) {
+    if let IRMethodName::Computed(expr) = method_name {
+        rewrite_exported_var_refs(expr, ns_name, names);
     }
 }
 
