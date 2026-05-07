@@ -981,26 +981,33 @@ impl<'a> CheckerState<'a> {
                     }
                     // Assignability check — tsc anchors at the attribute NAME.
                     //
-                    // When either the actual or expected type contains unresolved type
-                    // parameters (e.g., from a deferred conditional like
-                    // `ExtractValueType<WrappedProps>`), skip per-attribute type checking.
-                    // tsc's "applicability" mechanism is more lenient for generic
-                    // components with complex signatures — it defers the real check to
-                    // instantiation time. Without this, we emit false TS2322 for valid
-                    // JSX like:
+                    // When the *expected* prop type contains unresolved type parameters
+                    // (e.g., from a deferred conditional like
+                    // `ExtractValueType<WrappedProps>`), skip per-attribute type
+                    // checking. tsc's "applicability" mechanism is more lenient for
+                    // generic components with complex signatures — it defers the real
+                    // check to instantiation time. Without this, we emit false TS2322
+                    // for valid JSX like:
                     //   <ReactSelectClass<ExtractValueType<WrappedProps>> value={props.value} />
-                    // where the conditional type in `props.value` can't yet be resolved.
-                    let attr_has_unresolved_type_params =
+                    // where the conditional type in the expected prop can't yet be
+                    // resolved.
+                    //
+                    // We do NOT skip when only the *actual* attribute value contains
+                    // type parameters and the expected type is concrete. tsc still
+                    // checks `<Comp s={x} />` where `Comp` expects `s: string` and
+                    // `x: T` is unconstrained — it emits TS2322 because `T`'s
+                    // constraint (`unknown`) is not assignable to `string`. Letting the
+                    // standard assignability path run handles both the constrained
+                    // case (where the constraint satisfies the target) and the
+                    // unconstrained case (where it does not).
+                    let expected_has_unresolved_type_params =
                         crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             expected_type,
-                        ) || crate::query_boundaries::common::contains_type_parameters(
-                            self.ctx.types,
-                            actual_type,
                         );
                     if actual_type != TypeId::ANY
                         && actual_type != TypeId::ERROR
-                        && !attr_has_unresolved_type_params
+                        && !expected_has_unresolved_type_params
                     {
                         let assignable = if is_function_attr {
                             if attr_name == self.get_jsx_children_prop_name() {
