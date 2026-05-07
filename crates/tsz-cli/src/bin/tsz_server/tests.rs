@@ -2150,6 +2150,10 @@ fn test_full_protocol_dispatcher_commands_are_recognized() {
         make_request("outliningSpans", serde_json::json!({"file": file})),
         make_request("fileReferences-full", serde_json::json!({"file": file})),
         make_request("navbar-full", serde_json::json!({"file": file})),
+        make_request(
+            "selectionRange-full",
+            serde_json::json!({"file": file, "locations": [{"line": 2, "offset": 12}]}),
+        ),
     ];
 
     for req in requests {
@@ -2160,6 +2164,55 @@ fn test_full_protocol_dispatcher_commands_are_recognized() {
             "{command} should be routed to a handler, got: {resp:?}"
         );
     }
+}
+
+#[test]
+fn selection_range_full_returns_numeric_text_spans() {
+    let mut server = make_server();
+    let file = "/selection-full.ts";
+    server.open_files.insert(
+        file.to_string(),
+        "function f() {\n  return 1 + 2;\n}\n".to_string(),
+    );
+
+    let resp = server.handle_tsserver_request(make_request(
+        "selectionRange-full",
+        serde_json::json!({
+            "file": file,
+            "locations": [{ "line": 2, "offset": 12 }]
+        }),
+    ));
+
+    assert!(resp.success);
+    let body = resp.body.expect("selectionRange-full should return a body");
+    let ranges = body
+        .as_array()
+        .expect("selectionRange-full body should be an array");
+    assert_eq!(ranges.len(), 1);
+    let text_span = ranges[0]
+        .get("textSpan")
+        .expect("selectionRange-full should include textSpan");
+    assert!(
+        text_span
+            .get("start")
+            .and_then(serde_json::Value::as_u64)
+            .is_some(),
+        "full selection range should use numeric TextSpan start: {text_span:?}"
+    );
+    assert!(
+        text_span
+            .get("length")
+            .and_then(serde_json::Value::as_u64)
+            .is_some(),
+        "full selection range should use numeric TextSpan length: {text_span:?}"
+    );
+    assert!(
+        text_span
+            .get("start")
+            .and_then(|start| start.get("line"))
+            .is_none(),
+        "full selection range should not use simplified line/offset shape: {text_span:?}"
+    );
 }
 
 #[test]
