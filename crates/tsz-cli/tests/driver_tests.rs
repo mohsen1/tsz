@@ -420,6 +420,44 @@ for (const item of value) {
 }
 
 #[test]
+fn cli_check_js_implies_allow_js_for_root_js_file() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("index.js"),
+        r#"/** @type {number} */
+const x = "s";
+"#,
+    );
+
+    let args = parse_args(&[
+        "tsz",
+        "--ignoreConfig",
+        "--checkJs",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "index.js",
+    ]);
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::FILE_IS_A_JAVASCRIPT_FILE_DID_YOU_MEAN_TO_ENABLE_THE_ALLOWJS_OPTION
+        ),
+        "CLI checkJs should imply allowJs instead of TS6504, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected checked-JS assignment diagnostic after accepting index.js, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn plain_js_suppresses_ts2774_without_check_js() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
