@@ -1475,6 +1475,45 @@ fn test_resolver_relative_ts_file() {
 }
 
 #[test]
+fn test_resolver_explicit_dts_import_probes_sibling_implementation() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_resolver_explicit_dts_import");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(dir.join("types.d.ts"), "import {} from './a.d.ts';").unwrap();
+    fs::write(dir.join("a.ts"), "export {};").unwrap();
+    fs::write(dir.join("b.mts"), "export {};").unwrap();
+    fs::write(dir.join("c.cts"), "export = {};").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let dts = resolver
+        .resolve("./a.d.ts", &dir.join("types.d.ts"), Span::new(15, 25))
+        .expect("expected .d.ts specifier to resolve through sibling .ts");
+    assert_eq!(dts.resolved_path, dir.join("a.ts"));
+    assert_eq!(dts.extension, ModuleExtension::Ts);
+
+    let dmts = resolver
+        .resolve("./b.d.mts", &dir.join("types.d.ts"), Span::new(15, 26))
+        .expect("expected .d.mts specifier to resolve through sibling .mts");
+    assert_eq!(dmts.resolved_path, dir.join("b.mts"));
+    assert_eq!(dmts.extension, ModuleExtension::Mts);
+
+    let dcts = resolver
+        .resolve("./c.d.cts", &dir.join("types.d.ts"), Span::new(15, 26))
+        .expect("expected .d.cts specifier to resolve through sibling .cts");
+    assert_eq!(dcts.resolved_path, dir.join("c.cts"));
+    assert_eq!(dcts.extension, ModuleExtension::Cts);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_relative_tsx_file() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_tsx");
