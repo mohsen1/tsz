@@ -747,6 +747,14 @@ impl<'a> CheckerState<'a> {
         }
 
         tracing::trace!(name, "resolve_lib_type_by_name: called");
+        // Mark this name as in-progress. Recursive lib graphs such as
+        // `Promise`/`PromiseLike` can re-enter through generic-reference
+        // prewarming before the final cache write below; returning `None` for
+        // the in-progress edge breaks that cycle and the completed result
+        // overwrites this sentinel.
+        self.ctx
+            .lib_type_resolution_cache
+            .insert(name.to_string(), None);
         let mut lib_type_id: Option<TypeId> = None;
         let factory = self.ctx.types.factory();
         let mut symbol_has_interface = false;
@@ -802,6 +810,24 @@ impl<'a> CheckerState<'a> {
                                 .type_arguments
                                 .as_ref()
                                 .is_some_and(|args| !args.nodes.is_empty());
+                            if has_type_args
+                                && let Some(ref_sym_id) = resolve_lib_node_in_arenas(
+                                    self.ctx.binder,
+                                    type_ref.type_name,
+                                    &decls_with_arenas,
+                                    fallback_arena,
+                                )
+                                && ref_sym_id != sym_id
+                            {
+                                let ref_name = self
+                                    .ctx
+                                    .binder
+                                    .get_symbol_with_libs(ref_sym_id, &lib_binders)
+                                    .map(|symbol| symbol.escaped_name.clone());
+                                if let Some(ref_name) = ref_name {
+                                    let _ = self.resolve_lib_type_by_name(&ref_name);
+                                }
+                            }
                             if !has_type_args
                                 && let Some(name_node) = decl_arena.get(type_ref.type_name)
                                 && name_node.kind == SyntaxKind::Identifier as u16
@@ -966,6 +992,13 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+
+        for ty in lib_types.iter().copied() {
+            if crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty).is_some() {
+                continue;
+            }
+            self.ensure_relation_input_ready(ty);
         }
 
         // Merge repeated lib interface declarations using interface-merge

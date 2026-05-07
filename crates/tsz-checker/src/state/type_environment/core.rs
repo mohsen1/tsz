@@ -886,11 +886,12 @@ impl<'a> CheckerState<'a> {
         // Detect homomorphic source early: needed both for the solver retry
         // decision and for property expansion below.
         let is_homomorphic_source = query::keyof_inner_type(self.ctx.types, mapped.constraint);
-        let is_homomorphic = is_homomorphic_source.is_some();
+        let modifier_source = is_homomorphic_source;
+        let is_homomorphic = modifier_source.is_some();
         let is_identity_homomorphic =
             crate::query_boundaries::common::homomorphic_mapped_source(self.ctx.types, type_id)
                 .is_some();
-        let source_has_type_params = is_homomorphic_source.is_some_and(|source| {
+        let source_has_type_params = modifier_source.is_some_and(|source| {
             crate::query_boundaries::common::is_type_parameter_or_intersection_with_type_parameter(
                 self.ctx.types,
                 source,
@@ -928,7 +929,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 type_id,
             )
-            && let Some(source) = is_homomorphic_source
+            && let Some(source) = modifier_source
         {
             let source_props =
                 query::collect_homomorphic_source_property_infos(self.ctx.types, source);
@@ -1020,7 +1021,7 @@ impl<'a> CheckerState<'a> {
 
         let mut source_decl_order = Vec::new();
         let source_prop_map: rustc_hash::FxHashMap<tsz_common::Atom, (bool, bool, TypeId)> =
-            if let Some(source) = is_homomorphic_source {
+            if let Some(source) = modifier_source {
                 // Pre-resolve lazy refs in the homomorphic source so property
                 // collection sees the fully resolved object shape.
                 self.ensure_relation_input_ready(source);
@@ -1031,12 +1032,12 @@ impl<'a> CheckerState<'a> {
                     if !ordered.is_empty() {
                         ordered
                     } else {
-                        match tsz_solver::objects::collect_properties(
+                        match crate::query_boundaries::intersection_display::collect_properties(
                             resolved_source,
                             self.ctx.types,
                             &self.ctx,
                         ) {
-                            tsz_solver::objects::PropertyCollectionResult::Properties {
+                            crate::query_boundaries::intersection_display::PropertyCollectionResult::Properties {
                                 properties,
                                 ..
                             } => properties,

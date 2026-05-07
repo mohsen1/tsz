@@ -78,7 +78,22 @@ pub fn compute_conditional_expression_type(
         return interner.union2(adjusted_true, adjusted_false);
     }
 
+    if contains_unique_symbol(interner, true_type) || contains_unique_symbol(interner, false_type) {
+        return interner.union_preserve_members(vec![true_type, false_type]);
+    }
+
     interner.union2(true_type, false_type)
+}
+
+fn contains_unique_symbol(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match interner.lookup(type_id) {
+        Some(TypeData::UniqueSymbol(_)) => true,
+        Some(TypeData::Union(list_id)) => interner
+            .type_list(list_id)
+            .iter()
+            .any(|&member| contains_unique_symbol(interner, member)),
+        _ => false,
+    }
 }
 
 pub fn normalize_object_union_members_for_write_target(

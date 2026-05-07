@@ -2117,6 +2117,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.nameable_new_expression_type_text(expr_idx)
             }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                self.conditional_unique_symbol_union_type_text(expr_idx)
+            }
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 self.class_static_computed_index_access_type_text(expr_idx)
             }
@@ -2147,6 +2150,74 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => None,
         }
+    }
+
+    fn conditional_unique_symbol_union_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let conditional = self.arena.get_conditional_expr(expr_node)?;
+        let when_true = self.unique_symbol_reference_typeof_text(conditional.when_true)?;
+        let when_false = self.unique_symbol_reference_typeof_text(conditional.when_false)?;
+        if when_true == when_false {
+            Some(when_true)
+        } else {
+            Some(format!("{when_true} | {when_false}"))
+        }
+    }
+
+    fn unique_symbol_reference_typeof_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let name = self.get_identifier_text(expr_idx)?;
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        if !self.symbol_has_unique_symbol_type(sym_id) {
+            return None;
+        }
+        Some(format!("typeof {name}"))
+    }
+
+    fn symbol_has_unique_symbol_type(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let resolved_sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+
+        if let (Some(cache), Some(interner)) = (self.type_cache.as_ref(), self.type_interner)
+            && let Some(type_id) = cache.symbol_types.get(&resolved_sym_id).copied()
+            && tsz_solver::type_queries::is_unique_symbol_type(interner, type_id)
+        {
+            return true;
+        }
+
+        let Some(symbol) = binder.symbols.get(resolved_sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(var_decl) = self.arena.get_variable_declaration(decl_node) else {
+                return false;
+            };
+            if var_decl
+                .type_annotation
+                .into_option()
+                .is_some_and(|type_idx| {
+                    self.emit_type_node_text(type_idx).as_deref() == Some("unique symbol")
+                })
+            {
+                return true;
+            }
+            self.arena.is_const_variable_declaration(decl_idx)
+                && var_decl.initializer.is_some()
+                && self.is_symbol_call(var_decl.initializer)
+        })
     }
 
     pub(in crate::declaration_emitter) fn super_method_call_return_type_text(

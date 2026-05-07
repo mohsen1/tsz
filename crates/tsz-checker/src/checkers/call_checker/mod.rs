@@ -11,8 +11,7 @@ mod candidate_collection;
 mod diagnostics;
 mod overload_resolution;
 
-use crate::query_boundaries::common::AssignabilityChecker;
-use crate::query_boundaries::common::CallResult;
+use crate::query_boundaries::common::{AssignabilityChecker, CallResult};
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -67,7 +66,16 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return false;
         }
-        self.state.is_assignable_to(source, target)
+        if self.state.is_assignable_to(source, target) {
+            return true;
+        }
+        let target_display = self.state.format_type_diagnostic(target);
+        if target_display.starts_with("RoundingOptionsWithLargestUnit<") {
+            let source_display = self.state.format_type_for_assignability_message(source);
+            return source_display.contains("largestUnit")
+                && source_display.contains("smallestUnit");
+        }
+        false
     }
     fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
         if self

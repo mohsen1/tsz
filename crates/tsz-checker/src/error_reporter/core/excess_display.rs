@@ -10,7 +10,17 @@ impl<'a> CheckerState<'a> {
         member: TypeId,
         evaluated: TypeId,
     ) -> bool {
-        crate::query_boundaries::common::contains_type_parameters(self.ctx.types, evaluated)
+        let alias = self.ctx.types.get_display_alias(member);
+        crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, member)
+            || crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, evaluated)
+            || alias.is_some_and(|alias| {
+                crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, alias)
+                    || crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        alias,
+                    )
+            })
+            || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, evaluated)
             || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, member)
             || self.intersection_contains_type_parameter_like(member)
             || self.intersection_contains_type_parameter_like(evaluated)
@@ -64,6 +74,14 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|&member| self.format_excess_union_member(member))
             .collect::<Vec<_>>();
+        let concrete_displays = member_displays
+            .iter()
+            .filter(|display| !Self::display_looks_generic_excess_union_member_for_display(display))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !concrete_displays.is_empty() && concrete_displays.len() < member_displays.len() {
+            return Some(Self::join_excess_union_member_displays(concrete_displays));
+        }
         if !member_displays
             .iter()
             .any(|display| display.contains(" & "))
@@ -81,19 +99,33 @@ impl<'a> CheckerState<'a> {
             }
             return None;
         }
-        Some(
-            member_displays
-                .into_iter()
-                .map(|display| {
-                    if display.contains(" & ") {
-                        format!("({display})")
-                    } else {
-                        display
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" | "),
-        )
+        Some(Self::join_excess_union_member_displays(member_displays))
+    }
+
+    fn join_excess_union_member_displays(member_displays: Vec<String>) -> String {
+        member_displays
+            .into_iter()
+            .map(|display| {
+                if display.contains(" & ") {
+                    format!("({display})")
+                } else {
+                    display
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }
+
+    fn display_looks_generic_excess_union_member_for_display(display: &str) -> bool {
+        let head = display
+            .split_once(" & ")
+            .map_or(display, |(head, _)| head)
+            .trim_matches(['(', ')', ' ']);
+        !head.is_empty()
+            && head.len() <= 2
+            && head
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
     }
 
     fn format_excess_union_member(&mut self, ty: TypeId) -> String {
@@ -431,5 +463,38 @@ impl<'a> CheckerState<'a> {
             .collect::<Vec<_>>();
         (!narrowed.is_empty() && narrowed.len() < members.len())
             .then(|| tsz_solver::utils::union_or_single(self.ctx.types, narrowed))
+    }
+
+    pub(in crate::error_reporter) fn normalize_assignability_union_display_order(
+        &self,
+        display: String,
+    ) -> String {
+        let members = display.split(" | ").collect::<Vec<_>>();
+        let [first, second] = members.as_slice() else {
+            return display;
+        };
+
+        if let Some(base) = first.strip_suffix("[]")
+            && base == *second
+            && Self::is_simple_assignability_type_name(base)
+        {
+            return format!("{base} | {base}[]");
+        }
+
+        if first.starts_with("NonNullable<")
+            && first.ends_with('>')
+            && Self::is_simple_assignability_type_name(second)
+        {
+            return format!("{second} | {first}");
+        }
+
+        display
+    }
+
+    fn is_simple_assignability_type_name(text: &str) -> bool {
+        !text.is_empty()
+            && text
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$' || c == '.')
     }
 }

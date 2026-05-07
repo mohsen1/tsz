@@ -182,6 +182,10 @@ name = "destructuring_default_target_narrow_tests"
 path = "tests/destructuring_default_target_narrow_tests.rs"
 
 [[test]]
+name = "destructuring_spread_rest_tuple_source_display_tests"
+path = "tests/destructuring_spread_rest_tuple_source_display_tests.rs"
+
+[[test]]
 name = "destructuring_default_flow_assignment_tests"
 path = "tests/destructuring_default_flow_assignment_tests.rs"
 

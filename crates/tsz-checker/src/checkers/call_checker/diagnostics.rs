@@ -34,6 +34,10 @@ impl<'a> CheckerState<'a> {
             // They must survive call-expression diagnostic rollbacks.
             || diag.code == diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_TRUTHY
             || diag.code == diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_FALSY
+            // TS2352 from an explicit type assertion is not an overload-candidate
+            // failure. If the assertion itself has no overlap, tsc reports it even
+            // when the surrounding overloaded call resolves through a catch-all.
+            || diag.code == diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV
             // TS2304/TS2552 (Cannot find name / did you mean?) are name-resolution
             // facts that do not depend on the overload candidate being tried.
             // They must survive speculative rollbacks so undeclared identifiers

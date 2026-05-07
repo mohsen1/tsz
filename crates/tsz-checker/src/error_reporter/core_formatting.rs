@@ -628,6 +628,7 @@ impl<'a> CheckerState<'a> {
         {
             formatted = format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
+        formatted = self.normalize_assignability_union_display_order(formatted);
         self.normalize_template_placeholder_spacing_for_display(&formatted)
     }
 
