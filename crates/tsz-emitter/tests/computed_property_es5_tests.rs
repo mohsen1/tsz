@@ -70,3 +70,39 @@ fn computed_property_format_structure() {
         "Comma expression should end with _a).\nOutput:\n{output}"
     );
 }
+
+/// Issue #3968: An object literal spread whose leading element segment
+/// contains a computed property must lower the elements via the
+/// `(_a = {}, _a[k] = 1, _a)` pattern, not as an ES2015 `{ [k]: 1 }`
+/// literal. The emitted code must be valid ES5 with balanced parens.
+#[test]
+fn object_spread_leading_computed_property_lowers_to_assign_pattern() {
+    let source = r#"const k = "x";
+const b = { y: 2 };
+const obj = { [k]: 1, ...b };"#;
+    let output = emit_es5(source);
+
+    // Must NOT keep the ES2015 computed-property literal form.
+    assert!(
+        !output.contains("[k]: 1"),
+        "Computed property must be lowered, not emitted as ES2015 syntax.\nOutput:\n{output}"
+    );
+
+    // Must use the comma-expression lowering pattern.
+    assert!(
+        output.contains("_a[k] = 1"),
+        "Computed property should be lowered to `_a[k] = 1`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__assign("),
+        "Spread should be lowered with __assign helper.\nOutput:\n{output}"
+    );
+
+    // Parens must balance — Node would reject mismatched output.
+    let opens = output.matches('(').count();
+    let closes = output.matches(')').count();
+    assert_eq!(
+        opens, closes,
+        "Emitted JS must have balanced parens.\nOutput:\n{output}"
+    );
+}
