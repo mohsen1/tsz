@@ -182,6 +182,22 @@ fn check_json_module_import(
     module: ModuleKind,
     file_is_esm: Option<bool>,
 ) -> Vec<Diagnostic> {
+    check_json_module_import_with_resolve_json_module(
+        main_file_name,
+        source,
+        module,
+        file_is_esm,
+        true,
+    )
+}
+
+fn check_json_module_import_with_resolve_json_module(
+    main_file_name: &str,
+    source: &str,
+    module: ModuleKind,
+    file_is_esm: Option<bool>,
+    resolve_json_module: bool,
+) -> Vec<Diagnostic> {
     let (arena_main, binder_main, root_main) = parse_and_bind(main_file_name, source);
     let (arena_json, binder_json, _) = parse_and_bind("config.json", r#"{ "version": 1 }"#);
 
@@ -200,7 +216,7 @@ fn check_json_module_import(
         CheckerOptions {
             module,
             no_lib: true,
-            resolve_json_module: true,
+            resolve_json_module,
             ..CheckerOptions::default()
         },
     );
@@ -436,6 +452,24 @@ fn node18_esm_named_json_import_reports_ts1544_not_ts2614() {
     assert!(
         diagnostics.iter().all(|d| d.code != 2614),
         "Did not expect TS2614 for ESM named import from JSON, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn nodenext_esm_json_type_attribute_without_resolve_json_module_does_not_emit_module_errors() {
+    let diagnostics = check_json_module_import_with_resolve_json_module(
+        "main.mts",
+        r#"import config from "./config.json" with { type: "json" };"#,
+        ModuleKind::NodeNext,
+        Some(true),
+        false,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !matches!(d.code, 1192 | 2306 | 2732)),
+        "Did not expect JSON module/default diagnostics for a NodeNext ESM import with type=json, got: {diagnostics:?}"
     );
 }
 

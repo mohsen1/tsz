@@ -224,8 +224,16 @@ impl<'a> CheckerState<'a> {
         // TSC includes source-level quotes in module diagnostic messages:
         // Module '"./foo"' has no exported member 'X'
         let quoted_module = format!("\"{module_name}\"");
-        let has_json_default_export =
-            self.module_has_json_default_export(module_name, Some(self.ctx.current_file_idx));
+        let has_json_default_export = self
+            .module_has_json_default_export(module_name, Some(self.ctx.current_file_idx))
+            || (self.import_attributes_enable_json_module(import.attributes)
+                && resolved_target.is_some_and(|target_idx| {
+                    self.ctx
+                        .get_arena_for_file(target_idx as u32)
+                        .source_files
+                        .first()
+                        .is_some_and(|source_file| source_file.file_name.ends_with(".json"))
+                }));
         let json_default_only =
             has_json_default_export && self.current_file_uses_esm_import_syntax();
         let has_module_exports_binding =

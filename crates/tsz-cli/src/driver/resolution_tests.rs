@@ -859,6 +859,65 @@ fn test_collect_module_specifiers_dynamic_import_has_correct_kind() {
 }
 
 #[test]
+fn test_collect_module_specifiers_import_defer_has_dynamic_import_kind() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"import.defer("./foo.js").then(x => x);"#;
+    let file_name = "test.mts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let dynamic_imports: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::DynamicImport)
+        .collect();
+    assert_eq!(
+        dynamic_imports.len(),
+        1,
+        "Should find exactly one import.defer DynamicImport, got: {specifiers:?}"
+    );
+    assert_eq!(dynamic_imports[0].0, "./foo.js");
+}
+
+#[test]
+fn test_module_specifier_detects_type_json_import_attribute() {
+    let text = r#"import data from "./data.json" with { type: "json" };"#;
+    let file_name = "test.mts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let (specifier, specifier_idx, _, _) = specifiers
+        .iter()
+        .find(|(specifier, _, _, _)| specifier == "./data.json")
+        .expect("expected JSON import specifier");
+
+    assert_eq!(specifier, "./data.json");
+    assert!(
+        module_specifier_has_type_json_import_attribute(&arena, *specifier_idx),
+        "Expected the JSON module specifier to carry a type=json import attribute"
+    );
+}
+
+#[test]
+fn test_collect_module_requests_from_text_carries_type_json_attribute() {
+    let path = Path::new("test.mts");
+    let requests = collect_module_requests_from_text(
+        path,
+        r#"import data from "./data.json" with { type: "json" };"#,
+    );
+    let (_, _, _, has_type_json_attribute) = requests
+        .iter()
+        .find(|(specifier, _, _, _)| specifier == "./data.json")
+        .expect("expected JSON import request");
+
+    assert!(
+        *has_type_json_attribute,
+        "Expected source-discovery module requests to retain type=json import attributes"
+    );
+}
+
+#[test]
 fn test_collect_module_specifiers_mixed_import_kinds() {
     use tsz::module_resolver::ImportKind;
     let text = r#"
