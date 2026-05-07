@@ -866,6 +866,30 @@ class C {
     );
 }
 
+#[test]
+fn new_target_uses_function_expando_properties() {
+    let diags = check(
+        r#"
+function foo(x: true) { }
+
+function f() {
+  if (new.target.marked === true) {
+    foo(new.target.marked);
+  }
+}
+
+f.marked = true;
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for new.target expando property, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
 /// Heritage clause with unresolved name routes through boundary for suggestions
 #[test]
 fn phase2_heritage_unresolved_routes_through_boundary() {
