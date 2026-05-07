@@ -1,6 +1,6 @@
 # 100% Conformance Strategy
 
-Last updated: 2026-05-07 on `origin/main` at `61b566fd3a`.
+Last updated: 2026-05-07 on `origin/main` at `f48d0dc1ad`.
 
 ## Target
 
@@ -43,16 +43,14 @@ Monitor these PRs without sitting idle for CI:
 
 | PR | Purpose | Action |
 | --- | --- | --- |
-| #4436 | `fix(cli): account for rootDir in default tsbuildinfo path` | Not auto-merge enabled at last check; resolve dirty merge state before queueing. |
-| #4435 | `fix(server): emit fixMissingFunctionDeclaration for plain unresolved calls` | Auto-merge enabled; CI running. |
-| #4434 | `fix(server): implement-interface fix supports method signatures (#3938)` | Auto-merge enabled; CI running. |
-| #4433 | `perf(checker): precompile ambient module globs` | Auto-merge enabled; unit/lint passed, conformance/fourslash running. |
-| #4430 | `fix(server): honor generateReturnInDocTemplate user preference` | Auto-merge enabled; mostly green, one fourslash shard still running at last check. |
-| #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Auto-merge enabled; force-pushed after rebase, wait for new checks to appear. |
-| #4425 | `fix(server): match TODO comments inside template substitutions` | Auto-merge enabled; previous failure was fourslash shard 3 plus aggregate, rerun already active. |
+| #4435 | `fix(server): emit fixMissingFunctionDeclaration for plain unresolved calls` | Auto-merge enabled. The previous unit job stopped mid-nextest with no failing assertion; failed jobs were rerun and a worker is checking local reproducibility. |
+| #4442 | `fix(checker): require concrete normalize match in alias-array union check` | Auto-merge enabled. Direct check inspection currently reports no failing checks despite stale rollup entries. |
+| #4446 | `[WIP] fix(cli): merge config declaration into TS5069 prerequisite check` | Draft and not auto-merge enabled; leave out of the merge queue until intentionally readied. |
+| #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Draft and not auto-merge enabled because the last version had broad unit/conformance regressions. |
 
-Do not duplicate recently merged conformance work from `#4432`, `#4419`, `#4417`,
-or the assignment-compat work in `#4428`.
+Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434`,
+`#4438`, `#4439`, `#4443`, `#4444`, `#4447`, `#4448`, `#4449`, `#4450`, and
+`#4451`.
 
 ## Work Selection
 
@@ -80,20 +78,19 @@ Best one-extra targets on current `main`, excluding work already covered by open
 
 | Test | Extra code | Suggested lane |
 | --- | --- | --- |
-| `complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound.ts` | `TS2339` | Indexed access / `keyof never` property lookup. |
-| `genericFunctionsNotContextSensitive.ts` | `TS7006` | Context-sensitive function parameter inference. |
-| `propTypeValidatorInference.ts` | `TS2322` | Contextual return / object literal assignability. |
 | `controlFlowAssignmentPatternOrder.ts` | `TS2322` | Control-flow assignment pattern narrowing. |
-| `newTargetNarrowing.ts` | `TS2339` | `new.target` narrowing and function expando properties. |
 | `parserOverloadOnConstants1.ts` | `TS2430` | Parser/binder treatment of overload-like constant declarations. |
-| `typeFromParamTagForFunction.ts` | `TS2339` | JS/Salsa `@param` function shape. |
 
 Active local worker assignments from this tranche:
 
-- `fix/generic-functions-context-sensitive`
-- `fix/new-target-narrowing-ts2339`
-- `fix/type-param-tag-ts2339`
 - `fix/prop-type-validator-ts2322`
+- `fix/complicated-indexed-access-ts2339`
+
+Already published or merged from this tranche:
+
+- `fix/generic-functions-context-sensitive` as `#4447`
+- `fix/new-target-narrowing-ts2339` as `#4445`
+- `fix/type-param-tag-ts2339` as `#4450`
 
 ## Campaigns
 
