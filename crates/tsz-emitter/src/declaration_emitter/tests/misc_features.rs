@@ -898,6 +898,21 @@ fn test_multiple_variable_declarators() {
 }
 
 #[test]
+fn test_grouped_let_declarator_preserves_null_initializer_type() {
+    let output = emit_dts(r#"let l9 = 0, l10: string = "", l11 = null;"#);
+    assert!(
+        output.contains("declare let l9: number, l10: string, l11: null;"),
+        "Expected grouped let null initializer to emit null: {output}"
+    );
+
+    let const_output = emit_dts("const c = null;");
+    assert!(
+        const_output.contains("declare const c: any;"),
+        "Expected const null initializer to keep tsc-compatible any: {const_output}"
+    );
+}
+
+#[test]
 fn test_destructuring_variable_declaration_groups_typed_bindings() {
     let source = r#"var [x, y] = [1, "hello"];"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

@@ -111,6 +111,14 @@ impl<'a> DeclarationEmitter<'a> {
                 // The solver otherwise resolves `globalThis` to `any` in the
                 // emit boundary, producing a less-informative annotation.
                 self.write(": typeof globalThis");
+            } else if keyword != "const"
+                && has_initializer
+                && self
+                    .arena
+                    .get(initializer)
+                    .is_some_and(|node| node.kind == SyntaxKind::NullKeyword as u16)
+            {
+                self.write(": null");
             } else if has_initializer
                 && let Some(type_text) =
                     self.previous_duplicate_variable_declaration_type_text(decl_idx, decl_name)
