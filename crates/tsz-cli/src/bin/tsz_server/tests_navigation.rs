@@ -1565,7 +1565,7 @@ fn test_definition_full_shape_uses_filename_and_text_span() {
 
 #[test]
 fn test_type_definition_plain_shape_omits_full_only_fields() {
-    // typeDefinition shares handle_definition. The plain shape must not
+    // typeDefinition uses a dedicated handler and returns type declaration spans.
     // leak -full symbol metadata.
     let mut server = make_server();
     server.open_files.insert(
@@ -1584,6 +1584,14 @@ fn test_type_definition_plain_shape_omits_full_only_fields() {
         .as_array()
         .expect("typeDefinition response should be an array");
     if let Some(entry) = entries.first() {
+        assert_eq!(
+            entry
+                .get("start")
+                .and_then(|start| start.get("line"))
+                .and_then(|line| line.as_u64()),
+            Some(1),
+            "typeDefinition should resolve to the type declaration: {entry:?}"
+        );
         for forbidden in [
             "fileName",
             "textSpan",
@@ -1601,6 +1609,39 @@ fn test_type_definition_plain_shape_omits_full_only_fields() {
                 "plain typeDefinition must not include `{forbidden}`: {entry:?}"
             );
         }
+    }
+}
+
+#[test]
+fn test_type_definition_with_new_expression_infers_type_symbol() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "class Foo {}\nconst x = new Foo();\nx;\n".to_string(),
+    );
+
+    let req = make_request(
+        "typeDefinition",
+        serde_json::json!({"file": "/a.ts", "line": 3, "offset": 1}),
+    );
+
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("typeDefinition should return body");
+    let entries = body
+        .as_array()
+        .expect("typeDefinition response should be an array");
+    if let Some(entry) = entries.first() {
+        assert_eq!(
+            entry
+                .get("start")
+                .and_then(|start| start.get("line"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1),
+            "inferred typeDefinition should resolve to the class declaration: {entry:?}"
+        );
+    } else {
+        panic!("typeDefinition should return inferred Foo declaration");
     }
 }
 
