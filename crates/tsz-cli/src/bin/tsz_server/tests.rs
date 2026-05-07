@@ -2528,6 +2528,103 @@ fn test_todo_comments_report_utf16_position_after_non_bmp_text() {
 }
 
 #[test]
+fn test_todo_comments_match_inside_template_substitutions() {
+    // Comments inside `${...}` are real comments and tsc reports TODOs from
+    // them. Regression for https://github.com/mohsen1/tsz/issues/4003 — the
+    // backtick-to-backtick skip used to mask block and line comments inside
+    // template substitutions.
+    let mut server = make_server();
+    let file = "/todo-template.ts";
+    let source = "const s = `${/* TODO inside substitution */ 1}`;\n// TODO outside\n".to_string();
+    server.open_files.insert(file.to_string(), source);
+
+    let response = server.handle_tsserver_request(make_request(
+        "todoComments",
+        serde_json::json!({
+            "file": file,
+            "descriptors": [{ "text": "TODO", "priority": 1 }],
+        }),
+    ));
+    assert!(response.success);
+    let body = response.body.expect("todoComments should return a body");
+    let comments = body
+        .as_array()
+        .expect("todoComments body should be an array");
+    let messages: Vec<&str> = comments
+        .iter()
+        .map(|c| c["message"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.starts_with("TODO inside substitution")),
+        "expected TODO inside ${{...}} substitution, got {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m.starts_with("TODO outside")),
+        "expected outside TODO to still match, got {messages:?}"
+    );
+}
+
+#[test]
+fn test_todo_comments_skip_template_text_outside_substitutions() {
+    // Plain template text (no `${...}`) must not produce false TODO matches
+    // — only real comments do. Locks the existing template-skip behavior.
+    let mut server = make_server();
+    let file = "/todo-template-text.ts";
+    let source = "const s = `hello // TODO not a comment` ;\n".to_string();
+    server.open_files.insert(file.to_string(), source);
+
+    let response = server.handle_tsserver_request(make_request(
+        "todoComments",
+        serde_json::json!({
+            "file": file,
+            "descriptors": [{ "text": "TODO", "priority": 1 }],
+        }),
+    ));
+    assert!(response.success);
+    let body = response.body.expect("todoComments should return a body");
+    let comments = body
+        .as_array()
+        .expect("todoComments body should be an array");
+    assert!(
+        comments.is_empty(),
+        "TODO inside template *text* must not match, got {body:#}"
+    );
+}
+
+#[test]
+fn test_todo_comments_handle_nested_template_in_substitution() {
+    // Nested templates inside substitutions: the outer substitution contains
+    // an inner backtick literal whose own substitution holds the TODO.
+    let mut server = make_server();
+    let file = "/todo-nested-template.ts";
+    let source = "const s = `${`${/* TODO nested */ 1}`}`;\n".to_string();
+    server.open_files.insert(file.to_string(), source);
+
+    let response = server.handle_tsserver_request(make_request(
+        "todoComments",
+        serde_json::json!({
+            "file": file,
+            "descriptors": [{ "text": "TODO", "priority": 1 }],
+        }),
+    ));
+    assert!(response.success);
+    let body = response.body.expect("todoComments should return a body");
+    let comments = body
+        .as_array()
+        .expect("todoComments body should be an array");
+    let messages: Vec<&str> = comments
+        .iter()
+        .map(|c| c["message"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        messages.iter().any(|m| m.starts_with("TODO nested")),
+        "expected nested TODO to match, got {messages:?}"
+    );
+}
+
+#[test]
 fn test_signature_help_has_no_body_without_signature() {
     let mut server = make_server();
     server
