@@ -524,7 +524,22 @@ impl<'a> CheckerState<'a> {
             type_str = format!("typeof {type_str}");
         }
         let constraint_str = self.format_type_diagnostic(constraint);
-        if type_str.contains("HTMLElementDeprecatedTagNameMap[") && constraint_str == "Element" {
+        // Structural carve-out: `IndexedAccess(M, K)` where K is a bounded
+        // type parameter satisfies any constraint that ALL of M's property
+        // value types are assignable to. tsc's `getApparentType` reduces
+        // the indexed access to the union of value types and checks that
+        // against the target constraint; when the union is uniformly a
+        // subtype of the target, the constraint is satisfied.
+        //
+        // This replaces the previous printer-string carve-out
+        // (`type_str.contains("HTMLElementDeprecatedTagNameMap[")`) — which
+        // misses the regular `HTMLElementTagNameMap[K]` cascade triggered
+        // when user code declaration-merges a lib interface like `Node`.
+        // Once the lib's checker re-runs constraint validation against the
+        // merged Node, every `HTMLCollectionOf<HTMLElementTagNameMap[K]>`
+        // call site emits a spurious TS2344 unless we recognize that the
+        // map's values are uniformly Element subtypes.
+        if self.indexed_access_into_object_uniformly_satisfies_constraint(type_arg, constraint) {
             return;
         }
         if constraint_str.starts_with("ElementType<")
@@ -539,6 +554,133 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
             &[&type_str, &constraint_str],
         );
+    }
+
+    /// True when `type_arg` is an `IndexedAccess(M, K)` whose object operand
+    /// `M` exposes a finite object shape and ALL of M's property value types
+    /// are assignable to `constraint`.
+    ///
+    /// tsc's `getApparentType` collapses `M[K]` (with K a bounded type
+    /// parameter) to the union of value types, which then satisfies any
+    /// constraint that uniformly covers those values. We mirror that here
+    /// so a generic call site like
+    /// `function f<K extends keyof Map>(): HTMLCollectionOf<Map[K]>`
+    /// is accepted whenever every `Map[k]` is structurally compatible with
+    /// the target's `T extends Element` bound.
+    ///
+    /// This is the structural form of the previous printer-string carve-out
+    /// for `HTMLElementDeprecatedTagNameMap[K]` and prevents a TS2344
+    /// cascade inside `lib.dom.d.ts` whenever user code declaration-merges
+    /// a lib interface (e.g. `interface Node { ... }`) — the lib re-check
+    /// triggers constraint validation on every
+    /// `HTMLCollectionOf<HTMLElementTagNameMap[K]>` even though the
+    /// collapsed `HTMLElement` subtype union is plainly assignable to
+    /// `Element`.
+    fn indexed_access_into_object_uniformly_satisfies_constraint(
+        &mut self,
+        type_arg: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        let Some((object_type, _index_type)) =
+            crate::query_boundaries::checkers::generic::index_access_components(
+                self.ctx.types,
+                type_arg,
+            )
+        else {
+            return false;
+        };
+        // Reject nested/generic indexed accesses like `DataFetchFns[T][F]`
+        // (whose outer operand `DataFetchFns[T]` is itself an unresolved
+        // indexed access) — there tsc's constraint check legitimately
+        // fires and we must keep reporting it. The carve-out is intended
+        // for the static case `M[K]` where M is a closed object type
+        // and K is a bounded type parameter.
+        if crate::query_boundaries::checkers::generic::index_access_components(
+            self.ctx.types,
+            object_type,
+        )
+        .is_some()
+        {
+            return false;
+        }
+        let resolved_object = self.evaluate_type_for_assignability(object_type);
+        // Reject nested cases at the evaluated level too — `evaluate_*`
+        // can collapse a Lazy alias whose body is an indexed access into
+        // another indexed access, and we must not treat that as a
+        // closed object map either.
+        if crate::query_boundaries::checkers::generic::index_access_components(
+            self.ctx.types,
+            resolved_object,
+        )
+        .is_some()
+        {
+            return false;
+        }
+        // Reject when the object operand still references type parameters
+        // (e.g. `VehicleSelector<T>` whose body is itself a generic
+        // indexed access). Constraint resolution should defer to
+        // instantiation time in that case.
+        if crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            resolved_object,
+        ) {
+            return false;
+        }
+        // Require the ORIGINAL (un-evaluated) object operand to expose an
+        // object shape directly OR be a bare Lazy reference to an
+        // interface/class. This rejects generic alias APPLICATIONS like
+        // `VehicleSelector<T>` whose evaluated form happens to collapse
+        // to a closed shape under the current constraint (T extends
+        // 'Boat'); tsc reports TS2344 in those cases because the
+        // unevaluated form still has structural unknowns. Without this
+        // guard, the carve-out becomes more permissive than tsc and
+        // silently drops those legitimate diagnostics.
+        let shape_directly = common::object_shape_for_type(self.ctx.types, object_type).is_some();
+        let bare_lazy_ref = common::type_application(self.ctx.types, object_type).is_none();
+        if !shape_directly && !bare_lazy_ref {
+            return false;
+        }
+        let Some(shape) = common::object_shape_for_type(self.ctx.types, resolved_object) else {
+            return false;
+        };
+        if shape.properties.is_empty() {
+            return false;
+        }
+
+        // Fast path: when this checker run is itself a builtin lib file
+        // (i.e. the post-merge re-validation pass inside
+        // `check_checker_lib_file`), honor tsc's `getApparentType`
+        // reduction of `M[K]` to the union of value types and trust that
+        // the lib's original declarations satisfied the constraint.
+        // User declaration merging into a lib interface
+        // (`interface Node { extra(): void }`) only ADDS members, so it
+        // cannot break a subtype relation that held in the un-augmented
+        // lib. This skips a per-property assignability sweep that would
+        // otherwise fire on `HTMLElementTagNameMap` (112 props) and
+        // friends every time the lib re-check encounters their indexed
+        // accesses.
+        if crate::state_type_analysis::cross_file_direct::is_builtin_lib_file_name(
+            &self.ctx.file_name,
+        ) {
+            return true;
+        }
+
+        // Outside the lib re-check, do the strict per-property assignability
+        // check. This is the right path for user code that builds an
+        // indexed access over its own object map — the shape is finite and
+        // the per-property cost is bounded by user intent.
+        let resolved_constraint = self.evaluate_type_for_assignability(constraint);
+        for prop in shape.properties.iter() {
+            let prop_value = self.evaluate_type_for_assignability(prop.type_id);
+            if !self.is_assignable_to(prop_value, resolved_constraint)
+                && !self.is_assignable_to(prop.type_id, constraint)
+                && !self.is_assignable_to(prop_value, constraint)
+                && !self.is_assignable_to(prop.type_id, resolved_constraint)
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// Report TS2635: Type has no signatures for which the type argument list is applicable.
