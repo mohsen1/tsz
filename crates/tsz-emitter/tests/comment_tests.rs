@@ -750,3 +750,44 @@ export function g() {}
         "Inter-prologue comments must NOT appear after the CJS preamble.\nOutput:\n{output}"
     );
 }
+
+/// Issue #3897: comments between the export clause and `from`, between an
+/// open `{` and the first specifier, and between `*` and `from` were dropped
+/// when re-emitting ES module re-exports.
+#[test]
+fn re_export_preserves_comment_after_named_clause() {
+    let source = r#"export { foo } /* after clause */ from "./b";"#;
+    let output = parse_and_print(source);
+    assert!(
+        output.contains("/* after clause */"),
+        "Comment between `}}` and `from` must survive ES re-export emit.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("from \"./b\""),
+        "`from` keyword and module specifier must remain after preserved comment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn re_export_preserves_comment_inside_named_clause() {
+    let source = r#"export { /* before name */ bar } from "./b";"#;
+    let output = parse_and_print(source);
+    assert!(
+        output.contains("/* before name */"),
+        "Comment between `{{` and the first specifier must survive ES re-export emit.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn re_export_preserves_comment_after_star() {
+    let source = r#"export * /* star */ from "./b";"#;
+    let output = parse_and_print(source);
+    assert!(
+        output.contains("/* star */"),
+        "Comment between `*` and `from` must survive ES re-export emit.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("from \"./b\""),
+        "`from` keyword and module specifier must remain after preserved comment.\nOutput:\n{output}"
+    );
+}
