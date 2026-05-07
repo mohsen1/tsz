@@ -101,6 +101,22 @@ fn test_rest_parameter_in_function() {
     );
 }
 
+#[test]
+fn test_flat_map_callback_returning_array_subclass_flattens_element_type() {
+    let output = emit_dts(
+        r#"
+declare const foo: unknown[];
+const bar = foo.flatMap(value => value as Foo);
+interface Foo extends Array<string> {}
+"#,
+    );
+
+    assert!(
+        output.contains("declare const bar: string[];"),
+        "flatMap callback returning Array subclass should emit flattened element type: {output}"
+    );
+}
+
 // =============================================================================
 // 17. Call / Construct Signatures in Interfaces
 // =============================================================================
