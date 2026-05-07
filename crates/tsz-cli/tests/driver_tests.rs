@@ -19087,6 +19087,65 @@ before.toFixed();
 }
 
 #[test]
+fn nested_reexported_module_augmentation_preserves_original_members() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "commonjs",
+            "target": "es2015",
+            "noEmit": true
+          },
+          "files": ["file.ts", "reexport.ts", "augment.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("file.ts"),
+        r#"export namespace Root {
+    export interface Foo {
+        x: number;
+    }
+}
+"#,
+    );
+    write_file(&base.join("reexport.ts"), r#"export * from "./file";"#);
+    write_file(
+        &base.join("augment.ts"),
+        r#"import * as ns from "./reexport";
+
+declare module "./reexport" {
+    export namespace Root {
+        export interface Foo {
+            self: Foo;
+        }
+    }
+}
+
+declare const f: ns.Root.Foo;
+
+f.x;
+f.self;
+f.self.x;
+f.self.self;
+"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected re-exported nested module augmentation to preserve original members, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn new_target_uses_enclosing_function_or_constructor_type() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
