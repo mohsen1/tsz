@@ -1218,8 +1218,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        // Constraint must be keyof(S) for some S
-        let Some(constraint_source) = keyof_inner_type(self.interner, mapped.constraint) else {
+        // Constraint must be keyof(S), or a conditional alias equivalent to
+        // keyof(S), for some S.
+        let Some(constraint_source) = self.homomorphic_mapped_constraint_source(&mapped) else {
             return false;
         };
 
@@ -1408,8 +1409,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        // Constraint must be keyof(S) for some S
-        let Some(constraint_source) = keyof_inner_type(self.interner, mapped.constraint) else {
+        // Constraint must be keyof(S), or a conditional alias equivalent to
+        // keyof(S), for some S.
+        let Some(constraint_source) = self.homomorphic_mapped_constraint_source(&mapped) else {
             return false;
         };
 
@@ -1446,6 +1448,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         false
+    }
+
+    fn homomorphic_mapped_constraint_source(&mut self, mapped: &MappedType) -> Option<TypeId> {
+        if let Some(source) = keyof_inner_type(self.interner, mapped.constraint) {
+            return Some(source);
+        }
+
+        let (template_obj, template_idx) = index_access_parts(self.interner, mapped.template)?;
+        let idx_param = type_param_info(self.interner, template_idx)?;
+        if idx_param.name != mapped.type_param.name {
+            return None;
+        }
+
+        let full_key_set = self.interner.keyof(template_obj);
+        if self.mapped_key_constraint_covers(mapped.constraint, full_key_set)
+            && self.mapped_key_constraint_covers(full_key_set, mapped.constraint)
+        {
+            Some(template_obj)
+        } else {
+            None
+        }
     }
 
     /// Distribute a homomorphic mapped type over an intersection argument.
