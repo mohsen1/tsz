@@ -475,6 +475,72 @@ fn test_cli_strict_false_then_strict_null_checks_true_keeps_strict_null_checks()
     );
 }
 
+/// `--strictBuiltinIteratorReturn=false` must reach `checker.strict_builtin_iterator_return`.
+/// Previously the CLI parsed the flag but never applied it, so the option was silently
+/// ignored — `BuiltinIteratorReturn` kept resolving to `undefined` regardless. (issue #3522)
+#[test]
+fn test_cli_strict_builtin_iterator_return_false_applied() {
+    let args = CliArgs::try_parse_from(["tsz", "--strictBuiltinIteratorReturn=false"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.strict_builtin_iterator_return = true;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(
+        !options.checker.strict_builtin_iterator_return,
+        "--strictBuiltinIteratorReturn=false must flip the option to false"
+    );
+}
+
+#[test]
+fn test_cli_strict_builtin_iterator_return_true_applied() {
+    let args =
+        CliArgs::try_parse_from(["tsz", "--strictBuiltinIteratorReturn=true"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.strict_builtin_iterator_return = false;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(
+        options.checker.strict_builtin_iterator_return,
+        "--strictBuiltinIteratorReturn=true must flip the option to true"
+    );
+}
+
+/// `--strict` should expand to `strict_builtin_iterator_return = true` to match tsc's
+/// strict-family expansion. The config-loader path already does this; the CLI path was
+/// missing the assignment.
+#[test]
+fn test_cli_strict_expands_strict_builtin_iterator_return() {
+    let args = CliArgs::try_parse_from(["tsz", "--strict"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.strict_builtin_iterator_return = false;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(
+        options.checker.strict_builtin_iterator_return,
+        "--strict must enable strict_builtin_iterator_return as part of the strict-family expansion"
+    );
+}
+
+/// An explicit `--strictBuiltinIteratorReturn=false` after `--strict` must still
+/// disable the option — individual flag overrides win over the strict expansion.
+#[test]
+fn test_cli_strict_then_strict_builtin_iterator_return_false_keeps_false() {
+    let args = CliArgs::try_parse_from(["tsz", "--strict", "--strictBuiltinIteratorReturn=false"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(
+        options.checker.strict,
+        "--strict still enables checker.strict"
+    );
+    assert!(
+        !options.checker.strict_builtin_iterator_return,
+        "explicit --strictBuiltinIteratorReturn=false wins over --strict expansion"
+    );
+}
+
 #[test]
 fn test_cli_no_unchecked_side_effect_imports_overrides_config_false() {
     let args =

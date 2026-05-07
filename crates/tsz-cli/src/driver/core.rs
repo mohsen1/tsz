@@ -2943,6 +2943,7 @@ fn apply_cli_overrides_with_config_options(
         options.checker.strict_property_initialization = true;
         options.checker.no_implicit_this = true;
         options.checker.use_unknown_in_catch_variables = true;
+        options.checker.strict_builtin_iterator_return = true;
         options.checker.always_strict = true;
         options.printer.always_strict = true;
     } else if args
@@ -2990,6 +2991,9 @@ fn apply_cli_overrides_with_config_options(
     }
     if let Some(val) = args.use_unknown_in_catch_variables {
         options.checker.use_unknown_in_catch_variables = val;
+    }
+    if let Some(val) = args.strict_builtin_iterator_return {
+        options.checker.strict_builtin_iterator_return = val;
     }
     if args.no_unchecked_indexed_access {
         options.checker.no_unchecked_indexed_access = true;
