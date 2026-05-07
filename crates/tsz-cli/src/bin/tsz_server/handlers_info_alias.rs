@@ -1359,6 +1359,7 @@ impl Server {
     pub(super) fn definition_info_from_location(
         &self,
         loc: &tsz_common::position::Location,
+        full: bool,
     ) -> Option<serde_json::Value> {
         let (arena, binder, root, source_text) = self.parse_and_bind_file(&loc.file_path)?;
         let line_map = LineMap::build(&source_text);
@@ -1424,7 +1425,16 @@ impl Server {
         if !normalized.is_ambient {
             normalized.is_local = true;
         }
-        Some(Self::definition_info_to_json(&normalized, &loc.file_path))
+        if full {
+            Some(Self::definition_info_to_json_full(
+                &normalized,
+                &loc.file_path,
+                &line_map,
+                &source_text,
+            ))
+        } else {
+            Some(Self::definition_info_to_json(&normalized, &loc.file_path))
+        }
     }
 
     pub(super) fn is_offset_inside_comment(source_text: &str, offset: u32) -> bool {

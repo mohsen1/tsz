@@ -22,6 +22,15 @@ impl<'a> CheckerState<'a> {
         Some(type_expr.trim())
     }
 
+    pub(crate) fn extract_jsdoc_tag_type_expression<'b>(
+        jsdoc: &'b str,
+        tag_name: &str,
+    ) -> Option<&'b str> {
+        let tag_pos = Self::jsdoc_tag_offset(jsdoc, tag_name)?;
+        let rest = &jsdoc[tag_pos + tag_name.len() + 1..];
+        Self::jsdoc_balanced_braced_type_expr(rest)
+    }
+
     /// Find the first occurrence of a character at the top level.
     pub(crate) fn find_top_level_char(s: &str, target: char) -> Option<usize> {
         let mut angle_depth = 0u32;
