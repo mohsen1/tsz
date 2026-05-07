@@ -6,10 +6,11 @@
 //! - Trivial single-type-param fast path
 //! - Placeholder normalization
 
-use crate::TypeDatabase;
-use crate::instantiation::instantiate::{TypeInstantiator, TypeSubstitution};
+use crate::instantiation::instantiate::{TypeInstantiator, TypeSubstitution, instantiate_generic};
 use crate::types::{TypeData, TypeId};
+use crate::{TypeDatabase, TypeResolver};
 use std::sync::atomic::{AtomicU64, Ordering};
+use tsz_common::Atom;
 
 /// Global counter for generating unique inference placeholder names.
 /// Each `InferenceContext` starts its variable counter at 0, so placeholder
@@ -28,7 +29,58 @@ pub(crate) fn unique_placeholder_name(buf: &mut String) {
 /// Check if a type constraint is a primitive type (string, number, boolean, bigint, symbol)
 /// or a union containing a primitive. Used to preserve literal types during inference
 /// when the constraint implies literals should be kept (e.g., `T extends string`).
-fn constraint_is_primitive_type(interner: &dyn crate::QueryDatabase, type_id: TypeId) -> bool {
+fn constraint_is_primitive_type_with_resolver(
+    interner: &dyn crate::QueryDatabase,
+    resolver: &dyn TypeResolver,
+    type_id: TypeId,
+) -> bool {
+    constraint_is_primitive_type_inner(interner, resolver, type_id, 0)
+}
+
+fn literal_preservation_constraint_target(
+    interner: &dyn crate::QueryDatabase,
+    resolver: &dyn TypeResolver,
+    type_id: TypeId,
+    depth: u32,
+) -> Option<TypeId> {
+    if depth >= 4 || type_id.is_intrinsic() {
+        return None;
+    }
+
+    match interner.lookup(type_id) {
+        Some(TypeData::Lazy(def_id)) => resolver
+            .resolve_lazy(def_id, interner.as_type_database())
+            .map(|resolved| interner.evaluate_type(resolved)),
+        Some(TypeData::Application(app_id)) => {
+            let app = interner.type_application(app_id);
+            let TypeData::Lazy(def_id) = interner.lookup(app.base)? else {
+                return None;
+            };
+            let type_params = resolver.get_lazy_type_params(def_id)?;
+            let body = resolver.resolve_lazy(def_id, interner.as_type_database())?;
+            let instantiated =
+                instantiate_generic(interner.as_type_database(), body, &type_params, &app.args);
+            Some(interner.evaluate_type(instantiated))
+        }
+        Some(
+            TypeData::Conditional(_)
+            | TypeData::IndexAccess(_, _)
+            | TypeData::Mapped(_)
+            | TypeData::StringIntrinsic { .. },
+        ) => {
+            let evaluated = interner.evaluate_type(type_id);
+            (evaluated != type_id).then_some(evaluated)
+        }
+        _ => None,
+    }
+}
+
+fn constraint_is_primitive_type_inner(
+    interner: &dyn crate::QueryDatabase,
+    resolver: &dyn TypeResolver,
+    type_id: TypeId,
+    depth: u32,
+) -> bool {
     if type_id == TypeId::STRING
         || type_id == TypeId::NUMBER
         || type_id == TypeId::BOOLEAN
@@ -40,23 +92,328 @@ fn constraint_is_primitive_type(interner: &dyn crate::QueryDatabase, type_id: Ty
     if type_id.is_intrinsic() {
         return false;
     }
+    if let Some(resolved) =
+        literal_preservation_constraint_target(interner, resolver, type_id, depth)
+        && resolved != type_id
+        && constraint_is_primitive_type_inner(interner, resolver, resolved, depth + 1)
+    {
+        return true;
+    }
     match interner.lookup(type_id) {
+        // Literal unions and `keyof T` constraints preserve fresh literal candidates.
+        Some(TypeData::Literal(_) | TypeData::KeyOf(_)) => true,
+        Some(TypeData::Conditional(conditional_id)) => {
+            conditional_infer_constraint_preserves_literals(
+                interner,
+                resolver,
+                conditional_id,
+                depth + 1,
+            )
+        }
         Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             members
                 .iter()
-                .any(|&m| constraint_is_primitive_type(interner, m))
+                .any(|&m| constraint_is_primitive_type_inner(interner, resolver, m, depth + 1))
         }
-        // `keyof T` constraints produce string literal unions at runtime,
-        // so literals should be preserved (not widened to `string`).
-        Some(TypeData::KeyOf(_)) => true,
         // Intersections like `keyof T & string` — check if any member
         // implies literal preservation.
         Some(TypeData::Intersection(list_id)) => {
             let members = interner.type_list(list_id);
             members
                 .iter()
-                .any(|&m| constraint_is_primitive_type(interner, m))
+                .any(|&m| constraint_is_primitive_type_inner(interner, resolver, m, depth + 1))
+        }
+        _ => false,
+    }
+}
+
+fn infer_type_name(interner: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom> {
+    match interner.lookup(type_id) {
+        Some(TypeData::Infer(info)) => Some(info.name),
+        _ => None,
+    }
+}
+
+fn type_implies_literals_for_constraint(
+    interner: &dyn crate::QueryDatabase,
+    resolver: &dyn TypeResolver,
+    type_id: TypeId,
+    depth: u32,
+) -> bool {
+    if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+        return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    if let Some(resolved) =
+        literal_preservation_constraint_target(interner, resolver, type_id, depth)
+        && resolved != type_id
+        && type_implies_literals_for_constraint(interner, resolver, resolved, depth + 1)
+    {
+        return true;
+    }
+    match interner.lookup(type_id) {
+        Some(TypeData::Literal(_)) => true,
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            interner.type_list(list_id).iter().any(|&member| {
+                type_implies_literals_for_constraint(interner, resolver, member, depth + 1)
+            })
+        }
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => interner
+            .object_shape(shape_id)
+            .properties
+            .iter()
+            .any(|prop| {
+                type_implies_literals_for_constraint(interner, resolver, prop.type_id, depth + 1)
+            }),
+        Some(TypeData::Array(elem) | TypeData::ReadonlyType(elem)) => {
+            type_implies_literals_for_constraint(interner, resolver, elem, depth + 1)
+        }
+        Some(TypeData::Tuple(list_id)) => interner.tuple_list(list_id).iter().any(|elem| {
+            type_implies_literals_for_constraint(interner, resolver, elem.type_id, depth + 1)
+        }),
+        Some(TypeData::Application(app_id)) => {
+            interner.type_application(app_id).args.iter().any(|&arg| {
+                type_implies_literals_for_constraint(interner, resolver, arg, depth + 1)
+            })
+        }
+        _ => false,
+    }
+}
+
+fn type_contains_infer_name(
+    interner: &dyn crate::QueryDatabase,
+    resolver: &dyn TypeResolver,
+    type_id: TypeId,
+    infer_name: Atom,
+    depth: u32,
+) -> bool {
+    if depth >= 8 || type_id.is_intrinsic() {
+        return false;
+    }
+    if infer_type_name(interner, type_id) == Some(infer_name) {
+        return true;
+    }
+    if let Some(resolved) =
+        literal_preservation_constraint_target(interner, resolver, type_id, depth)
+        && resolved != type_id
+        && type_contains_infer_name(interner, resolver, resolved, infer_name, depth + 1)
+    {
+        return true;
+    }
+    match interner.lookup(type_id) {
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            interner.type_list(list_id).iter().any(|&member| {
+                type_contains_infer_name(interner, resolver, member, infer_name, depth + 1)
+            })
+        }
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => interner
+            .object_shape(shape_id)
+            .properties
+            .iter()
+            .any(|prop| {
+                type_contains_infer_name(interner, resolver, prop.type_id, infer_name, depth + 1)
+            }),
+        Some(TypeData::Array(elem) | TypeData::ReadonlyType(elem)) => {
+            type_contains_infer_name(interner, resolver, elem, infer_name, depth + 1)
+        }
+        Some(TypeData::Tuple(list_id)) => interner.tuple_list(list_id).iter().any(|elem| {
+            type_contains_infer_name(interner, resolver, elem.type_id, infer_name, depth + 1)
+        }),
+        Some(TypeData::Application(app_id)) => {
+            interner.type_application(app_id).args.iter().any(|&arg| {
+                type_contains_infer_name(interner, resolver, arg, infer_name, depth + 1)
+            })
+        }
+        Some(TypeData::Conditional(cond_id)) => {
+            let cond = interner.conditional_type(cond_id);
+            type_contains_infer_name(interner, resolver, cond.check_type, infer_name, depth + 1)
+                || type_contains_infer_name(
+                    interner,
+                    resolver,
+                    cond.extends_type,
+                    infer_name,
+                    depth + 1,
+                )
+                || type_contains_infer_name(
+                    interner,
+                    resolver,
+                    cond.true_type,
+                    infer_name,
+                    depth + 1,
+                )
+                || type_contains_infer_name(
+                    interner,
+                    resolver,
+                    cond.false_type,
+                    infer_name,
+                    depth + 1,
+                )
+        }
+        Some(TypeData::IndexAccess(object, index)) => {
+            type_contains_infer_name(interner, resolver, object, infer_name, depth + 1)
+                || type_contains_infer_name(interner, resolver, index, infer_name, depth + 1)
+        }
+        Some(TypeData::KeyOf(inner) | TypeData::NoInfer(inner)) => {
+            type_contains_infer_name(interner, resolver, inner, infer_name, depth + 1)
+        }
+        _ => false,
+    }
+}
+
+fn source_type_preserves_literal_inference(
+    interner: &dyn crate::QueryDatabase,
+    resolver: &dyn TypeResolver,
+    source: TypeId,
+    depth: u32,
+) -> bool {
+    type_implies_literals_for_constraint(interner, resolver, source, depth + 1)
+        || constraint_is_primitive_type_inner(interner, resolver, source, depth + 1)
+}
+
+fn conditional_infer_constraint_preserves_literals(
+    interner: &dyn crate::QueryDatabase,
+    resolver: &dyn TypeResolver,
+    conditional_id: crate::types::ConditionalTypeId,
+    depth: u32,
+) -> bool {
+    let cond = interner.conditional_type(conditional_id);
+    let Some(infer_name) = infer_type_name(interner, cond.true_type) else {
+        return false;
+    };
+    infer_match_preserves_literals(
+        interner,
+        resolver,
+        cond.check_type,
+        cond.extends_type,
+        infer_name,
+        depth,
+    )
+}
+
+fn infer_match_preserves_literals(
+    interner: &dyn crate::QueryDatabase,
+    resolver: &dyn TypeResolver,
+    source: TypeId,
+    target: TypeId,
+    infer_name: Atom,
+    depth: u32,
+) -> bool {
+    if depth >= 8 {
+        return false;
+    }
+    if infer_type_name(interner, target) == Some(infer_name) {
+        return source_type_preserves_literal_inference(interner, resolver, source, depth);
+    }
+    if let Some(resolved_source) =
+        literal_preservation_constraint_target(interner, resolver, source, depth)
+        && resolved_source != source
+    {
+        return infer_match_preserves_literals(
+            interner,
+            resolver,
+            resolved_source,
+            target,
+            infer_name,
+            depth + 1,
+        );
+    }
+    if let Some(resolved_target) =
+        literal_preservation_constraint_target(interner, resolver, target, depth)
+        && resolved_target != target
+    {
+        return infer_match_preserves_literals(
+            interner,
+            resolver,
+            source,
+            resolved_target,
+            infer_name,
+            depth + 1,
+        );
+    }
+
+    match (interner.lookup(source), interner.lookup(target)) {
+        (Some(TypeData::Union(source_list)), _) => {
+            interner.type_list(source_list).iter().any(|&member| {
+                infer_match_preserves_literals(
+                    interner,
+                    resolver,
+                    member,
+                    target,
+                    infer_name,
+                    depth + 1,
+                )
+            })
+        }
+        (_, Some(TypeData::Union(target_list) | TypeData::Intersection(target_list))) => {
+            interner.type_list(target_list).iter().any(|&member| {
+                infer_match_preserves_literals(
+                    interner,
+                    resolver,
+                    source,
+                    member,
+                    infer_name,
+                    depth + 1,
+                )
+            })
+        }
+        (
+            Some(TypeData::Object(source_shape) | TypeData::ObjectWithIndex(source_shape)),
+            Some(TypeData::Object(target_shape) | TypeData::ObjectWithIndex(target_shape)),
+        ) => {
+            let source_shape = interner.object_shape(source_shape);
+            let target_shape = interner.object_shape(target_shape);
+            target_shape.properties.iter().any(|target_prop| {
+                type_contains_infer_name(
+                    interner,
+                    resolver,
+                    target_prop.type_id,
+                    infer_name,
+                    depth + 1,
+                ) && source_shape
+                    .properties
+                    .iter()
+                    .find(|source_prop| source_prop.name == target_prop.name)
+                    .is_some_and(|source_prop| {
+                        infer_match_preserves_literals(
+                            interner,
+                            resolver,
+                            source_prop.type_id,
+                            target_prop.type_id,
+                            infer_name,
+                            depth + 1,
+                        )
+                    })
+            })
+        }
+        (Some(TypeData::Array(source_elem)), Some(TypeData::Array(target_elem))) => {
+            infer_match_preserves_literals(
+                interner,
+                resolver,
+                source_elem,
+                target_elem,
+                infer_name,
+                depth + 1,
+            )
+        }
+        (Some(TypeData::Tuple(source_list)), Some(TypeData::Tuple(target_list))) => {
+            let source_elems = interner.tuple_list(source_list);
+            let target_elems = interner.tuple_list(target_list);
+            source_elems
+                .iter()
+                .zip(target_elems.iter())
+                .any(|(source_elem, target_elem)| {
+                    infer_match_preserves_literals(
+                        interner,
+                        resolver,
+                        source_elem.type_id,
+                        target_elem.type_id,
+                        infer_name,
+                        depth + 1,
+                    )
+                })
         }
         _ => false,
     }
@@ -71,6 +428,7 @@ fn constraint_is_primitive_type(interner: &dyn crate::QueryDatabase, type_id: Ty
 /// constrained `U`, so fresh literal property values must not be widened away.
 fn constraint_contains_primitive_constrained_type_param(
     interner: &dyn crate::QueryDatabase,
+    resolver: &dyn TypeResolver,
     type_id: TypeId,
     depth: u32,
 ) -> bool {
@@ -82,12 +440,17 @@ fn constraint_contains_primitive_constrained_type_param(
     }
 
     match interner.lookup(type_id) {
-        Some(TypeData::TypeParameter(info)) => info
-            .constraint
-            .is_some_and(|constraint| constraint_is_primitive_type(interner, constraint)),
+        Some(TypeData::TypeParameter(info)) => info.constraint.is_some_and(|constraint| {
+            constraint_is_primitive_type_with_resolver(interner, resolver, constraint)
+        }),
         Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
             interner.type_list(list_id).iter().any(|&member| {
-                constraint_contains_primitive_constrained_type_param(interner, member, depth + 1)
+                constraint_contains_primitive_constrained_type_param(
+                    interner,
+                    resolver,
+                    member,
+                    depth + 1,
+                )
             })
         }
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
@@ -95,18 +458,21 @@ fn constraint_contains_primitive_constrained_type_param(
             shape.properties.iter().any(|prop| {
                 constraint_contains_primitive_constrained_type_param(
                     interner,
+                    resolver,
                     prop.type_id,
                     depth + 1,
                 )
             }) || shape.string_index.as_ref().is_some_and(|index| {
                 constraint_contains_primitive_constrained_type_param(
                     interner,
+                    resolver,
                     index.value_type,
                     depth + 1,
                 )
             }) || shape.number_index.as_ref().is_some_and(|index| {
                 constraint_contains_primitive_constrained_type_param(
                     interner,
+                    resolver,
                     index.value_type,
                     depth + 1,
                 )

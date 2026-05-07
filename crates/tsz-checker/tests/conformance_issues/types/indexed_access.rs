@@ -260,6 +260,58 @@ function f<T>(x: T, y: MyPartial<T>, k: keyof T) {
 }
 
 #[test]
+fn test_old_omit_keyof_never_filter_preserves_filtered_property_access() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface TextChannel {
+    id: string;
+    type: 'text';
+    phoneNumber: string;
+}
+
+interface EmailChannel {
+    id: string;
+    type: 'email';
+    addres: string;
+}
+
+type Channel = TextChannel | EmailChannel;
+type ChannelType = Channel extends { type: infer R } ? R : never;
+
+type OldOmit<T, K extends keyof T> = Pick<
+    T,
+    ({ [P in keyof T]: P } & { [P in K]: never } & { [x: string]: never })[keyof T]
+>;
+
+type ChannelOfType<T extends ChannelType, A = Channel> = A extends { type: T }
+    ? A
+    : never;
+
+type NewChannel<T extends Channel> = Pick<T, 'type'> &
+    Partial<OldOmit<T, 'type' | 'id'>> & { localChannelId: string };
+
+declare const directTextChannel: NewChannel<ChannelOfType<'text'>>;
+directTextChannel.phoneNumber = '613-555-1234';
+
+declare function makeNewChannel<T extends ChannelType>(type: T): NewChannel<ChannelOfType<T>>;
+
+const newTextChannel = makeNewChannel('text');
+newTextChannel.phoneNumber = '613-555-1234';
+"#,
+        CheckerOptions {
+            strict: false,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Old Omit/keyof-never filtering should preserve the selected channel's properties after generic call instantiation.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_mapped_key_constraint_relationship_is_directional() {
     let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics(
         r"
