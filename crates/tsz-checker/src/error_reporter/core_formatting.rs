@@ -201,10 +201,7 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::TypeFormatter::with_symbols(state.ctx.types, &state.ctx.binder.symbols)
                     .with_def_store(&state.ctx.definition_store)
                     .with_diagnostic_mode()
-                    // Match tsc: optional parameters in assignability messages
-                    // display as `(a?: T)`, not `(a?: T | undefined)`. The `?`
-                    // already implies `| undefined`; tsc only writes the union
-                    // form when the source explicitly types the param that way.
+                    // Match tsc: optional parameters display as `(a?: T)`.
                     .with_preserve_optional_parameter_surface_syntax(true)
                     .with_strict_null_checks(state.ctx.compiler_options.strict_null_checks)
                     .with_exact_optional_property_types(
@@ -458,10 +455,6 @@ impl<'a> CheckerState<'a> {
         } else {
             self.format_type_diagnostic_for_assignability_display(display_ty)
         };
-        // Preserve generic instantiations for nominal class instance names when possible.
-        // First check if the solver has a display_alias (Application type) for the
-        // original type or the display type. If so, format that directly instead
-        // of guessing type args from properties.
         if !formatted.contains('<')
             && let Some(shape) =
                 crate::query_boundaries::common::object_shape_for_type(self.ctx.types, display_ty)

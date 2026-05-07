@@ -10,7 +10,8 @@ use tsz_solver::TypeId;
 mod indexed_access_helpers;
 
 use indexed_access_helpers::{
-    has_nonpublic_property, is_broad_index_type, same_object_key_space, same_type_param_name,
+    has_nonpublic_property, indexed_access_object_alias_application_exceeds_depth,
+    is_broad_index_type, same_object_key_space, same_type_param_name,
 };
 
 impl<'a> CheckerState<'a> {
@@ -658,6 +659,15 @@ impl<'a> CheckerState<'a> {
         let index_type = self.get_type_from_type_node(data.index_type);
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
+        if indexed_access_object_alias_application_exceeds_depth(self, data.object_type) {
+            self.error_at_node(
+                data.object_type,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            );
+            return;
+        }
+
         if object_type == TypeId::ERROR
             && index_type != TypeId::ERROR
             && index_type != TypeId::NEVER
@@ -984,6 +994,13 @@ impl<'a> CheckerState<'a> {
         }
 
         let index_type_for_check = self.evaluate_type_with_env(index_type);
+        if let Some(prop_atom) =
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+            && self.ctx.types.resolve_atom(prop_atom) == "length"
+            && self.indexed_access_object_allows_length_property(object_type, object_type_for_check)
+        {
+            return;
+        }
         // First check: raw index type against keyof.
         // This handles cases where keyof includes type parameters from mapped types
         // (e.g. keyof ({ [P in T]: P } & ...) = T | ...) and the index IS that parameter.
