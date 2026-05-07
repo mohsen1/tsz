@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-07
 - **Branch**: `fix/server-jsdoc-no-filename-gated-placeholders`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #4424
+- **Status**: ready
 - **Workstream**: server protocol parity (issue #3848)
 
 ## Intent
