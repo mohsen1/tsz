@@ -458,8 +458,6 @@ impl Server {
             }
 
             let mut results = Vec::new();
-            let bytes = source_text.as_bytes();
-            let len = bytes.len();
 
             // Implements TypeScript's todo comment matching algorithm:
             // The regex pattern is: (preamble)(descriptor + message)(endOfLine|*/)
@@ -467,110 +465,164 @@ impl Server {
             //   - //+\s*  (single line comment)
             //   - /*+\s*  (block comment start)
             //   - ^[\s*]* (start of line with spaces/asterisks, for continued block comments)
-            let mut i = 0;
-            while i < len {
-                // Skip string literals to avoid false matches
-                if bytes[i] == b'"' || bytes[i] == b'\'' || bytes[i] == b'`' {
-                    let quote = bytes[i];
-                    i += 1;
-                    while i < len {
-                        if bytes[i] == b'\\' {
-                            i += 2;
-                            continue;
-                        }
-                        if bytes[i] == quote {
-                            i += 1;
-                            break;
-                        }
-                        i += 1;
-                    }
-                    continue;
-                }
-
-                if i + 1 < len && bytes[i] == b'/' {
-                    if bytes[i + 1] == b'/' {
-                        // Line comment: //+\s* then check for descriptor
-                        i += 2;
-                        while i < len && bytes[i] == b'/' {
-                            i += 1;
-                        }
-                        while i < len && (bytes[i] == b' ' || bytes[i] == b'\t') {
-                            i += 1;
-                        }
-                        // Check for descriptor at current position
-                        Self::match_descriptor_at(source_text, i, &descriptor_texts, &mut results);
-                        // Skip to end of line
-                        while i < len && bytes[i] != b'\n' && bytes[i] != b'\r' {
-                            i += 1;
-                        }
-                        continue;
-                    } else if bytes[i + 1] == b'*' {
-                        // Block comment: /*+\s* then content with ^[\s*]* per line
-                        i += 2;
-                        // Skip additional asterisks (but not closing */)
-                        while i < len && bytes[i] == b'*' {
-                            if i + 1 < len && bytes[i + 1] == b'/' {
-                                break;
-                            }
-                            i += 1;
-                        }
-                        // Skip whitespace after comment start
-                        while i < len && (bytes[i] == b' ' || bytes[i] == b'\t') {
-                            i += 1;
-                        }
-                        // Check for descriptor right after the comment opening
-                        if i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                            Self::match_descriptor_at(
-                                source_text,
-                                i,
-                                &descriptor_texts,
-                                &mut results,
-                            );
-                        }
-                        // Scan through block comment content
-                        while i + 1 < len {
-                            if bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                                i += 2;
-                                break;
-                            }
-                            if bytes[i] == b'\n' || bytes[i] == b'\r' {
-                                // Handle \r\n
-                                if bytes[i] == b'\r' && i + 1 < len && bytes[i + 1] == b'\n' {
-                                    i += 1;
-                                }
-                                i += 1;
-                                // Skip leading whitespace and asterisks (^[\s*]*)
-                                while i < len
-                                    && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'*')
-                                {
-                                    if bytes[i] == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
-                                        break;
-                                    }
-                                    i += 1;
-                                }
-                                // Check for descriptor
-                                if i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                                    Self::match_descriptor_at(
-                                        source_text,
-                                        i,
-                                        &descriptor_texts,
-                                        &mut results,
-                                    );
-                                }
-                                continue;
-                            }
-                            i += 1;
-                        }
-                        continue;
-                    }
-                }
-                i += 1;
-            }
+            //
+            // Templates are scanned for ${...} substitutions, which can contain
+            // nested code (and therefore nested comments). See #4003.
+            Self::scan_todos_in_range(source_text, &descriptor_texts, &mut results, 0, false);
 
             Some(serde_json::json!(results))
         })();
 
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    /// Scan `source_text` from `start_pos` for TODO comments. Skips string and
+    /// template literals, but recurses into `${...}` template substitutions
+    /// because comments inside substitutions are real comments (#4003).
+    ///
+    /// When `stop_at_unbalanced_close_brace` is true, returns at the first `}`
+    /// that has no matching `{` in this scope — used to bound a single
+    /// substitution. Otherwise scans to end of input.
+    fn scan_todos_in_range(
+        source_text: &str,
+        descriptors: &[(String, i64)],
+        results: &mut Vec<serde_json::Value>,
+        start_pos: usize,
+        stop_at_unbalanced_close_brace: bool,
+    ) -> usize {
+        let bytes = source_text.as_bytes();
+        let len = bytes.len();
+        let mut i = start_pos;
+        let mut brace_depth: u32 = 0;
+
+        while i < len {
+            let b = bytes[i];
+
+            // String literal: skip quoted content (with escapes).
+            if b == b'"' || b == b'\'' {
+                let quote = b;
+                i += 1;
+                while i < len {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == quote {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+
+            // Template literal: scan content with substitution recursion.
+            if b == b'`' {
+                i += 1;
+                i = Self::scan_todos_in_template(source_text, descriptors, results, i);
+                continue;
+            }
+
+            // Track brace nesting to find the end of a `${...}` substitution.
+            if stop_at_unbalanced_close_brace {
+                if b == b'{' {
+                    brace_depth += 1;
+                } else if b == b'}' {
+                    if brace_depth == 0 {
+                        return i + 1;
+                    }
+                    brace_depth -= 1;
+                }
+            }
+
+            if i + 1 < len && b == b'/' {
+                if bytes[i + 1] == b'/' {
+                    // Line comment: //+\s* then check for descriptor.
+                    i += 2;
+                    while i < len && bytes[i] == b'/' {
+                        i += 1;
+                    }
+                    while i < len && (bytes[i] == b' ' || bytes[i] == b'\t') {
+                        i += 1;
+                    }
+                    Self::match_descriptor_at(source_text, i, descriptors, results);
+                    while i < len && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                    continue;
+                } else if bytes[i + 1] == b'*' {
+                    // Block comment: /*+\s* then content with ^[\s*]* per line.
+                    i += 2;
+                    while i < len && bytes[i] == b'*' {
+                        if i + 1 < len && bytes[i + 1] == b'/' {
+                            break;
+                        }
+                        i += 1;
+                    }
+                    while i < len && (bytes[i] == b' ' || bytes[i] == b'\t') {
+                        i += 1;
+                    }
+                    if i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                        Self::match_descriptor_at(source_text, i, descriptors, results);
+                    }
+                    while i + 1 < len {
+                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                            i += 2;
+                            break;
+                        }
+                        if bytes[i] == b'\n' || bytes[i] == b'\r' {
+                            if bytes[i] == b'\r' && i + 1 < len && bytes[i + 1] == b'\n' {
+                                i += 1;
+                            }
+                            i += 1;
+                            while i < len
+                                && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'*')
+                            {
+                                if bytes[i] == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
+                                    break;
+                                }
+                                i += 1;
+                            }
+                            if i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                                Self::match_descriptor_at(source_text, i, descriptors, results);
+                            }
+                            continue;
+                        }
+                        i += 1;
+                    }
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        i
+    }
+
+    /// Scan a template literal body. `start_pos` points just past the opening
+    /// backtick. On `${`, recurses into `scan_todos_in_range` with brace-end
+    /// tracking so comments inside substitutions are still matched. Returns
+    /// the position just past the closing backtick (or end of input).
+    fn scan_todos_in_template(
+        source_text: &str,
+        descriptors: &[(String, i64)],
+        results: &mut Vec<serde_json::Value>,
+        start_pos: usize,
+    ) -> usize {
+        let bytes = source_text.as_bytes();
+        let len = bytes.len();
+        let mut i = start_pos;
+        while i < len {
+            match bytes[i] {
+                b'\\' if i + 1 < len => i += 2,
+                b'`' => return i + 1,
+                b'$' if i + 1 < len && bytes[i + 1] == b'{' => {
+                    i += 2;
+                    i = Self::scan_todos_in_range(source_text, descriptors, results, i, true);
+                }
+                _ => i += 1,
+            }
+        }
+        i
     }
 
     /// Check if any descriptor matches at the given position (case-insensitive).
