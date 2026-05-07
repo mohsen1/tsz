@@ -304,7 +304,6 @@ const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[
     "mixinAccessModifiers",
     "typeFromPropertyAssignment39",
     "promiseTry",
-    "defaultPropertyAssignedClassWithPrototype",
 ];
 
 fn known_conformance_debt_reason(test_key: &str) -> Option<&'static str> {
