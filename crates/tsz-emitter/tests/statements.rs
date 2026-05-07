@@ -78,6 +78,26 @@ fn js_satisfies_binary_expression_is_erased() {
     assert_eq!(output.trim_end(), "\"use strict\";\nvar v = undefined;");
 }
 
+#[test]
+fn recovered_regex_close_bracket_slash_tail_emits_slash_statement() {
+    let source = "var v = /[]/]/";
+    let mut parser = ParserState::new("a.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            always_strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(output.trim_end(), "\"use strict\";\nvar v = /[]/;\n/;");
+}
+
 /// Case clause with a single non-block statement on the same source line
 /// should be emitted on one line: `case true: return "true";`
 #[test]
