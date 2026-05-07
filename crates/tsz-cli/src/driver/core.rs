@@ -3636,6 +3636,46 @@ fn validate_cli_compiler_option_diagnostics(
         compiler_options.insert("downlevelIteration".to_string(), true.into());
     }
 
+    // Removed compiler-option flags accepted by clap should still surface
+    // TS5102 (Option has been removed) the same way they do from a tsconfig.
+    // Synthesize the keys here so the shared `parse_tsconfig_with_diagnostics`
+    // pass below catches them via `removed_compiler_option`. See #3558.
+    if args.no_implicit_use_strict {
+        compiler_options.insert("noImplicitUseStrict".to_string(), true.into());
+    }
+    if args.keyof_strings_only {
+        compiler_options.insert("keyofStringsOnly".to_string(), true.into());
+    }
+    if args.suppress_excess_property_errors {
+        compiler_options.insert("suppressExcessPropertyErrors".to_string(), true.into());
+    }
+    if args.suppress_implicit_any_index_errors {
+        compiler_options.insert("suppressImplicitAnyIndexErrors".to_string(), true.into());
+    }
+    if args.no_strict_generic_checks {
+        compiler_options.insert("noStrictGenericChecks".to_string(), true.into());
+    }
+    if args.preserve_value_imports {
+        compiler_options.insert("preserveValueImports".to_string(), true.into());
+    }
+    if let Some(charset) = args.charset.as_deref() {
+        compiler_options.insert("charset".to_string(), charset.to_string().into());
+    }
+    if let Some(imports_not_used_as_values) = args.imports_not_used_as_values {
+        let value = match imports_not_used_as_values {
+            crate::args::ImportsNotUsedAsValues::Remove => "remove",
+            crate::args::ImportsNotUsedAsValues::Preserve => "preserve",
+            crate::args::ImportsNotUsedAsValues::Error => "error",
+        };
+        compiler_options.insert(
+            "importsNotUsedAsValues".to_string(),
+            value.to_string().into(),
+        );
+    }
+    if let Some(out) = args.out.as_ref() {
+        compiler_options.insert("out".to_string(), out.to_string_lossy().into_owned().into());
+    }
+
     if compiler_options.is_empty() {
         return Ok(diagnostics);
     }
