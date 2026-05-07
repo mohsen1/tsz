@@ -552,9 +552,10 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|(name, _)| name.as_str())
                     .collect();
-                if let Some(suggestion) =
-                    tsz_parser::parser::spelling::get_spelling_suggestion(&export_name, &export_names)
-                {
+                if let Some(suggestion) = tsz_parser::parser::spelling::get_spelling_suggestion(
+                    &export_name,
+                    &export_names,
+                ) {
                     // TS2724: did you mean?
                     let message = format_message(
                         diagnostic_messages::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
@@ -565,7 +566,8 @@ impl<'a> CheckerState<'a> {
                         &message,
                         diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
                     );
-                } else if has_json_default_export || module_exports.has("default")
+                } else if has_json_default_export
+                    || module_exports.has("default")
                     || module_exports.has("export=")
                 {
                     // TS2614: Symbol doesn't exist but a default export does

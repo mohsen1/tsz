@@ -2698,12 +2698,10 @@ impl<'a> CheckerState<'a> {
         let suggestion = self
             .resolve_effective_module_exports(module_specifier)
             .and_then(|exports| {
-                let export_names: Vec<&str> = exports.iter().map(|(name, _)| name.as_str()).collect();
-                tsz_parser::parser::spelling::get_spelling_suggestion(
-                    member_name,
-                    &export_names,
-                )
-                .map(|s| s.to_string())
+                let export_names: Vec<&str> =
+                    exports.iter().map(|(name, _)| name.as_str()).collect();
+                tsz_parser::parser::spelling::get_spelling_suggestion(member_name, &export_names)
+                    .map(|s| s.to_string())
             });
 
         if let Some(suggestion) = suggestion {

@@ -1053,7 +1053,10 @@ export default function defaultThing() {}
 export const ExistingName = 1;
                 "#,
             ),
-            ("consumer.ts", r#"import { ExistingNam } from "./provider";"#),
+            (
+                "consumer.ts",
+                r#"import { ExistingNam } from "./provider";"#,
+            ),
         ],
         "consumer.ts",
         CheckerOptions::default(),
@@ -1087,7 +1090,10 @@ export default function defaultThing() {}
 export const ExistingName = 1;
                 "#,
             ),
-            ("consumer.ts", r#"export { ExistingNam } from "./provider";"#),
+            (
+                "consumer.ts",
+                r#"export { ExistingNam } from "./provider";"#,
+            ),
         ],
         "consumer.ts",
         CheckerOptions::default(),
