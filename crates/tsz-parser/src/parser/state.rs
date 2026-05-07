@@ -161,6 +161,10 @@ pub struct ParserState {
     /// Whether the most recently parsed named import list hit a structural
     /// recovery path rather than a semantic-only specifier error.
     pub(crate) last_named_imports_had_structural_error: bool,
+    /// When recovery consumes a malformed arrow-body `}` directly, keep a small
+    /// number of following module-closing braces in the token stream so outer
+    /// list recovery can report them as stray braces.
+    pub(crate) deferred_module_close_braces: u32,
     /// When malformed import-attribute recovery breaks a type constituent,
     /// stop consuming `&`-continued intersections so the tail falls back to
     /// statement-level recovery like TypeScript.
@@ -271,6 +275,7 @@ impl ParserState {
             last_named_imports_consumed_closing_brace: false,
             last_named_imports_recovered_to_from: false,
             last_named_imports_had_structural_error: false,
+            deferred_module_close_braces: 0,
             abort_intersection_continuation: false,
             deferred_type_member_close_braces: 0,
             fallback_import_type_options_once: false,
@@ -310,6 +315,7 @@ impl ParserState {
         self.last_named_imports_consumed_closing_brace = false;
         self.last_named_imports_recovered_to_from = false;
         self.last_named_imports_had_structural_error = false;
+        self.deferred_module_close_braces = 0;
         self.deferred_type_member_close_braces = 0;
         self.abort_intersection_continuation = false;
         self.fallback_import_type_options_once = false;

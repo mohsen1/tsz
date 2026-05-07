@@ -51,10 +51,13 @@ impl<'a> CheckerState<'a> {
             if let Some(sig) = self.ctx.arena.get_signature(member_node) {
                 let (_type_params, method_type_param_updates) =
                     self.push_type_parameters(&sig.type_parameters);
-                if sig.type_annotation.is_some() {
-                    self.check_type_node(sig.type_annotation);
-                    self.get_type_from_type_node(sig.type_annotation);
-                }
+                // Resolve parameter types first so the params list (and their
+                // names) is available when checking the return-type annotation.
+                // The return type may reference parameters via `typeof p` —
+                // pushing typeof_param_scope around the annotation resolution
+                // mirrors the lowering crate's behavior so identifiers like
+                // `a` in `(a: number): typeof a` resolve to the parameter
+                // type instead of falling through to TS2304.
                 for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
                     if let Some(param_node) = self.ctx.arena.get(param_idx)
                         && let Some(param) = self.ctx.arena.get_parameter(param_node)
@@ -63,6 +66,14 @@ impl<'a> CheckerState<'a> {
                         self.check_type_node(param.type_annotation);
                         self.get_type_from_type_node(param.type_annotation);
                     }
+                }
+                if sig.type_annotation.is_some() {
+                    let (params, _this_type) =
+                        self.extract_params_from_signature_in_type_literal(sig);
+                    self.push_typeof_param_scope(&params);
+                    self.check_type_node(sig.type_annotation);
+                    self.get_type_from_type_node(sig.type_annotation);
+                    self.pop_typeof_param_scope(&params);
                 }
                 self.pop_type_parameters(method_type_param_updates);
                 continue;
@@ -220,10 +231,11 @@ impl<'a> CheckerState<'a> {
                     }
                     let (_type_params, type_param_updates) =
                         self.push_type_parameters(&sig.type_parameters);
-                    if sig.type_annotation.is_some() {
-                        self.check_type_node(sig.type_annotation);
-                        self.get_type_from_type_node(sig.type_annotation);
-                    }
+                    // Resolve parameters first so the param scope is built
+                    // before the return type annotation is checked. The
+                    // return type may reference `typeof p`; pushing the
+                    // typeof_param_scope mirrors the lowering crate so the
+                    // checker's TS2304 path can resolve the parameter.
                     for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
@@ -232,6 +244,14 @@ impl<'a> CheckerState<'a> {
                             self.check_type_node(param.type_annotation);
                             self.get_type_from_type_node(param.type_annotation);
                         }
+                    }
+                    if sig.type_annotation.is_some() {
+                        self.check_type_node(sig.type_annotation);
+                        let (params, _this_type) =
+                            self.extract_params_from_signature_in_type_literal(sig);
+                        self.push_typeof_param_scope(&params);
+                        self.get_type_from_type_node(sig.type_annotation);
+                        self.pop_typeof_param_scope(&params);
                     }
                     self.pop_type_parameters(type_param_updates);
                 }
