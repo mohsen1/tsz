@@ -482,8 +482,30 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // geterr is async in tsserver - it fires diagnostic events
-        // For now, just acknowledge the request
+        // tsserver acknowledges immediately, then asynchronously fires
+        // `syntaxDiag`, `semanticDiag`, `suggestionDiag`, and finally
+        // `requestCompleted`. Without these events, clients see no
+        // diagnostics. See https://github.com/mohsen1/tsz/issues/3544.
+        let files: Vec<String> = request
+            .arguments
+            .get("files")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|f| f.as_str().map(std::string::ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for file in &files {
+            self.emit_geterr_events_for_file(file);
+        }
+
+        self.emit_event(
+            "requestCompleted",
+            serde_json::json!({"request_seq": request.seq}),
+        );
+
         self.stub_response(seq, request, None)
     }
 
@@ -492,6 +514,59 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
+        // Without a real project graph, behave like `geterr` over all
+        // currently-open files: emit per-file events plus a final
+        // `requestCompleted`. See #3544.
+        let files: Vec<String> = self.open_files.keys().cloned().collect();
+        for file in &files {
+            self.emit_geterr_events_for_file(file);
+        }
+        self.emit_event(
+            "requestCompleted",
+            serde_json::json!({"request_seq": request.seq}),
+        );
         self.stub_response(seq, request, None)
+    }
+
+    /// Compute and emit `syntaxDiag`, `semanticDiag`, `suggestionDiag`
+    /// events for a single file. Reuses the existing `*-Sync` handlers'
+    /// diagnostic shapes (each returns a JSON body of `{file, diagnostics}`)
+    /// by synthesizing a minimal request and extracting the response body.
+    fn emit_geterr_events_for_file(&mut self, file: &str) {
+        let synth_request = |command: &str| TsServerRequest {
+            seq: 0,
+            _msg_type: "request".to_string(),
+            command: command.to_string(),
+            arguments: serde_json::json!({"file": file}),
+        };
+        let body_of = |response: TsServerResponse| -> serde_json::Value {
+            response
+                .body
+                .unwrap_or(serde_json::Value::Array(Vec::new()))
+        };
+
+        let syntax = body_of(
+            self.handle_syntactic_diagnostics_sync(0, &synth_request("syntacticDiagnosticsSync")),
+        );
+        self.emit_event(
+            "syntaxDiag",
+            serde_json::json!({"file": file, "diagnostics": syntax}),
+        );
+
+        let semantic = body_of(
+            self.handle_semantic_diagnostics_sync(0, &synth_request("semanticDiagnosticsSync")),
+        );
+        self.emit_event(
+            "semanticDiag",
+            serde_json::json!({"file": file, "diagnostics": semantic}),
+        );
+
+        let suggestion = body_of(
+            self.handle_suggestion_diagnostics_sync(0, &synth_request("suggestionDiagnosticsSync")),
+        );
+        self.emit_event(
+            "suggestionDiag",
+            serde_json::json!({"file": file, "diagnostics": suggestion}),
+        );
     }
 }
