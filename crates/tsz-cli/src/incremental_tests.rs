@@ -128,11 +128,51 @@ fn test_default_build_info_path() {
     let config = Path::new("/project/tsconfig.json");
 
     // Without outDir
-    let path = default_build_info_path(config, None);
+    let path = default_build_info_path(config, None, None);
     assert_eq!(path, PathBuf::from("/project/tsconfig.tsbuildinfo"));
 
-    // With outDir
-    let path = default_build_info_path(config, Some(Path::new("/project/dist")));
+    // With outDir, no rootDir → goes under outDir
+    let path = default_build_info_path(config, Some(Path::new("/project/dist")), None);
+    assert_eq!(path, PathBuf::from("/project/dist/tsconfig.tsbuildinfo"));
+}
+
+// Issue #3821: when both rootDir and outDir are set, tsc places the default
+// build-info file next to the tsconfig because the configFileExtensionLess
+// path is computed relative to rootDir, which walks up out of rootDir to
+// the config directory.
+#[test]
+fn test_default_build_info_path_with_root_dir_and_out_dir() {
+    let config = Path::new("/project/tsconfig.json");
+    let path = default_build_info_path(
+        config,
+        Some(Path::new("/project/dist")),
+        Some(Path::new("/project/src")),
+    );
+    assert_eq!(path, PathBuf::from("/project/dist/../tsconfig.tsbuildinfo"));
+}
+
+#[test]
+fn test_default_build_info_path_with_nested_root_dir() {
+    let config = Path::new("/project/tsconfig.json");
+    let path = default_build_info_path(
+        config,
+        Some(Path::new("/project/dist")),
+        Some(Path::new("/project/src/sub")),
+    );
+    assert_eq!(
+        path,
+        PathBuf::from("/project/dist/../../tsconfig.tsbuildinfo")
+    );
+}
+
+#[test]
+fn test_default_build_info_path_with_root_dir_equals_config_dir() {
+    let config = Path::new("/project/tsconfig.json");
+    let path = default_build_info_path(
+        config,
+        Some(Path::new("/project/dist")),
+        Some(Path::new("/project")),
+    );
     assert_eq!(path, PathBuf::from("/project/dist/tsconfig.tsbuildinfo"));
 }
 

@@ -519,8 +519,21 @@ impl BuildInfoBuilder {
     }
 }
 
-/// Determine the default .tsbuildinfo path based on configuration
-pub fn default_build_info_path(config_path: &Path, out_dir: Option<&Path>) -> PathBuf {
+/// Determine the default .tsbuildinfo path based on configuration.
+///
+/// Mirrors `tsc`'s `getTsBuildInfoEmitOutputFilePath` algorithm:
+/// - With `outDir` and `rootDir`: place at `outDir + relativePath(rootDir,
+///   configFileExtensionLess) + .tsbuildinfo`. With a typical layout where
+///   the tsconfig sits above `rootDir`, the relative path walks up out of
+///   `rootDir` and back to the tsconfig location, so the build-info file
+///   ends up next to the tsconfig.
+/// - With `outDir` but no `rootDir`: place at `outDir/<config-name>.tsbuildinfo`.
+/// - With neither: place next to the tsconfig.
+pub fn default_build_info_path(
+    config_path: &Path,
+    out_dir: Option<&Path>,
+    root_dir: Option<&Path>,
+) -> PathBuf {
     let config_name = config_path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -528,14 +541,49 @@ pub fn default_build_info_path(config_path: &Path, out_dir: Option<&Path>) -> Pa
 
     let build_info_name = format!("{config_name}.tsbuildinfo");
 
-    if let Some(out) = out_dir {
-        out.join(&build_info_name)
-    } else {
-        config_path
+    let Some(out) = out_dir else {
+        return config_path
             .parent()
             .unwrap_or_else(|| Path::new("."))
-            .join(&build_info_name)
+            .join(&build_info_name);
+    };
+
+    let Some(root) = root_dir else {
+        return out.join(&build_info_name);
+    };
+
+    let config_dir = config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let config_extension_less = config_dir.join(config_name);
+
+    let relative = diff_paths(&config_extension_less, root)
+        .unwrap_or_else(|| PathBuf::from(config_name));
+    let mut path = out.join(relative);
+    path.set_extension("tsbuildinfo");
+    path
+}
+
+fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let path_components: Vec<Component<'_>> = path.components().collect();
+    let base_components: Vec<Component<'_>> = base.components().collect();
+    let common_len = path_components
+        .iter()
+        .zip(base_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    if common_len == 0 && path.is_absolute() != base.is_absolute() {
+        return None;
     }
+    let mut result = PathBuf::new();
+    for _ in common_len..base_components.len() {
+        result.push("..");
+    }
+    for component in &path_components[common_len..] {
+        result.push(component);
+    }
+    Some(result)
 }
 
 #[cfg(test)]
