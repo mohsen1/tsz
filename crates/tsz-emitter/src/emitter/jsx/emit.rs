@@ -559,8 +559,18 @@ impl<'a> Printer<'a> {
     // Shared JSX Helpers
     // =========================================================================
 
-    /// Get the JSX factory function name (e.g. "React.createElement" or custom)
+    /// Get the JSX factory function name (e.g. "React.createElement" or custom).
+    ///
+    /// Resolution order matches tsc:
+    ///   1. per-file `/** @jsx <factory> */` pragma in leading comments
+    ///   2. `compilerOptions.jsxFactory`
+    ///   3. default `React.createElement`
+    ///
+    /// See <https://github.com/mohsen1/tsz/issues/4010>.
     pub(in super::super) fn get_jsx_factory(&self) -> String {
+        if let Some(pragma) = self.source_text.and_then(super::extract_jsx_factory_pragma) {
+            return pragma;
+        }
         self.ctx
             .options
             .jsx_factory
@@ -569,8 +579,16 @@ impl<'a> Printer<'a> {
             .to_string()
     }
 
-    /// Get the JSX fragment factory (e.g. "React.Fragment" or custom)
+    /// Get the JSX fragment factory (e.g. "React.Fragment" or custom).
+    /// Same resolution order as `get_jsx_factory`, but for the
+    /// `@jsxFrag` pragma and `compilerOptions.jsxFragmentFactory`.
     pub(in super::super) fn get_jsx_fragment_factory(&self) -> String {
+        if let Some(pragma) = self
+            .source_text
+            .and_then(super::extract_jsx_fragment_factory_pragma)
+        {
+            return pragma;
+        }
         self.ctx
             .options
             .jsx_fragment_factory

@@ -89,6 +89,94 @@ pub(super) fn group_jsx_attrs(attrs: &[JsxAttrInfo]) -> Vec<AttrGroup> {
 // Pragma extraction
 // =============================================================================
 
+/// Extract a `@<tag> <value>` pragma from leading block comments.
+///
+/// `tag` is the bare pragma name (e.g. `"jsx"`, `"jsxFrag"`, `"jsxImportSource"`).
+/// `value_chars` decides which characters are part of the pragma value.
+///
+/// Mirrors tsc behavior: only block comments before any code are scanned, and
+/// the tag must be followed by a pragma boundary (whitespace or end-of-comment)
+/// — this rejects fake matches like `@jsxImportSourcex` matching `@jsxImportSource`,
+/// or `@jsxImportSource` matching `@jsx` (the latter is the reason the boundary
+/// check matters even more for the new `@jsx` / `@jsxFrag` pragmas).
+fn extract_pragma_value(
+    source: &str,
+    tag: &str,
+    value_chars: impl Fn(char) -> bool,
+) -> Option<String> {
+    let scan_limit = source.len().min(4096);
+    let text = &source[..scan_limit];
+    let bytes = text.as_bytes();
+    let needle = format!("@{tag}");
+    let mut pos = 0;
+    while pos < bytes.len() {
+        if bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+            continue;
+        }
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+            let comment_start = pos + 2;
+            if let Some(end_offset) = text[comment_start..].find("*/") {
+                let comment_body = &text[comment_start..comment_start + end_offset];
+                let mut start = 0usize;
+                while let Some(rel) = comment_body[start..].find(&needle) {
+                    let abs = start + rel;
+                    let after = abs + needle.len();
+                    let body_bytes = comment_body.as_bytes();
+                    let boundary_ok = after >= body_bytes.len()
+                        || (body_bytes[after] as char).is_ascii_whitespace();
+                    if boundary_ok {
+                        let value: String = comment_body[after..]
+                            .trim_start()
+                            .chars()
+                            .take_while(|c| value_chars(*c))
+                            .collect();
+                        if !value.is_empty() {
+                            return Some(value);
+                        }
+                        // Tag found but no value — keep scanning for another match.
+                    }
+                    start = after;
+                    if start >= comment_body.len() {
+                        break;
+                    }
+                }
+                pos = comment_start + end_offset + 2;
+            } else {
+                break;
+            }
+            continue;
+        }
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
+            if let Some(nl) = text[pos..].find('\n') {
+                pos += nl + 1;
+            } else {
+                break;
+            }
+            continue;
+        }
+        break;
+    }
+    None
+}
+
+/// Extract `@jsx <factory>` from leading block comments. The factory may be
+/// a member-expression chain (e.g. `h`, `React.createElement`, `Foo.bar.baz`).
+/// Returns `None` if no `@jsx` pragma is present.
+pub(super) fn extract_jsx_factory_pragma(source: &str) -> Option<String> {
+    extract_pragma_value(source, "jsx", |c| {
+        c.is_alphanumeric() || c == '_' || c == '$' || c == '.'
+    })
+}
+
+/// Extract `@jsxFrag <factory>` from leading block comments. Same value shape
+/// as `@jsx`. Returns `None` if no `@jsxFrag` pragma is present.
+pub(super) fn extract_jsx_fragment_factory_pragma(source: &str) -> Option<String> {
+    extract_pragma_value(source, "jsxFrag", |c| {
+        c.is_alphanumeric() || c == '_' || c == '$' || c == '.'
+    })
+}
+
 /// Extract `@jsxImportSource <package>` from leading block comments.
 /// Mirrors tsc behavior: only block comments before any code are scanned, and
 /// the `@jsxImportSource` tag must be followed by a pragma boundary
@@ -588,6 +676,77 @@ mod tests {
         printer.set_source_text(source);
         printer.print(root);
         printer.finish().code
+    }
+
+    use super::{extract_jsx_factory_pragma, extract_jsx_fragment_factory_pragma};
+
+    #[test]
+    fn jsx_factory_pragma_extracts_simple_identifier() {
+        // Issue #4010 repro: classic JSX emit should pick up `@jsx h`.
+        let source = "/** @jsx h */\nconst x = <div />;";
+        assert_eq!(extract_jsx_factory_pragma(source).as_deref(), Some("h"));
+    }
+
+    #[test]
+    fn jsx_factory_pragma_extracts_member_expression() {
+        let source = "/** @jsx React.createElement */\n";
+        assert_eq!(
+            extract_jsx_factory_pragma(source).as_deref(),
+            Some("React.createElement")
+        );
+    }
+
+    #[test]
+    fn jsx_factory_pragma_rejects_jsx_import_source_collision() {
+        // `@jsxImportSource` shares a prefix with `@jsx` — the pragma boundary
+        // check must reject the inner match. Otherwise factory would resolve to
+        // `ImportSource`.
+        let source = "/** @jsxImportSource preact */\n";
+        assert_eq!(extract_jsx_factory_pragma(source), None);
+    }
+
+    #[test]
+    fn jsx_fragment_factory_pragma_extracts() {
+        let source = "/** @jsx h\n *  @jsxFrag Fragment */\n";
+        assert_eq!(extract_jsx_factory_pragma(source).as_deref(), Some("h"));
+        assert_eq!(
+            extract_jsx_fragment_factory_pragma(source).as_deref(),
+            Some("Fragment")
+        );
+    }
+
+    #[test]
+    fn jsx_factory_pragma_only_in_leading_block_comments() {
+        // Pragma after code starts is ignored (matches tsc).
+        let source = "const noop = 1;\n/** @jsx h */\nconst x = <div />;";
+        assert_eq!(extract_jsx_factory_pragma(source), None);
+    }
+
+    #[test]
+    fn classic_jsx_emit_uses_pragma_factory_over_default() {
+        // End-to-end: with `/** @jsx h */`, classic JSX (`jsx: react`) must
+        // emit `h(...)`, not `React.createElement(...)`. Issue #4010 repro.
+        use crate::emitter::JsxEmit;
+        use crate::output::printer::{PrintOptions, Printer};
+        let source = "/** @jsx h */\nconst x = <div id=\"a\" />;";
+        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrintOptions {
+            jsx: JsxEmit::React,
+            ..PrintOptions::default()
+        };
+        let mut printer = Printer::new(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+        assert!(
+            output.contains("h(\"div\""),
+            "expected `h(\"div\"...)` call, got {output:?}"
+        );
+        assert!(
+            !output.contains("React.createElement"),
+            "must not fall back to React.createElement when @jsx pragma is set, got {output:?}"
+        );
     }
 
     #[test]
