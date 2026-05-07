@@ -408,6 +408,52 @@ fn prepare_paste_edits_accepts_protocol_copied_text_span() {
 }
 
 #[test]
+fn brace_completion_allows_non_quote_openings_inside_comments() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/index.ts",
+                    "fileContent": "// comment\n",
+                }),
+            ))
+            .success
+    );
+
+    for opening_brace in ["{", "(", "["] {
+        let response = server.handle_tsserver_request(make_request(
+            "braceCompletion",
+            serde_json::json!({
+                "file": "/src/index.ts",
+                "line": 1,
+                "offset": 4,
+                "openingBrace": opening_brace,
+            }),
+        ));
+        assert!(
+            response.success,
+            "expected {opening_brace} in comment to succeed, got {response:?}"
+        );
+        assert_eq!(response.body, Some(serde_json::json!(true)));
+    }
+
+    let quote = server.handle_tsserver_request(make_request(
+        "braceCompletion",
+        serde_json::json!({
+            "file": "/src/index.ts",
+            "line": 1,
+            "offset": 4,
+            "openingBrace": "'",
+        }),
+    ));
+    assert!(!quote.success);
+    assert_eq!(quote.message.as_deref(), Some("No content available."));
+    assert_eq!(quote.body, None);
+}
+
+#[test]
 fn brace_completion_rejects_less_than_opening_brace() {
     let mut server = make_server();
     assert!(
