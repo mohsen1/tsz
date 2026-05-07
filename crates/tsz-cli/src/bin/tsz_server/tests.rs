@@ -5394,6 +5394,82 @@ mod brace_code_map {
     }
 }
 
+// Issue #3718: refactor handlers must accept position-only requests
+// (`line`/`offset`) in addition to range requests
+// (`startLine`/`startOffset`/`endLine`/`endOffset`). tsserver dispatches
+// `FileLocationOrRangeRequestArgs` to the language service in either form.
+#[test]
+fn extract_refactor_span_accepts_range_form() {
+    let args = serde_json::json!({
+        "file": "/a.ts",
+        "startLine": 2,
+        "startOffset": 13,
+        "endLine": 2,
+        "endOffset": 18,
+    });
+    let span = Server::extract_refactor_span(&args).expect("range form must parse");
+    assert_eq!(span, (2, 13, 2, 18));
+}
+
+#[test]
+fn extract_refactor_span_accepts_position_only_form_as_zero_width() {
+    // Issue #3718: when only `line`/`offset` are sent, treat the request as a
+    // zero-width range at that position so the handler proceeds instead of
+    // bailing through the optional-chained `?` on the missing range fields.
+    let args = serde_json::json!({
+        "file": "/a.ts",
+        "line": 2,
+        "offset": 9,
+    });
+    let span = Server::extract_refactor_span(&args).expect("position-only must parse");
+    assert_eq!(span, (2, 9, 2, 9));
+}
+
+#[test]
+fn extract_refactor_span_prefers_explicit_range_over_position() {
+    // If both forms are present, the explicit range wins (matches tsserver).
+    let args = serde_json::json!({
+        "file": "/a.ts",
+        "startLine": 1, "startOffset": 1, "endLine": 1, "endOffset": 5,
+        "line": 9, "offset": 9,
+    });
+    let span = Server::extract_refactor_span(&args).expect("range form must win");
+    assert_eq!(span, (1, 1, 1, 5));
+}
+
+#[test]
+fn extract_refactor_span_returns_none_without_position_or_range() {
+    let args = serde_json::json!({"file": "/a.ts"});
+    assert!(Server::extract_refactor_span(&args).is_none());
+}
+
+#[test]
+fn applicable_refactors_position_only_request_returns_success_not_error() {
+    // End-to-end smoke check that position-only requests no longer fail the
+    // request shape. The body may be empty depending on whether an
+    // extractable expression sits at the cursor; the contract is that the
+    // request completes successfully (it used to return `None` from the
+    // closure when `startLine` was missing).
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/pos.ts",
+                    "fileContent": "function f() {\n  const value = 1 + 2;\n  return value;\n}\n",
+                }),
+            ))
+            .success
+    );
+    let response = server.handle_tsserver_request(make_request(
+        "getApplicableRefactors",
+        serde_json::json!({"file": "/src/pos.ts", "line": 2, "offset": 9}),
+    ));
+    assert!(response.success);
+    assert!(response.body.is_some_and(|b| b.is_array()));
+}
+
 // Issue #3803: getApplicableRefactors must NOT emit the `_scope_1` actions
 // when the request range has no enclosing function — only the global scope
 // is meaningful — and every action must carry a `range`.

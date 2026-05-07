@@ -532,6 +532,26 @@ impl Server {
         std::fs::write(out_path, output)
     }
 
+    /// Extract a 1-based (`startLine`, `startOffset`, `endLine`, `endOffset`)
+    /// range from a `FileLocationOrRangeRequestArgs` payload. The protocol
+    /// accepts either an explicit range or a position-only request
+    /// (`line`/`offset`); for the latter, return a zero-width range at the
+    /// position. See #3718.
+    pub(super) fn extract_refactor_span(args: &serde_json::Value) -> Option<(u32, u32, u32, u32)> {
+        let start_line = args.get("startLine").and_then(serde_json::Value::as_u64);
+        let start_offset = args.get("startOffset").and_then(serde_json::Value::as_u64);
+        let end_line = args.get("endLine").and_then(serde_json::Value::as_u64);
+        let end_offset = args.get("endOffset").and_then(serde_json::Value::as_u64);
+        if let (Some(sl), Some(so), Some(el), Some(eo)) =
+            (start_line, start_offset, end_line, end_offset)
+        {
+            return Some((sl as u32, so as u32, el as u32, eo as u32));
+        }
+        let line = args.get("line").and_then(serde_json::Value::as_u64)?;
+        let offset = args.get("offset").and_then(serde_json::Value::as_u64)?;
+        Some((line as u32, offset as u32, line as u32, offset as u32))
+    }
+
     pub(crate) fn handle_get_applicable_refactors(
         &mut self,
         seq: u64,
@@ -539,10 +559,12 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
-            let start_line = request.arguments.get("startLine")?.as_u64()? as u32;
-            let start_offset = request.arguments.get("startOffset")?.as_u64()? as u32;
-            let end_line = request.arguments.get("endLine")?.as_u64()? as u32;
-            let end_offset = request.arguments.get("endOffset")?.as_u64()? as u32;
+            // tsserver accepts `FileLocationOrRangeRequestArgs`: either an
+            // explicit range (`startLine`/`startOffset`/`endLine`/`endOffset`)
+            // or a position-only request (`line`/`offset`). For position-only
+            // we treat the request as a zero-width range. See #3718.
+            let (start_line, start_offset, end_line, end_offset) =
+                Self::extract_refactor_span(&request.arguments)?;
 
             let (arena, binder, root, content) = self.parse_and_bind_file(file)?;
             let line_map = LineMap::build(&content);
@@ -678,10 +700,10 @@ impl Server {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
             let refactor = request.arguments.get("refactor")?.as_str()?;
-            let start_line = request.arguments.get("startLine")?.as_u64()? as u32;
-            let start_offset = request.arguments.get("startOffset")?.as_u64()? as u32;
-            let end_line = request.arguments.get("endLine")?.as_u64()? as u32;
-            let end_offset = request.arguments.get("endOffset")?.as_u64()? as u32;
+            // Same `FileLocationOrRangeRequestArgs` handling as
+            // `getApplicableRefactors`. See #3718.
+            let (start_line, start_offset, end_line, end_offset) =
+                Self::extract_refactor_span(&request.arguments)?;
 
             let (arena, binder, root, content) = self.parse_and_bind_file(file)?;
             let line_map = LineMap::build(&content);
