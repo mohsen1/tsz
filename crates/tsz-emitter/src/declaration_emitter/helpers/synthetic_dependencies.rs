@@ -197,6 +197,12 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(access) = self.arena.get_access_expr(callee_node) else {
             return;
         };
+        if self
+            .call_receiver_default_import_alias(call.expression)
+            .is_some()
+        {
+            return;
+        }
         let Some(receiver_name) = self.get_identifier_text(access.expression) else {
             return;
         };

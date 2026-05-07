@@ -1278,6 +1278,10 @@ bitflags::bitflags! {
         /// exported class. It must not later pick up module augmentation members
         /// through name-based fallback lookup.
         const NO_MODULE_AUGMENTATION_LOOKUP = 1 << 4;
+        /// Synthetic `Record<K, unknown>` produced by `K in value` flow narrowing.
+        /// This is semantically structural, but diagnostics should keep tsc's
+        /// `Record<..., unknown>` display surface.
+        const IN_OPERATOR_RECORD = 1 << 5;
     }
 }
 

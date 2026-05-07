@@ -600,10 +600,14 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const tsconfigModule = tsconfigOptions.module
       ? parseModule(String(tsconfigOptions.module))
       : undefined;
+    const hasEmbeddedTsconfig = Object.keys(tsconfigOptions).length > 0;
     const module = variant.module ? parseModule(variant.module)
       : directives.module ? parseModule(String(directives.module))
       : tsconfigModule !== undefined ? tsconfigModule
-      : inferDefaultModule(target);  // Match TSC's default: commonjs for es3/es5, es2015 for es2015+
+      // Project-style tsconfig baselines inherit tsc's compiler-option default:
+      // unspecified `module` remains CommonJS, independent of `target`.
+      : hasEmbeddedTsconfig ? parseModule('commonjs')
+      : inferDefaultModule(target);
     const lib = parseLibList(directives.lib) ?? parseLibList(tsconfigOptions.lib);
 
     // TS6: alwaysStrict defaults to true unless explicitly set to false.
@@ -670,7 +674,11 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       : directives.rewriterelativeimportextensions === true;
     const isolatedModules = variant.isolatedmodules !== undefined
       ? variant.isolatedmodules === 'true'
-      : directives.isolatedmodules === true;
+      : directives.isolatedmodules === true
+        ? true
+        : typeof tsconfigOptions.isolatedModules === 'boolean'
+          ? (tsconfigOptions.isolatedModules as boolean)
+          : false;
     const importsNotUsedAsValues = typeof directives.importsnotusedasvalues === 'string'
       ? directives.importsnotusedasvalues : undefined;
     const preserveValueImports = directives.preservevalueimports === true;
@@ -804,20 +812,37 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
 async function readTypeScriptTestFile(testPath: string): Promise<string> {
   const testFilePath = path.join(TS_DIR, testPath);
   try {
-    return await fs.promises.readFile(testFilePath, 'utf-8');
+    return decodeTypeScriptTestFile(await fs.promises.readFile(testFilePath));
   } catch (readError) {
     try {
       const normalizedPath = testPath.replace(/\\/g, '/');
       const { stdout } = await execFile(
         'git',
         ['-C', TS_DIR, 'show', `HEAD:${normalizedPath}`],
-        { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 },
+        { encoding: 'buffer', maxBuffer: 8 * 1024 * 1024 },
       );
-      return stdout;
+      return decodeTypeScriptTestFile(Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout));
     } catch {
       throw readError;
     }
   }
+}
+
+function decodeTypeScriptTestFile(bytes: Buffer): string {
+  if (bytes.length >= 2) {
+    if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+      return bytes.subarray(2).toString('utf16le');
+    }
+    if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+      let text = '';
+      for (let i = 2; i + 1 < bytes.length; i += 2) {
+        text += String.fromCharCode((bytes[i] << 8) | bytes[i + 1]);
+      }
+      return text;
+    }
+  }
+
+  return bytes.toString('utf8');
 }
 
 // ============================================================================
