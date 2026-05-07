@@ -2314,6 +2314,7 @@ impl ParserState {
         self.parse_expected_less_than();
 
         let mut args = Vec::new();
+        let mut has_trailing_comma = false;
 
         // Check for empty type argument list: <>
         // TypeScript reports TS1099: "Type argument list cannot be empty"
@@ -2333,11 +2334,16 @@ impl ParserState {
                 if !self.parse_optional(SyntaxKind::CommaToken) {
                     break;
                 }
+                if self.is_greater_than_or_compound() {
+                    has_trailing_comma = true;
+                }
             }
         }
 
         self.parse_expected_greater_than();
-        self.make_node_list(args)
+        let mut list = self.make_node_list(args);
+        list.has_trailing_comma = has_trailing_comma;
+        list
     }
 
     fn parse_type_argument_in_type_arguments(&mut self) -> NodeIndex {

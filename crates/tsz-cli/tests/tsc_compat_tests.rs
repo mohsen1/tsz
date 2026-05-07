@@ -2270,6 +2270,57 @@ fn show_config_check_js_implied_allow_js_includes_js_files() {
 }
 
 #[test]
+fn show_config_renders_inherited_root_selectors_relative_to_child_config() {
+    let temp = TempDir::new("show_config_inherited_root_selectors").expect("temp dir");
+    let base = temp.path.join("base");
+    let child = temp.path.join("child");
+    std::fs::create_dir_all(base.join("src")).expect("create base src");
+    std::fs::create_dir_all(&child).expect("create child");
+    write_file(&base.join("src/a.ts"), "export const x = 1;\n");
+    write_file(
+        &base.join("tsconfig.base.json"),
+        r#"{
+  "include": ["src"]
+}
+"#,
+    );
+    write_file(
+        &child.join("tsconfig.json"),
+        r#"{
+  "extends": "../base/tsconfig.base.json"
+}
+"#,
+    );
+
+    let output = run_tsz(&child, &["--showConfig"]).expect("tsz should run");
+    let json: serde_json::Value = serde_json::from_str(&output)
+        .unwrap_or_else(|_| panic!("invalid showConfig JSON:\n{output}"));
+    let files = json
+        .get("files")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("missing files in showConfig output:\n{output}"));
+    let include = json
+        .get("include")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("missing include in showConfig output:\n{output}"));
+
+    assert_eq!(
+        files,
+        &[serde_json::Value::String("../base/src/a.ts".to_string())],
+        "inherited discovered file should render relative to child config: {output}"
+    );
+    assert_eq!(
+        include,
+        &[serde_json::Value::String("../base/src".to_string())],
+        "inherited include should render relative to child config: {output}"
+    );
+    assert!(
+        !output.contains(temp.path.to_string_lossy().as_ref()),
+        "showConfig should not leak absolute temp paths: {output}"
+    );
+}
+
+#[test]
 fn show_config_rejects_tsconfig_only_cli_options() {
     let temp = TempDir::new("show_config_tsconfig_only_cli_options").expect("temp dir");
     write_file(&temp.path.join("index.ts"), "export {};\n");
@@ -3141,6 +3192,68 @@ fn tsc_parity_ts2427_any_alone_still_reported() {
             "--target", "es2015", "--noEmit", "--pretty", "false", "test.ts",
         ],
         "TS2427 still reported for predefined names when no hard keyword present",
+    );
+}
+
+/// Regression for #3908: when `noEmit` comes from tsconfig.json (not the
+/// CLI flag), tsz must exit with `DiagnosticsPresent_OutputsGenerated` (2),
+/// matching tsc. Previously the exit-code branch only consulted the CLI
+/// arg, so config-only `noEmit` fell through to the outputs-skipped path
+/// (1).
+#[test]
+fn tsconfig_no_emit_with_errors_exits_outputs_generated() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("tsconfig_no_emit_exit_code").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "let x: string = 1;\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true},"files":["a.ts"]}"#,
+    );
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["-p", "tsconfig.json", "--pretty", "false"])
+            .expect("tsz should run");
+    assert!(
+        output.contains("TS2322"),
+        "expected TS2322 diagnostic, got:\n{output}"
+    );
+    assert_eq!(
+        code, 2,
+        "tsconfig noEmit with errors should exit 2 (DiagnosticsPresent_OutputsGenerated), got {code}\n{output}"
+    );
+}
+
+/// Companion to the test above: the same program with `--noEmit` on the
+/// command line must produce the same exit code. This locks the parity
+/// between CLI-driven and tsconfig-driven `noEmit`.
+#[test]
+fn cli_no_emit_with_errors_exits_outputs_generated() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("cli_no_emit_exit_code").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "let x: string = 1;\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{},"files":["a.ts"]}"#,
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", "tsconfig.json", "--noEmit", "--pretty", "false"],
+    )
+    .expect("tsz should run");
+    assert!(
+        output.contains("TS2322"),
+        "expected TS2322 diagnostic, got:\n{output}"
+    );
+    assert_eq!(
+        code, 2,
+        "CLI --noEmit with errors should exit 2 (DiagnosticsPresent_OutputsGenerated), got {code}\n{output}"
     );
 }
 
