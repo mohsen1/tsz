@@ -38,6 +38,7 @@ fn make_server() -> Server {
         auto_import_specifier_exclude_regexes: Vec::new(),
         include_completions_with_class_member_snippets: false,
         include_inlay_parameter_name_hints: None,
+        generate_return_in_doc_template: None,
         new_line_character: None,
         plugin_configs: FxHashMap::default(),
         native_ts_worker: None,

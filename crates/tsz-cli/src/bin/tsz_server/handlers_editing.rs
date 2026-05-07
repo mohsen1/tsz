@@ -697,10 +697,15 @@ impl Server {
             let line = request.arguments.get("line")?.as_u64()? as usize;
             let _offset = request.arguments.get("offset")?.as_u64().unwrap_or(1);
             let source_text = self.open_files.get(file)?;
+            // Resolution order matches tsserver:
+            //   1. per-request argument `generateReturnInDocTemplate`
+            //   2. user preference set via `configure`
+            //   3. tsserver default (`true`)
             let generate_return = request
                 .arguments
                 .get("generateReturnInDocTemplate")
                 .and_then(serde_json::Value::as_bool)
+                .or(self.generate_return_in_doc_template)
                 .unwrap_or(true);
 
             // Detect JS files for JSDoc type annotation format

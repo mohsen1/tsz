@@ -35,6 +35,7 @@ fn make_server() -> Server {
         auto_import_specifier_exclude_regexes: Vec::new(),
         include_completions_with_class_member_snippets: false,
         include_inlay_parameter_name_hints: None,
+        generate_return_in_doc_template: None,
         new_line_character: None,
         plugin_configs: FxHashMap::default(),
         native_ts_worker: None,
@@ -2669,6 +2670,47 @@ fn test_todo_comments_match_inside_template_substitutions() {
 }
 
 #[test]
+fn test_doc_comment_template_omits_returns_when_configure_disables_pref() {
+    // tsserver lets clients turn off `@returns` via the
+    // `generateReturnInDocTemplate` preference. tsz-server was hard-coding the
+    // default. Regression for https://github.com/mohsen1/tsz/issues/3972.
+    let mut server = make_server();
+    let file = "/doc-template.ts";
+    server.open_files.insert(
+        file.to_string(),
+        "function f(a: number) { return a; }\n".to_string(),
+    );
+
+    let configure = server.handle_tsserver_request(make_request(
+        "configure",
+        serde_json::json!({
+            "preferences": { "generateReturnInDocTemplate": false }
+        }),
+    ));
+    assert!(configure.success);
+
+    let response = server.handle_tsserver_request(make_request(
+        "docCommentTemplate",
+        serde_json::json!({ "file": file, "line": 1, "offset": 1 }),
+    ));
+    assert!(response.success);
+    let new_text = response
+        .body
+        .as_ref()
+        .and_then(|b| b.get("newText"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        new_text.contains("@param a"),
+        "@param should still be present, got {new_text:?}"
+    );
+    assert!(
+        !new_text.contains("@returns"),
+        "@returns must be omitted when generateReturnInDocTemplate=false, got {new_text:?}"
+    );
+}
+
+#[test]
 fn test_todo_comments_skip_template_text_outside_substitutions() {
     // Plain template text (no `${...}`) must not produce false TODO matches
     // — only real comments do. Locks the existing template-skip behavior.
@@ -2692,6 +2734,45 @@ fn test_todo_comments_skip_template_text_outside_substitutions() {
     assert!(
         comments.is_empty(),
         "TODO inside template *text* must not match, got {body:#}"
+    );
+}
+
+#[test]
+fn test_doc_comment_template_per_request_arg_overrides_configure_pref() {
+    // Per-request `generateReturnInDocTemplate` takes precedence over the
+    // configured user preference, matching tsserver's resolution order.
+    let mut server = make_server();
+    let file = "/doc-template-override.ts";
+    server.open_files.insert(
+        file.to_string(),
+        "function f(a: number) { return a; }\n".to_string(),
+    );
+
+    server.handle_tsserver_request(make_request(
+        "configure",
+        serde_json::json!({
+            "preferences": { "generateReturnInDocTemplate": false }
+        }),
+    ));
+
+    let response = server.handle_tsserver_request(make_request(
+        "docCommentTemplate",
+        serde_json::json!({
+            "file": file,
+            "line": 1,
+            "offset": 1,
+            "generateReturnInDocTemplate": true
+        }),
+    ));
+    let new_text = response
+        .body
+        .as_ref()
+        .and_then(|b| b.get("newText"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        new_text.contains("@returns"),
+        "per-request arg=true must override configure=false, got {new_text:?}"
     );
 }
 
@@ -2723,6 +2804,32 @@ fn test_todo_comments_handle_nested_template_in_substitution() {
     assert!(
         messages.iter().any(|m| m.starts_with("TODO nested")),
         "expected nested TODO to match, got {messages:?}"
+    );
+}
+
+#[test]
+fn test_doc_comment_template_default_includes_returns() {
+    // No configure, no per-request arg: default is `true` (matches tsc).
+    let mut server = make_server();
+    let file = "/doc-template-default.ts";
+    server.open_files.insert(
+        file.to_string(),
+        "function f(a: number) { return a; }\n".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "docCommentTemplate",
+        serde_json::json!({ "file": file, "line": 1, "offset": 1 }),
+    ));
+    let new_text = response
+        .body
+        .as_ref()
+        .and_then(|b| b.get("newText"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        new_text.contains("@returns"),
+        "default behavior should include @returns, got {new_text:?}"
     );
 }
 

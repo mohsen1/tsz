@@ -98,6 +98,12 @@ impl Server {
             .get("includeInlayParameterNameHints")
             .and_then(|v| v.as_str())
             .map(std::string::ToString::to_string);
+        // `generateReturnInDocTemplate` controls the `@returns` line in
+        // `docCommentTemplate`. Storing as `Option<bool>` so the per-request
+        // argument or the default still applies when `configure` doesn't set it.
+        self.generate_return_in_doc_template = preferences
+            .get("generateReturnInDocTemplate")
+            .and_then(serde_json::Value::as_bool);
         if let Some(format_options) = request
             .arguments
             .get("formatOptions")
