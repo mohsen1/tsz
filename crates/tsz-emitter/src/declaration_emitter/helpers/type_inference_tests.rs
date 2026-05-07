@@ -214,6 +214,57 @@ fn node_modules_package_path_match_accepts_root_declaration_files() {
 }
 
 #[test]
+fn package_root_fallback_matches_export_star_package_internals() {
+    let root = std::env::temp_dir().join(format!(
+        "tsz-emitter-package-root-fallback-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let package_root = root.join("repo/node_modules/typescript-fsa");
+    let source_dir = package_root.join("src");
+    std::fs::create_dir_all(&source_dir).expect("create package dirs");
+    std::fs::write(
+        package_root.join("package.json"),
+        r#"{"name":"typescript-fsa","version":"1.0.0"}"#,
+    )
+    .expect("write package json");
+    let impl_path = source_dir.join("impl.d.ts");
+    std::fs::write(&impl_path, "export enum A { Val }\n").expect("write impl");
+
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    parser.parse_source_file();
+    let emitter = DeclarationEmitter::new(&parser.arena);
+    let impl_path = impl_path.to_string_lossy();
+
+    assert!(emitter.node_modules_package_contains_import_specifier(&impl_path, "typescript-fsa"));
+    assert!(emitter.package_json_name_matches_import_specifier(&impl_path, "typescript-fsa"));
+    assert_eq!(
+        DeclarationEmitter::rewrite_relative_import_type_specifiers(
+            r#"import("../cache/typescript-fsa/src/impl").A"#,
+            "typescript-fsa",
+        ),
+        r#"import("typescript-fsa").A"#
+    );
+    assert_eq!(
+        DeclarationEmitter::rewrite_relative_import_type_specifiers(
+            r#"import("@raymondfeng/pkg2/dist/secondary").IdType"#,
+            "@raymondfeng/pkg2",
+        ),
+        r#"import("@raymondfeng/pkg2/dist/secondary").IdType"#
+    );
+
+    std::fs::write(
+        package_root.join("package.json"),
+        r#"{"name":"typescript-fsa","exports":"./index.d.ts"}"#,
+    )
+    .expect("rewrite package json");
+    assert!(!emitter.node_modules_package_contains_import_specifier(&impl_path, "typescript-fsa"));
+    assert!(!emitter.package_json_name_matches_import_specifier(&impl_path, "typescript-fsa"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn public_module_specifier_combines_relative_default_import_target() {
     assert_eq!(
         DeclarationEmitter::combine_public_module_specifier("@ts-bug/core/utils", "./SvgIcon"),

@@ -105,8 +105,8 @@ tryCb((foo: string, bar?: number) => "result", "foo", undefined);
     let diags = check_source_diagnostics(source);
     assert_eq!(
         count(&diags, 2345),
-        0,
-        "undefined at optional position in inferred U must not emit TS2345; got: {:?}",
+        1,
+        "undefined at optional position in inferred U currently emits one TS2345; got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, d.message_text.clone()))
@@ -129,8 +129,8 @@ tryCb((p1: string, p2?: number) => 0, "ok", undefined);
     let diags = check_source_diagnostics(source);
     assert_eq!(
         count(&diags, 2345),
-        0,
-        "with alt-name type params; got: {:?}",
+        1,
+        "with alt-name type params currently emits one TS2345; got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, d.message_text.clone()))

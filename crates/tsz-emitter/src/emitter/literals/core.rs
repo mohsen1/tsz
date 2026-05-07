@@ -68,6 +68,13 @@ impl<'a> Printer<'a> {
                 .namespace_current_class_fn_enum_names
                 .contains(original_text.as_str())
         {
+            // Class/function/enum declared in the CURRENT namespace block is
+            // lexically in scope inside the IIFE — emit the bare identifier.
+            // This must run before the `namespace_exported_names` qualifier
+            // branch because the merged-prior-blocks set may include names
+            // that are also in the current block, and tsc keeps same-block
+            // class references unqualified (`extends PullSymbol`, not
+            // `extends TypeScript.PullSymbol`).
             self.write_identifier(emit_text);
         } else if self.in_namespace_iife
             && !self.suppress_ns_qualification
