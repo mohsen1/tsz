@@ -934,6 +934,13 @@ impl<'a> CheckerState<'a> {
                 .prefer_more_specific_contextual_property_type(best_property_type, property_type);
         }
 
+        if let Some(env_property_type) = env_property_type {
+            best_property_type = self.prefer_more_specific_contextual_property_type(
+                best_property_type,
+                env_property_type,
+            );
+        }
+
         if let Some(property_type) = self
             .ctx
             .types
@@ -952,13 +959,6 @@ impl<'a> CheckerState<'a> {
                 best_property_type = self.prefer_more_specific_contextual_property_type(
                     best_property_type,
                     property_type,
-                );
-            }
-
-            if let Some(env_property_type) = env_property_type {
-                best_property_type = self.prefer_more_specific_contextual_property_type(
-                    best_property_type,
-                    env_property_type,
                 );
             }
         }
