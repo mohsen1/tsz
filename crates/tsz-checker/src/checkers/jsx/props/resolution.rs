@@ -981,22 +981,23 @@ impl<'a> CheckerState<'a> {
                     }
                     // Assignability check — tsc anchors at the attribute NAME.
                     //
-                    // When either the actual or expected type contains unresolved type
-                    // parameters (e.g., from a deferred conditional like
-                    // `ExtractValueType<WrappedProps>`), skip per-attribute type checking.
-                    // tsc's "applicability" mechanism is more lenient for generic
-                    // components with complex signatures — it defers the real check to
-                    // instantiation time. Without this, we emit false TS2322 for valid
-                    // JSX like:
+                    // tsc defers the per-attribute relation only when the *expected*
+                    // prop type itself depends on an unresolved type parameter (e.g.
+                    // a conditional like `ExtractValueType<WrappedProps>` baked into
+                    // the contextual prop type). In that case the real relation can
+                    // only be decided at instantiation time, and checking now would
+                    // emit a false TS2322 for valid JSX like:
                     //   <ReactSelectClass<ExtractValueType<WrappedProps>> value={props.value} />
-                    // where the conditional type in `props.value` can't yet be resolved.
+                    //
+                    // It is *not* sufficient for the actual attribute value to mention
+                    // a type parameter — tsc still relates an unconstrained `T`
+                    // (effectively `unknown`) against a concrete expected type and
+                    // reports TS2322 when the relation fails (see #4018). Gate on the
+                    // expected side only.
                     let attr_has_unresolved_type_params =
                         crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             expected_type,
-                        ) || crate::query_boundaries::common::contains_type_parameters(
-                            self.ctx.types,
-                            actual_type,
                         );
                     if actual_type != TypeId::ANY
                         && actual_type != TypeId::ERROR

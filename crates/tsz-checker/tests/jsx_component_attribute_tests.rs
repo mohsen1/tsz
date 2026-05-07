@@ -189,6 +189,88 @@ let x2 = <MyComp a="hi" />;
     );
 }
 
+/// Regression for #4018: when the expected JSX prop type is concrete (e.g.
+/// `string`) and the supplied attribute value is an unconstrained outer type
+/// parameter (e.g. `T` defaulting to `unknown`), tsc still rejects the
+/// assignment with TS2322. tsz used to skip the per-attribute relation any
+/// time *either* side mentioned a type parameter, which silently dropped this
+/// error. The skip must only fire when the *expected* type is the one
+/// carrying the unresolved type parameter (deferred until instantiation).
+#[test]
+fn jsx_unconstrained_generic_value_to_concrete_prop_emits_ts2322() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicAttributes {}
+}
+
+declare function Comp(props: { s: string }): JSX.Element;
+
+function f<T>(x: T) {
+    return <Comp s={x} />;
+}
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for unconstrained T not assignable to string, got: {diags:?}"
+    );
+}
+
+/// Companion to `jsx_unconstrained_generic_value_to_concrete_prop_emits_ts2322`:
+/// the same shape using a different type-parameter name (`U` instead of `T`)
+/// must produce the same diagnostic. If renaming the variable changes
+/// behaviour, the fix has been hardcoded to a single spelling — see
+/// `.claude/CLAUDE.md` §25.
+#[test]
+fn jsx_unconstrained_generic_value_to_concrete_prop_emits_ts2322_alt_name() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicAttributes {}
+}
+
+declare function Comp(props: { s: string }): JSX.Element;
+
+function f<U>(y: U) {
+    return <Comp s={y} />;
+}
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for unconstrained U not assignable to string, got: {diags:?}"
+    );
+}
+
+/// The skip *should* still fire when the expected prop type carries an
+/// unresolved type parameter — that's the case the original heuristic was
+/// added for. A generic component whose prop type depends on its own outer
+/// type argument (e.g. `Box<T>` with `value: T`) cannot be fully checked
+/// per-attribute until instantiation, so per-attribute TS2322 must remain
+/// suppressed when both sides mention type parameters in this shape.
+#[test]
+fn jsx_generic_component_with_generic_prop_value_skips_per_attr_ts2322() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicAttributes {}
+}
+
+interface Box<T> { value: T }
+declare function BoxComp<T>(props: Box<T>): JSX.Element;
+
+function f<T>(x: T) {
+    return <BoxComp value={x} />;
+}
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should not emit TS2322 when expected prop type is itself generic, got: {diags:?}"
+    );
+}
+
 #[test]
 fn test_sfc_type_mismatch_emits_ts2322() {
     let source = format!(
