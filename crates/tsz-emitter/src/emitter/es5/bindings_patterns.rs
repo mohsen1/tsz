@@ -1579,9 +1579,9 @@ impl<'a> Printer<'a> {
             // Then: const env = ...; try { const d1 = __addDisposable(env, d1_1, ...); body } catch/finally
             let value_temp = loop_result_name.clone();
 
-            // Emit value assignment to a temp that was declared in the hoisted vars
-            let value_assign_temp = self.get_temp_var_name();
-            self.hoisted_for_of_temps.push(value_assign_temp.clone());
+            // Emit value assignment to the temp already reserved for this loop.
+            // Reusing it keeps later disposable environment suffixes aligned with tsc.
+            let value_assign_temp = value_temp_name.clone();
             self.write(&value_assign_temp);
             self.write(" = ");
             self.write(&value_temp);
@@ -1591,14 +1591,10 @@ impl<'a> Printer<'a> {
             self.write(" = false;");
             self.write_line();
 
-            // Register the outer for-await-of error container name so that
-            // next_disposable_env_names doesn't collide with it.
-            self.generated_temp_names
-                .insert(error_container_name.clone());
-
             // Generate temp name for the renamed variable: d1 -> d1_1
-            let (env_name, error_name, result_name) = self.next_disposable_env_names();
-            let temp_var_name = format!("{}_{}", var_name, self.next_disposable_env_id - 1);
+            let (env_name, error_name, result_name, env_id) =
+                self.next_disposable_env_names_with_reserved_error(&error_container_name);
+            let temp_var_name = format!("{var_name}_{env_id}");
             self.generated_temp_names.insert(temp_var_name.clone());
 
             // Determine if we use const or var based on target

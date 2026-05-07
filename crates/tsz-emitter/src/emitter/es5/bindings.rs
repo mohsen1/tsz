@@ -282,6 +282,43 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn next_disposable_env_names_with_reserved_error(
+        &mut self,
+        reserved_error_name: &str,
+    ) -> (String, String, String, u32) {
+        loop {
+            let env_id = self.next_disposable_env_id;
+            let env_name = format!("env_{env_id}");
+            let result_name = format!("result_{env_id}");
+            self.next_disposable_env_id += 1;
+
+            if self.file_identifiers.contains(&env_name)
+                || self.generated_temp_names.contains(&env_name)
+                || self.file_identifiers.contains(&result_name)
+                || self.generated_temp_names.contains(&result_name)
+            {
+                continue;
+            }
+
+            let mut error_id = env_id;
+            let error_name = loop {
+                let candidate = format!("e_{error_id}");
+                if candidate != reserved_error_name
+                    && !self.file_identifiers.contains(&candidate)
+                    && !self.generated_temp_names.contains(&candidate)
+                {
+                    break candidate;
+                }
+                error_id += 1;
+            };
+
+            self.generated_temp_names.insert(env_name.clone());
+            self.generated_temp_names.insert(error_name.clone());
+            self.generated_temp_names.insert(result_name.clone());
+            return (env_name, error_name, result_name, env_id);
+        }
+    }
+
     /// Count effective (non-omitted) bindings in a destructuring pattern
     pub(in crate::emitter) fn count_effective_bindings(
         &self,

@@ -143,6 +143,40 @@ mod tests {
     }
 
     #[test]
+    fn for_await_using_reuses_reserved_value_temp() {
+        let source = "async function main() {\n    for await (await using d1 of [{ async [Symbol.asyncDispose]() {} }]) {\n    }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, e_1, _b, _c;"),
+            "For-await using should not allocate an extra value temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_c = _f.value;")
+                && output.contains("const d1_1 = _c;")
+                && output.contains("const env_1 = { stack: [], error: void 0, hasError: false };"),
+            "Disposable lowering should reuse the reserved value temp and first env suffix.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_g = _f.value") && !output.contains("const env_2"),
+            "For-await using should not skip to later temp/env names.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn emit_class_with_accessor_members_preserves_leading_comments_in_ts_output() {
         let source = "// Regular class should still error when targeting ES5\n\
 class RegularClass {\n    accessor shouldError;\n}\n";
