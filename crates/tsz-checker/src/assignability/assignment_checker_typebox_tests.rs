@@ -27,8 +27,6 @@ function problematicFunction1(ors: Input[]): Output[] {
     return ors;
 }
 
-export type Evaluate<T> = T extends infer O ? { [K in keyof O]: O[K] } : never
-
 export declare const Readonly: unique symbol;
 export declare const Optional: unique symbol;
 export declare const Hint: unique symbol;
@@ -55,24 +53,11 @@ export interface TString extends TSchema {
     type: 'string';
 }
 
-export type ReadonlyOptionalPropertyKeys<T extends TProperties> = { [K in keyof T]: T[K] extends TReadonly<TSchema> ? (T[K] extends TOptional<T[K]> ? K : never) : never }[keyof T]
-export type ReadonlyPropertyKeys<T extends TProperties> = { [K in keyof T]: T[K] extends TReadonly<TSchema> ? (T[K] extends TOptional<T[K]> ? never : K) : never }[keyof T]
-export type OptionalPropertyKeys<T extends TProperties> = { [K in keyof T]: T[K] extends TOptional<TSchema> ? (T[K] extends TReadonly<T[K]> ? never : K) : never }[keyof T]
-export type RequiredPropertyKeys<T extends TProperties> = keyof Omit<T, ReadonlyOptionalPropertyKeys<T> | ReadonlyPropertyKeys<T> | OptionalPropertyKeys<T>>
-export type PropertiesReducer<T extends TProperties, R extends Record<keyof any, unknown>> = Evaluate<(
-    Readonly<Partial<Pick<R, ReadonlyOptionalPropertyKeys<T>>>> &
-    Readonly<Pick<R, ReadonlyPropertyKeys<T>>> &
-    Partial<Pick<R, OptionalPropertyKeys<T>>> &
-    Required<Pick<R, RequiredPropertyKeys<T>>>
-)>
-export type PropertiesReduce<T extends TProperties, P extends unknown[]> = PropertiesReducer<T, {
-    [K in keyof T]: Static<T[K], P>
-}>
 export type TPropertyKey = string | number
 export type TProperties = Record<TPropertyKey, TSchema>
 export interface TObject<T extends TProperties = TProperties> extends TSchema {
     [Kind]: 'Object'
-    static: PropertiesReduce<T, this['params']>
+    static: { [K in keyof T]: Static<T[K], this['params']> }
     type: 'object'
     properties: T
 }
