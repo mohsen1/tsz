@@ -217,7 +217,6 @@ fn collect_import_candidates_normalizes_commonjs_js_specifiers() {
 }
 
 #[test]
-#[ignore] // TODO: Code fix suggestion needs filtering for plain missing properties vs typos
 fn get_code_fixes_does_not_offer_spelling_for_plain_missing_property_2339() {
     let mut server = make_server();
     server.open_files.insert(
@@ -274,6 +273,42 @@ fn get_code_fixes_does_not_offer_spelling_for_plain_missing_property_2339() {
         ],
         "unexpected codefix list for plain TS2339 missing property: {actions:?}"
     );
+
+    for action in actions {
+        let changes = action
+            .get("changes")
+            .and_then(serde_json::Value::as_array)
+            .expect("missing-member fix should include changes");
+        assert_eq!(changes.len(), 1, "expected one file change: {action:?}");
+        assert_eq!(
+            changes[0]
+                .get("fileName")
+                .and_then(serde_json::Value::as_str),
+            Some("/declarations.d.ts")
+        );
+        let text_changes = changes[0]
+            .get("textChanges")
+            .and_then(serde_json::Value::as_array)
+            .expect("missing textChanges");
+        assert_eq!(
+            text_changes.len(),
+            1,
+            "expected one insertion edit: {action:?}"
+        );
+        assert_eq!(
+            text_changes[0].get("start"),
+            text_changes[0].get("end"),
+            "missing-member fix should insert into the target interface"
+        );
+        assert!(
+            text_changes[0]
+                .get("newText")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|text| text.contains("unknown")
+                    && (text.contains("test") || text.contains("[x: string]"))),
+            "missing-member edit should declare the requested member: {action:?}"
+        );
+    }
 }
 
 #[test]

@@ -758,9 +758,9 @@ fn test_completion_info_includes_reexported_config_auto_import() {
     let body_c_legacy = resp_c_legacy
         .body
         .expect("completions should return a body");
-    let entries_c_legacy = body_c_legacy["entries"]
+    let entries_c_legacy = body_c_legacy
         .as_array()
-        .expect("completions should include entries");
+        .expect("legacy completions should return a top-level entries array");
     assert_has_config_completion(entries_c_legacy, "legacy `completions` prefix `C`").unwrap();
 
     server.open_files.insert(
@@ -803,9 +803,9 @@ fn test_completion_info_includes_reexported_config_auto_import() {
     let body_co_legacy = resp_co_legacy
         .body
         .expect("completions should return a body");
-    let entries_co_legacy = body_co_legacy["entries"]
+    let entries_co_legacy = body_co_legacy
         .as_array()
-        .expect("completions should include entries");
+        .expect("legacy completions should return a top-level entries array");
     assert_has_config_completion(entries_co_legacy, "legacy `completions` prefix `Co`").unwrap();
 }
 
@@ -2555,9 +2555,9 @@ fn test_completion_info_contextual_string_literal_keyof_constraint() {
     let completions_body = completions_resp
         .body
         .expect("completions should return a body");
-    let completion_entries = completions_body["entries"]
+    let completion_entries = completions_body
         .as_array()
-        .expect("completions should include entries");
+        .expect("legacy completions should return a top-level entries array");
     let completion_names: Vec<&str> = completion_entries
         .iter()
         .filter_map(|entry| entry.get("name").and_then(serde_json::Value::as_str))
@@ -3950,9 +3950,9 @@ fn test_completion_info_auto_import_file_exclude_patterns_keeps_button_from_main
     let completions_body = completions_resp
         .body
         .expect("completions should return a body");
-    let completions_entries = completions_body["entries"]
+    let completions_entries = completions_body
         .as_array()
-        .expect("completions should include entries");
+        .expect("legacy completions should return a top-level entries array");
     assert_eq!(
         completions_entries
             .iter()
@@ -3991,9 +3991,9 @@ fn test_completion_info_auto_import_file_exclude_patterns_keeps_button_from_main
     let completions_from_configured_body = completions_from_configured_resp
         .body
         .expect("configured completions should return a body");
-    let completions_from_configured_entries = completions_from_configured_body["entries"]
+    let completions_from_configured_entries = completions_from_configured_body
         .as_array()
-        .expect("configured completions should include entries");
+        .expect("legacy configured completions should return a top-level entries array");
     assert_eq!(
         completions_from_configured_entries
             .iter()
@@ -4446,5 +4446,139 @@ fn test_completion_info_auto_import_dependency_filter_allows_require_usage() {
                 && entry.get("source").and_then(serde_json::Value::as_str) == Some("react")
         }),
         "expected require()-based package usage to keep same-package auto-import candidates available"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Issue #3955: tsserver protocol distinguishes the legacy `completions` body
+// from `completionInfo` and the full-protocol `completions-full` body. The
+// legacy `completions` command returns a top-level `CompletionEntry[]`, while
+// `completionInfo`/`completions-full` return a `CompletionInfo` object whose
+// `entries` field carries the same array.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn legacy_completions_returns_top_level_entries_array() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "const alpha = 1;\nal".to_string());
+
+    let req = make_request(
+        "completions",
+        serde_json::json!({"file": "/a.ts", "line": 2, "offset": 3}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("legacy completions should return a body");
+    let entries = body
+        .as_array()
+        .expect("legacy completions body must be a CompletionEntry[] array");
+    assert!(
+        entries.iter().any(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("alpha")
+        }),
+        "expected `alpha` in legacy completions entries, got {entries:?}"
+    );
+    assert!(
+        body.get("entries").is_none(),
+        "legacy completions body must not be the CompletionInfo object shape, got {body:?}"
+    );
+    assert!(
+        body.get("isGlobalCompletion").is_none(),
+        "legacy completions body must omit CompletionInfo-only fields, got {body:?}"
+    );
+    assert!(
+        body.get("isMemberCompletion").is_none(),
+        "legacy completions body must omit CompletionInfo-only fields, got {body:?}"
+    );
+    assert!(
+        body.get("isNewIdentifierLocation").is_none(),
+        "legacy completions body must omit CompletionInfo-only fields, got {body:?}"
+    );
+}
+
+#[test]
+fn completion_info_returns_completion_info_object_shape() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "const alpha = 1;\nal".to_string());
+
+    let req = make_request(
+        "completionInfo",
+        serde_json::json!({"file": "/a.ts", "line": 2, "offset": 3}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("completionInfo should return a body");
+    assert!(
+        body.is_object(),
+        "completionInfo body must be the CompletionInfo object shape, got {body:?}"
+    );
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo body must include an `entries` array");
+    assert!(
+        entries.iter().any(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("alpha")
+        }),
+        "expected `alpha` inside completionInfo.entries, got {entries:?}"
+    );
+    assert!(
+        body.get("isNewIdentifierLocation").is_some(),
+        "completionInfo body must include CompletionInfo-only fields, got {body:?}"
+    );
+}
+
+#[test]
+fn completions_full_returns_completion_info_object_shape() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "const alpha = 1;\nal".to_string());
+
+    let req = make_request(
+        "completions-full",
+        serde_json::json!({"file": "/a.ts", "line": 2, "offset": 3}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("completions-full should return a body");
+    assert!(
+        body.is_object(),
+        "completions-full body must be the CompletionInfo object shape, got {body:?}"
+    );
+    let entries = body["entries"]
+        .as_array()
+        .expect("completions-full body must include an `entries` array");
+    assert!(
+        entries.iter().any(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("alpha")
+        }),
+        "expected `alpha` inside completions-full.entries, got {entries:?}"
+    );
+}
+
+#[test]
+fn legacy_completions_inside_line_comment_returns_empty_array() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "// hello al".to_string());
+
+    let req = make_request(
+        "completions",
+        serde_json::json!({"file": "/a.ts", "line": 1, "offset": 12}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("legacy completions should return a body");
+    let entries = body
+        .as_array()
+        .expect("legacy completions body must be an array even inside line comments");
+    assert!(
+        entries.is_empty(),
+        "legacy completions inside a line comment must be an empty array, got {entries:?}"
     );
 }

@@ -24,6 +24,23 @@ impl<'a> CheckerState<'a> {
     // Helpers
     // =========================================================================
 
+    /// Whether AMD/System/classic-resolution should swallow secondary
+    /// missing-module diagnostics (TS2792/TS2307/TS2882) in favor of the
+    /// TS5107 deprecation diagnostic.
+    ///
+    /// tsc's behaviour (issue #3077): under `module: amd|system` or classic
+    /// `moduleResolution`, the deprecation diagnostic is the user-visible
+    /// signal. The secondary missing-module diagnostic is suppressed unless
+    /// `ignoreDeprecations` is set to silence TS5107, in which case the
+    /// missing-module diagnostic surfaces normally.
+    pub(crate) const fn deprecated_mode_suppresses_module_not_found(&self) -> bool {
+        let module_kind = self.ctx.compiler_options.module;
+        let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
+        let is_classic_style =
+            is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution;
+        is_classic_style && !self.ctx.compiler_options.ignore_deprecations
+    }
+
     /// Extract the `resolution-mode` override from an import/export declaration's
     /// attributes (e.g., `with { "resolution-mode": "require" }`).
     pub(crate) fn get_resolution_mode_override(

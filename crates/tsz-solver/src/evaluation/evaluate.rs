@@ -433,29 +433,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Cross-evaluator stack overflow prevention.
-        //
-        // This must count every non-cached evaluation, not just calls where the
-        // current evaluator is already deep. Large project checks commonly nest
-        // many fresh `TypeEvaluator` instances through checker-side application
-        // evaluation and subtype reduction; each individual evaluator can be
-        // shallow while the OS stack is still growing across all of them.
-        thread_local! {
-            static GLOBAL_EVAL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-        }
-        let global_depth = GLOBAL_EVAL_DEPTH.with(|d| {
-            let v = d.get();
-            d.set(v + 1);
-            v
-        });
-        if global_depth >= Self::MAX_GLOBAL_EVAL_DEPTH {
+        // Only check thread-local global depth when the local guard depth
+        // is already significant (>= 10). This avoids expensive TLS access
+        // on the vast majority of shallow evaluations.
+        if self.guard.depth() >= 10 {
+            thread_local! {
+                static GLOBAL_EVAL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+            }
+            let global_depth = GLOBAL_EVAL_DEPTH.with(|d| {
+                let v = d.get();
+                d.set(v + 1);
+                v
+            });
+            if global_depth >= Self::MAX_GLOBAL_EVAL_DEPTH {
+                GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                self.guard.mark_exceeded();
+                return TypeId::ERROR;
+            }
+            let result = self.evaluate_guarded(type_id);
             GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-            self.guard.mark_exceeded();
-            return TypeId::ERROR;
+            return result;
         }
 
-        let result = self.evaluate_guarded(type_id);
-        GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-        result
+        self.evaluate_guarded(type_id)
     }
 
     /// Inner evaluate logic, called after global depth check.
@@ -679,16 +679,39 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // For conditional type bodies with Application extends containing infer,
                     // preserve Application args so the conditional evaluator can match
                     // at the Application level (e.g., Promise<string> vs Promise<infer U>).
-                    let body_is_conditional_with_app_infer =
-                        self.is_conditional_with_application_infer(resolved);
-                    let expanded_args: std::borrow::Cow<'_, [TypeId]> =
-                        if body_is_conditional_with_app_infer {
-                            std::borrow::Cow::Owned(
-                                self.expand_type_args_preserve_applications(&app.args),
-                            )
-                        } else {
-                            self.expand_type_args(&app.args)
-                        };
+                    let arg_preservation = crate::type_queries::classify_body_for_arg_preservation(
+                        self.interner,
+                        resolved,
+                    );
+                    let body_is_conditional = matches!(
+                        self.interner.lookup(resolved),
+                        Some(TypeData::Conditional(_))
+                    );
+                    let expanded_args: std::borrow::Cow<'_, [TypeId]> = if body_is_conditional {
+                        std::borrow::Cow::Owned(
+                            app.args
+                                .iter()
+                                .map(|&arg| {
+                                    if crate::visitor::contains_type_parameters(self.interner, arg)
+                                    {
+                                        arg
+                                    } else {
+                                        self.try_expand_type_arg(arg)
+                                    }
+                                })
+                                .collect(),
+                        )
+                    } else if matches!(
+                        arg_preservation,
+                        crate::type_queries::BodyArgPreservation::ConditionalInfer
+                            | crate::type_queries::BodyArgPreservation::ConditionalApplicationInfer
+                    ) {
+                        std::borrow::Cow::Owned(
+                            self.expand_type_args_preserve_applications(&app.args),
+                        )
+                    } else {
+                        self.expand_type_args(&app.args)
+                    };
                     let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
                     if let Some(db) = self.query_db
@@ -1583,18 +1606,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// Example: `string | T[K]` where `T[K]` evaluates to `string` will become
     /// `string | string`, which then reduces to `string` via the interner's normalization.
-    fn evaluate_union(&mut self, list_id: TypeListId) -> TypeId {
-        let members = self.interner.type_list(list_id);
+    fn evaluate_union(&mut self, type_id: TypeId, list_id: TypeListId) -> TypeId {
+        let canonical_members = self.interner.type_list(list_id);
+        let origin_members = self.interner.get_union_origin(type_id);
+        let members = origin_members
+            .as_deref()
+            .map_or(canonical_members.as_ref(), Vec::as_slice);
         let mut evaluated_members = Vec::with_capacity(members.len());
 
-        for &member in members.iter() {
+        for &member in members {
             evaluated_members.push(self.evaluate_compound_member(member));
         }
 
         // Deep structural simplification using SubtypeChecker
         self.simplify_union_members(&mut evaluated_members);
 
-        self.interner.union(evaluated_members)
+        let result = self.interner.union(evaluated_members.clone());
+        self.interner.store_union_origin(result, evaluated_members);
+        result
     }
 
     /// Evaluate a member of a compound type (union/intersection) while
@@ -1981,7 +2010,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.visit_string_intrinsic(*kind, *type_arg)
             }
             TypeData::Intersection(list_id) => self.visit_intersection(*list_id),
-            TypeData::Union(list_id) => self.visit_union(*list_id),
+            TypeData::Union(list_id) => self.visit_union(type_id, *list_id),
             TypeData::Array(elem) => self.visit_array(*elem, type_id),
             TypeData::Tuple(tuple_list_id) => self.visit_tuple(*tuple_list_id, type_id),
             TypeData::NoInfer(inner) => {
@@ -2259,8 +2288,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Visit a union type: A | B | C
-    fn visit_union(&mut self, list_id: TypeListId) -> TypeId {
-        self.evaluate_union(list_id)
+    fn visit_union(&mut self, type_id: TypeId, list_id: TypeListId) -> TypeId {
+        self.evaluate_union(type_id, list_id)
     }
 
     /// Visit an array type: T[].

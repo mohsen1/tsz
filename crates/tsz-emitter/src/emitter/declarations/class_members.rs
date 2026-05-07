@@ -79,14 +79,17 @@ impl<'a> Printer<'a> {
                 .arena
                 .get(name)
                 .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
-            if is_computed {
-                self.emit(name);
-            } else {
-                let prev_ns = self.suppress_ns_qualification;
+            // Suppress namespace/CJS-export qualification only when emitting a
+            // non-computed class member name. Object-literal methods and
+            // computed class names are runtime expressions and must still pick
+            // up namespace/export rewrites.
+            let in_class_member = self.class_member_emit_depth > 0 && !is_computed;
+            let prev_ns = self.suppress_ns_qualification;
+            if in_class_member {
                 self.suppress_ns_qualification = true;
-                self.emit(name);
-                self.suppress_ns_qualification = prev_ns;
             }
+            self.emit(name);
+            self.suppress_ns_qualification = prev_ns;
         }
         self.scoped_class_expression_self_alias = prev_alias;
     }

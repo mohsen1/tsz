@@ -13,6 +13,32 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn property_type_has_array_like_length(&self, type_id: TypeId) -> bool {
+        let kind = crate::query_boundaries::type_checking_utilities::classify_array_like(
+            self.ctx.types,
+            type_id,
+        );
+        match kind {
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Array(_)
+            | crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Tuple => true,
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Readonly(inner) => {
+                self.property_type_has_array_like_length(inner)
+            }
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Union(members) => {
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|&member| self.property_type_has_array_like_length(member))
+            }
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Intersection(
+                members,
+            ) => members
+                .iter()
+                .any(|&member| self.property_type_has_array_like_length(member)),
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Other => false,
+        }
+    }
+
     fn is_global_this_surface_type(&self, type_id: TypeId) -> bool {
         let Some(shape) = query::object_shape_for_type(self.ctx.types, type_id) else {
             return false;
@@ -665,6 +691,9 @@ impl<'a> CheckerState<'a> {
             if self
                 .jsdoc_callable_type_annotation_for_node(func_idx)
                 .is_some()
+                || self
+                    .get_jsdoc_for_function(func_idx)
+                    .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"))
             {
                 return None;
             }
@@ -1341,6 +1370,13 @@ impl<'a> CheckerState<'a> {
         // and does not emit TS2339. Check this before computing source location
         // to avoid unnecessary work.
         if self.class_extends_any_base(type_id) {
+            return;
+        }
+
+        // Array-like generic constraints always provide `.length`; if property
+        // resolution misses while recursive conditional evaluation is still
+        // deferred, avoid emitting a cascaded TS2339.
+        if prop_name == "length" && self.property_type_has_array_like_length(type_id) {
             return;
         }
 

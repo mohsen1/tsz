@@ -798,9 +798,15 @@ pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> Type
         Some(TypeData::Literal(ref value)) => value.primitive_type_id(),
 
         Some(TypeData::Union(list_id)) => {
-            let members = db.type_list(list_id);
+            let canonical_members = db.type_list(list_id);
+            let origin_members = db.get_union_origin(type_id);
+            let members = origin_members
+                .as_deref()
+                .map_or(canonical_members.as_ref(), Vec::as_slice);
             let mapped: Vec<TypeId> = members.iter().map(|&m| widen_literal_type(db, m)).collect();
-            db.union(mapped)
+            let result = db.union(mapped.clone());
+            db.store_union_origin(result, mapped);
+            result
         }
 
         _ => type_id,

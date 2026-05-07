@@ -1508,6 +1508,41 @@ impl<'a> CheckerState<'a> {
         .is_some()
     }
 
+    /// Whether the root segment of a qualified JSDoc type expression refers
+    /// to a (possibly aliased) namespace, module, or import alias visible in
+    /// the current file. Used by the JSDoc typedef-base-type diagnostic loop
+    /// to suppress the generic "Cannot find name" emitter for qualified names
+    /// whose validity is owned by namespace-member resolution rather than by
+    /// simple-identifier name lookup.
+    ///
+    /// `import * as s from './m'` binds `s` as an ALIAS symbol with
+    /// `import_module = Some("./m")` but no `NAMESPACE_MODULE` flag on the
+    /// alias itself, so `is_jsdoc_namespace_root` returns false. References
+    /// like `@param {s.X}` are namespace-member accesses; emitting TS2304
+    /// "Cannot find name 's.X'" for them conflicts with tsc, which either
+    /// accepts them silently (when `X` is a valid export) or emits the
+    /// namespace-member-specific TS2694 ("Namespace 's' has no exported
+    /// member 'X'"). Both outcomes are owned by namespace-member resolution
+    /// — not by the generic identifier-not-found emitter.
+    pub(crate) fn jsdoc_qualified_root_is_namespace_or_alias(&self, root_name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+        if self.is_jsdoc_namespace_root(root_name) {
+            return true;
+        }
+        let Some(sym_id) = self.ctx.binder.file_locals.get(root_name) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.has_any_flags(
+            symbol_flags::ALIAS
+                | symbol_flags::NAMESPACE_MODULE
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::MODULE_EXPORTS,
+        ) || symbol.import_module.is_some()
+    }
+
     const fn is_jsdoc_identifier_start(byte: u8) -> bool {
         byte == b'_' || byte == b'$' || byte.is_ascii_alphabetic()
     }

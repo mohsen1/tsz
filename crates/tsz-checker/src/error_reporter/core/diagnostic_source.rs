@@ -3,6 +3,7 @@
 mod assignment_formatting;
 mod compound_assignment_context;
 mod object_literal_targets;
+mod static_schema;
 mod type_query_alias;
 
 use crate::diagnostics::diagnostic_codes;
@@ -1784,6 +1785,9 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target: TypeId,
     ) -> Option<String> {
+        if let Some(display) = self.static_schema_array_structural_display(source_type, target) {
+            return Some(display);
+        }
         let element_type =
             crate::query_boundaries::common::array_element_type(self.ctx.types, source_type)?;
         if matches!(element_type, TypeId::ERROR | TypeId::UNKNOWN) {

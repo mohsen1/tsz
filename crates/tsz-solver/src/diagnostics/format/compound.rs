@@ -538,25 +538,38 @@ impl<'a> TypeFormatter<'a> {
         // match source declaration order. Display-time sorting fixes this for diagnostics.
         //
         // Sorting rules:
-        // - Tier 0/1 (builtins/user types with source): sort by source position.
-        // - Tier 2 (anonymous objects without source): preserve declaration order.
-        //   The previous "sort tier-2 objects by property count" heuristic matched
-        //   tsc's output for some `{} | { a: number }`-style unions but reordered
-        //   legitimate discriminated-union displays (e.g. TS2353/TS2322 messages)
-        //   where tsc preserves declaration order of the anonymous members.
+        // - Tier 0/1 (builtins/user types with source): sort by source position
+        //   and place at the front of the union display.
+        // - Tier 2 (anonymous objects, literal types without a source pos): keep
+        //   their relative declaration order and place AFTER tier 0/1.
+        //
+        // The split-then-sort approach matches tsc's display preference of
+        // showing named/built-in types before anonymous/literal members
+        // (e.g. `Refrigerator | "foo"` rather than `"foo" | Refrigerator`),
+        // while still preserving discriminated-union order for anonymous
+        // object members where tsc keeps declaration order.
         if let Some(def_store) = self.def_store {
             let positions: Vec<_> = ordered
                 .iter()
                 .map(|&m| self.get_source_position_for_type(m, def_store))
                 .collect();
 
-            let all_tier_0_or_1 = positions.iter().all(|&(tier, _, _)| tier < 2);
-
-            if all_tier_0_or_1 {
-                let mut pairs: Vec<_> = ordered.iter().copied().zip(positions).collect();
-                pairs.sort_by_key(|&(_, pos)| pos);
-                ordered = pairs.into_iter().map(|(id, _)| id).collect();
+            let mut named: Vec<(TypeId, (u32, u32, u32))> = Vec::new();
+            let mut anonymous: Vec<TypeId> = Vec::new();
+            for (&id, &pos) in ordered.iter().zip(&positions) {
+                if pos.0 < 2 {
+                    named.push((id, pos));
+                } else {
+                    anonymous.push(id);
+                }
             }
+            named.sort_by_key(|&(_, pos)| pos);
+
+            ordered = named
+                .into_iter()
+                .map(|(id, _)| id)
+                .chain(anonymous)
+                .collect();
         }
 
         if has_null {
@@ -2285,10 +2298,44 @@ impl<'a> TypeFormatter<'a> {
             return (1, file_id, span_start);
         }
 
-        // Try Application - generic instantiation, get base type's position
+        // Try Application - generic instantiation. Use the MAX position of the
+        // base and the type arguments so that types like `Container<Cover>`
+        // (modeled as `Application(Container, [Cover])`) sort with their
+        // user-defined element type rather than with a built-in/lib base.
         if let Some(TypeData::Application(app_id)) = &data {
             let app = self.interner.type_application(*app_id);
-            return self.get_source_position_for_type(app.base, def_store);
+            let mut best = self.get_source_position_for_type(app.base, def_store);
+            for &arg in &app.args {
+                let candidate = self.get_source_position_for_type(arg, def_store);
+                if candidate > best {
+                    best = candidate;
+                }
+            }
+            return best;
+        }
+
+        // Try Array - structural shorthand for `Array<T>`. Use the element's
+        // position +1 so the array form sorts with its element but always
+        // immediately after it. This keeps `Cover | Cover[]` displays in
+        // source declaration order (and the canonical interner ordering of
+        // the union doesn't matter because the element vs. array tie-break
+        // is decided by this offset).
+        if let Some(TypeData::Array(elem)) = &data {
+            let (tier, file, span) = self.get_source_position_for_type(*elem, def_store);
+            if tier == 0 {
+                return (tier, file, span.saturating_add(100));
+            }
+            return (tier, file, span.saturating_add(1));
+        }
+
+        // Try ReadonlyType - `readonly T[]` modifier wrapping an inner type.
+        // Use the inner type's position +1 for the same reason.
+        if let Some(TypeData::ReadonlyType(inner)) = &data {
+            let (tier, file, span) = self.get_source_position_for_type(*inner, def_store);
+            if tier == 0 {
+                return (tier, file, span.saturating_add(100));
+            }
+            return (tier, file, span.saturating_add(1));
         }
 
         // Try Enum
