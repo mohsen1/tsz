@@ -104,6 +104,16 @@ impl<'a> CheckerState<'a> {
             self.register_boxed_types();
         }
 
+        // Type setup can spend the per-file resolution budget or trip the
+        // stack breaker while probing large lib-facing types. Those guards
+        // should bound setup itself, not poison the later statement pass where
+        // user-visible diagnostics are emitted.
+        self.ctx
+            .type_resolution_fuel
+            .set(crate::state::MAX_TYPE_RESOLUTION_OPS);
+        crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
+        crate::checkers_domain::reset_stack_overflow_flag();
+
         // Mark that we're now in the checking phase. During build_type_environment,
         // closures may be type-checked without contextual types, which would cause
         // premature TS7006 errors. The checking phase ensures contextual types are available.
