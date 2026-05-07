@@ -845,15 +845,18 @@ impl<'a> CheckerState<'a> {
         let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
-        // Files with an unambiguous ESM extension (.mjs/.mts/.d.mts) never
-        // synthesize a `default` export from `export =` — `export =` is a
-        // syntax error in ESM (TS1203). Skip the synthesis when resolving
-        // the `default` export for these files so consumers see TS1192.
+        // Files with an unambiguous ESM extension (.mjs/.mts/.d.mts) generally
+        // do not synthesize a `default` export from `export =`, because
+        // `export =` is a syntax error in ESM (TS1203). `module: preserve` is
+        // the exception: it permits CJS and ESM syntax side-by-side and tsc
+        // treats `export =` as the default-import target there.
         let target_is_explicit_esm = {
             let n = target_file_name.as_str();
             n.ends_with(".mjs") || n.ends_with(".mts")
         };
-        let default_skips_export_equals = export_name == "default" && target_is_explicit_esm;
+        let default_skips_export_equals = export_name == "default"
+            && target_is_explicit_esm
+            && self.ctx.compiler_options.module != tsz_common::common::ModuleKind::Preserve;
 
         // Check direct exports (module_exports)
         if let Some(exports) = self
@@ -2067,11 +2070,15 @@ impl<'a> CheckerState<'a> {
         let has_export_equals = self.module_has_export_equals(module_specifier)
             || self.module_has_export_assignment_declaration(module_specifier);
 
-        // `export =` inside an ESM-extension module (.mts/.mjs/.d.mts) is a
-        // syntax error (TS1203) and does not provide a default export. Fall
-        // through to TS1192 so the default-import side is also diagnosed.
+        // `export =` inside an ESM-extension module (.mts/.mjs/.d.mts) is
+        // usually a syntax error (TS1203) and does not provide a default
+        // export. `module: preserve` permits `export =`, so do not add TS1192
+        // on consumers in that mode.
+        let explicit_esm_export_equals_suppresses_default = self
+            .module_has_explicit_esm_extension(module_specifier)
+            && self.ctx.compiler_options.module != tsz_common::common::ModuleKind::Preserve;
         let export_equals_provides_default = has_export_equals
-            && !self.module_has_explicit_esm_extension(module_specifier)
+            && !explicit_esm_export_equals_suppresses_default
             && !target_is_js_with_esm_syntax;
 
         if export_equals_provides_default {
