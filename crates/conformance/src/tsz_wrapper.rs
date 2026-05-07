@@ -1546,7 +1546,8 @@ fn copy_tsconfig_to_root_if_needed(
     Ok(())
 }
 
-/// Filter out diagnostic lines originating from `.lib/` test helper files.
+/// Filter out diagnostic lines originating from library declaration files that
+/// tsc's conformance baseline does not expose as user-facing diagnostics.
 ///
 /// tsc does not resolve `/.lib/react16.d.ts` references in conformance tests
 /// (it emits TS6053 "file not found" instead), so any diagnostics our runner
@@ -1583,10 +1584,34 @@ fn filter_lib_diagnostics(text: &str, project_root: &Path) -> String {
             if trimmed.contains("/.lib/") && trimmed.contains("error TS") {
                 return false;
             }
+            if is_typescript_builtin_lib_diagnostic_line(trimmed) {
+                return false;
+            }
             true
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn is_typescript_builtin_lib_diagnostic_line(line: &str) -> bool {
+    if !line.contains("error TS") {
+        return false;
+    }
+    let Some((path, _)) = line.split_once('(') else {
+        return false;
+    };
+    is_typescript_builtin_lib_path(path)
+}
+
+fn is_typescript_builtin_lib_path(path: &str) -> bool {
+    let normalized = path.trim().replace('\\', "/").to_ascii_lowercase();
+    if !normalized.ends_with(".d.ts") {
+        return false;
+    }
+    normalized.starts_with("node_modules/typescript/lib/lib.")
+        || normalized.contains("/node_modules/typescript/lib/lib.")
+        || normalized.starts_with("typescript/lib/lib.")
+        || normalized.contains("/typescript/lib/lib.")
 }
 
 fn parse_error_codes_from_text(text: &str) -> Vec<u32> {

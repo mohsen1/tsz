@@ -1172,6 +1172,19 @@ fn test_parse_batch_output_does_not_synthesize_ts5110() {
 }
 
 #[test]
+fn test_parse_batch_output_filters_typescript_builtin_lib_diagnostics() {
+    let output = "TypeScript/lib/lib.dom.d.ts(13729,101): error TS2344: Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'.\n\
+test.ts(1,1): error TS2304: Cannot find name 'missing'.";
+    let root = std::path::Path::new("/tmp/tsz-test");
+
+    let result = parse_batch_output(output, root, HashMap::new());
+
+    assert_eq!(result.error_codes, vec![2304]);
+    assert_eq!(result.diagnostic_fingerprints.len(), 1);
+    assert_eq!(result.diagnostic_fingerprints[0].code, 2304);
+}
+
+#[test]
 fn test_parse_tsz_output_does_not_synthesize_ts5110() {
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;

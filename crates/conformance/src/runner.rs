@@ -68,17 +68,32 @@ fn sanitize_artifact_name(path: &str) -> String {
         .collect()
 }
 
-/// Filter diagnostics from `.lib/` test library files out of tsz results.
+/// Filter diagnostics from library declaration files out of tsz results.
 ///
 /// Our conformance wrapper resolves `/// <reference path="/.lib/react16.d.ts" />`
 /// by copying lib files into the temp dir. This lets tsz type-check them and emit
 /// errors (e.g. TS2430) that tsc never sees — tsc emits TS6053 "file not found"
-/// instead. Filtering these avoids false positive mismatches.
+/// instead. tsz can also surface bundled TypeScript lib diagnostics from
+/// `node_modules/typescript/lib/lib.*.d.ts`; tsc's conformance baseline does not
+/// compare those as user-file diagnostics. Filtering these avoids false positive
+/// mismatches.
 fn is_lib_diagnostic(fp: &DiagnosticFingerprint) -> bool {
     fp.file.starts_with(".lib/")
         || fp.file.starts_with("/.lib/")
         || fp.message_key.contains("/.lib/")
         || fp.message_key.contains(".lib/")
+        || is_typescript_builtin_lib_path(&fp.file)
+}
+
+fn is_typescript_builtin_lib_path(path: &str) -> bool {
+    let normalized = path.trim().replace('\\', "/").to_ascii_lowercase();
+    if !normalized.ends_with(".d.ts") {
+        return false;
+    }
+    normalized.starts_with("node_modules/typescript/lib/lib.")
+        || normalized.contains("/node_modules/typescript/lib/lib.")
+        || normalized.starts_with("typescript/lib/lib.")
+        || normalized.contains("/typescript/lib/lib.")
 }
 
 fn filter_lib_diagnostics_tsz(
@@ -2004,6 +2019,16 @@ mod tests {
             "test.tsx",
             "File '/.lib/react.d.ts' not found."
         )));
+        assert!(is_lib_diagnostic(&fp(
+            2344,
+            "scripts/node_modules/typescript/lib/lib.dom.d.ts",
+            "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'."
+        )));
+        assert!(is_lib_diagnostic(&fp(
+            2344,
+            "TypeScript/lib/lib.dom.d.ts",
+            "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'."
+        )));
         assert!(!is_lib_diagnostic(&fp(
             2322,
             "test.ts",
@@ -2026,6 +2051,27 @@ mod tests {
         assert_eq!(filtered.error_codes, vec![2322]);
         assert_eq!(filtered.diagnostic_fingerprints.len(), 1);
         assert_eq!(filtered.diagnostic_fingerprints[0].code, 2322);
+    }
+
+    #[test]
+    fn filter_tsz_removes_builtin_lib_only_codes() {
+        let result = tsz_wrapper::CompilationResult {
+            error_codes: vec![2344, 2304],
+            diagnostic_fingerprints: vec![
+                fp(
+                    2344,
+                    "TypeScript/lib/lib.dom.d.ts",
+                    "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'.",
+                ),
+                fp(2304, "test.ts", "Cannot find name 'missing'."),
+            ],
+            crashed: false,
+            options: Default::default(),
+        };
+        let filtered = filter_lib_diagnostics_tsz(result);
+        assert_eq!(filtered.error_codes, vec![2304]);
+        assert_eq!(filtered.diagnostic_fingerprints.len(), 1);
+        assert_eq!(filtered.diagnostic_fingerprints[0].code, 2304);
     }
 
     #[test]
