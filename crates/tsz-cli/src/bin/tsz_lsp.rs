@@ -126,6 +126,17 @@ struct JsonRpcNotification {
     params: Value,
 }
 
+/// A JSON-RPC server-to-client request. Issue #3545: methods like
+/// `workspace/applyEdit` are LSP requests, not notifications, so they
+/// must include an `id` and the client is expected to respond.
+#[derive(Debug, Serialize)]
+struct JsonRpcServerRequest {
+    jsonrpc: String,
+    id: Value,
+    method: String,
+    params: Value,
+}
+
 // =============================================================================
 // LSP Server State
 // =============================================================================
@@ -142,6 +153,11 @@ struct LspServer {
     shutdown_requested: bool,
     /// Pending diagnostics notifications to send after handling a request.
     pending_notifications: Vec<JsonRpcNotification>,
+    /// Pending server-to-client requests (e.g. `workspace/applyEdit`).
+    /// Drained alongside notifications. Issue #3545.
+    pending_server_requests: Vec<JsonRpcServerRequest>,
+    /// Counter for generating unique server-side request ids. Issue #3545.
+    next_server_request_id: u64,
     /// Request IDs that have been cancelled by the client.
     cancelled_requests: FxHashSet<String>,
     /// Workspace folder URIs.
@@ -166,6 +182,8 @@ impl LspServer {
             initialized: false,
             shutdown_requested: false,
             pending_notifications: Vec::new(),
+            pending_server_requests: Vec::new(),
+            next_server_request_id: 1,
             cancelled_requests: FxHashSet::default(),
             workspace_folders: Vec::new(),
             client_supports_workspace_folders: false,
@@ -2757,8 +2775,11 @@ impl LspServer {
                     changes.insert(uri, Value::Array(lsp_edits));
                 }
 
-                self.pending_notifications.push(JsonRpcNotification {
+                let req_id = self.next_server_request_id;
+                self.next_server_request_id += 1;
+                self.pending_server_requests.push(JsonRpcServerRequest {
                     jsonrpc: "2.0".to_string(),
+                    id: serde_json::Value::Number(req_id.into()),
                     method: "workspace/applyEdit".to_string(),
                     params: serde_json::json!({
                         "label": "Update imports for renamed file",
@@ -2831,9 +2852,14 @@ impl LspServer {
                 if let Some(args) = arguments
                     && let Some(edit_value) = args.first()
                 {
-                    // Send workspace/applyEdit request to the client
-                    self.pending_notifications.push(JsonRpcNotification {
+                    // Issue #3545: workspace/applyEdit is a server-to-client
+                    // request, not a notification. Allocate an id so the
+                    // client can respond with `ApplyWorkspaceEditResponse`.
+                    let req_id = self.next_server_request_id;
+                    self.next_server_request_id += 1;
+                    self.pending_server_requests.push(JsonRpcServerRequest {
                         jsonrpc: "2.0".to_string(),
+                        id: serde_json::Value::Number(req_id.into()),
                         method: "workspace/applyEdit".to_string(),
                         params: serde_json::json!({
                             "label": "Apply code action",
@@ -2967,6 +2993,24 @@ fn main() -> Result<()> {
             )?;
             stdout.flush()?;
         }
+
+        // Issue #3545: send any pending server-to-client requests (with id).
+        for request in server.pending_server_requests.drain(..) {
+            let request_str = serde_json::to_string(&request)?;
+            let request_bytes = request_str.as_bytes();
+
+            if args.verbose {
+                trace!("tsz-lsp: Sending server request: {}", request_str);
+            }
+
+            write!(
+                stdout,
+                "Content-Length: {}\r\n\r\n{}",
+                request_bytes.len(),
+                request_str
+            )?;
+            stdout.flush()?;
+        }
     }
 }
 
@@ -3052,6 +3096,57 @@ mod tests {
         assert_eq!(
             server.project.workspace_roots(),
             ["/private/tmp/tsz lsp uri current".to_string()]
+        );
+    }
+
+    // Issue #3545: tsz.applyCodeAction must enqueue workspace/applyEdit as a
+    // server-to-client REQUEST (with `id`), not a notification. LSP spec
+    // requires the client to respond with `ApplyWorkspaceEditResponse`.
+    #[test]
+    fn apply_code_action_enqueues_workspace_apply_edit_as_request() {
+        let mut server = LspServer::new();
+        let params = json!({
+            "command": "tsz.applyCodeAction",
+            "arguments": [{
+                "changes": {
+                    "file:///tmp/a.ts": [{
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 0 }
+                        },
+                        "newText": "x"
+                    }]
+                }
+            }]
+        });
+
+        let result = server
+            .handle_execute_command(Some(params))
+            .expect("execute command should succeed");
+        assert_eq!(result, Value::Bool(true));
+
+        // No notification should be queued — the message is a request.
+        assert!(
+            !server
+                .pending_notifications
+                .iter()
+                .any(|n| n.method == "workspace/applyEdit"),
+            "workspace/applyEdit must NOT be a notification"
+        );
+
+        // Exactly one server-to-client request, with a numeric id and the
+        // expected method.
+        assert_eq!(
+            server.pending_server_requests.len(),
+            1,
+            "expected one pending server request"
+        );
+        let req = &server.pending_server_requests[0];
+        assert_eq!(req.method, "workspace/applyEdit");
+        assert!(
+            matches!(req.id, Value::Number(_)),
+            "request id must be numeric per JSON-RPC, got: {:?}",
+            req.id
         );
     }
 }
