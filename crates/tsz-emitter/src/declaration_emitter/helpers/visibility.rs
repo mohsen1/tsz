@@ -19,7 +19,7 @@ use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 #[allow(unused_imports)]
 use tsz_parser::parser::ParserState;
 #[allow(unused_imports)]
-use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
+use tsz_parser::parser::node::{Node, NodeAccess, NodeArena, NodeView};
 #[allow(unused_imports)]
 use tsz_parser::parser::syntax_kind_ext;
 #[allow(unused_imports)]
@@ -574,6 +574,158 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(&name_ident.escaped_text)
                 .is_some_and(|scope_sym_id| used.contains_key(&scope_sym_id))
         })
+    }
+
+    pub(crate) fn declared_ambient_value_dependency_is_initializer_only(
+        &self,
+        name_idx: NodeIndex,
+        initializer: NodeIndex,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        if !self.public_api_filter_enabled() || initializer.is_some() || type_annotation.is_none() {
+            return false;
+        }
+        let Some(_usage_kind) = self.public_api_dependency_usage_kind(name_idx) else {
+            return false;
+        };
+        let Some(name) = self.get_identifier_text(name_idx) else {
+            return false;
+        };
+        !self.public_api_type_surface_contains_typeof_name(&name)
+            && !self.public_api_export_specifier_exports_name(&name)
+    }
+
+    fn public_api_dependency_usage_kind(
+        &self,
+        name_idx: NodeIndex,
+    ) -> Option<super::super::usage_analyzer::UsageKind> {
+        if !self.public_api_filter_enabled() {
+            return Some(
+                super::super::usage_analyzer::UsageKind::TYPE
+                    | super::super::usage_analyzer::UsageKind::VALUE,
+            );
+        }
+        let used = self.used_symbols.as_ref()?;
+        let binder = self.binder?;
+        let name_node = self.arena.get(name_idx)?;
+        let name_ident = self.arena.get_identifier(name_node)?;
+
+        if let Some(sym_id) = binder.node_symbols.get(&name_idx.0)
+            && let Some(kind) = used.get(sym_id)
+        {
+            return Some(*kind);
+        }
+        if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text)
+            && let Some(kind) = used.get(&sym_id)
+        {
+            return Some(*kind);
+        }
+        for scope in binder.scopes.iter() {
+            if let Some(sym_id) = scope.table.get(&name_ident.escaped_text)
+                && let Some(kind) = used.get(&sym_id)
+            {
+                return Some(*kind);
+            }
+        }
+        None
+    }
+
+    fn public_api_type_surface_contains_typeof_name(&self, name: &str) -> bool {
+        let Some(source_file) = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))
+        else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                let is_public_surface = self.stmt_has_export_modifier(stmt_node)
+                    || stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    || stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT;
+                is_public_surface && self.node_subtree_contains_type_query_name(stmt_idx, name)
+            })
+    }
+
+    fn node_subtree_contains_type_query_name(&self, node_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::TYPE_QUERY
+            && let Some(type_query) = self.arena.get_type_query(node)
+            && self.entity_name_contains_identifier(type_query.expr_name, name)
+        {
+            return true;
+        }
+        self.arena
+            .get_children(node_idx)
+            .iter()
+            .copied()
+            .any(|child_idx| self.node_subtree_contains_type_query_name(child_idx, name))
+    }
+
+    fn entity_name_contains_identifier(&self, name_idx: NodeIndex, name: &str) -> bool {
+        if self.get_identifier_text(name_idx).as_deref() == Some(name) {
+            return true;
+        }
+        self.arena
+            .get_children(name_idx)
+            .iter()
+            .copied()
+            .any(|child_idx| self.entity_name_contains_identifier(child_idx, name))
+    }
+
+    fn public_api_export_specifier_exports_name(&self, name: &str) -> bool {
+        let Some(source_file) = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))
+        else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                    return false;
+                }
+                self.node_subtree_contains_export_specifier_name(stmt_idx, name)
+            })
+    }
+
+    fn node_subtree_contains_export_specifier_name(&self, node_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::EXPORT_SPECIFIER
+            && let Some(specifier) = self.arena.get_specifier(node)
+            && (self.get_identifier_text(specifier.name).as_deref() == Some(name)
+                || self.get_identifier_text(specifier.property_name).as_deref() == Some(name))
+        {
+            return true;
+        }
+        self.arena
+            .get_children(node_idx)
+            .iter()
+            .copied()
+            .any(|child_idx| self.node_subtree_contains_export_specifier_name(child_idx, name))
     }
 
     pub(crate) fn public_api_dependency_is_type_only_exported_type_side(
