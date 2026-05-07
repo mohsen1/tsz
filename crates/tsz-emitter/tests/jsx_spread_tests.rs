@@ -75,6 +75,30 @@ fn automatic_spread_flattening() {
 }
 
 #[test]
+fn classic_jsx_drops_trailing_line_comment_after_attribute_expression() {
+    let source = r#"function f() {
+    return (
+        <Component
+            value={'s'}
+            onChange={val => console.log(val)} // attribute note
+        />
+    );
+}"#;
+    let output = emit_jsx(source, JsxEmit::React, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "React.createElement(Component, { value: 's', onChange: val => console.log(val) })"
+        ),
+        "Classic JSX transform should emit the attribute object without the trailing line comment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("attribute note"),
+        "Trailing line comment after a JSX attribute expression should not leak into transformed JS.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn no_flatten_when_object_has_non_spread_props() {
     // Object literal with a mix of spread and non-spread props should NOT flatten
     let source = r#"const el = <div {...{...a, x: 1}} />;"#;

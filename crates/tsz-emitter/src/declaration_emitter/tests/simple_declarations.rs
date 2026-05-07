@@ -1867,6 +1867,35 @@ export declare namespace foo {
 }
 
 #[test]
+fn test_ts_late_bound_function_assignments_ignore_block_scoped_shadow() {
+    let source = r#"
+export function X() {}
+if (Math.random()) {
+  const X: { test?: any } = {};
+  X.test = 1;
+}
+
+export function Y() {}
+Y.test = "foo";
+if (Math.random()) {
+  const Y = function Y() {}
+  Y.test = 42;
+}
+"#;
+
+    let output = emit_dts_with_binding(source);
+    let expected = r#"export declare function X(): void;
+export declare function Y(): void;
+export declare namespace Y {
+    var test: string;
+}"#;
+    assert!(
+        output.contains(expected),
+        "Expected block-scoped shadow assignments to be ignored: {output}"
+    );
+}
+
+#[test]
 fn test_export_default_function_with_late_bound_assignment_emits_default_alias() {
     let source = r#"
 export default function someFunc() {

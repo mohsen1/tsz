@@ -14,6 +14,28 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn module_augmentation_lookup_name_for_type(&self, object_type: TypeId) -> Option<String> {
+        let base_type =
+            crate::query_boundaries::property_access::unwrap_readonly(self.ctx.types, object_type);
+
+        let application_base =
+            crate::query_boundaries::common::type_application(self.ctx.types, base_type)
+                .map(|application| application.base)
+                .or_else(|| {
+                    self.ctx
+                        .types
+                        .get_display_alias(base_type)
+                        .and_then(|alias| {
+                            crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                                .map(|application| application.base)
+                        })
+                });
+
+        application_base
+            .and_then(|base| self.named_type_display_name(base))
+            .or_else(|| self.named_type_display_name(base_type))
+    }
+
     pub(super) fn resolve_array_global_augmentation_property(
         &mut self,
         object_type: TypeId,
@@ -591,14 +613,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let type_name = self.format_type_for_assignability_message(object_type);
-        if type_name.is_empty()
-            || type_name == "any"
-            || type_name == "unknown"
-            || type_name == "never"
-        {
-            return None;
-        }
+        let type_name = self.module_augmentation_lookup_name_for_type(object_type)?;
 
         let module_specs: Vec<String> =
             if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {

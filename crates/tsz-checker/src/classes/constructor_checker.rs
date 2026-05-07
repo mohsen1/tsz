@@ -304,16 +304,13 @@ impl<'a> CheckerState<'a> {
         for member in &members {
             // Resolve Lazy to see the actual constructor type's shape
             let resolved = self.resolve_lazy_type(*member);
-            // Get raw construct return type (without resolve_type_for_property_access)
-            if let Some(return_type) = construct_return_type_for_display(self.ctx.types, resolved) {
-                // Collect display names from this constructor's return type.
-                // If the return type is an intersection (e.g., `AbstractBase & Mixin`),
-                // walk each member individually to preserve named type references.
-                // Otherwise, handle single types directly.
-                self.collect_display_names_from_return_type(return_type, &mut names);
-            } else {
-                return None;
-            }
+            // Get raw construct return type (without resolve_type_for_property_access).
+            // Collect display names from this constructor's return type. If the
+            // return type is an intersection (e.g., `AbstractBase & Mixin`),
+            // walk each member individually to preserve named type references.
+            // Otherwise, handle single types directly.
+            let return_type = construct_return_type_for_display(self.ctx.types, resolved)?;
+            self.collect_display_names_from_return_type(return_type, &mut names);
         }
 
         let mixin_anonymous_display =
