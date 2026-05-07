@@ -493,3 +493,70 @@ fn react_jsx_under_module_detection_legacy_system_emits_use_strict() {
         "module=System + legacy detection on a non-module file must still emit `use strict`.\nOutput:\n{output}"
     );
 }
+
+// Issue #4010: Classic JSX (jsx=react) should honor a per-file `@jsx` pragma
+// and use that factory instead of falling back to React.createElement.
+#[test]
+fn classic_jsx_pragma_overrides_react_create_element() {
+    let source = r#"/** @jsx h */
+const el = <div id="a" />;"#;
+    let output = emit_jsx(source, JsxEmit::React, ScriptTarget::ES2018);
+    assert!(
+        output.contains("h(\"div\""),
+        "Expected the @jsx pragma factory `h` to drive the call, got: {output}"
+    );
+    assert!(
+        !output.contains("React.createElement"),
+        "Default React.createElement must not appear when @jsx pragma is set, got: {output}"
+    );
+}
+
+// Issue #4010: An expression-style pragma value (dot-separated identifier
+// chain) is allowed and must be emitted verbatim.
+#[test]
+fn classic_jsx_pragma_dotted_factory() {
+    let source = r#"/** @jsx Preact.h */
+const el = <div />;"#;
+    let output = emit_jsx(source, JsxEmit::React, ScriptTarget::ES2018);
+    assert!(
+        output.contains("Preact.h(\"div\""),
+        "Expected dotted pragma factory `Preact.h`, got: {output}"
+    );
+}
+
+// Issue #4010: The pragma must override the `compilerOptions.jsxFactory`
+// option per-file, mirroring tsc.
+#[test]
+fn classic_jsx_pragma_beats_jsx_factory_option() {
+    let source = r#"/** @jsx h */
+const el = <div />;"#;
+    let opts = PrinterOptions {
+        jsx: JsxEmit::React,
+        target: ScriptTarget::ES2018,
+        jsx_factory: Some("React.createElement".to_string()),
+        ..Default::default()
+    };
+    let output = emit_jsx_with_printer_options(source, opts);
+    assert!(
+        output.contains("h(\"div\""),
+        "Expected per-file pragma to override the option, got: {output}"
+    );
+    assert!(
+        !output.contains("React.createElement"),
+        "Option-set factory must lose to the pragma, got: {output}"
+    );
+}
+
+// Issue #4010: Non-leading `@jsx` (e.g. inside the body) must NOT be treated
+// as a pragma — only leading block comments before any code are scanned.
+#[test]
+fn classic_jsx_pragma_ignored_when_not_leading() {
+    let source = r#"const dummy = 1;
+/** @jsx h */
+const el = <div />;"#;
+    let output = emit_jsx(source, JsxEmit::React, ScriptTarget::ES2018);
+    assert!(
+        output.contains("React.createElement(\"div\""),
+        "Pragma after code should be ignored, got: {output}"
+    );
+}
