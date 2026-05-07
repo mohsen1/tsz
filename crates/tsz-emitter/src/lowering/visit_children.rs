@@ -125,6 +125,20 @@ impl<'a> LoweringPass<'a> {
                             n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                                 || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         });
+                    if is_destructuring_assignment
+                        && self.ctx.needs_es2018_lowering
+                        && self.arena.get(bin.left).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                && self.arena.get_literal_expr(n).is_some_and(|lit| {
+                                    lit.elements
+                                        .nodes
+                                        .iter()
+                                        .any(|&idx| emit_utils::is_spread_element(self.arena, idx))
+                                })
+                        })
+                    {
+                        self.transforms.helpers_mut().rest = true;
+                    }
                     if is_destructuring_assignment {
                         let prev = self.in_assignment_target;
                         self.in_assignment_target = true;

@@ -974,6 +974,35 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn object_rest_assignment_marks_rest_helper() {
+        let source = "let bar: {};\n({ ...bar } = {});\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var __rest = "),
+            "Object-rest assignment should request the __rest helper.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(bar = __rest({}, []));"),
+            "Object-rest assignment lowering should still call __rest.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn namespace_block_preserves_recovered_module_syntax() {
         let source = "namespace P {\n    {\n        namespace M { }\n        export = M;\n        function foo() { }\n        export { foo };\n        import I = M;\n        import I2 = require(\"foo\");\n        import * as Foo from \"ambient\";\n        import bar from \"ambient\";\n        import { baz } from \"ambient\";\n    }\n}\n";
 
