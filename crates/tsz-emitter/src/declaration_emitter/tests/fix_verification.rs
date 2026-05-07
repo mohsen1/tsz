@@ -1597,6 +1597,29 @@ export const Mixer = Mix(class {
 }
 
 #[test]
+fn fix_deferred_lookup_preserves_string_literal_key_substitution() {
+    let output = emit_dts_with_binding(
+        r#"
+declare function f1<A extends string, B extends string>(a: A, b: B): { [P in A | B]: any };
+
+function f2<A extends string>(a: A) {
+    return f1(a, 'x');
+}
+"#,
+    );
+
+    assert!(
+        output
+            .contains(r#"declare function f2<A extends string>(a: A): { [P in A | "x"]: any; };"#),
+        "expected f2 to preserve the string literal key substitution: {output}"
+    );
+    assert!(
+        !output.contains("[P in string | string]"),
+        "string-constrained literal substitution should not widen both keys: {output}"
+    );
+}
+
+#[test]
 fn fix_const_literal_preservation_uses_lexical_const_symbol() {
     let output = emit_dts_with_binding(
         r#"
