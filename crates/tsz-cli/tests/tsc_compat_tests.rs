@@ -624,6 +624,43 @@ fn find_tsz_binary() -> Option<PathBuf> {
 }
 
 #[test]
+fn array_values_iterator_helpers_do_not_report_missing_members() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("array_values_iterator_helpers").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"[1, 2, 3, 4].values()
+    .filter((x) => x % 2 === 0)
+    .map((x) => x * 10)
+    .toArray();
+"#,
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--target",
+            "esnext",
+            "--lib",
+            "es2024,es2025.iterator",
+            "--strict",
+            "--noEmit",
+            "--pretty",
+            "false",
+            "test.ts",
+        ],
+    )
+    .expect("tsz should run");
+    assert_eq!(
+        code, 0,
+        "array iterator helpers should type-check without false diagnostics:\n{output}"
+    );
+}
+
+#[test]
 fn batch_mode_uses_project_cwd_for_jsdoc_required_constructor_types() {
     let Some(tsz_bin) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");
