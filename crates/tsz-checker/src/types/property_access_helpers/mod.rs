@@ -7,6 +7,7 @@
 
 mod access_semantics;
 mod expando;
+mod iterator_methods;
 
 #[cfg(test)]
 mod tests {

@@ -4659,3 +4659,27 @@ const result: Next<number> = map.values().next();
         "Expected strict built-in iterator return to report both MapIterator.next assignments. Got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_synthesized_array_iterator_methods_see_es2025_helpers() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+[1, 2, 3, 4].values()
+    .filter((x) => x % 2 === 0)
+    .map((x) => x * 10)
+    .toArray();
+"#,
+    );
+    let false_iterator_helper_diags: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 7006))
+        .collect();
+    assert!(
+        false_iterator_helper_diags.is_empty(),
+        "Expected synthesized ArrayIterator methods to inherit es2025 iterator helpers. Got: {diagnostics:#?}"
+    );
+}
