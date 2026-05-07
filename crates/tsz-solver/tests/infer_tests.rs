@@ -15207,9 +15207,9 @@ fn test_const_type_param_preserves_literal_number() {
 }
 
 #[test]
-fn test_const_type_param_array_to_readonly_tuple() {
+fn test_const_type_param_array_to_readonly_array() {
     // function foo<const T>(x: T): T
-    // foo([1, 2, 3]) should infer T as readonly [1, 2, 3] (not number[])
+    // foo([1, 2, 3]) should infer T as readonly array with literal elements.
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
@@ -15224,15 +15224,12 @@ fn test_const_type_param_array_to_readonly_tuple() {
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
 
-    // With const, array should become readonly tuple
+    // With const, declared array types remain arrays inside the readonly wrapper.
     match interner.lookup(result) {
-        Some(TypeData::ReadonlyType(inner)) => {
-            // Inner should be a tuple with literal elements
-            match interner.lookup(inner) {
-                Some(TypeData::Tuple(_)) => {} // Expected
-                other => panic!("Expected Tuple inside ReadonlyType, got {other:?}"),
-            }
-        }
+        Some(TypeData::ReadonlyType(inner)) => match interner.lookup(inner) {
+            Some(TypeData::Array(element)) => assert_eq!(element, one),
+            other => panic!("Expected Array inside ReadonlyType, got {other:?}"),
+        },
         other => panic!("Expected ReadonlyType, got {other:?}"),
     }
 }
