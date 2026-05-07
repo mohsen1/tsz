@@ -607,6 +607,10 @@ impl<'a> TypeInstantiator<'a> {
             None => return type_id,
         };
 
+        if Self::is_instantiation_leaf(&key) {
+            return type_id;
+        }
+
         // Mark as visiting (with original ID as placeholder for cycles)
         self.visiting.insert(type_id, type_id);
 
@@ -627,6 +631,23 @@ impl<'a> TypeInstantiator<'a> {
             type_id,
             ..*predicate
         })
+    }
+
+    #[inline]
+    const fn is_instantiation_leaf(key: &TypeData) -> bool {
+        matches!(
+            key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::UnresolvedTypeName(_)
+                | TypeData::Error
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::BoundParameter(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+        )
     }
 
     /// Instantiate a call signature.

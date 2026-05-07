@@ -187,6 +187,55 @@ fn test_provide_inlay_hints_respects_protocol_start_length_span() {
 }
 
 #[test]
+fn linked_editing_range_returns_jsx_member_expression_tag_names() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.tsx".to_string(),
+        "const x = <Foo.Bar>hi</Foo.Bar>;".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "linkedEditingRange",
+        serde_json::json!({
+            "file": "/a.tsx",
+            "line": 1,
+            "offset": 12,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response
+        .body
+        .expect("linkedEditingRange should return a body for JSX member tags");
+    assert_eq!(
+        body.get("wordPattern").and_then(serde_json::Value::as_str),
+        Some("[a-zA-Z0-9:\\-\\._$]*")
+    );
+
+    let ranges = body
+        .get("ranges")
+        .and_then(serde_json::Value::as_array)
+        .expect("linkedEditingRange body should contain ranges");
+    assert_eq!(ranges.len(), 2);
+    assert_eq!(
+        ranges[0]["start"],
+        serde_json::json!({"line": 1, "offset": 12})
+    );
+    assert_eq!(
+        ranges[0]["end"],
+        serde_json::json!({"line": 1, "offset": 19})
+    );
+    assert_eq!(
+        ranges[1]["start"],
+        serde_json::json!({"line": 1, "offset": 24})
+    );
+    assert_eq!(
+        ranges[1]["end"],
+        serde_json::json!({"line": 1, "offset": 31})
+    );
+}
+
+#[test]
 fn emit_output_preserves_type_only_module_marker() {
     let mut server = make_server();
     let response = server.handle_tsserver_request(make_request(
@@ -390,6 +439,52 @@ fn brace_completion_allows_template_substitution_expressions() {
         );
         assert_eq!(response.body, Some(serde_json::json!(true)));
     }
+}
+
+#[test]
+fn brace_completion_allows_non_quote_openings_inside_comments() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/index.ts",
+                    "fileContent": "// comment\n",
+                }),
+            ))
+            .success
+    );
+
+    for opening_brace in ["{", "(", "["] {
+        let response = server.handle_tsserver_request(make_request(
+            "braceCompletion",
+            serde_json::json!({
+                "file": "/src/index.ts",
+                "line": 1,
+                "offset": 4,
+                "openingBrace": opening_brace,
+            }),
+        ));
+        assert!(
+            response.success,
+            "expected {opening_brace} in comment to succeed, got {response:?}"
+        );
+        assert_eq!(response.body, Some(serde_json::json!(true)));
+    }
+
+    let quote = server.handle_tsserver_request(make_request(
+        "braceCompletion",
+        serde_json::json!({
+            "file": "/src/index.ts",
+            "line": 1,
+            "offset": 4,
+            "openingBrace": "'",
+        }),
+    ));
+    assert!(!quote.success);
+    assert_eq!(quote.message.as_deref(), Some("No content available."));
+    assert_eq!(quote.body, None);
 }
 
 #[test]
@@ -4677,4 +4772,73 @@ fn test_project_info_no_lib_suppresses_lib_files() {
         lib_count, 0,
         "noLib must suppress all lib files, got {files:?}"
     );
+}
+
+mod brace_code_map {
+    use super::super::{build_code_map, scan_forward};
+
+    fn match_brace(src: &str, open_pos: usize) -> Option<usize> {
+        let bytes = src.as_bytes();
+        let map = build_code_map(bytes);
+        assert!(
+            map[open_pos],
+            "test setup error: open position {open_pos} is not in code"
+        );
+        scan_forward(bytes, &map, open_pos, b'{', b'}')
+    }
+
+    #[test]
+    fn brace_match_skips_close_brace_inside_regex_literal() {
+        // Repro from issue #4013: the `}` inside `/}/` must be ignored when
+        // matching the outer block braces.
+        let src = "if (true) { const r = /}/; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_skips_close_brace_inside_regex_character_class() {
+        // `[}]` is a character class containing only `}`; outer braces still
+        // pair with the trailing `}`.
+        let src = "{ const r = /[}]/; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_handles_regex_with_flags() {
+        let src = "{ const r = /}/gi; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_treats_division_as_code_not_regex() {
+        // After a value-producing token (`)`), `/` is division, not a regex.
+        // The `}` inside the comment is non-code; `b` and `c` are identifiers.
+        // This guards against the regex heuristic mis-firing on division.
+        let src = "{ let x = (a) / b / c; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_handles_regex_after_return_keyword() {
+        let src = "function f() { return /}/.test(\"\"); }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_handles_regex_with_escaped_slash() {
+        let src = "{ const r = /\\/}/; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
 }

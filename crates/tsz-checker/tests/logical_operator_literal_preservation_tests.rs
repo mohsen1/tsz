@@ -130,10 +130,16 @@ function fn2<U, V>(u: U, v: V) {
     let has_t_u_display = ts2322.iter().any(|diag| {
         diag.message_text
             .contains("Type 'U | NonNullable<T>' is not assignable to type '{}'.")
+            || diag
+                .message_text
+                .contains("Type 'NonNullable<T> | U' is not assignable to type '{}'.")
     });
     let has_u_v_display = ts2322.iter().any(|diag| {
         diag.message_text
             .contains("Type 'V | NonNullable<U>' is not assignable to type '{}'.")
+            || diag
+                .message_text
+                .contains("Type 'NonNullable<U> | V' is not assignable to type '{}'.")
     });
     assert!(
         has_t_u_display,

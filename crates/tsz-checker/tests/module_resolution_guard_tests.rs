@@ -342,7 +342,7 @@ declare module "node:ph" {
 "#;
     let src1 = r#"
 import * as ph from "node:ph";
-console.log(ph.value);
+ph.value;
 "#;
 
     let mut parser0 = ParserState::new(
