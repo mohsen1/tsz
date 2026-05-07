@@ -605,7 +605,7 @@ pub(crate) fn default_type_roots(base_dir: &Path) -> Vec<PathBuf> {
 pub(crate) fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Vec<String> {
     collect_module_requests_from_text(path, text)
         .into_iter()
-        .map(|(specifier, _, _)| specifier)
+        .map(|(specifier, _, _, _)| specifier)
         .collect()
 }
 
@@ -616,6 +616,7 @@ pub(crate) fn collect_module_requests_from_text(
     String,
     tsz::module_resolver::ImportKind,
     Option<tsz::module_resolver::ImportingModuleKind>,
+    bool,
 )> {
     // Fast path: skip the full parse if the text cannot contain any module specifiers.
     // This avoids a redundant parse for files that will be parsed again in build_program.
@@ -628,12 +629,23 @@ pub(crate) fn collect_module_requests_from_text(
     let (arena, _diagnostics) = parser.into_parts();
     let mut requests: Vec<_> = collect_module_specifiers(&arena, source_file)
         .into_iter()
-        .map(|(specifier, _, import_kind, resolution_mode_override)| {
-            (specifier, import_kind, resolution_mode_override)
-        })
+        .map(
+            |(specifier, specifier_idx, import_kind, resolution_mode_override)| {
+                (
+                    specifier,
+                    import_kind,
+                    resolution_mode_override,
+                    module_specifier_has_type_json_import_attribute(&arena, specifier_idx),
+                )
+            },
+        )
         .collect();
     if let Some(source) = arena.get_source_file_at(source_file) {
-        requests.extend(collect_jsdoc_import_requests(source));
+        requests.extend(collect_jsdoc_import_requests(source).into_iter().map(
+            |(specifier, import_kind, resolution_mode_override)| {
+                (specifier, import_kind, resolution_mode_override, false)
+            },
+        ));
     }
     requests
 }
@@ -1067,8 +1079,7 @@ fn collect_non_static_module_specifiers(
             k if k == syntax_kind_ext::CALL_EXPRESSION && include_runtime_specifiers => {
                 let idx = NodeIndex(i as u32);
                 if let Some(call) = arena.get_call_expr(node)
-                    && let Some(callee) = arena.get(call.expression)
-                    && callee.kind == SyntaxKind::ImportKeyword as u16
+                    && is_dynamic_import_callee(arena, call.expression)
                     && let Some(args) = call.arguments.as_ref()
                     && let Some(&arg_idx) = args.nodes.first()
                     && !arg_idx.is_none()
@@ -1111,6 +1122,29 @@ fn collect_non_static_module_specifiers(
     specifiers.extend(dynamic_imports);
     specifiers.extend(commonjs_requires);
     specifiers.extend(import_types);
+}
+
+fn is_dynamic_import_callee(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+    if node.kind == SyntaxKind::ImportKeyword as u16 {
+        return true;
+    }
+
+    let Some(access) = arena.get_access_expr(node) else {
+        return false;
+    };
+    let Some(base_node) = arena.get(access.expression) else {
+        return false;
+    };
+    if base_node.kind != SyntaxKind::ImportKeyword as u16 {
+        return false;
+    }
+
+    arena
+        .get_identifier_at(access.name_or_argument)
+        .is_some_and(|ident| ident.escaped_text == "defer")
 }
 
 fn import_type_resolution_mode_override(
@@ -1214,6 +1248,84 @@ fn import_attributes_resolution_mode(
     }
 
     None
+}
+
+fn import_attributes_has_type_json(arena: &NodeArena, attributes_idx: NodeIndex) -> bool {
+    use tsz::parser::syntax_kind_ext;
+
+    let Some(attr_node) = arena.get(attributes_idx) else {
+        return false;
+    };
+    let Some(attrs) = arena.get_import_attributes_data(attr_node) else {
+        return false;
+    };
+
+    attrs.elements.nodes.iter().any(|&elem_idx| {
+        let Some(elem_node) = arena.get(elem_idx) else {
+            return false;
+        };
+        if elem_node.kind != syntax_kind_ext::IMPORT_ATTRIBUTE {
+            return false;
+        }
+        let Some(attr) = arena.get_import_attribute_data(elem_node) else {
+            return false;
+        };
+
+        let name_is_type = if let Some(ident) = arena
+            .get(attr.name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+        {
+            ident.escaped_text.as_str() == "type"
+        } else {
+            arena
+                .get_literal_text(attr.name)
+                .is_some_and(|text| text.trim_matches('"').trim_matches('\'') == "type")
+        };
+        let value_is_json = arena
+            .get_literal_text(attr.value)
+            .is_some_and(|text| text.trim_matches('"').trim_matches('\'') == "json");
+
+        name_is_type && value_is_json
+    })
+}
+
+pub(crate) fn module_specifier_has_type_json_import_attribute(
+    arena: &NodeArena,
+    specifier_idx: NodeIndex,
+) -> bool {
+    let Some(parent_idx) = arena.parent_of(specifier_idx) else {
+        return false;
+    };
+    let Some(parent_node) = arena.get(parent_idx) else {
+        return false;
+    };
+
+    if let Some(import_decl) = arena.get_import_decl(parent_node)
+        && import_decl.module_specifier == specifier_idx
+    {
+        return import_attributes_has_type_json(arena, import_decl.attributes);
+    }
+
+    if let Some(export_decl) = arena.get_export_decl(parent_node)
+        && export_decl.module_specifier == specifier_idx
+    {
+        return import_attributes_has_type_json(arena, export_decl.attributes);
+    }
+
+    false
+}
+
+pub(crate) fn json_type_attribute_enables_json_module(
+    options: &ResolvedCompilerOptions,
+    containing_file: &Path,
+    base_dir: &Path,
+    resolution_cache: &mut ModuleResolutionCache,
+) -> bool {
+    matches!(
+        options.checker.module,
+        ModuleKind::Node18 | ModuleKind::Node20 | ModuleKind::NodeNext
+    ) && implied_resolution_mode_for_file_with_cache(containing_file, base_dir, resolution_cache)
+        == "import"
 }
 
 /// Extract module specifier from a `require()` call expression

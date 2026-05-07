@@ -569,8 +569,33 @@ pub(super) fn collect_diagnostics(
                     Some(&program_paths),
                 );
 
-                // Classify the lookup result into a driver-facing outcome
-                let outcome = result.classify();
+                // Classify the lookup result into a driver-facing outcome.
+                let mut outcome = result.classify();
+                if outcome
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.code == 2732)
+                    && module_specifier_has_type_json_import_attribute(&file.arena, *specifier_node)
+                    && json_type_attribute_enables_json_module(
+                        options,
+                        file_path,
+                        base_dir,
+                        &mut resolution_cache,
+                    )
+                    && let Some(resolved_path) = resolve_module_specifier(
+                        file_path,
+                        specifier,
+                        options,
+                        base_dir,
+                        &mut resolution_cache,
+                        &program_paths,
+                    )
+                    && resolved_path.extension().is_some_and(|ext| ext == "json")
+                {
+                    outcome.resolved_path = Some(resolved_path);
+                    outcome.is_resolved = true;
+                    outcome.error = None;
+                }
 
                 if std::env::var_os("TSZ_DEBUG_RESOLVE").is_some() {
                     tracing::debug!(

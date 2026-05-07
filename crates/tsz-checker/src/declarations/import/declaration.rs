@@ -456,7 +456,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn import_has_type_json_attribute(&self, attributes_idx: NodeIndex) -> bool {
+    pub(crate) fn import_has_type_json_attribute(&self, attributes_idx: NodeIndex) -> bool {
         if attributes_idx.is_none() {
             return false;
         }
@@ -494,6 +494,17 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|value| value.trim_matches('"').trim_matches('\'') == "json");
             name_is_type && value_is_json
         })
+    }
+
+    pub(crate) fn import_attributes_enable_json_module(&self, attributes_idx: NodeIndex) -> bool {
+        self.import_has_type_json_attribute(attributes_idx)
+            && matches!(
+                self.ctx.compiler_options.module,
+                tsz_common::common::ModuleKind::Node18
+                    | tsz_common::common::ModuleKind::Node20
+                    | tsz_common::common::ModuleKind::NodeNext
+            )
+            && self.current_file_uses_esm_import_syntax()
     }
 
     fn maybe_emit_json_esm_import_attribute_required(
@@ -1533,7 +1544,8 @@ impl<'a> CheckerState<'a> {
                             || file_name.ends_with(".mjs")
                             || file_name.ends_with(".cjs");
                         let is_json_module = file_name.ends_with(".json")
-                            && self.ctx.compiler_options.resolve_json_module;
+                            && (self.ctx.compiler_options.resolve_json_module
+                                || self.import_attributes_enable_json_module(import.attributes));
                         if !is_js_like && !is_json_module {
                             use crate::diagnostics::{
                                 diagnostic_codes, diagnostic_messages, format_message,
