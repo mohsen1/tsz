@@ -223,7 +223,12 @@ pub fn get_build_info_path(project: &ResolvedProject) -> Option<PathBuf> {
 
     // Use the same logic as incremental.rs
     let out_dir = project.out_dir.as_deref();
-    Some(default_build_info_path(&project.config_path, out_dir))
+    let root_dir = project.compiler_root_dir.as_deref();
+    Some(default_build_info_path(
+        &project.config_path,
+        out_dir,
+        root_dir,
+    ))
 }
 
 #[cfg(test)]
@@ -317,6 +322,7 @@ mod tests {
             no_emit: false,
             declaration_dir: None,
             out_dir,
+            compiler_root_dir: None,
         }
     }
 
@@ -337,6 +343,57 @@ mod tests {
         assert_eq!(
             get_build_info_path(&project_with_out_dir),
             Some(out_dir.join("tsconfig.tsbuildinfo"))
+        );
+    }
+
+    #[test]
+    fn get_build_info_path_anchors_outside_out_dir_when_root_dir_is_below_config() {
+        // Repro for issue #3821: when both `rootDir` and `outDir` are set
+        // and `rootDir` is below the config directory, tsc places the
+        // default `.tsbuildinfo` next to the config, not under `outDir`.
+        let temp = create_project_dir("rootdir_below_config");
+        let root_dir = temp.path().to_path_buf();
+        let config_path = root_dir.join("tsconfig.json");
+        fs::create_dir_all(root_dir.join("src")).unwrap();
+        fs::write(
+            &config_path,
+            r#"{"compilerOptions":{"composite":true,"incremental":true,"declaration":true,"outDir":"dist","rootDir":"src"}}"#,
+        )
+        .unwrap();
+
+        let project = load_project(&config_path).unwrap();
+        let build_info_path = get_build_info_path(&project).expect("build info path");
+
+        assert_eq!(
+            build_info_path,
+            project.root_dir.join("tsconfig.tsbuildinfo"),
+            "expected build-info next to config, not under outDir"
+        );
+        assert!(
+            !build_info_path.starts_with(project.root_dir.join("dist")),
+            "build-info path must not live under outDir when rootDir moves it out"
+        );
+    }
+
+    #[test]
+    fn get_build_info_path_uses_out_dir_when_root_dir_equals_config_dir() {
+        // When `rootDir` is the same as the config directory, the default
+        // `.tsbuildinfo` lives under `outDir` named after the config.
+        let temp = create_project_dir("rootdir_at_config");
+        let root_dir = temp.path().to_path_buf();
+        let config_path = root_dir.join("tsconfig.json");
+        fs::write(
+            &config_path,
+            r#"{"compilerOptions":{"composite":true,"incremental":true,"outDir":"dist","rootDir":"."}}"#,
+        )
+        .unwrap();
+
+        let project = load_project(&config_path).unwrap();
+        let build_info_path = get_build_info_path(&project).expect("build info path");
+
+        assert_eq!(
+            build_info_path,
+            project.root_dir.join("dist").join("tsconfig.tsbuildinfo")
         );
     }
 

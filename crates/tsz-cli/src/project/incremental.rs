@@ -519,8 +519,20 @@ impl BuildInfoBuilder {
     }
 }
 
-/// Determine the default .tsbuildinfo path based on configuration
-pub fn default_build_info_path(config_path: &Path, out_dir: Option<&Path>) -> PathBuf {
+/// Determine the default .tsbuildinfo path based on configuration.
+///
+/// Mirrors TypeScript's `getTsBuildInfoEmitOutputFilePath`:
+/// - With both `outDir` and `rootDir`: anchor the build-info file at
+///   `resolve(outDir, relative(rootDir, configFileExtensionLess))`. When the
+///   config sits above `rootDir`, this places the file outside `outDir`.
+/// - With only `outDir`: drop the build-info file under `outDir` using the
+///   config's base name.
+/// - With neither: place it next to the config file.
+pub fn default_build_info_path(
+    config_path: &Path,
+    out_dir: Option<&Path>,
+    root_dir: Option<&Path>,
+) -> PathBuf {
     let config_name = config_path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -528,14 +540,71 @@ pub fn default_build_info_path(config_path: &Path, out_dir: Option<&Path>) -> Pa
 
     let build_info_name = format!("{config_name}.tsbuildinfo");
 
-    if let Some(out) = out_dir {
-        out.join(&build_info_name)
-    } else {
-        config_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(&build_info_name)
+    let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let config_extensionless = config_dir.join(config_name);
+
+    match (out_dir, root_dir) {
+        (Some(out), Some(root)) => {
+            let relative = relative_path_from_directory(root, &config_extensionless);
+            let mut resolved = normalize_components(&out.join(relative));
+            resolved.set_file_name(build_info_name);
+            resolved
+        }
+        (Some(out), None) => out.join(&build_info_name),
+        (None, _) => config_dir.join(&build_info_name),
     }
+}
+
+/// Return a relative path from `from` (a directory) to `to` (a file or
+/// directory). Mirrors TypeScript's `getRelativePathFromDirectory` for the
+/// case-sensitive case used by build-info anchoring.
+fn relative_path_from_directory(from: &Path, to: &Path) -> PathBuf {
+    let from = normalize_components(from);
+    let to = normalize_components(to);
+
+    let from_components: Vec<_> = from.components().collect();
+    let to_components: Vec<_> = to.components().collect();
+
+    let common_len = from_components
+        .iter()
+        .zip(to_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let mut result = PathBuf::new();
+    for _ in common_len..from_components.len() {
+        result.push("..");
+    }
+    for component in &to_components[common_len..] {
+        result.push(component.as_os_str());
+    }
+    if result.as_os_str().is_empty() {
+        result.push(".");
+    }
+    result
+}
+
+/// Normalize a path by collapsing `.` and `..` segments without touching the
+/// filesystem. Mirrors TypeScript's `resolvePath` semantics for paths that are
+/// already absolute (or relative to the same anchor).
+fn normalize_components(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push("..");
+                }
+            }
+            std::path::Component::RootDir
+            | std::path::Component::Normal(_)
+            | std::path::Component::Prefix(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
 }
 
 #[cfg(test)]

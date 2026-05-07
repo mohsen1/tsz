@@ -88,6 +88,10 @@ pub struct ResolvedProject {
     pub declaration_dir: Option<PathBuf>,
     /// Output directory for JavaScript
     pub out_dir: Option<PathBuf>,
+    /// `compilerOptions.rootDir`, joined to the project root when present.
+    /// Distinct from `root_dir` (the project directory containing the
+    /// tsconfig file). Mirrors TypeScript's `options.rootDir`.
+    pub compiler_root_dir: Option<PathBuf>,
 }
 
 /// A resolved reference to another project
@@ -483,6 +487,11 @@ pub fn load_project(config_path: &Path) -> Result<ResolvedProject> {
         .and_then(|opts| opts.out_dir.as_ref())
         .map(|d| root_dir.join(d));
 
+    let compiler_root_dir = effective_options
+        .as_ref()
+        .and_then(|opts| opts.root_dir.as_ref())
+        .map(|d| root_dir.join(d));
+
     Ok(ResolvedProject {
         config_path: std::fs::canonicalize(config_path)
             .unwrap_or_else(|_| config_path.to_path_buf()),
@@ -493,6 +502,7 @@ pub fn load_project(config_path: &Path) -> Result<ResolvedProject> {
         no_emit,
         declaration_dir,
         out_dir,
+        compiler_root_dir,
     })
 }
 

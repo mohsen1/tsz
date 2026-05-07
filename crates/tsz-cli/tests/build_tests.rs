@@ -60,6 +60,7 @@ fn test_is_project_up_to_date_no_buildinfo() {
         no_emit: false,
         out_dir: Some(project_dir.join("dist")),
         declaration_dir: None,
+        compiler_root_dir: None,
     };
 
     let args = CliArgs::try_parse_from(["tsz"]).unwrap();
@@ -118,6 +119,7 @@ fn test_is_project_up_to_date_with_buildinfo() {
         no_emit: false,
         out_dir: Some(project_dir.join("dist")),
         declaration_dir: None,
+        compiler_root_dir: None,
     };
 
     let args = CliArgs::try_parse_from(["tsz"]).unwrap();
@@ -160,6 +162,7 @@ fn test_is_project_up_to_date_force_rebuild() {
         no_emit: false,
         out_dir: Some(project_dir.join("dist")),
         declaration_dir: None,
+        compiler_root_dir: None,
     };
 
     let args = CliArgs::try_parse_from(["tsz", "--force"]).unwrap();
@@ -183,6 +186,7 @@ fn test_get_build_info_path() {
         no_emit: false,
         out_dir: None,
         declaration_dir: None,
+        compiler_root_dir: None,
     };
 
     // This is an internal test, so we need to make get_build_info_path public or test indirectly
@@ -247,6 +251,7 @@ fn test_is_project_up_to_date_with_source_changes() {
         no_emit: false,
         out_dir: Some(project_dir.join("dist")),
         declaration_dir: None,
+        compiler_root_dir: None,
     };
 
     let args = CliArgs::try_parse_from(["tsz"]).unwrap();
@@ -305,6 +310,7 @@ fn test_is_project_up_to_date_with_new_source_files() {
         no_emit: false,
         out_dir: Some(project_dir.join("dist")),
         declaration_dir: None,
+        compiler_root_dir: None,
     };
 
     let args = CliArgs::try_parse_from(["tsz"]).unwrap();
@@ -379,6 +385,7 @@ fn test_is_project_up_to_date_ignores_unlisted_source_files() {
         no_emit: false,
         out_dir: Some(project_dir.join("dist")),
         declaration_dir: None,
+        compiler_root_dir: None,
     };
 
     let args = CliArgs::try_parse_from(["tsz"]).unwrap();
@@ -495,6 +502,7 @@ fn test_is_project_up_to_date_cross_project_invalidation() {
         no_emit: false,
         out_dir: Some(main_dir.join("dist")),
         declaration_dir: None,
+        compiler_root_dir: None,
     };
 
     let args = CliArgs::try_parse_from(["tsz"]).unwrap();

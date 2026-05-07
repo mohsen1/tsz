@@ -127,13 +127,88 @@ fn test_build_info_builder() {
 fn test_default_build_info_path() {
     let config = Path::new("/project/tsconfig.json");
 
-    // Without outDir
-    let path = default_build_info_path(config, None);
+    // Without outDir, without rootDir
+    let path = default_build_info_path(config, None, None);
     assert_eq!(path, PathBuf::from("/project/tsconfig.tsbuildinfo"));
 
-    // With outDir
-    let path = default_build_info_path(config, Some(Path::new("/project/dist")));
+    // With outDir, no rootDir: anchor under outDir
+    let path = default_build_info_path(config, Some(Path::new("/project/dist")), None);
     assert_eq!(path, PathBuf::from("/project/dist/tsconfig.tsbuildinfo"));
+
+    // Without outDir but with rootDir: rootDir alone does not move the
+    // build-info file (matches tsc).
+    let path = default_build_info_path(config, None, Some(Path::new("/project/src")));
+    assert_eq!(path, PathBuf::from("/project/tsconfig.tsbuildinfo"));
+}
+
+#[test]
+fn test_default_build_info_path_with_root_dir_below_config() {
+    // Repro for issue #3821: rootDir=src, outDir=dist, config at project
+    // root. tsc places the build-info at <project>/tsconfig.tsbuildinfo.
+    let config = Path::new("/project/tsconfig.json");
+
+    let path = default_build_info_path(
+        config,
+        Some(Path::new("/project/dist")),
+        Some(Path::new("/project/src")),
+    );
+    assert_eq!(path, PathBuf::from("/project/tsconfig.tsbuildinfo"));
+}
+
+#[test]
+fn test_default_build_info_path_with_root_dir_equal_to_config_dir() {
+    // When rootDir is the same as the config directory, the build-info
+    // file lands inside outDir, named after the config.
+    let config = Path::new("/project/tsconfig.json");
+
+    let path = default_build_info_path(
+        config,
+        Some(Path::new("/project/dist")),
+        Some(Path::new("/project")),
+    );
+    assert_eq!(path, PathBuf::from("/project/dist/tsconfig.tsbuildinfo"));
+}
+
+#[test]
+fn test_default_build_info_path_with_nested_config_under_root_dir() {
+    // Config at /project/configs/tsconfig.build.json with rootDir=/project/src
+    // and outDir=/project/out. Relative from /project/src to
+    // /project/configs/tsconfig.build is `../configs/tsconfig.build`, resolved
+    // against /project/out gives /project/configs/tsconfig.build.tsbuildinfo.
+    let config = Path::new("/project/configs/tsconfig.build.json");
+
+    let path = default_build_info_path(
+        config,
+        Some(Path::new("/project/out")),
+        Some(Path::new("/project/src")),
+    );
+    assert_eq!(
+        path,
+        PathBuf::from("/project/configs/tsconfig.build.tsbuildinfo")
+    );
+}
+
+#[test]
+fn test_default_build_info_path_preserves_config_basename() {
+    // Non-default config name should be honored in all branches.
+    let config = Path::new("/project/tsconfig.app.json");
+
+    assert_eq!(
+        default_build_info_path(config, None, None),
+        PathBuf::from("/project/tsconfig.app.tsbuildinfo")
+    );
+    assert_eq!(
+        default_build_info_path(config, Some(Path::new("/project/dist")), None),
+        PathBuf::from("/project/dist/tsconfig.app.tsbuildinfo")
+    );
+    assert_eq!(
+        default_build_info_path(
+            config,
+            Some(Path::new("/project/dist")),
+            Some(Path::new("/project/src")),
+        ),
+        PathBuf::from("/project/tsconfig.app.tsbuildinfo")
+    );
 }
 
 #[test]
