@@ -626,6 +626,21 @@ fn no_ts2365_for_objects_with_all_optional_properties() {
 }
 
 #[test]
+fn ts2365_unknown_addition_without_strict_checks() {
+    let diags = check_source_diagnostics_no_strict_null("let x: unknown; const y = x + 1;");
+    assert!(
+        diags.iter().any(|d| d.code == 2365),
+        "Expected TS2365 for `unknown + 1` without strictNullChecks, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 18046),
+        "Should not emit TS18046 for `unknown + 1` without strictNullChecks, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn no_ts2367_for_objects_with_all_optional_properties() {
     // Objects where ALL properties are optional overlap at `{}`, so equality
     // operators should not emit TS2367 even if the optional property types differ.

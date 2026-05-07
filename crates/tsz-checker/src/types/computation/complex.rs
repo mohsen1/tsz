@@ -597,10 +597,27 @@ impl<'a> CheckerState<'a> {
 
         // TS18046: Constructing an expression of type `unknown` is not allowed.
         // tsc emits TS18046 instead of TS2351 when the constructor type is `unknown`.
-        // Without strictNullChecks, unknown is treated like any (constructable, returns any).
+        // Without strictNullChecks, let normal construct checks run so that the
+        // expression emits TS2351 (`new` on non-constructable) instead of TS18046.
         if constructor_type == TypeId::UNKNOWN {
-            if self.error_is_of_type_unknown(new_expr.expression) {
-                // Still need to check arguments for definite assignment (TS2454)
+            if self.ctx.compiler_options.strict_null_checks {
+                if self.error_is_of_type_unknown(new_expr.expression) {
+                    // Still need to check arguments for definite assignment (TS2454)
+                    let args = match new_expr.arguments.as_ref() {
+                        Some(a) => a.nodes.as_slice(),
+                        None => &[],
+                    };
+                    let check_excess_properties = false;
+                    self.collect_call_argument_types_with_context(
+                        args,
+                        |_i, _arg_count| None,
+                        check_excess_properties,
+                        None,
+                        CallableContext::none(),
+                    );
+                    return TypeId::ERROR;
+                }
+                // Without strictNullChecks, treat unknown like any
                 let args = match new_expr.arguments.as_ref() {
                     Some(a) => a.nodes.as_slice(),
                     None => &[],
@@ -613,9 +630,11 @@ impl<'a> CheckerState<'a> {
                     None,
                     CallableContext::none(),
                 );
-                return TypeId::ERROR;
+                return TypeId::ANY;
             }
-            // Without strictNullChecks, treat unknown like any
+
+            // In non-strict mode, unknown should report TS2351
+            // (`new` on non-constructable) instead of TS18046.
             let args = match new_expr.arguments.as_ref() {
                 Some(a) => a.nodes.as_slice(),
                 None => &[],
@@ -628,6 +647,7 @@ impl<'a> CheckerState<'a> {
                 None,
                 CallableContext::none(),
             );
+            self.error_not_constructable_at(constructor_type, new_expr.expression);
             return TypeId::ANY;
         }
 
