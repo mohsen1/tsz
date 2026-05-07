@@ -1191,6 +1191,67 @@ fn jsx_library_managed_attributes_function_variable_display_uses_param_props() {
     );
 }
 
+/// Reproduces conformance test `compiler/ignoredJsxAttributes.tsx`. When a
+/// function component has no `propTypes`/`defaultProps`, TS2741's target-type
+/// display must use the props alias (`Props`), not the unevaluated
+/// `LibraryManagedAttributes<C, P>` conditional that contains `propTypes: infer T`.
+#[test]
+fn jsx_library_managed_attributes_function_component_with_index_signature_props_displays_alias() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type Pick<T, K extends keyof T> = { [P in K]: T[P]; };
+        type Exclude<T, U> = T extends U ? never : T;
+        type Extract<T, U> = T extends U ? T : never;
+        type Partial<T> = { [P in keyof T]?: T[P]; };
+
+        type MergePropTypes<P, T> = P & Pick<T, Exclude<keyof T, keyof P>>;
+        type Defaultize<P, D> = P extends any
+            ? string extends keyof P
+                ? P
+                : Pick<P, Exclude<keyof P, keyof D>>
+                    & Partial<Pick<P, Extract<keyof P, keyof D>>>
+                    & Partial<Pick<D, Exclude<keyof D, keyof P>>>
+            : never;
+        declare namespace PropTypes {
+            type InferProps<T> = any;
+        }
+
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {}
+            interface IntrinsicAttributes {}
+            type LibraryManagedAttributes<C, P> =
+                C extends { propTypes: infer T; defaultProps: infer D; }
+                    ? Defaultize<MergePropTypes<P, PropTypes.InferProps<T>>, D>
+                    : C extends { propTypes: infer T; }
+                        ? MergePropTypes<P, PropTypes.InferProps<T>>
+                        : C extends { defaultProps: infer D; }
+                            ? Defaultize<P, D>
+                            : P;
+        }
+
+        interface Props {
+            foo: string;
+            [dataProp: string]: string;
+        }
+        declare function Yadda(props: Props): JSX.Element;
+        let x = <Yadda bar="hello" data-yadda={42}/>;
+        "#,
+    );
+    let ts2741 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741 for missing required prop");
+    assert!(
+        !ts2741.message_text.contains("propTypes: infer"),
+        "TS2741 must not display the unevaluated LibraryManagedAttributes conditional, got: {ts2741:?}"
+    );
+    assert!(
+        ts2741.message_text.contains("required in type 'Props'"),
+        "TS2741 should display the named props alias 'Props', got: {ts2741:?}"
+    );
+}
+
 #[test]
 fn jsx_generic_class_component_infers_props_from_attributes() {
     let diagnostics = check_jsx_codes(

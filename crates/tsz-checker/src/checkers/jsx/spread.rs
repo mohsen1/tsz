@@ -531,7 +531,7 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         // Walk through any display alias chain first — the alias usually
         // points to the original Lazy/Application that displays as the
-        // bare prop type name.  Apply the same stripping to the resolved
+        // bare prop type name. Apply the same stripping to the resolved
         // alias if the alias itself is an intersection containing a
         // children-injection member.
         let candidate = self
@@ -540,7 +540,21 @@ impl<'a> CheckerState<'a> {
             .get_display_alias(props_type)
             .filter(|&alias| alias != props_type)
             .unwrap_or(props_type);
-        self.strip_jsx_children_injection_for_display_inner(candidate)
+        let stripped = self.strip_jsx_children_injection_for_display_inner(candidate);
+        // The alias chain is only useful when stripping actually finds and
+        // removes a children-injection member. When the alias resolves to a
+        // type that has nothing to strip (e.g. the alias is a richer
+        // `LibraryManagedAttributes<C, P>` Application form recorded for
+        // formatter-recovery purposes), returning the candidate verbatim
+        // would surface that richer form to callers that compare the result
+        // against `props_type` to decide whether to switch displays. Fall
+        // back to the original `props_type` in that case so callers see "no
+        // change", which is the truthful answer.
+        if stripped == candidate {
+            props_type
+        } else {
+            stripped
+        }
     }
 
     pub(in crate::checkers_domain::jsx) fn strip_jsx_children_injection_for_display_inner(
