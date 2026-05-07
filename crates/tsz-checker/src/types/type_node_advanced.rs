@@ -1044,6 +1044,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return literal_type;
         }
 
+        if let Some(property_type) = self.value_property_type_query(type_query.expr_name) {
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(property_type, type_arguments);
+            }
+            return property_type;
+        }
+
         // Prefer the already-computed value-space type at this query site when available.
         // This preserves flow-sensitive narrowing for `typeof expr` in type positions.
         if use_flow_sensitive_query
@@ -1694,7 +1702,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .is_some_and(|name| name.escaped_text == param_name.escaped_text)
     }
 
-    fn property_name_text(&self, name: NodeIndex) -> Option<String> {
+    pub(crate) fn property_name_text(&self, name: NodeIndex) -> Option<String> {
         let name = self.ctx.arena.skip_parenthesized_and_assertions(name);
         let node = self.ctx.arena.get(name)?;
         if let Some(ident) = self.ctx.arena.get_identifier(node) {
