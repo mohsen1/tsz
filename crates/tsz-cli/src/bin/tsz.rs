@@ -2364,7 +2364,8 @@ fn render_init_template(overrides: &[(&'static str, String)]) -> String {
 }
 
 fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
-    use tsz_cli::config::{load_tsconfig, resolve_compiler_options};
+    use tsz::checker::diagnostics::diagnostic_codes;
+    use tsz_cli::config::{load_tsconfig_with_diagnostics, resolve_compiler_options};
     use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
     if args.ignore_config && args.files.is_empty() {
@@ -2426,13 +2427,35 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         std::process::exit(1);
     }
 
-    // Issue 2: load_tsconfig already resolves extends chains, so the returned
-    // config is the fully merged result.
-    let config = if let Some(path) = tsconfig_path.as_ref() {
-        Some(load_tsconfig(path)?)
+    // Issue 2: load_tsconfig_with_diagnostics already resolves extends chains
+    // and validates compiler-option types (TS5024) on every file in the chain,
+    // so the returned config is the fully merged, validated result. Surfacing
+    // the config diagnostics keeps `--showConfig` parity with tsc, which exits
+    // 1 when an invalid option is present in the root config or any base.
+    let (config, config_diagnostics) = if let Some(path) = tsconfig_path.as_ref() {
+        let parsed = load_tsconfig_with_diagnostics(path)?;
+        (Some(parsed.config), parsed.diagnostics)
     } else {
-        None
+        (None, Vec::new())
     };
+    if config_diagnostics.iter().any(|d| {
+        d.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE
+            || d.code
+                == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
+    }) {
+        let pretty = args
+            .pretty
+            .unwrap_or_else(|| std::io::stdout().is_terminal());
+        if args.pretty == Some(true) {
+            Reporter::force_colors(true);
+        }
+        let mut reporter = Reporter::new(pretty);
+        let output = reporter.render(&config_diagnostics);
+        if !output.is_empty() {
+            print!("{output}");
+        }
+        std::process::exit(1);
+    }
 
     let base_dir = tsconfig_path
         .as_ref()
@@ -3644,7 +3667,8 @@ fn format_json_value(value: &serde_json::Value, indent: usize) -> String {
 }
 
 fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
-    use tsz_cli::config::{load_tsconfig, resolve_compiler_options};
+    use tsz::checker::diagnostics::diagnostic_codes;
+    use tsz_cli::config::{load_tsconfig_with_diagnostics, resolve_compiler_options};
     use tsz_cli::driver::apply_cli_overrides;
     use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
@@ -3674,11 +3698,34 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             .or_else(|| driver::find_tsconfig(cwd))
     };
 
-    let config = if let Some(path) = tsconfig_path.as_ref() {
-        Some(load_tsconfig(path)?)
+    // Route through the diagnostic loader so TS5024 / TS5102 in the root
+    // config or any base reached via `extends` surface as errors instead of
+    // being silently coerced (matching tsc's `--listFilesOnly` exit-1
+    // behavior).
+    let (config, config_diagnostics) = if let Some(path) = tsconfig_path.as_ref() {
+        let parsed = load_tsconfig_with_diagnostics(path)?;
+        (Some(parsed.config), parsed.diagnostics)
     } else {
-        None
+        (None, Vec::new())
     };
+    if config_diagnostics.iter().any(|d| {
+        d.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE
+            || d.code
+                == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
+    }) {
+        let pretty = args
+            .pretty
+            .unwrap_or_else(|| std::io::stdout().is_terminal());
+        if args.pretty == Some(true) {
+            Reporter::force_colors(true);
+        }
+        let mut reporter = Reporter::new(pretty);
+        let output = reporter.render(&config_diagnostics);
+        if !output.is_empty() {
+            print!("{output}");
+        }
+        std::process::exit(1);
+    }
 
     let mut resolved = resolve_compiler_options(
         config
