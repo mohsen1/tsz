@@ -1,9 +1,85 @@
 //! Regression coverage for assertion-function target diagnostics and reachability.
 
 use crate::context::CheckerOptions;
+use crate::module_resolution::build_module_resolution_maps;
+use crate::state::CheckerState;
 use crate::test_utils::{
     check_js_source_diagnostics, check_source, check_source_codes, check_source_strict_codes,
 };
+use std::sync::Arc;
+use tsz_binder::BinderState;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
+
+fn check_require_assertion_from_dts() -> Vec<u32> {
+    let files = [
+        (
+            "ex2.d.ts",
+            r#"
+declare function art(value: any): asserts value;
+export = art;
+"#,
+        ),
+        (
+            "38379.js",
+            r#"
+const artoo = require("./ex2");
+let y = 1;
+artoo(y);
+"#,
+        ),
+    ];
+
+    let mut parsed = Vec::new();
+    let mut binders = Vec::new();
+    let mut roots = Vec::new();
+    for (file_name, source) in files {
+        let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        roots.push(root);
+        binders.push(Arc::new(binder));
+        parsed.push(Arc::new(parser.get_arena().clone()));
+    }
+
+    let file_names = vec!["ex2.d.ts".to_string(), "38379.js".to_string()];
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+    let types = TypeInterner::new();
+    let current_arena = Arc::clone(&parsed[1]);
+    let current_binder = Arc::clone(&binders[1]);
+    let mut checker = CheckerState::new(
+        current_arena.as_ref(),
+        current_binder.as_ref(),
+        &types,
+        "38379.js".to_string(),
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_lib: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(Arc::new(parsed));
+    checker.ctx.set_all_binders(Arc::new(binders));
+    checker.ctx.set_current_file_idx(1);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+    checker.ctx.set_lib_contexts(Vec::new());
+
+    checker.check_source_file(roots[1]);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect()
+}
 
 #[test]
 fn unannotated_assertion_identifier_emits_ts2775() {
@@ -139,6 +215,15 @@ foo(a);
     assert!(
         ts2775.is_empty(),
         "did not expect TS2775 when assertion target has @returns predicate, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn js_require_export_equals_assertion_from_dts_does_not_emit_ts2775() {
+    let codes = check_require_assertion_from_dts();
+    assert!(
+        !codes.contains(&2775),
+        "did not expect TS2775 for JS require() of export= assertion function from .d.ts, got {codes:?}"
     );
 }
 
