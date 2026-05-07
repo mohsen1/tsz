@@ -171,6 +171,60 @@ class C {
 }
 
 #[test]
+fn test_delete_identifier_diagnostic_suppressed_after_syntax_errors() {
+    let source = r#"
+var BOOLEAN1 = ANY delete ;
+var BOOLEAN2 = delete ;
+
+class C {
+    method(s: unknown) {
+        delete s;
+    }
+}
+"#;
+    let mut parser = ParserState::new(
+        "deleteIdentifierWithSyntaxErrors.ts".to_string(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let parse_diagnostics = parser.get_diagnostics().to_vec();
+    assert!(
+        !parse_diagnostics.is_empty(),
+        "test fixture must contain syntax diagnostics"
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "deleteIdentifierWithSyntaxErrors.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.ctx.has_parse_errors = true;
+    checker.ctx.has_syntax_parse_errors = true;
+    checker.ctx.all_parse_error_positions =
+        parse_diagnostics.iter().map(|diag| diag.start).collect();
+    checker.ctx.syntax_parse_error_positions = checker.ctx.all_parse_error_positions.clone();
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.message_text.clone()))
+        .collect();
+
+    assert!(
+        !has_error(&diagnostics, 1102),
+        "Did not expect TS1102 after prior syntax errors.\nGot: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_import_equals_reserved_word_uses_ts1214() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
