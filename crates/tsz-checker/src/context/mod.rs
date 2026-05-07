@@ -409,7 +409,8 @@ pub struct CheckerContext<'a> {
     pub lowering_entity_name_resolution_cache: RefCell<FxHashMap<String, Option<DefId>>>,
 
     /// Per-checker cache for cross-file namespace export resolution.
-    /// Keyed by module specifier and stores both hits and misses.
+    /// Keyed by the requesting file and module specifier because relative
+    /// specifiers are resolved from the current file.
     pub namespace_exports_cache: RefCell<NamespaceExportsCache>,
 
     /// Shared lib type resolution cache across parallel file checks.

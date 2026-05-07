@@ -152,6 +152,12 @@ pub struct CompilationResult {
     pub files_read: Vec<PathBuf>,
     /// Files with their inclusion reasons (for --explainFiles)
     pub file_infos: Vec<FileInfo>,
+    /// Resolved `noEmit` option (merged from tsconfig.json + CLI overrides).
+    /// Used by the CLI to pick the correct exit code: tsc returns
+    /// `DiagnosticsPresent_OutputsGenerated` (2) for `--noEmit` regardless of
+    /// where the option originated, since emit was disabled by configuration
+    /// rather than skipped due to errors.
+    pub no_emit: bool,
     pub request_cache_counters: tsz::checker::context::RequestCacheCounters,
     /// Number of interned types in the shared `TypeInterner` after checking.
     pub interned_types_count: usize,
@@ -998,6 +1004,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            no_emit: args.no_emit,
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
             interner_estimated_bytes: 0,
@@ -1031,6 +1038,7 @@ fn compile_inner(
                     emitted_files: Vec::new(),
                     files_read: Vec::new(),
                     file_infos: Vec::new(),
+                    no_emit: args.no_emit,
                     request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
                     interned_types_count: 0,
                     interner_estimated_bytes: 0,
@@ -1054,7 +1062,6 @@ fn compile_inner(
     )?;
     let positional_no_config_no_emit =
         tsconfig_path.is_none() && !args.files.is_empty() && resolved.no_emit;
-
     // Wire removed-but-honored suppress flags from config
     if loaded.suppress_excess_property_errors {
         resolved.checker.suppress_excess_property_errors = true;
@@ -1107,6 +1114,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            no_emit: resolved.no_emit,
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
             interner_estimated_bytes: 0,
@@ -1158,6 +1166,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            no_emit: resolved.no_emit,
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
             interner_estimated_bytes: 0,
@@ -1234,6 +1243,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            no_emit: resolved.no_emit,
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
             interner_estimated_bytes: 0,
@@ -1476,6 +1486,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: user_files_read,
             file_infos,
+            no_emit: resolved.no_emit,
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
             interner_estimated_bytes: 0,
@@ -1859,6 +1870,7 @@ fn compile_inner(
         emitted_files,
         files_read,
         file_infos,
+        no_emit: resolved.no_emit,
         request_cache_counters: collected.request_cache_counters,
         interned_types_count: program.type_interner.len(),
         interner_estimated_bytes: program.type_interner.estimated_size_bytes(),
@@ -2037,6 +2049,7 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         emitted_files: Vec::new(),
         files_read: Vec::new(),
         file_infos: Vec::new(),
+        no_emit: false,
         request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
         interned_types_count: 0,
         interner_estimated_bytes: 0,

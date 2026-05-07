@@ -290,9 +290,11 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         //   (--noEmitOnError with errors means no outputs were generated).
         // Exit code 2 (DiagnosticsPresent_OutputsGenerated): errors exist but outputs were
         //   still generated (or --noEmit where there's nothing to emit regardless).
+        // `result.no_emit` reflects the resolved option (CLI + tsconfig.json),
+        // so a tsconfig-only `noEmit` selects exit 2 just like the CLI flag.
         if args.no_emit_on_error {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
-        } else if args.no_emit || !result.emitted_files.is_empty() {
+        } else if result.no_emit || !result.emitted_files.is_empty() {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
         } else {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
@@ -2108,7 +2110,8 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         if let Some(ref include) = cfg.include {
             output.push_str(",\n    \"include\": [\n");
             for (i, v) in include.iter().enumerate() {
-                output.push_str(&format!("        \"{v}\""));
+                let display = show_config_display_selector(base_dir, v);
+                output.push_str(&format!("        \"{display}\""));
                 if i + 1 < include.len() {
                     output.push(',');
                 }
@@ -2120,7 +2123,8 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         if !effective_exclude.is_empty() {
             output.push_str(",\n    \"exclude\": [\n");
             for (i, v) in effective_exclude.iter().enumerate() {
-                output.push_str(&format!("        \"{v}\""));
+                let display = show_config_display_selector(base_dir, v);
+                output.push_str(&format!("        \"{display}\""));
                 if i + 1 < effective_exclude.len() {
                     output.push(',');
                 }
@@ -2134,6 +2138,24 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     print!("{output}");
 
     Ok(())
+}
+
+fn show_config_display_selector(base_dir: &Path, selector: &str) -> String {
+    let path = Path::new(selector);
+    if path.is_absolute() {
+        show_config_display_path(base_dir, path)
+    } else {
+        selector.to_string()
+    }
+}
+
+fn show_config_display_path(base_dir: &Path, path: &Path) -> String {
+    let relative = if path.is_absolute() {
+        diff_paths(path, base_dir).unwrap_or_else(|| path.to_path_buf())
+    } else {
+        path.to_path_buf()
+    };
+    path_to_show_config_string(&relative)
 }
 
 /// Normalize a path for the --showConfig `files` array: strip the tsconfig

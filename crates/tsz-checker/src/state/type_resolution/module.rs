@@ -966,11 +966,12 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
     ) -> Option<tsz_binder::SymbolTable> {
+        let cache_key = (self.ctx.current_file_idx, module_specifier.to_string());
         if let Some(cached) = self
             .ctx
             .namespace_exports_cache
             .borrow()
-            .get(module_specifier)
+            .get(&cache_key)
             .cloned()
         {
             return cached;
@@ -980,7 +981,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .namespace_exports_cache
                 .borrow_mut()
-                .insert(module_specifier.to_string(), Some(exports.clone()));
+                .insert(cache_key, Some(exports.clone()));
             return Some(exports);
         }
 
@@ -988,14 +989,14 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .namespace_exports_cache
                 .borrow_mut()
-                .insert(module_specifier.to_string(), None);
+                .insert(cache_key, None);
             return None;
         };
         let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
             self.ctx
                 .namespace_exports_cache
                 .borrow_mut()
-                .insert(module_specifier.to_string(), None);
+                .insert(cache_key, None);
             return None;
         };
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
@@ -1007,7 +1008,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .namespace_exports_cache
                 .borrow_mut()
-                .insert(module_specifier.to_string(), None);
+                .insert(cache_key, None);
             return None;
         };
 
@@ -1052,7 +1053,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .namespace_exports_cache
                 .borrow_mut()
-                .insert(module_specifier.to_string(), Some(combined.clone()));
+                .insert(cache_key, Some(combined.clone()));
             return Some(combined);
         }
 
@@ -1086,14 +1087,14 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .namespace_exports_cache
                 .borrow_mut()
-                .insert(module_specifier.to_string(), Some(combined.clone()));
+                .insert(cache_key, Some(combined.clone()));
             return Some(combined);
         }
 
         self.ctx
             .namespace_exports_cache
             .borrow_mut()
-            .insert(module_specifier.to_string(), None);
+            .insert(cache_key, None);
         None
     }
 
