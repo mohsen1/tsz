@@ -1893,7 +1893,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     (Some(owner_idx), Some(kind))
                         if kind == FUNCTION_DECLARATION || kind == FUNCTION_EXPRESSION =>
                     {
-                        self.checker.get_type_of_function(owner_idx)
+                        let function_type = self.checker.get_type_of_function(owner_idx);
+                        if let (Some(name), Some(sym_id)) = (
+                            self.checker.get_function_name_from_node(owner_idx),
+                            self.checker.ctx.binder.get_node_symbol(owner_idx),
+                        ) {
+                            self.checker.augment_callable_type_with_expandos(
+                                &name,
+                                sym_id,
+                                function_type,
+                            )
+                        } else {
+                            function_type
+                        }
                     }
                     (Some(owner_idx), Some(CONSTRUCTOR)) => {
                         if let Some(class_idx) = self.checker.nearest_enclosing_class(owner_idx)
