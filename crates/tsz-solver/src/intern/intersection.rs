@@ -776,6 +776,9 @@ impl TypeInterner {
                     });
                 }
                 (Some(idx), Some(existing)) => {
+                    if existing.key_type != idx.key_type {
+                        return None;
+                    }
                     merged_string_index = Some(IndexSignature {
                         key_type: existing.key_type,
                         value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
@@ -797,6 +800,9 @@ impl TypeInterner {
                     });
                 }
                 (Some(idx), Some(existing)) => {
+                    if existing.key_type != idx.key_type {
+                        return None;
+                    }
                     merged_number_index = Some(IndexSignature {
                         key_type: existing.key_type,
                         value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
