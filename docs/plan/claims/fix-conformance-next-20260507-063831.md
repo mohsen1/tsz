@@ -1,9 +1,9 @@
-# [WIP] fix(checker): align required mapped type variance diagnostics
+# fix(checker): align required mapped type variance diagnostics
 
 - **Date**: 2026-05-07
 - **Branch**: `fix/conformance-next-20260507-063831`
 - **PR**: #4341
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 
 ## Intent
@@ -17,10 +17,16 @@ scoped to the remaining mismatch.
 
 ## Files Touched
 
-- TBD after diagnosis.
+- `crates/tsz-checker/src/types/computation/object_literal_context.rs`
+- `crates/tsz-checker/src/tests/dispatch_tests.rs`
+- `scripts/conformance/conformance-baseline.txt`
+- `scripts/conformance/conformance-detail.json`
+- `scripts/conformance/conformance-snapshot.json`
 
 ## Verification
 
-- Planned: `./scripts/conformance/conformance.sh run --filter "requiredMappedTypeModifierTrumpsVariance" --verbose`
-- Planned: focused Rust regression test in the owning crate
-- Planned: `./scripts/conformance/conformance.sh snapshot`
+- `cargo nextest run -p tsz-checker nested_mapped_application_property_preserves_literal_context`
+- `./scripts/conformance/conformance.sh run --filter "requiredMappedTypeModifierTrumpsVariance" --verbose`
+- `cargo fmt --check && ./scripts/conformance/conformance.sh run --max 200`
+- Pre-commit hook: clippy, wasm rustc warnings, architecture guardrails, and 16,089 affected-crate tests
+- `./scripts/conformance/conformance.sh snapshot` -> `12582 tests, 12474 passed, 108 failed`
