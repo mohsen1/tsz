@@ -2294,9 +2294,6 @@ fn test_new_commands_are_recognized() {
         "toggleMultilineComment",
         "commentSelection",
         "uncommentSelection",
-        "getSmartSelectionRange",
-        "getSyntacticClassifications",
-        "getSemanticClassifications",
         "getCompilerOptionsDiagnostics",
     ];
     for cmd in commands {
@@ -2581,6 +2578,46 @@ fn test_watch_change_is_unrecognized() {
             .unwrap()
             .contains("Unrecognized command: watchChange")
     );
+}
+
+/// Obsolete TS5-era selection/classification commands are not part of the
+/// TS6.0.3 protocol; tsserver replies with `success: false` and an
+/// "Unrecognized JSON command" message. tsz-server previously routed them
+/// to placeholder handlers that returned `success: true`.
+#[test]
+fn test_obsolete_selection_and_classification_commands_are_unrecognized() {
+    let mut server = make_server();
+    let file = "/obsolete-cmds.ts";
+    server.open_files.insert(
+        file.to_string(),
+        "const answer = 42;\nfunction f(x: number) { return answer + x; }\n".to_string(),
+    );
+
+    for cmd in [
+        "getSmartSelectionRange",
+        "getSyntacticClassifications",
+        "getSemanticClassifications",
+    ] {
+        let req = make_request(
+            cmd,
+            serde_json::json!({
+                "file": file,
+                "start": 0,
+                "length": 64,
+            }),
+        );
+        let resp = server.handle_tsserver_request(req);
+        assert!(!resp.success, "{cmd}: should report success=false");
+        assert!(
+            resp.body.is_none(),
+            "{cmd}: should not return a placeholder body",
+        );
+        let message = resp.message.unwrap_or_default();
+        assert!(
+            message.contains("Unrecognized") && message.contains(cmd),
+            "{cmd}: expected unrecognized-command message, got {message:?}",
+        );
+    }
 }
 
 /// Helper to validate that a JSON value has valid tsserver start/end spans.
