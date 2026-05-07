@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-07
 - **Branch**: `fix/compileroptions-scalar-ts5024`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #4387
+- **Status**: ready
 - **Workstream**: config validation parity (issue #3882)
 
 ## Intent
