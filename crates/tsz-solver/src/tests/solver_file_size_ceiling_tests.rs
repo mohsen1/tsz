@@ -197,7 +197,7 @@ fn test_emitter_file_size_ceiling() {
     }
 
     // Current oversized files (16 as of 2026-05-06):
-    //   declaration_emitter/helpers/type_inference.rs (8295),
+    //   declaration_emitter/helpers/type_inference.rs (8303),
     //   emitter/declarations/class/emit_es6.rs (3698),
     //   transforms/class_es5_ir.rs (3257),
     //   declaration_emitter/core/js_emit.rs (3009),
