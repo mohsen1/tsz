@@ -1821,8 +1821,7 @@ fn test_navtree_full_text_spans_use_utf16_units_for_non_ascii_source() {
         .find("function f")
         .map(|i| i + "function ".len())
         .expect("expected `function f` in source") as u32;
-    let function_name_utf16 =
-        source[..function_name_byte as usize].encode_utf16().count() as u64;
+    let function_name_utf16 = source[..function_name_byte as usize].encode_utf16().count() as u64;
     assert_eq!(
         name_span.get("start").and_then(serde_json::Value::as_u64),
         Some(function_name_utf16),
