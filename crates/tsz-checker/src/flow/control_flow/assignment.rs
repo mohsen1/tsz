@@ -1739,13 +1739,15 @@ impl<'a> FlowAnalyzer<'a> {
         // NOT mutual subtype. One-way is essential for cases like:
         //   - `let b: 0|1|9; [b] = [0];` → b narrows to 0 (0 <: 0)
         //   - `let c: string|number; c = 0;` → c narrows to number (0 <: number)
+        let assigned_members = union_members_for_type(self.interner, assigned_type);
         let mut kept = Vec::new();
         for &m in &members {
-            let assignable_to_member = if let Some(env) = &self.type_environment {
-                is_assignable_with_env(self.interner, &env.borrow(), assigned_type, m, true)
-            } else {
-                is_assignable(self.interner, assigned_type, m)
-            };
+            let assignable_to_member = assigned_members.as_ref().is_some_and(|sources| {
+                sources
+                    .iter()
+                    .any(|&source| self.assignment_source_assignable_to_member(source, m))
+            }) || self
+                .assignment_source_assignable_to_member(assigned_type, m);
             if assignable_to_member {
                 kept.push(m);
             }
@@ -1782,5 +1784,13 @@ impl<'a> FlowAnalyzer<'a> {
         };
         let env = env.borrow();
         evaluate_application_type(self.interner, &env, resolved)
+    }
+
+    fn assignment_source_assignable_to_member(&self, source: TypeId, member: TypeId) -> bool {
+        if let Some(env) = &self.type_environment {
+            is_assignable_with_env(self.interner, &env.borrow(), source, member, true)
+        } else {
+            is_assignable(self.interner, source, member)
+        }
     }
 }
