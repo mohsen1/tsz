@@ -157,6 +157,66 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(in crate::declaration_emitter) fn default_import_alias_dependency_is_type_only(
+        &self,
+        name_idx: NodeIndex,
+        initializer: NodeIndex,
+    ) -> bool {
+        if !self.variable_is_default_import_alias(name_idx, initializer) {
+            return false;
+        }
+        let Some(used) = &self.used_symbols else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(name_ident) = self.arena.get_identifier(name_node) else {
+            return false;
+        };
+        let sym_id = binder
+            .node_symbols
+            .get(&name_idx.0)
+            .copied()
+            .or_else(|| binder.file_locals.get(&name_ident.escaped_text));
+        sym_id
+            .and_then(|sym_id| used.get(&sym_id))
+            .is_some_and(|kind| kind.is_type() && !kind.is_value())
+    }
+
+    fn variable_is_default_import_alias(
+        &self,
+        name_idx: NodeIndex,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(local_name) = self.get_identifier_text(name_idx) else {
+            return false;
+        };
+        let Some(init_idx) = self.skip_parenthesized_expression(initializer) else {
+            return false;
+        };
+        let Some(init_node) = self.arena.get(init_idx) else {
+            return false;
+        };
+        let Some(access) = self.arena.get_access_expr(init_node) else {
+            return false;
+        };
+        if self.get_identifier_text(access.name_or_argument).as_deref() != Some("default") {
+            return false;
+        }
+        let Some(namespace_name) = self.get_identifier_text(access.expression) else {
+            return false;
+        };
+        self.default_import_alias_module_from_variable_name(&local_name)
+            .is_some()
+            || self
+                .namespace_import_module_specifier(&namespace_name)
+                .is_some()
+    }
+
     pub(in crate::declaration_emitter) fn rewrite_import_type_export_to_default_alias(
         text: &str,
         export_name: &str,
@@ -226,10 +286,116 @@ impl<'a> DeclarationEmitter<'a> {
         else {
             return type_text;
         };
-        Self::rewrite_import_type_export_to_default_alias(
+        let type_text = Self::rewrite_import_type_export_to_default_alias(
+            &type_text,
+            &alias_name,
+            &module_specifier,
+        );
+        Self::rewrite_bare_type_reference_to_default_alias(
             &type_text,
             &alias_name,
             &module_specifier,
         )
+    }
+
+    fn rewrite_bare_type_reference_to_default_alias(
+        type_text: &str,
+        alias_name: &str,
+        module_specifier: &str,
+    ) -> String {
+        let bytes = type_text.as_bytes();
+        let alias_bytes = alias_name.as_bytes();
+        let replacement = format!("import(\"{module_specifier}\").default");
+        let mut rewritten = String::with_capacity(type_text.len());
+        let mut i = 0usize;
+
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            if ch == '"' || ch == '\'' || ch == '`' {
+                let start = i;
+                i += 1;
+                while i < bytes.len() {
+                    let current = bytes[i] as char;
+                    if current == '\\' {
+                        i = (i + 2).min(bytes.len());
+                        continue;
+                    }
+                    i += 1;
+                    if current == ch {
+                        break;
+                    }
+                }
+                rewritten.push_str(&type_text[start..i]);
+                continue;
+            }
+
+            if i + alias_bytes.len() <= bytes.len()
+                && &bytes[i..i + alias_bytes.len()] == alias_bytes
+                && (i == 0 || !Self::is_type_reference_identifier_continue(bytes[i - 1] as char))
+                && (i + alias_bytes.len() == bytes.len()
+                    || !Self::is_type_reference_identifier_continue(
+                        bytes[i + alias_bytes.len()] as char,
+                    ))
+                && !Self::bare_alias_reference_is_qualified(type_text, i)
+                && !Self::bare_alias_reference_is_property_name(type_text, i + alias_bytes.len())
+            {
+                rewritten.push_str(&replacement);
+                i += alias_bytes.len();
+                continue;
+            }
+
+            rewritten.push(bytes[i] as char);
+            i += 1;
+        }
+
+        rewritten
+    }
+
+    fn bare_alias_reference_is_qualified(type_text: &str, start: usize) -> bool {
+        type_text[..start]
+            .chars()
+            .rev()
+            .find(|ch| !ch.is_ascii_whitespace())
+            == Some('.')
+    }
+
+    fn bare_alias_reference_is_property_name(type_text: &str, end: usize) -> bool {
+        let mut chars = type_text[end..]
+            .chars()
+            .filter(|ch| !ch.is_ascii_whitespace());
+        match chars.next() {
+            Some(':') => true,
+            Some('?') => chars.next() == Some(':'),
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DeclarationEmitter;
+
+    #[test]
+    fn rewrites_bare_default_import_alias_type_references() {
+        assert_eq!(
+            DeclarationEmitter::rewrite_bare_type_reference_to_default_alias(
+                r#"import("mod/ctor").ExtendedCtor<Ctor>"#,
+                "Ctor",
+                "mod",
+            ),
+            r#"import("mod/ctor").ExtendedCtor<import("mod").default>"#,
+        );
+    }
+
+    #[test]
+    fn bare_default_import_alias_rewrite_ignores_property_names_and_qualified_names() {
+        assert_eq!(
+            DeclarationEmitter::rewrite_bare_type_reference_to_default_alias(
+                r#"{ Ctor: string; nested: ns.Ctor; value: "Ctor"; item?: Ctor }"#,
+                "Ctor",
+                "mod",
+            ),
+            r#"{ Ctor: string; nested: ns.Ctor; value: "Ctor"; item?: import("mod").default }"#,
+        );
     }
 }
