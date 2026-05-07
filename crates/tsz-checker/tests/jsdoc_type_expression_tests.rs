@@ -436,6 +436,38 @@ function f() {
     );
 }
 
+/// `@this` on a real arrow function is invalid and must not override lexical
+/// class `this` for member lookup.
+#[test]
+fn jsdoc_this_tag_on_class_field_arrow_uses_lexical_this() {
+    let diags = check_js(
+        r#"/** @typedef {{fn(a: string): void}} T */
+class C {
+    /**
+     * @this {T}
+     * @param {string} a
+     */
+    p = (a) => this.fn("" + a);
+}
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2730),
+        "Expected TS2730 for @this on arrow function, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert!(
+        diags.iter().any(|d| {
+            d.code == 2339 && d.message == "Property 'fn' does not exist on type 'C'."
+        }),
+        "Expected TS2339 for class lexical this, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message.as_str()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// `@type {(...values: string[]) => void}` should be parsed as a rest parameter,
 /// not as a single `string[]` positional parameter.
 #[test]

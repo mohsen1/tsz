@@ -348,6 +348,13 @@ impl<'a> CheckerState<'a> {
         if self.node_span_contains_parse_error(stmt_idx) {
             return;
         }
+        // Suppress when a parse error sits immediately before the break —
+        // the statement is a parser-recovery artifact, not user code (e.g.
+        // `public break;` is parsed as a TS1128 invalid token followed by a
+        // recovered `break`, and tsc does NOT additionally emit TS1105).
+        if self.node_has_nearby_parse_error(stmt_idx) {
+            return;
+        }
 
         // Get the label if any
         let label_name = self

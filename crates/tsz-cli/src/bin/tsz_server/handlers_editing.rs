@@ -193,7 +193,7 @@ impl Server {
             };
         }
 
-        let result = (|| -> Option<serde_json::Value> {
+        let result = (|| -> Option<Result<serde_json::Value, ()>> {
             let file = request.arguments.get("file")?.as_str()?;
             let line = request.arguments.get("line")?.as_u64()? as u32;
             let offset = request.arguments.get("offset")?.as_u64().unwrap_or(1) as u32;
@@ -293,21 +293,35 @@ impl Server {
                 i += 1;
             }
 
-            // Don't auto-complete braces inside strings, comments, or template literals
-            if in_string || in_line_comment || in_block_comment || in_template {
-                return Some(serde_json::json!(false));
+            let is_quote_like = matches!(opening_brace, "'" | "\"" | "`");
+
+            if is_quote_like && (in_line_comment || in_block_comment) {
+                return Some(Err(()));
+            }
+
+            // Don't auto-complete inside strings or template literals.
+            if in_string || in_template {
+                return Some(Ok(serde_json::json!(false)));
             }
 
             // All valid opening braces should be completed.
             let valid = matches!(opening_brace, "{" | "(" | "[" | "'" | "\"" | "`");
-            Some(serde_json::json!(valid))
+            Some(Ok(serde_json::json!(valid)))
         })();
 
-        self.stub_response(
-            seq,
-            request,
-            Some(result.unwrap_or(serde_json::json!(true))),
-        )
+        match result {
+            Some(Err(())) => TsServerResponse {
+                seq,
+                msg_type: "response".to_string(),
+                command: request.command.clone(),
+                request_seq: request.seq,
+                success: false,
+                message: Some("No content available.".to_string()),
+                body: None,
+            },
+            Some(Ok(body)) => self.stub_response(seq, request, Some(body)),
+            None => self.stub_response(seq, request, Some(serde_json::json!(true))),
+        }
     }
 
     pub(crate) fn handle_span_of_enclosing_comment(
