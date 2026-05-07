@@ -1037,17 +1037,19 @@ impl<'a> CheckerState<'a> {
         // assignment-failure message reads `Type '[1]'...` instead of
         // `Type 'readonly [1]'...` for sources whose readonliness is the
         // very property the assignment is failing on.
+        // This can evaluate applications/lazy aliases; reuse it so recursive
+        // readonly tuple sources do not take the same tuple path twice.
+        let source_elements =
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, source_type);
         let source_is_readonly_tuple =
             crate::query_boundaries::type_computation::complex::is_readonly_type(
                 self.ctx.types,
                 source_type,
-            ) && crate::query_boundaries::common::tuple_elements(self.ctx.types, source_type)
-                .is_some();
-        let elements = crate::query_boundaries::common::tuple_elements(self.ctx.types, source_type)
-            .or_else(|| {
-                let evaluated = self.evaluate_type_for_assignability(source_type);
-                crate::query_boundaries::common::tuple_elements(self.ctx.types, evaluated)
-            })?;
+            ) && source_elements.is_some();
+        let elements = source_elements.or_else(|| {
+            let evaluated = self.evaluate_type_for_assignability(source_type);
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, evaluated)
+        })?;
         if elements.is_empty() {
             return None;
         }
