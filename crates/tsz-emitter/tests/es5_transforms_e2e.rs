@@ -176,6 +176,35 @@ fn test_assignment_object_rest_uses_es5_lowering() {
 }
 
 #[test]
+fn assignment_object_rest_strips_redundant_paren_around_object_rhs() {
+    // Regression for `destructuringObjectBindingPatternAndAssignment5`: when the
+    // RHS of an assignment-form object-rest destructuring is a parenthesized
+    // type-erased object literal (`({ } as any)`), the lowering threads the
+    // RHS into a temp inside a comma expression — never at statement-leading
+    // position, so the outer paren is redundant. tsc emits `_a = {}` here, not
+    // `_a = ({})`.
+    let output = emit_with_target(
+        r#"
+function a() {
+    let x: number;
+    let y: any;
+    ({ x, ...y } = ({ } as any));
+}
+"#,
+        ScriptTarget::ES2017,
+    );
+
+    assert!(
+        output.contains("_a = {}, "),
+        "RHS object literal must be unwrapped from its redundant paren.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_a = ({})"),
+        "Redundant paren must not be preserved at non-statement-leading position.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn object_rest_computed_exclusion_reuses_key_temp() {
     let output = emit_es5(
         r#"
