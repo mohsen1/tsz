@@ -1544,7 +1544,10 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 1139 // Can not use 'JSDoc' type in TS
         | 1141 // String literal expected
         | 1163 // A 'yield' expression is only allowed in a generator body
-        | 1192 // Module has no default export
+        // Note: TS1192 ("Module has no default export") is intentionally
+        // excluded — it is a semantic checker diagnostic that tsc routes
+        // through getSemanticDiagnostics, so unchecked JS files never see
+        // it (issue #3693).
         | 1196 // Catch clause variable type annotation
         | 1206 // Decorators are not valid here
         | 8038 // Decorators may not appear after 'export' if they also appear before 'export'

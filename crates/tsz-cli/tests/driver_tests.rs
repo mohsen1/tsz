@@ -20547,3 +20547,35 @@ fn ts5011_not_emitted_with_no_emit() {
         "Should NOT emit TS5011 when noEmit is true, got: {codes:?}"
     );
 }
+
+// Issue #3693: TS1192 must NOT leak into JS files when checkJs is not
+// enabled. tsc routes TS1192 through getSemanticDiagnostics, which is
+// suppressed for unchecked JS, so tsz must mirror that.
+#[test]
+fn ts1192_suppressed_for_js_default_import_without_check_js() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "allowJs": true,
+            "noEmit": true,
+            "module": "esnext",
+            "moduleResolution": "bundler"
+          },
+          "files": ["a.js", "mod.js"]
+        }"#,
+    );
+    write_file(&base.join("a.js"), "import d from \"./mod\";\nd;\n");
+    write_file(&base.join("mod.js"), "export const named = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1192),
+        "TS1192 must not appear for unchecked JS, got: {codes:?}"
+    );
+}
