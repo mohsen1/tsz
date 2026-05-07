@@ -984,6 +984,13 @@ impl<'a> CheckerState<'a> {
         }
 
         let index_type_for_check = self.evaluate_type_with_env(index_type);
+        if let Some(prop_atom) =
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+            && self.ctx.types.resolve_atom(prop_atom) == "length"
+            && self.indexed_access_object_allows_length_property(object_type, object_type_for_check)
+        {
+            return;
+        }
         // First check: raw index type against keyof.
         // This handles cases where keyof includes type parameters from mapped types
         // (e.g. keyof ({ [P in T]: P } & ...) = T | ...) and the index IS that parameter.

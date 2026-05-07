@@ -35,3 +35,21 @@ evaluation.
 - `./scripts/conformance/conformance.sh run --filter "recursiveConditionalTypes" --verbose`
 - Architecture guardrails if checker boundary code changes
 - Pre-commit hook before publishing ready PR
+
+## Progress
+
+- Removed extra `TS2339`/`TS2536` fingerprints for recursive array-like
+  `length` access.
+- Suppressed false recursive-alias `TS2322` drift for structurally identical
+  conditional type aliases.
+- Preserved `Grow1<[], T>` in the recursive conditional call-argument
+  `TS2345` target display.
+
+## Verification
+
+- `cargo fmt --all`
+- `cargo nextest run -p tsz-checker recursive_conditional_call_parameter_keeps_alias_display structurally_identical_recursive_conditionals_are_assignable nested_tuple_rest_infer_result_satisfies_array_constraint recursive_tuple_spread_length_index_access_is_valid`
+- `./scripts/conformance/conformance.sh run --filter "recursiveConditionalTypes" --verbose`
+  remains XFAIL with matching diagnostic codes and no extra fingerprints;
+  remaining work is the missing tuple assignment, `Enumerate<T["length"]>`
+  return, and two `TS2589` fingerprints.

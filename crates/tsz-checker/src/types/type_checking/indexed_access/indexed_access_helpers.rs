@@ -46,6 +46,63 @@ pub(super) fn same_object_key_space(
 }
 
 impl<'a> CheckerState<'a> {
+    fn array_like_kind_has_length(
+        &self,
+        kind: crate::query_boundaries::type_checking_utilities::ArrayLikeKind,
+    ) -> bool {
+        match kind {
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Array(_)
+            | crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Tuple => true,
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Readonly(inner) => {
+                self.indexed_access_type_has_array_like_length(inner)
+            }
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Union(members) => {
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|&member| self.indexed_access_type_has_array_like_length(member))
+            }
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Intersection(
+                members,
+            ) => members
+                .iter()
+                .any(|&member| self.indexed_access_type_has_array_like_length(member)),
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Other => false,
+        }
+    }
+
+    fn indexed_access_type_has_array_like_length(&self, type_id: TypeId) -> bool {
+        let kind = crate::query_boundaries::type_checking_utilities::classify_array_like(
+            self.ctx.types,
+            type_id,
+        );
+        self.array_like_kind_has_length(kind)
+    }
+
+    pub(super) fn indexed_access_object_allows_length_property(
+        &mut self,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        let candidates = [
+            object_type,
+            object_type_for_check,
+            self.evaluate_type_with_env(object_type),
+            self.evaluate_type_with_env(object_type_for_check),
+        ];
+
+        candidates.iter().copied().any(|candidate| {
+            self.indexed_access_type_has_array_like_length(candidate)
+                || crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    candidate,
+                )
+                .is_some_and(|constraint| {
+                    self.indexed_access_type_has_array_like_length(constraint)
+                })
+        })
+    }
+
     pub(super) fn union_restricted_literal_property_is_missing(
         &mut self,
         property_name: &str,

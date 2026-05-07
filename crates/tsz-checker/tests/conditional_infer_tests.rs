@@ -118,6 +118,75 @@ function foo2<T extends unknown[]>(value: T): Enumerate<T['length']> {
         diagnostics.iter().all(|diag| diag.code != 2344),
         "tuple-rest infer result should satisfy Array<unknown> and not emit TS2344. Actual diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.code != 2339 && diag.code != 2536),
+        "array-like length access should not cascade into TS2339/TS2536. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn recursive_tuple_spread_length_index_access_is_valid() {
+    let source = r#"
+type NTuple<N extends number, Tup extends unknown[] = []> =
+    Tup['length'] extends N ? Tup : NTuple<N, [...Tup, unknown]>;
+
+type Add<A extends number, B extends number> =
+    [...NTuple<A>, ...NTuple<B>]['length'];
+
+let five: Add<2, 3>;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2536),
+        "tuple spread length indexed access should not emit TS2536. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn structurally_identical_recursive_conditionals_are_assignable() {
+    let source = r#"
+type Unpack1<T> = T extends (infer U)[] ? Unpack1<U> : T;
+type Unpack2<T> = T extends (infer U)[] ? Unpack2<U> : T;
+
+function f20<T>(x: Unpack1<T>, y: Unpack2<T>) {
+    x = y;
+    y = x;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "structurally identical recursive conditional aliases should be mutually assignable. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn recursive_conditional_call_parameter_keeps_alias_display() {
+    let source = r#"
+type Grow1<T extends unknown[], N extends number> =
+    T['length'] extends N ? T : Grow1<[number, ...T], N>;
+type Grow2<T extends unknown[], N extends number> =
+    T['length'] extends N ? T : Grow2<[string, ...T], N>;
+
+function f21<T extends number>(x: Grow1<[], T>, y: Grow2<[], T>) {
+    f21(y, x);
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2345
+                && diag
+                    .message_text
+                    .contains("parameter of type 'Grow1<[], T>'")
+        }),
+        "recursive conditional parameter diagnostics should preserve the alias target. Actual diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]
