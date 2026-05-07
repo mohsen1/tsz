@@ -1193,6 +1193,15 @@ impl<'a> CheckerState<'a> {
                     self.ctx.import_resolution_stack.pop();
                     return;
                 }
+                // A resolved triple-slash type reference can introduce ambient
+                // wildcard modules for non-TS assets (for example Vite's
+                // `vite/client` declarations). Those declarations should
+                // suppress the resolver's missing-file diagnostic.
+                if self.wildcard_ambient_module_declared(module_name) {
+                    self.check_imported_members(import, module_name);
+                    self.ctx.import_resolution_stack.pop();
+                    return;
+                }
                 // Node.js built-in modules: suppress TS2307/TS2882 entirely,
                 // UNLESS noTypesAndSymbols is set — in that case @types/node
                 // won't be auto-loaded, so tsc emits TS2591 instead.

@@ -20260,3 +20260,77 @@ fn ts2792_emitted_for_missing_import_under_classic_resolution() {
         "expected TS2792 under moduleResolution: classic, got codes: {codes:?}\ndiagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn vite_client_reference_suppresses_asset_import_diagnostics() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "ESNext",
+            "moduleResolution": "bundler",
+            "noEmit": true,
+            "noUncheckedSideEffectImports": true,
+            "strict": true,
+            "target": "ES2020"
+          },
+          "include": ["src"]
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/vite/package.json"),
+        r#"{
+          "name": "vite",
+          "version": "0.0.0",
+          "exports": {
+            "./client": {
+              "types": "./client.d.ts",
+              "default": "./dist/client.js"
+            }
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/vite/client.d.ts"),
+        r#"declare module "*.css" {}
+declare module "*.svg" {
+  const src: string;
+  export default src;
+}
+declare module "*.png" {
+  const src: string;
+  export default src;
+}
+"#,
+    );
+    write_file(
+        &base.join("src/vite-env.d.ts"),
+        r#"/// <reference types="vite/client" />
+"#,
+    );
+    write_file(
+        &base.join("src/main.ts"),
+        r#"import "./style.css";
+import tsLogo from "./assets/typescript.svg";
+import hero from "./assets/hero.png";
+
+const assets: string[] = [tsLogo, hero];
+console.log(assets.join(","));
+"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes
+            .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS)
+            && !codes.contains(&2882),
+        "Vite asset ambient modules should suppress missing-module diagnostics, got codes: {codes:?}\ndiagnostics: {:#?}",
+        result.diagnostics
+    );
+}

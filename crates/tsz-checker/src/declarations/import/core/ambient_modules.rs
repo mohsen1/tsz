@@ -35,6 +35,35 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn wildcard_ambient_module_declared(&self, module_name: &str) -> bool {
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+
+        if let Some(declared) = &self.ctx.global_declared_modules {
+            return declared
+                .patterns
+                .iter()
+                .any(|pattern| Self::module_name_matches_pattern_for_imports(pattern, normalized));
+        }
+
+        let Some(all_binders) = &self.ctx.all_binders else {
+            return false;
+        };
+        for binder in all_binders.iter() {
+            for pattern in binder
+                .declared_modules
+                .iter()
+                .chain(binder.shorthand_ambient_modules.iter())
+                .chain(binder.module_exports.keys())
+                .filter(|pattern| pattern.contains('*'))
+            {
+                if Self::module_name_matches_pattern_for_imports(pattern, normalized) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     pub(super) fn module_name_matches_pattern_for_imports(
         pattern: &str,
         module_name: &str,
