@@ -58,7 +58,7 @@ use tracing::{debug, info};
 
 use tsz::binder::BinderState;
 use tsz::lib_loader::LibFile;
-use tsz::lsp::position::Position;
+use tsz::lsp::position::{LineMap, Position};
 use tsz::parser::ParserState;
 use tsz::parser::base::NodeIndex;
 use tsz::parser::node::NodeArena;
@@ -848,7 +848,15 @@ impl Server {
         })
     }
 
-    /// Convert a `DefinitionInfo` to a tsserver-compatible JSON value.
+    /// Convert a `DefinitionInfo` to a tsserver-compatible JSON value for the
+    /// plain `definition` / `typeDefinition` / `findSourceDefinition` commands.
+    ///
+    /// This is the `FileSpanWithContext` shape: `file` plus 1-based
+    /// `start`/`end` line/offset positions, and optional `contextStart`/
+    /// `contextEnd` line/offset positions. Symbol metadata (`kind`, `name`,
+    /// `containerName`, `isLocal`, `isAmbient`, …) belongs to the `-full`
+    /// shape; including it here causes consumers that parse the protocol
+    /// strictly to treat the response as the full shape.
     fn definition_info_to_json(
         info: &tsz::lsp::definition::DefinitionInfo,
         file: &str,
@@ -862,18 +870,68 @@ impl Server {
             "file": out_file,
             "start": Self::lsp_to_tsserver_position(info.location.range.start),
             "end": Self::lsp_to_tsserver_position(info.location.range.end),
+        });
+        if let Some(ref ctx) = info.context_span {
+            result["contextStart"] = Self::lsp_to_tsserver_position(ctx.start);
+            result["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);
+        }
+        result
+    }
+
+    /// Convert a `DefinitionInfo` to a tsserver-compatible JSON value for the
+    /// `definition-full` / `typeDefinition-full` / `definitionAndBoundSpan-full`
+    /// commands.
+    ///
+    /// This is the `DefinitionInfo` shape: `fileName` plus a numeric
+    /// `textSpan` (`start`/`length`), an optional numeric `contextSpan`,
+    /// the symbol metadata (`kind`, `name`, `containerName`), and the
+    /// `isLocal` / `isAmbient` / `unverified` / `failedAliasResolution`
+    /// flags. The byte-offset positions are computed against `line_map` /
+    /// `source_text`, which the caller is expected to have built for the
+    /// requesting file (mirroring the cross-file handling of
+    /// `references-full`).
+    fn definition_info_to_json_full(
+        info: &tsz::lsp::definition::DefinitionInfo,
+        file: &str,
+        line_map: &LineMap,
+        source_text: &str,
+    ) -> serde_json::Value {
+        let out_file = if info.location.file_path.is_empty() {
+            file.to_string()
+        } else {
+            info.location.file_path.clone()
+        };
+        let span_start = line_map
+            .position_to_offset(info.location.range.start, source_text)
+            .unwrap_or(0);
+        let span_end = line_map
+            .position_to_offset(info.location.range.end, source_text)
+            .unwrap_or(span_start);
+        let mut result = serde_json::json!({
+            "fileName": out_file,
+            "textSpan": {
+                "start": span_start,
+                "length": span_end.saturating_sub(span_start),
+            },
             "kind": info.kind,
             "name": info.name,
             "containerName": info.container_name,
-            "containerKind": info.container_kind,
             "isLocal": info.is_local,
             "isAmbient": info.is_ambient,
             "unverified": false,
             "failedAliasResolution": false,
         });
         if let Some(ref ctx) = info.context_span {
-            result["contextStart"] = Self::lsp_to_tsserver_position(ctx.start);
-            result["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);
+            let ctx_start = line_map
+                .position_to_offset(ctx.start, source_text)
+                .unwrap_or(0);
+            let ctx_end = line_map
+                .position_to_offset(ctx.end, source_text)
+                .unwrap_or(ctx_start);
+            result["contextSpan"] = serde_json::json!({
+                "start": ctx_start,
+                "length": ctx_end.saturating_sub(ctx_start),
+            });
         }
         result
     }

@@ -1183,8 +1183,10 @@ fn test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol() {
         .join("\n"),
     );
 
+    // Symbol metadata (`name`) lives on the `-full` shape, not on plain
+    // `definition` (see #4002). Use `definition-full` to inspect it.
     let req = make_request(
-        "definition",
+        "definition-full",
         serde_json::json!({
             "file": "/foo.ts",
             "line": 3,
@@ -1195,10 +1197,10 @@ fn test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol() {
     assert!(resp.success);
     let defs = resp
         .body
-        .expect("definition should return body")
+        .expect("definition-full should return body")
         .as_array()
         .cloned()
-        .expect("definition response should be an array");
+        .expect("definition-full response should be an array");
     assert!(
         defs.iter()
             .any(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("foo")),
@@ -1220,8 +1222,10 @@ fn test_definition_type_only_quoted_alias_marks_non_declare_target_as_local_non_
         .join("\n"),
     );
 
+    // `isAmbient` / `isLocal` live on the `-full` shape, not on plain
+    // `definition` (see #4002). Use `definition-full` to inspect them.
     let req = make_request(
-        "definition",
+        "definition-full",
         serde_json::json!({
             "file": "/foo.ts",
             "line": 3,
@@ -1232,10 +1236,10 @@ fn test_definition_type_only_quoted_alias_marks_non_declare_target_as_local_non_
     assert!(resp.success);
     let defs = resp
         .body
-        .expect("definition should return body")
+        .expect("definition-full should return body")
         .as_array()
         .cloned()
-        .expect("definition response should be an array");
+        .expect("definition-full response should be an array");
     let foo_def = defs
         .iter()
         .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("foo"))
@@ -1251,5 +1255,367 @@ fn test_definition_type_only_quoted_alias_marks_non_declare_target_as_local_non_
         foo_def.get("isLocal").and_then(serde_json::Value::as_bool),
         Some(true),
         "non-declare quoted alias definition should be local: {foo_def:?}"
+    );
+}
+
+// =============================================================================
+// Issue #4002: definition vs definition-full response shape parity with tsc
+// =============================================================================
+//
+// Plain `definition` returns `FileSpanWithContext`: `file`, `start`/`end`
+// line/offset positions, optional `contextStart`/`contextEnd` line/offset
+// positions. It must NOT include symbol metadata (`kind`, `name`,
+// `containerName`, `isLocal`, `isAmbient`, `unverified`,
+// `failedAliasResolution`) — those belong to the `-full` shape only.
+//
+// `definition-full` returns `DefinitionInfo`: `fileName`, numeric `textSpan`
+// (`start`/`length`), optional numeric `contextSpan`, plus all the symbol
+// metadata fields above. It must NOT include the plain `file`/`start`/`end`
+// fields.
+
+#[test]
+fn test_definition_plain_shape_omits_full_only_fields() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "const alpha = 1;\nalpha;\n".to_string(),
+    );
+
+    let req = make_request(
+        "definition",
+        serde_json::json!({"file": "/a.ts", "line": 2, "offset": 1}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("definition should return body");
+    let entries = body
+        .as_array()
+        .expect("definition response should be an array");
+    let entry = entries.first().expect("expected at least one definition");
+
+    // FileSpan fields must be present.
+    assert!(
+        entry.get("file").is_some(),
+        "plain definition must have 'file': {entry:?}"
+    );
+    assert!(
+        entry.get("start").is_some(),
+        "plain definition must have 'start': {entry:?}"
+    );
+    assert!(
+        entry.get("end").is_some(),
+        "plain definition must have 'end': {entry:?}"
+    );
+
+    // -full-only fields must be absent.
+    for forbidden in [
+        "fileName",
+        "textSpan",
+        "contextSpan",
+        "kind",
+        "name",
+        "containerName",
+        "containerKind",
+        "isLocal",
+        "isAmbient",
+        "unverified",
+        "failedAliasResolution",
+    ] {
+        assert!(
+            entry.get(forbidden).is_none(),
+            "plain definition must not include `{forbidden}`: {entry:?}"
+        );
+    }
+}
+
+#[test]
+fn test_definition_full_shape_uses_filename_and_text_span() {
+    let mut server = make_server();
+    let source = "const alpha = 1;\nalpha;\n";
+    server
+        .open_files
+        .insert("/a.ts".to_string(), source.to_string());
+
+    let req = make_request(
+        "definition-full",
+        serde_json::json!({"file": "/a.ts", "line": 2, "offset": 1}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("definition-full should return body");
+    let entries = body
+        .as_array()
+        .expect("definition-full response should be an array");
+    let entry = entries.first().expect("expected at least one definition");
+
+    // -full uses `fileName` + numeric `textSpan` and must not include the
+    // plain-shape fields.
+    assert_eq!(
+        entry.get("fileName").and_then(serde_json::Value::as_str),
+        Some("/a.ts"),
+        "definition-full should expose fileName: {entry:?}"
+    );
+    let text_span = entry.get("textSpan").expect("expected textSpan");
+    assert_eq!(
+        text_span.get("start").and_then(serde_json::Value::as_u64),
+        Some(6),
+        "alpha starts at byte 6: {text_span:?}"
+    );
+    assert_eq!(
+        text_span.get("length").and_then(serde_json::Value::as_u64),
+        Some(5),
+        "alpha is 5 bytes long: {text_span:?}"
+    );
+    assert!(
+        entry.get("file").is_none()
+            && entry.get("start").is_none()
+            && entry.get("end").is_none()
+            && entry.get("contextStart").is_none()
+            && entry.get("contextEnd").is_none(),
+        "definition-full must not use plain definition fields: {entry:?}"
+    );
+
+    // Symbol metadata must be present on the -full shape.
+    assert_eq!(
+        entry.get("kind").and_then(serde_json::Value::as_str),
+        Some("const")
+    );
+    assert_eq!(
+        entry.get("name").and_then(serde_json::Value::as_str),
+        Some("alpha")
+    );
+    assert!(entry.get("containerName").is_some());
+    assert!(entry.get("isLocal").is_some());
+    assert!(entry.get("isAmbient").is_some());
+    assert_eq!(
+        entry.get("unverified").and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        entry
+            .get("failedAliasResolution")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+
+    // contextSpan is present and uses numeric start/length covering the
+    // declaration `const alpha = 1;`.
+    let context_span = entry.get("contextSpan").expect("expected contextSpan");
+    assert_eq!(
+        context_span
+            .get("start")
+            .and_then(serde_json::Value::as_u64),
+        Some(0),
+        "context starts at the `const` keyword: {context_span:?}"
+    );
+    assert_eq!(
+        context_span
+            .get("length")
+            .and_then(serde_json::Value::as_u64),
+        Some(16),
+        "context covers `const alpha = 1;`: {context_span:?}"
+    );
+}
+
+#[test]
+fn test_type_definition_plain_shape_omits_full_only_fields() {
+    // typeDefinition shares handle_definition. The plain shape must not
+    // leak -full symbol metadata.
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "interface I { x: number; }\nconst v: I = { x: 1 };\nv;\n".to_string(),
+    );
+
+    let req = make_request(
+        "typeDefinition",
+        serde_json::json!({"file": "/a.ts", "line": 3, "offset": 1}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("typeDefinition should return body");
+    let entries = body
+        .as_array()
+        .expect("typeDefinition response should be an array");
+    if let Some(entry) = entries.first() {
+        for forbidden in [
+            "fileName",
+            "textSpan",
+            "contextSpan",
+            "kind",
+            "name",
+            "containerName",
+            "isLocal",
+            "isAmbient",
+            "unverified",
+            "failedAliasResolution",
+        ] {
+            assert!(
+                entry.get(forbidden).is_none(),
+                "plain typeDefinition must not include `{forbidden}`: {entry:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_type_definition_full_shape_uses_filename_and_text_span() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "interface I { x: number; }\nconst v: I = { x: 1 };\nv;\n".to_string(),
+    );
+
+    let req = make_request(
+        "typeDefinition-full",
+        serde_json::json!({"file": "/a.ts", "line": 3, "offset": 1}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("typeDefinition-full should return body");
+    let entries = body
+        .as_array()
+        .expect("typeDefinition-full response should be an array");
+    if let Some(entry) = entries.first() {
+        assert!(
+            entry.get("fileName").is_some(),
+            "typeDefinition-full should expose fileName: {entry:?}"
+        );
+        let text_span = entry
+            .get("textSpan")
+            .expect("typeDefinition-full should expose textSpan");
+        assert!(
+            text_span
+                .get("start")
+                .and_then(serde_json::Value::as_u64)
+                .is_some()
+                && text_span
+                    .get("length")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some(),
+            "textSpan should be numeric: {text_span:?}"
+        );
+        assert!(
+            entry.get("file").is_none()
+                && entry.get("start").is_none()
+                && entry.get("end").is_none(),
+            "typeDefinition-full must not use plain definition fields: {entry:?}"
+        );
+    }
+}
+
+#[test]
+fn test_definition_and_bound_span_plain_shape_omits_full_only_fields() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "const alpha = 1;\nalpha;\n".to_string(),
+    );
+
+    let req = make_request(
+        "definitionAndBoundSpan",
+        serde_json::json!({"file": "/a.ts", "line": 2, "offset": 1}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp
+        .body
+        .expect("definitionAndBoundSpan should return body");
+    let definitions = body
+        .get("definitions")
+        .and_then(serde_json::Value::as_array)
+        .expect("expected definitions array");
+    let entry = definitions
+        .first()
+        .expect("expected at least one definition");
+    for forbidden in [
+        "fileName",
+        "textSpan",
+        "contextSpan",
+        "kind",
+        "name",
+        "containerName",
+        "isLocal",
+        "isAmbient",
+        "unverified",
+        "failedAliasResolution",
+    ] {
+        assert!(
+            entry.get(forbidden).is_none(),
+            "definitionAndBoundSpan plain definition must not include `{forbidden}`: {entry:?}"
+        );
+    }
+
+    // textSpan in the wrapper is the bound span (line/offset shape).
+    let text_span = body.get("textSpan").expect("expected textSpan");
+    assert!(
+        text_span.get("start").is_some() && text_span.get("end").is_some(),
+        "plain definitionAndBoundSpan textSpan should use line/offset shape: {text_span:?}"
+    );
+    assert!(
+        text_span.get("length").is_none(),
+        "plain definitionAndBoundSpan textSpan must not be numeric: {text_span:?}"
+    );
+}
+
+#[test]
+fn test_definition_and_bound_span_full_uses_numeric_text_span_and_filename() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "const alpha = 1;\nalpha;\n".to_string(),
+    );
+
+    let req = make_request(
+        "definitionAndBoundSpan-full",
+        serde_json::json!({"file": "/a.ts", "line": 2, "offset": 1}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp
+        .body
+        .expect("definitionAndBoundSpan-full should return body");
+    let definitions = body
+        .get("definitions")
+        .and_then(serde_json::Value::as_array)
+        .expect("expected definitions array");
+    let entry = definitions
+        .first()
+        .expect("expected at least one definition");
+    assert!(
+        entry.get("fileName").is_some(),
+        "definitionAndBoundSpan-full inner definition should use fileName: {entry:?}"
+    );
+    let inner_span = entry
+        .get("textSpan")
+        .expect("inner definition should have textSpan");
+    assert!(
+        inner_span
+            .get("start")
+            .and_then(serde_json::Value::as_u64)
+            .is_some()
+            && inner_span
+                .get("length")
+                .and_then(serde_json::Value::as_u64)
+                .is_some(),
+        "inner textSpan should be numeric: {inner_span:?}"
+    );
+    assert!(
+        entry.get("file").is_none() && entry.get("start").is_none() && entry.get("end").is_none(),
+        "definitionAndBoundSpan-full inner definition must not use plain fields: {entry:?}"
+    );
+
+    // Wrapper textSpan is also numeric for the -full shape.
+    let outer = body.get("textSpan").expect("expected outer textSpan");
+    assert!(
+        outer
+            .get("start")
+            .and_then(serde_json::Value::as_u64)
+            .is_some()
+            && outer
+                .get("length")
+                .and_then(serde_json::Value::as_u64)
+                .is_some(),
+        "definitionAndBoundSpan-full outer textSpan should be numeric: {outer:?}"
     );
 }
