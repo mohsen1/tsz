@@ -53,6 +53,30 @@ fn checked_js_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn nested_or_right_operand_preserves_false_path_narrowing() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function f(x: number | string | boolean) {
+    let y: number | string | boolean;
+    let z: number | string | boolean;
+    return typeof x === "string"
+        || ((z = x)
+        || (typeof x === "number"
+        ? ((x = 10) && x.toString())
+        : ((y = x) && x.toString())));
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message == "Property 'toString' does not exist on type 'never'."
+        }),
+        "expected the conformance TS2339 for `x.toString()` narrowed to never, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn shadowed_builtin_guard_names_do_not_narrow() {
     let diagnostics = strict_diagnostics(
         r#"

@@ -275,3 +275,30 @@ C.prototype = 12
         "TS2322 must not collapse both sides to the JSDoc-declared target type; got: {msg:?}"
     );
 }
+
+/// `/** @type {number} */ C.prototype.x;` declares the prototype property
+/// type and should check the constructor's `this.x = ...` initializer against
+/// that declared type. This mirrors
+/// `conformance/jsdoc/jsdocPrototypePropertyAccessWithType.ts`.
+#[test]
+fn ts2322_for_jsdoc_prototype_property_access_decl_checks_constructor_assignment() {
+    let diags = diagnostics_for_js(
+        r#"
+function C() { this.x = false; }
+/** @type {number} */
+C.prototype.x;
+new C().x;
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|(c, _)| *c == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected exactly one TS2322 for constructor assignment checked against JSDoc prototype property type; got: {diags:?}"
+    );
+    let msg = &ts2322[0].1;
+    assert!(
+        msg.contains("'boolean'") && msg.contains("'number'"),
+        "TS2322 must compare the constructor RHS boolean with the prototype property's JSDoc number type; got: {msg:?}"
+    );
+}
