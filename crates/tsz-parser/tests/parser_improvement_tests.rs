@@ -547,7 +547,11 @@ fn test_middle_dot_identifier_part_parses_without_ts1127() {
 }
 
 #[test]
-fn test_regex_extended_unicode_escape_above_max_reports_ts1198() {
+fn test_regex_extended_unicode_escape_above_max_does_not_report_ts1198() {
+    // tsc treats out-of-range `\u{...}` inside regex literals as a runtime
+    // concern and does not emit TS1198 even with the `u` flag. Match that
+    // behavior — the parser must skip past the braced escape without
+    // validating its code-point range.
     let source = r#"
 const regexes: RegExp[] = [
   /\u{110000}/u,
@@ -566,20 +570,9 @@ const regexes: RegExp[] = [
         })
         .collect();
 
-    assert_eq!(
-        ts1198.len(),
-        2,
-        "Expected exactly two TS1198 diagnostics for out-of-range regex unicode escapes, got {diagnostics:?}"
-    );
-
-    let expected_starts = [
-        source.find("110000").expect("first escape") as u32,
-        source.rfind("110000").expect("second escape") as u32,
-    ];
-    let actual_starts: Vec<_> = ts1198.iter().map(|d| d.start).collect();
-    assert_eq!(
-        actual_starts, expected_starts,
-        "Expected TS1198 to point at the braced escape digits, got {diagnostics:?}"
+    assert!(
+        ts1198.is_empty(),
+        "Expected no TS1198 inside regex literals to match tsc, got {diagnostics:?}"
     );
 }
 
