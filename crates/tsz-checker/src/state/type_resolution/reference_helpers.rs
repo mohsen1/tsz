@@ -789,6 +789,86 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    pub(crate) fn type_alias_symbol_contains_conditional_type(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            return false;
+        }
+
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return false;
+            }
+            let Some(type_alias) = self.ctx.arena.get_type_alias(node) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(type_alias.type_node)
+                .and_then(|node| self.ctx.arena.get_conditional_type(node))
+                .is_some()
+        })
+    }
+
+    pub(crate) fn type_alias_symbol_direct_conditional_branches_are_array_like(
+        &self,
+        sym_id: SymbolId,
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            return false;
+        }
+
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(type_alias) = self.ctx.arena.get_type_alias(node) else {
+                return false;
+            };
+            let Some(body_node) = self.ctx.arena.get(type_alias.type_node) else {
+                return false;
+            };
+            let Some(conditional) = self.ctx.arena.get_conditional_type(body_node) else {
+                return false;
+            };
+            self.type_node_is_array_like_branch(conditional.true_type)
+                && self.type_node_is_array_like_branch(conditional.false_type)
+        })
+    }
+
+    fn type_node_is_array_like_branch(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if matches!(
+            node.kind,
+            syntax_kind_ext::ARRAY_TYPE | syntax_kind_ext::TUPLE_TYPE
+        ) {
+            return true;
+        }
+        if node.kind == syntax_kind_ext::TYPE_OPERATOR
+            && let Some(operator) = self.ctx.arena.get_type_operator(node)
+            && operator.operator == SyntaxKind::ReadonlyKeyword as u16
+        {
+            let Some(operand) = self.ctx.arena.get(operator.type_node) else {
+                return false;
+            };
+            return matches!(
+                operand.kind,
+                syntax_kind_ext::ARRAY_TYPE | syntax_kind_ext::TUPLE_TYPE
+            );
+        }
+        false
+    }
+
     pub(crate) fn type_arg_nodes_contain_scoped_type_parameter_for_depth_check(
         &self,
         type_args: &NodeList,
