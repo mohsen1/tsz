@@ -168,17 +168,26 @@ pub(super) fn extract_jsx_import_source(source: &str) -> Option<String> {
 
 /// Process JSX text content matching tsc's `getTransformedJsxText` algorithm:
 ///
-/// - If the text has no newlines, return it as-is (preserving whitespace).
+/// - If the text has no line breaks, return it as-is (preserving whitespace).
 /// - If multi-line, trim each line's leading/trailing whitespace, skip empty
 ///   lines, and join with a single space.
+///
+/// All three JS line terminator forms (`\r\n`, `\n`, and bare `\r`) act as
+/// line breaks. tsc treats CR-only line breaks the same as LF — `isLineBreak`
+/// in `compiler/scanner.ts` accepts CR, LF, LS, and PS.
 pub(super) fn process_jsx_text(text: &str) -> String {
-    // No newlines at all -> return as-is (even if whitespace-only)
-    if !text.contains('\n') {
+    // No line breaks at all -> return as-is (even if whitespace-only)
+    if !text.contains('\n') && !text.contains('\r') {
         return text.to_string();
     }
 
+    // Normalize CRLF and bare CR to LF, then split on LF. Without this, a
+    // CR-only line break (`a\rb`) would not split into separate lines and the
+    // whitespace coalescing would preserve the `\r` byte in the emitted string.
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+
     // Multi-line processing (matches tsc's algorithm)
-    let lines: Vec<&str> = text.split('\n').collect();
+    let lines: Vec<&str> = normalized.split('\n').collect();
     let mut parts: Vec<String> = Vec::new();
 
     for (i, line) in lines.iter().enumerate() {
@@ -568,6 +577,7 @@ pub(super) fn needs_quoting(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::process_jsx_text;
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
@@ -661,6 +671,33 @@ mod tests {
             output.contains("<span>a</span>\n    <span>b</span>"),
             "Whitespace between JSX children should be preserved.\nOutput: {output}"
         );
+    }
+
+    #[test]
+    fn process_jsx_text_normalizes_cr_only_line_break() {
+        // Issue #3903: JSX text with a CR-only line break (e.g. "a\rb") was
+        // emitted unchanged because the multiline path only fired on '\n'.
+        // tsc collapses CR-only breaks the same as LF, joining trimmed lines
+        // with a single space.
+        assert_eq!(process_jsx_text("a\rb"), "a b");
+    }
+
+    #[test]
+    fn process_jsx_text_normalizes_crlf_line_break() {
+        assert_eq!(process_jsx_text("a\r\nb"), "a b");
+    }
+
+    #[test]
+    fn process_jsx_text_normalizes_mixed_cr_and_lf() {
+        assert_eq!(process_jsx_text("a\rb\nc"), "a b c");
+    }
+
+    #[test]
+    fn process_jsx_text_preserves_text_without_line_breaks() {
+        // Non-multiline text must round-trip verbatim, including significant
+        // whitespace, so the rest of the emitter can decide how to escape it.
+        assert_eq!(process_jsx_text("hello world"), "hello world");
+        assert_eq!(process_jsx_text("  spaced  "), "  spaced  ");
     }
 
     #[test]
