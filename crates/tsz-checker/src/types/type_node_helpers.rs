@@ -755,6 +755,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         })
     }
 
+    pub(super) fn check_tuple_rest_type_node(
+        &mut self,
+        idx: NodeIndex,
+        canonicalize_array_ref: bool,
+    ) -> TypeId {
+        if canonicalize_array_ref
+            && let Some(array_type) = self.try_canonicalize_array_type_reference(idx)
+        {
+            array_type
+        } else {
+            self.check(idx)
+        }
+    }
+
     pub(super) fn is_this_type_allowed(
         &self,
         this_node_idx: tsz_parser::parser::NodeIndex,
