@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-05-07T12:00:02Z",
-  "git_sha": "fe972706584ddf467172f70e936f60a9ac4e081e",
+  "timestamp": "2026-05-07T09:03:43Z",
+  "git_sha": "5ebc6cd6a746ed29044a803278f9f0b21deb3c5f",
   "summary": {
     "total_tests": 12582,
-    "passed": 12455,
-    "failed": 127,
-    "pass_rate": 98.99062152281036
+    "passed": 12456,
+    "failed": 126,
+    "pass_rate": 99.0
   },
   "areas_by_pass_rate": [
     {
@@ -172,9 +172,9 @@
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6458,
-      "failed": 62,
-      "pass_rate": 99.05
+      "passed": 6459,
+      "failed": 61,
+      "pass_rate": 99.06
     },
     {
       "area": "jsdoc",
@@ -807,7 +807,7 @@
   "one_extra_zero_missing": [
     {
       "code": "TS2345",
-      "count": 6
+      "count": 5
     },
     {
       "code": "TS2589",
@@ -830,12 +830,12 @@
       "count": 2
     },
     {
-      "code": "TS2741",
+      "code": "TS7006",
       "count": 2
     },
     {
-      "code": "TS7006",
-      "count": 1
+      "code": "TS2741",
+      "count": 2
     },
     {
       "code": "TS1192",
@@ -846,11 +846,11 @@
       "count": 1
     },
     {
-      "code": "TS2732",
+      "code": "TS2307",
       "count": 1
     },
     {
-      "code": "TS2307",
+      "code": "TS2732",
       "count": 1
     },
     {
@@ -888,19 +888,19 @@
       "count": 2
     },
     {
-      "code": "TS2732",
-      "count": 1
-    },
-    {
       "code": "TS2307",
       "count": 1
     },
     {
-      "code": "TS2430",
+      "code": "TS2732",
       "count": 1
     },
     {
       "code": "TS2775",
+      "count": 1
+    },
+    {
+      "code": "TS2430",
       "count": 1
     }
   ],
@@ -989,7 +989,7 @@
   "top_extra_codes": [
     {
       "code": "TS2345",
-      "count": 8
+      "count": 7
     },
     {
       "code": "TS2339",
@@ -1009,7 +1009,7 @@
     },
     {
       "code": "TS7006",
-      "count": 3
+      "count": 4
     },
     {
       "code": "TS2638",
@@ -1040,19 +1040,19 @@
       "count": 1
     },
     {
-      "code": "TS2732",
-      "count": 1
-    },
-    {
       "code": "TS2307",
       "count": 1
     },
     {
-      "code": "TS2430",
+      "code": "TS2732",
       "count": 1
     },
     {
       "code": "TS2775",
+      "count": 1
+    },
+    {
+      "code": "TS2430",
       "count": 1
     }
   ],
@@ -1060,7 +1060,7 @@
     "false_positive": 22,
     "all_missing": 0,
     "wrong_code": 23,
-    "fingerprint_only": 77,
+    "fingerprint_only": 76,
     "same_code_count_drift": 0,
     "close_to_passing": 17
   }

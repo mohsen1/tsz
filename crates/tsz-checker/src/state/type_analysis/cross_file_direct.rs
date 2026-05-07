@@ -9,7 +9,7 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-fn is_builtin_lib_file_name(file_name: &str) -> bool {
+pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
     let basename = std::path::Path::new(file_name)
         .file_name()
         .and_then(|name| name.to_str())

@@ -2080,6 +2080,9 @@ impl<'a> DeclarationEmitter<'a> {
                 type_text
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if let Some(type_text) = self.flat_map_array_subclass_return_type_text(expr_idx) {
+                    return Some(type_text);
+                }
                 let reused_type_text = self.call_expression_reused_type_text(expr_idx);
                 let reused_type_uses_function_local_alias =
                     reused_type_text.as_deref().is_some_and(|type_text| {
@@ -3277,18 +3280,6 @@ impl<'a> DeclarationEmitter<'a> {
                 return Some(replacements);
             }
             current_idx = parent_idx;
-        }
-        None
-    }
-
-    fn simple_type_reference_name_text(&self, type_node_idx: NodeIndex) -> Option<String> {
-        let type_node = self.arena.get(type_node_idx)?;
-        if type_node.kind == SyntaxKind::Identifier as u16 {
-            return self.get_identifier_text(type_node_idx);
-        }
-        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
-            let type_ref = self.arena.get_type_ref(type_node)?;
-            return self.type_reference_name_text(type_ref.type_name);
         }
         None
     }

@@ -539,9 +539,47 @@ fn duplicate_symbol_computed_property() {
 /// Test that duplicate import = alias declarations emit TS2300.
 #[test]
 fn duplicate_import_equals_alias() {
-    verify_errors(
+    let diagnostics = verify_errors(
         "namespace m { export const x = 1; } import a = m; import a = m;",
-        &[(1, 58, "Duplicate identifier 'a'.")],
+        &[
+            (1, 44, "Duplicate identifier 'a'."),
+            (1, 58, "Duplicate identifier 'a'."),
+        ],
+    );
+
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 2,
+        "Duplicate import aliases should report TS2300 on both declarations"
+    );
+}
+
+#[test]
+fn duplicate_import_equals_qualified_value_alias() {
+    let diagnostics = verify_errors(
+        "namespace m { export var m = ''; }\nimport x = m.m;\nimport x = m.m;",
+        &[
+            (2, 8, "Duplicate identifier 'x'."),
+            (3, 8, "Duplicate identifier 'x'."),
+        ],
+    );
+
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 2,
+        "Duplicate qualified import aliases should report TS2300 on both declarations"
+    );
+}
+
+/// Test that duplicate ES import local bindings emit TS2300.
+#[test]
+fn duplicate_named_import_local_binding() {
+    verify_errors(
+        "import { z } from './a'; import { z1 as z } from './a';",
+        &[
+            (1, 10, "Duplicate identifier 'z'."),
+            (1, 41, "Duplicate identifier 'z'."),
+        ],
     );
 }
 

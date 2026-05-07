@@ -715,6 +715,22 @@ impl<'a> Printer<'a> {
             }
             self.write("export *");
             if export.module_specifier.is_some() {
+                // Preserve any comments between the `*` and `from` (e.g.
+                // `export * /* star */ from "./b"`). Without this, comments
+                // attached to the source range between the star token and the
+                // module specifier are silently dropped.
+                if let Some(mod_spec_node) = self.arena.get(export.module_specifier)
+                    && let Some(text) = self.source_text
+                    && let Ok(slice) = crate::safe_slice::slice(
+                        text,
+                        node.pos as usize,
+                        mod_spec_node.pos as usize,
+                    )
+                    && let Some(rel) = slice.find('*')
+                {
+                    let after_star = node.pos + (rel as u32) + 1;
+                    self.emit_comments_in_range(after_star, mod_spec_node.pos, false, false);
+                }
                 self.write(" from ");
                 self.emit_module_specifier(export.module_specifier);
             }
@@ -761,7 +777,23 @@ impl<'a> Printer<'a> {
             if value_specs.is_empty() {
                 self.write("export {}");
             } else {
-                self.write("export { ");
+                self.write("export {");
+                // Preserve any comments between the open `{` and the first
+                // specifier (e.g. `export { /* before name */ bar }`).
+                if let Some(&first_elem_idx) = value_specs.first()
+                    && let Some(first_elem) = self.arena.get(first_elem_idx)
+                    && let Some(text) = self.source_text
+                    && let Ok(slice) = crate::safe_slice::slice(
+                        text,
+                        clause_node.pos as usize,
+                        first_elem.pos as usize,
+                    )
+                    && let Some(rel) = slice.find('{')
+                {
+                    let after_open_brace = clause_node.pos + (rel as u32) + 1;
+                    self.emit_comments_in_range(after_open_brace, first_elem.pos, false, false);
+                }
+                self.write(" ");
                 self.emit_comma_separated(&value_specs);
                 if self.has_trailing_comma_in_source(clause_node, &named_exports.elements.nodes) {
                     self.write(",");
@@ -769,6 +801,24 @@ impl<'a> Printer<'a> {
                 self.write(" }");
             }
             if export.module_specifier.is_some() {
+                // Preserve any comments between the export clause's closing
+                // `}` and the `from` keyword (e.g.
+                // `export { foo } /* after clause */ from "./b"`). The
+                // NamedExports node's `.end` extends past the `from`
+                // keyword in our AST, so locate the `}` directly from the
+                // source text.
+                if let Some(mod_spec_node) = self.arena.get(export.module_specifier)
+                    && let Some(text) = self.source_text
+                    && let Ok(slice) = crate::safe_slice::slice(
+                        text,
+                        clause_node.pos as usize,
+                        mod_spec_node.pos as usize,
+                    )
+                    && let Some(rel) = slice.rfind('}')
+                {
+                    let after_close_brace = clause_node.pos + (rel as u32) + 1;
+                    self.emit_comments_in_range(after_close_brace, mod_spec_node.pos, false, false);
+                }
                 self.write(" from ");
                 self.emit_module_specifier(export.module_specifier);
             }

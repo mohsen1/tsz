@@ -202,6 +202,14 @@ name = "interface_call_signature_typeof_param_tests"
 path = "tests/interface_call_signature_typeof_param_tests.rs"
 
 [[test]]
+name = "lib_merge_indexed_access_no_cascade_tests"
+path = "tests/lib_merge_indexed_access_no_cascade_tests.rs"
+
+[[test]]
+name = "readonly_tuple_source_display_tests"
+path = "tests/readonly_tuple_source_display_tests.rs"
+
+[[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"
 

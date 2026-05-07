@@ -2614,6 +2614,16 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         for key in ["include", "exclude", "files", "references"] {
             validate_top_level_array_option(obj, &mut diagnostics, &stripped, file_path, key);
         }
+        // `compilerOptions` must be a JSON object; a scalar bypasses every
+        // nested option validator and would otherwise surface as a generic
+        // serde `invalid type` failure instead of TS5024.
+        validate_top_level_object_option(
+            obj,
+            &mut diagnostics,
+            &stripped,
+            file_path,
+            "compilerOptions",
+        );
     }
 
     let mut config: TsConfig =
@@ -2776,6 +2786,42 @@ fn validate_top_level_array_option(
     obj.insert(key.to_string(), serde_json::Value::Null);
 }
 
+fn validate_top_level_object_option(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+    source: &str,
+    file_path: &str,
+    key: &str,
+) {
+    let Some(value) = obj.get(key) else {
+        return;
+    };
+    if value.is_null() || value.is_object() {
+        return;
+    }
+
+    let value_start = find_top_level_value_offset_in_source(source, key);
+    let value_len = estimate_json_value_len(value);
+    let msg = format_message(
+        diagnostic_messages::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+        &[key, "object"],
+    );
+    diagnostics.push(Diagnostic::error(
+        file_path,
+        value_start,
+        value_len,
+        msg,
+        diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+    ));
+
+    // Replace the scalar with an empty object so serde can still deserialize
+    // the rest of the config; the diagnostic above is what surfaces to users.
+    obj.insert(
+        key.to_string(),
+        serde_json::Value::Object(serde_json::Map::new()),
+    );
+}
+
 /// Estimate the display length of a JSON value for diagnostic span.
 fn estimate_json_value_len(value: &serde_json::Value) -> u32 {
     match value {
@@ -2935,13 +2981,155 @@ fn removed_compiler_option(key: &str) -> Option<&'static str> {
 }
 
 fn unknown_compiler_option_suggestion(key_lower: &str) -> Option<&'static str> {
-    match key_lower {
+    // Preserve the historical aliases for `disableSolution*`: those names are
+    // closer to the real option semantically than they are by edit distance,
+    // so spell out the mapping rather than relying on Levenshtein scoring.
+    if let Some(name) = match key_lower {
         "disablesolutioncaching" | "disablesolutiontypechecking" => {
             Some("disableSolutionSearching")
         }
         _ => None,
+    } {
+        return Some(name);
     }
+
+    // General nearest-option suggestion using TypeScript's `getSpellingSuggestion`
+    // algorithm against the full set of canonical compiler-option names. This
+    // upgrades typos like `stric` → `strict`, `noEmti` → `noEmit`, and
+    // `moduleResoluton` → `moduleResolution` from a bare TS5023 to a TS5025
+    // `Did you mean ...` diagnostic.
+    tsz_parser::parser::spelling::get_spelling_suggestion(
+        key_lower,
+        KNOWN_COMPILER_OPTION_CANONICAL_NAMES,
+    )
 }
+
+/// Canonical names of every compiler option recognized by `known_compiler_option`.
+/// Used as the candidate set for `getSpellingSuggestion`-style typo recovery.
+/// Keep this list in sync with `known_compiler_option`.
+const KNOWN_COMPILER_OPTION_CANONICAL_NAMES: &[&str] = &[
+    "allowArbitraryExtensions",
+    "allowImportingTsExtensions",
+    "allowJs",
+    "allowSyntheticDefaultImports",
+    "allowUmdGlobalAccess",
+    "allowUnreachableCode",
+    "allowUnusedLabels",
+    "alwaysStrict",
+    "baseUrl",
+    "charset",
+    "checkJs",
+    "composite",
+    "customConditions",
+    "declaration",
+    "declarationDir",
+    "declarationMap",
+    "diagnostics",
+    "disableReferencedProjectLoad",
+    "disableSizeLimit",
+    "disableSolutionSearching",
+    "disableSourceOfProjectReferenceRedirect",
+    "disableSourceOfReferencedProjectLoad",
+    "downlevelIteration",
+    "emitBOM",
+    "emitDeclarationOnly",
+    "emitDecoratorMetadata",
+    "erasableSyntaxOnly",
+    "esModuleInterop",
+    "exactOptionalPropertyTypes",
+    "experimentalDecorators",
+    "extendedDiagnostics",
+    "forceConsistentCasingInFileNames",
+    "generateCpuProfile",
+    "generateTrace",
+    "ignoreDeprecations",
+    "importHelpers",
+    "importsNotUsedAsValues",
+    "incremental",
+    "inlineSourceMap",
+    "inlineSources",
+    "isolatedDeclarations",
+    "isolatedModules",
+    "jsx",
+    "jsxFactory",
+    "jsxFragmentFactory",
+    "jsxImportSource",
+    "keyofStringsOnly",
+    "lib",
+    "libReplacement",
+    "listEmittedFiles",
+    "listFiles",
+    "listFilesOnly",
+    "locale",
+    "mapRoot",
+    "maxNodeModuleJsDepth",
+    "module",
+    "moduleDetection",
+    "moduleResolution",
+    "moduleSuffixes",
+    "newLine",
+    "noCheck",
+    "noEmit",
+    "noEmitHelpers",
+    "noEmitOnError",
+    "noErrorTruncation",
+    "noFallthroughCasesInSwitch",
+    "noImplicitAny",
+    "noImplicitOverride",
+    "noImplicitReturns",
+    "noImplicitThis",
+    "noImplicitUseStrict",
+    "noLib",
+    "noTypesAndSymbols",
+    "noPropertyAccessFromIndexSignature",
+    "noResolve",
+    "noStrictGenericChecks",
+    "noUncheckedIndexedAccess",
+    "noUncheckedSideEffectImports",
+    "noUnusedLocals",
+    "noUnusedParameters",
+    "out",
+    "outDir",
+    "outFile",
+    "paths",
+    "plugins",
+    "preserveConstEnums",
+    "preserveSymlinks",
+    "preserveValueImports",
+    "preserveWatchOutput",
+    "pretty",
+    "reactNamespace",
+    "removeComments",
+    "resolveJsonModule",
+    "resolvePackageJsonExports",
+    "resolvePackageJsonImports",
+    "rewriteRelativeImportExtensions",
+    "rootDir",
+    "rootDirs",
+    "skipDefaultLibCheck",
+    "skipLibCheck",
+    "sourceMap",
+    "sourceRoot",
+    "strict",
+    "strictBindCallApply",
+    "strictBuiltinIteratorReturn",
+    "strictFunctionTypes",
+    "strictNullChecks",
+    "strictPropertyInitialization",
+    "stripInternal",
+    "stableTypeOrdering",
+    "suppressExcessPropertyErrors",
+    "suppressImplicitAnyIndexErrors",
+    "target",
+    "traceResolution",
+    "tsBuildInfoFile",
+    "typesVersionsCompilerVersion",
+    "typeRoots",
+    "types",
+    "useDefineForClassFields",
+    "useUnknownInCatchVariables",
+    "verbatimModuleSyntax",
+];
 
 /// Comprehensive map of all known TypeScript compiler options.
 /// Maps lowercase name → canonical camelCase name.
@@ -4993,6 +5181,47 @@ mod tests {
     }
 
     #[test]
+    fn test_ts5024_emitted_for_scalar_compiler_options() {
+        // Issue #3882: a top-level scalar `compilerOptions` would bypass every
+        // nested option validator and trip serde's `invalid type` error
+        // instead of the user-facing TS5024 diagnostic.
+        let source = r#"{"compilerOptions":"bad","files":["a.ts"]}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let diag = parsed
+            .diagnostics
+            .iter()
+            .find(|d| d.code == 5024 && d.message_text.contains("compilerOptions"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected TS5024 mentioning compilerOptions, got: {:?}",
+                    parsed
+                        .diagnostics
+                        .iter()
+                        .map(|d| (d.code, d.message_text.clone()))
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert!(
+            diag.message_text.contains("object"),
+            "TS5024 message should mention expected type 'object': {}",
+            diag.message_text
+        );
+    }
+
+    #[test]
+    fn test_scalar_compiler_options_does_not_break_files_array() {
+        // The recovery path replaces the invalid scalar with `{}` so the
+        // rest of the config (e.g. `files`) still parses cleanly.
+        let source = r#"{"compilerOptions":42,"files":["a.ts"]}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert_eq!(
+            parsed.config.files.as_deref(),
+            Some(&["a.ts".to_string()][..]),
+            "files array must still parse after compilerOptions recovery"
+        );
+    }
+
+    #[test]
     fn test_ts5024_emitted_for_recognized_options_with_invalid_value_types() {
         for (option, value, expected_type) in [
             ("plugins", r#""not-an-array""#, "Array"),
@@ -5162,6 +5391,62 @@ mod tests {
         assert!(
             codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN),
             "Expected TS5025-style did-you-mean for mis-cased disableSizeLimit, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_typo_suggestions_emit_ts5025_for_close_compiler_option_names() {
+        // Issue #3831: typoed compiler-option names that the canonical option
+        // list contains within Levenshtein range should be reported as TS5025
+        // with a `Did you mean ...` suggestion, matching tsc.
+        let cases = [
+            ("stric", "strict"),
+            ("noEmti", "noEmit"),
+            ("moduleResoluton", "moduleResolution"),
+        ];
+        for (typo, expected) in cases {
+            let source = format!("{{\"compilerOptions\":{{\"{typo}\":true}}}}");
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            let diag = parsed
+                .diagnostics
+                .iter()
+                .find(|d| d.code == diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Expected TS5025 for typo {typo}, got: {:?}",
+                        parsed.diagnostics
+                    )
+                });
+            assert!(
+                diag.message_text.contains(expected),
+                "TS5025 for {typo} should suggest {expected}, got: {}",
+                diag.message_text
+            );
+            assert!(
+                !parsed
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.code == diagnostic_codes::UNKNOWN_COMPILER_OPTION),
+                "Bare TS5023 should not be emitted alongside TS5025 for {typo}, got: {:?}",
+                parsed.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn test_unrelated_unknown_compiler_option_still_falls_back_to_ts5023() {
+        // A name that bears no resemblance to any canonical option must not
+        // get a spurious TS5025 suggestion, just the bare TS5023.
+        let source = r#"{"compilerOptions":{"completelyUnrelatedXYZ":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION),
+            "Expected TS5023 for unrelated unknown option, got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN),
+            "Unrelated option should not emit a Did-you-mean suggestion, got: {codes:?}"
         );
     }
 

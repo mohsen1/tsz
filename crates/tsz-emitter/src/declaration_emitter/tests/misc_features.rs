@@ -101,6 +101,22 @@ fn test_rest_parameter_in_function() {
     );
 }
 
+#[test]
+fn test_flat_map_callback_returning_array_subclass_flattens_element_type() {
+    let output = emit_dts(
+        r#"
+declare const foo: unknown[];
+const bar = foo.flatMap(value => value as Foo);
+interface Foo extends Array<string> {}
+"#,
+    );
+
+    assert!(
+        output.contains("declare const bar: string[];"),
+        "flatMap callback returning Array subclass should emit flattened element type: {output}"
+    );
+}
+
 // =============================================================================
 // 17. Call / Construct Signatures in Interfaces
 // =============================================================================
@@ -913,6 +929,31 @@ fn test_grouped_let_declarator_preserves_null_initializer_type() {
 }
 
 #[test]
+fn test_type_only_same_name_interface_reference_does_not_emit_local_value_dependency() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export interface Component {
+    play(): void;
+}
+
+declare function createComponent(): void;
+const Component = createComponent();
+
+export type ComponentDefinition = Partial<Component>;
+"#,
+    );
+
+    assert!(
+        output.contains("export type ComponentDefinition = Partial<Component>;"),
+        "Expected exported type alias to remain: {output}"
+    );
+    assert!(
+        !output.contains("declare const Component"),
+        "Did not expect type-only Component reference to emit local const: {output}"
+    );
+}
+
+#[test]
 fn test_destructuring_variable_declaration_groups_typed_bindings() {
     let source = r#"var [x, y] = [1, "hello"];"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1289,5 +1330,62 @@ export let x: Foo;
     assert!(
         output.contains("Foo") && output.contains(r#""./dep""#),
         "Expected type-only default import to still be preserved: {output}"
+    );
+}
+
+#[test]
+fn value_only_ambient_dependency_from_exported_initializer_is_elided() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const t: number;
+export const out: number = t;
+"#,
+    );
+
+    assert!(
+        !output.contains("declare const t"),
+        "Did not expect ambient initializer-only dependency to leak: {output}"
+    );
+    assert!(
+        output.contains("export declare const out: number;"),
+        "Expected exported declaration to remain: {output}"
+    );
+}
+
+#[test]
+fn ambient_value_dependency_used_in_exported_type_query_is_preserved() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const t: number;
+export type T = typeof t;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const t: number;"),
+        "Expected ambient value referenced by exported typeof to remain: {output}"
+    );
+    assert!(
+        output.contains("export type T = typeof t;"),
+        "Expected exported type query to remain: {output}"
+    );
+}
+
+#[test]
+fn ambient_value_dependency_exported_by_specifier_is_preserved() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const t: number;
+export { t };
+"#,
+    );
+
+    assert!(
+        output.contains("declare const t: number;"),
+        "Expected ambient value exported by specifier to remain: {output}"
+    );
+    assert!(
+        output.contains("export { t };"),
+        "Expected export specifier to remain: {output}"
     );
 }

@@ -16,8 +16,7 @@ use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::state::CheckerState;
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{ParamInfo, TypeId, TypePredicate, TypePredicateTarget};
 
@@ -293,7 +292,9 @@ impl<'a> CheckerState<'a> {
             // variable declaration.
             return var_decl.type_annotation.is_some()
                 || self.declaration_has_jsdoc_type_tag(decl_idx)
-                || self.declaration_has_jsdoc_assertion_return(decl_idx);
+                || self.declaration_has_jsdoc_assertion_return(decl_idx)
+                || self
+                    .require_initializer_exports_explicit_assertion_function(var_decl.initializer);
         }
         if let Some(param) = self.ctx.arena.get_parameter(decl_node) {
             return param.type_annotation.is_some()
@@ -320,6 +321,83 @@ impl<'a> CheckerState<'a> {
                 || self.declaration_has_jsdoc_assertion_return(decl_idx);
         }
         if let Some(sig) = self.ctx.arena.get_signature(decl_node) {
+            return sig.type_annotation.is_some();
+        }
+        true
+    }
+
+    fn require_initializer_exports_explicit_assertion_function(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        if !self.is_js_file() || initializer.is_none() {
+            return false;
+        }
+
+        let Some(module_specifier) = self.get_require_module_specifier(initializer) else {
+            return false;
+        };
+        let Some(target_file_idx) = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, &module_specifier)
+            .or_else(|| self.ctx.resolve_import_target(&module_specifier))
+        else {
+            return false;
+        };
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        if !target_arena
+            .source_files
+            .first()
+            .is_some_and(|source_file| source_file.is_declaration_file)
+        {
+            return false;
+        }
+
+        let Some(exports) = self.resolve_effective_module_exports_from_file(
+            &module_specifier,
+            Some(self.ctx.current_file_idx),
+        ) else {
+            return false;
+        };
+        let Some(export_equals_sym_id) = exports.get("export=") else {
+            return false;
+        };
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
+            return false;
+        };
+        let Some(export_symbol) = target_binder.get_symbol(export_equals_sym_id) else {
+            return false;
+        };
+        let Some(decl_idx) = export_symbol.primary_declaration() else {
+            return false;
+        };
+
+        Self::declaration_has_syntactic_type_annotation(target_arena, decl_idx)
+    }
+
+    fn declaration_has_syntactic_type_annotation(arena: &NodeArena, decl_idx: NodeIndex) -> bool {
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return true;
+        };
+        if let Some(var_decl) = arena.get_variable_declaration(decl_node) {
+            return var_decl.type_annotation.is_some();
+        }
+        if let Some(param) = arena.get_parameter(decl_node) {
+            return param.type_annotation.is_some();
+        }
+        if let Some(prop) = arena.get_property_decl(decl_node) {
+            return prop.type_annotation.is_some();
+        }
+        if let Some(method) = arena.get_method_decl(decl_node) {
+            return method.type_annotation.is_some();
+        }
+        if let Some(accessor) = arena.get_accessor(decl_node) {
+            return accessor.type_annotation.is_some();
+        }
+        if let Some(func) = arena.get_function(decl_node) {
+            return func.type_annotation.is_some();
+        }
+        if let Some(sig) = arena.get_signature(decl_node) {
             return sig.type_annotation.is_some();
         }
         true

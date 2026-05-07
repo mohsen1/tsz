@@ -19,7 +19,7 @@ use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 #[allow(unused_imports)]
 use tsz_parser::parser::ParserState;
 #[allow(unused_imports)]
-use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
+use tsz_parser::parser::node::{Node, NodeAccess, NodeArena, NodeView};
 #[allow(unused_imports)]
 use tsz_parser::parser::syntax_kind_ext;
 #[allow(unused_imports)]
@@ -576,6 +576,257 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    pub(crate) fn declared_ambient_value_dependency_is_initializer_only(
+        &self,
+        name_idx: NodeIndex,
+        initializer: NodeIndex,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        if !self.public_api_filter_enabled() || initializer.is_some() || type_annotation.is_none() {
+            return false;
+        }
+        let Some(_usage_kind) = self.public_api_dependency_usage_kind(name_idx) else {
+            return false;
+        };
+        let Some(name) = self.get_identifier_text(name_idx) else {
+            return false;
+        };
+        !self.public_api_type_surface_contains_typeof_name(&name)
+            && !self.public_api_export_specifier_exports_name(&name)
+    }
+
+    fn public_api_dependency_usage_kind(
+        &self,
+        name_idx: NodeIndex,
+    ) -> Option<super::super::usage_analyzer::UsageKind> {
+        if !self.public_api_filter_enabled() {
+            return Some(
+                super::super::usage_analyzer::UsageKind::TYPE
+                    | super::super::usage_analyzer::UsageKind::VALUE,
+            );
+        }
+        let used = self.used_symbols.as_ref()?;
+        let binder = self.binder?;
+        let name_node = self.arena.get(name_idx)?;
+        let name_ident = self.arena.get_identifier(name_node)?;
+
+        if let Some(sym_id) = binder.node_symbols.get(&name_idx.0)
+            && let Some(kind) = used.get(sym_id)
+        {
+            return Some(*kind);
+        }
+        if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text)
+            && let Some(kind) = used.get(&sym_id)
+        {
+            return Some(*kind);
+        }
+        for scope in binder.scopes.iter() {
+            if let Some(sym_id) = scope.table.get(&name_ident.escaped_text)
+                && let Some(kind) = used.get(&sym_id)
+            {
+                return Some(*kind);
+            }
+        }
+        None
+    }
+
+    fn public_api_type_surface_contains_typeof_name(&self, name: &str) -> bool {
+        let Some(source_file) = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))
+        else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                let is_public_surface = self.stmt_has_export_modifier(stmt_node)
+                    || stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    || stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT;
+                is_public_surface && self.node_subtree_contains_type_query_name(stmt_idx, name)
+            })
+    }
+
+    fn node_subtree_contains_type_query_name(&self, node_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::TYPE_QUERY
+            && let Some(type_query) = self.arena.get_type_query(node)
+            && self.entity_name_contains_identifier(type_query.expr_name, name)
+        {
+            return true;
+        }
+        self.arena
+            .get_children(node_idx)
+            .iter()
+            .copied()
+            .any(|child_idx| self.node_subtree_contains_type_query_name(child_idx, name))
+    }
+
+    fn entity_name_contains_identifier(&self, name_idx: NodeIndex, name: &str) -> bool {
+        if self.get_identifier_text(name_idx).as_deref() == Some(name) {
+            return true;
+        }
+        self.arena
+            .get_children(name_idx)
+            .iter()
+            .copied()
+            .any(|child_idx| self.entity_name_contains_identifier(child_idx, name))
+    }
+
+    fn public_api_export_specifier_exports_name(&self, name: &str) -> bool {
+        let Some(source_file) = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))
+        else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                    return false;
+                }
+                self.node_subtree_contains_export_specifier_name(stmt_idx, name)
+            })
+    }
+
+    fn node_subtree_contains_export_specifier_name(&self, node_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::EXPORT_SPECIFIER
+            && let Some(specifier) = self.arena.get_specifier(node)
+            && (self.get_identifier_text(specifier.name).as_deref() == Some(name)
+                || self.get_identifier_text(specifier.property_name).as_deref() == Some(name))
+        {
+            return true;
+        }
+        self.arena
+            .get_children(node_idx)
+            .iter()
+            .copied()
+            .any(|child_idx| self.node_subtree_contains_export_specifier_name(child_idx, name))
+    }
+
+    pub(crate) fn public_api_dependency_is_type_only_exported_type_side(
+        &self,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(name_ident) = self.arena.get_identifier(name_node) else {
+            return false;
+        };
+
+        if self.current_file_has_exported_type_side_named(&name_ident.escaped_text) {
+            return true;
+        }
+
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let mut symbol_ids = Vec::new();
+        if let Some(sym_id) = binder.node_symbols.get(&name_idx.0).copied() {
+            symbol_ids.push(sym_id);
+        }
+        if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text) {
+            symbol_ids.push(sym_id);
+        }
+        symbol_ids.extend(
+            binder
+                .scopes
+                .iter()
+                .filter_map(|scope| scope.table.get(&name_ident.escaped_text)),
+        );
+
+        symbol_ids
+            .iter()
+            .copied()
+            .any(|sym_id| self.symbol_has_exported_type_side(sym_id, binder))
+    }
+
+    fn symbol_has_exported_type_side(&self, sym_id: SymbolId, binder: &BinderState) -> bool {
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        if symbol.flags & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS) == 0 {
+            return false;
+        }
+
+        symbol
+            .declarations
+            .iter()
+            .copied()
+            .any(|decl_idx| self.declaration_is_exported_type_side(decl_idx))
+    }
+
+    fn current_file_has_exported_type_side_named(&self, name: &str) -> bool {
+        let Some(source_idx) = self.current_source_file_idx else {
+            return false;
+        };
+        let Some(source_node) = self.arena.get(source_idx) else {
+            return false;
+        };
+        let Some(source_file) = self.arena.get_source_file(source_node) else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                    return export.module_specifier.is_none()
+                        && self.declaration_is_type_side_named(export.export_clause, Some(name));
+                }
+                match stmt_node.kind {
+                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                        let Some(iface) = self.arena.get_interface(stmt_node) else {
+                            return false;
+                        };
+                        self.arena
+                            .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
+                            && self.get_identifier_text(iface.name).as_deref() == Some(name)
+                    }
+                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                        let Some(alias) = self.arena.get_type_alias(stmt_node) else {
+                            return false;
+                        };
+                        self.arena
+                            .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
+                            && self.get_identifier_text(alias.name).as_deref() == Some(name)
+                    }
+                    _ => false,
+                }
+            })
+    }
+
     /// Walk a binding pattern's leaf identifiers and return true if any one
     /// is in `used_symbols`.
     fn binding_pattern_has_used_identifier(&self, name_idx: NodeIndex) -> bool {
@@ -606,6 +857,40 @@ impl<'a> DeclarationEmitter<'a> {
                         return false;
                     };
                     self.binding_pattern_has_used_identifier(elem.name)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn declaration_is_exported_type_side(&self, decl_idx: NodeIndex) -> bool {
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        if let Some(export) = self.arena.get_export_decl(decl_node) {
+            return export.module_specifier.is_none()
+                && self.declaration_is_type_side_named(export.export_clause, None);
+        }
+        self.declaration_is_type_side_named(decl_idx, None)
+    }
+
+    fn declaration_is_type_side_named(&self, decl_idx: NodeIndex, name: Option<&str>) -> bool {
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        match decl_node.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.arena.get_interface(decl_node).is_some_and(|iface| {
+                    name.is_none_or(|name| {
+                        self.get_identifier_text(iface.name).as_deref() == Some(name)
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.arena.get_type_alias(decl_node).is_some_and(|alias| {
+                    name.is_none_or(|name| {
+                        self.get_identifier_text(alias.name).as_deref() == Some(name)
+                    })
                 })
             }
             _ => false,

@@ -585,6 +585,17 @@ impl<'a> TypeFormatter<'a> {
             ordered = normalized;
         }
 
+        // tsc's `typeof` operator produces a fixed eight-element string
+        // literal union; when the diagnostic surface displays that exact
+        // union, tsc renders it in JS-spec order regardless of how the
+        // interner pre-sorted the union members. Without this carve-out,
+        // the global literal-id allocation order can put `"symbol"` ahead
+        // of `"string"`, leaking the interner's history into TS2367
+        // overlap diagnostics.
+        if let Some(reordered) = self.reorder_typeof_result_union_in_canonical_order(&ordered) {
+            ordered = reordered;
+        }
+
         if let Some(collapsed) = self.collapse_same_enum_members_for_display(&ordered) {
             return collapsed;
         }
@@ -608,6 +619,52 @@ impl<'a> TypeFormatter<'a> {
         // types share the same name in different namespaces.
         let disambiguated = self.disambiguate_union_member_names(&ordered, formatted);
         disambiguated.join(" | ")
+    }
+
+    /// When the union members exactly match the eight string literals that
+    /// the JavaScript `typeof` operator can produce, return them in tsc's
+    /// canonical display order. Otherwise return `None` so the caller
+    /// keeps the input order untouched.
+    ///
+    /// Detected purely by string-literal value equality on the closed
+    /// `typeof` result vocabulary — this set is fixed by the JS spec, not
+    /// a user-chosen identifier, so the check is structural rather than
+    /// a printer-output-driven decision.
+    fn reorder_typeof_result_union_in_canonical_order(
+        &self,
+        members: &[TypeId],
+    ) -> Option<Vec<TypeId>> {
+        const TYPEOF_RESULT_ORDER: [&str; 8] = [
+            "string",
+            "number",
+            "bigint",
+            "boolean",
+            "symbol",
+            "undefined",
+            "object",
+            "function",
+        ];
+        if members.len() != TYPEOF_RESULT_ORDER.len() {
+            return None;
+        }
+        let mut found: [Option<TypeId>; 8] = [None; 8];
+        for &member in members {
+            let Some(crate::types::TypeData::Literal(crate::types::LiteralValue::String(atom))) =
+                self.interner.lookup(member)
+            else {
+                return None;
+            };
+            let value = self.interner.resolve_atom(atom);
+            let idx = TYPEOF_RESULT_ORDER
+                .iter()
+                .position(|&v| v == value.as_str())?;
+            if found[idx].is_some() {
+                return None;
+            }
+            found[idx] = Some(member);
+        }
+        let reordered: Vec<TypeId> = found.into_iter().collect::<Option<Vec<_>>>()?;
+        Some(reordered)
     }
 
     fn remove_redundant_intersection_displays(

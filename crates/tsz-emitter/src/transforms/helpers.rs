@@ -592,10 +592,6 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(ES_DECORATE_HELPER);
         output.push('\n');
     }
-    if helpers.set_function_name {
-        output.push_str(SET_FUNCTION_NAME_HELPER);
-        output.push('\n');
-    }
     if helpers.prop_key {
         output.push_str(PROP_KEY_HELPER);
         output.push('\n');
@@ -634,7 +630,11 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(GENERATOR_HELPER);
         output.push('\n');
     }
-    // Async generator helpers (after awaiter/generator)
+    if helpers.set_function_name {
+        output.push_str(SET_FUNCTION_NAME_HELPER);
+        output.push('\n');
+    }
+    // Async generator helpers (after awaiter/generator/setFunctionName)
     if helpers.await_helper {
         output.push_str(AWAIT_HELPER);
         output.push('\n');
@@ -915,7 +915,7 @@ mod tests {
     /// Find the byte offset of a helper's `var __name` declaration in the
     /// emitted source. Asserts the helper is present.
     fn find_helper(output: &str, name: &str) -> usize {
-        let needle = format!("var {name}");
+        let needle = format!("var {name} ");
         output
             .find(&needle)
             .unwrap_or_else(|| panic!("expected `{needle}` in emit_helpers output:\n{output}"))
@@ -997,17 +997,23 @@ mod tests {
     }
 
     #[test]
-    fn emit_helpers_priority_two_internal_order_decorate_run_init_es_decorate() {
+    fn emit_helpers_order_decorators_and_async_helpers() {
         // emit_helpers source orders priority-2 helpers as:
-        //   decorate, runInitializers, esDecorate, setFunctionName,
+        //   decorate, runInitializers, esDecorate,
         //   propKey, importStar (with setModuleDefault),
         //   rewriteRelativeImportExtension, exportStar
+        // and places setFunctionName after awaiter/generator but before
+        // async-generator helpers.
         let helpers = HelpersNeeded {
             decorate: true,
             run_initializers: true,
             es_decorate: true,
             set_function_name: true,
             prop_key: true,
+            awaiter: true,
+            generator: true,
+            await_helper: true,
+            async_generator: true,
             import_star: true,
             rewrite_relative_import_extension: true,
             export_star: true,
@@ -1020,17 +1026,25 @@ mod tests {
         let i_es_decorate = find_helper(&output, "__esDecorate");
         let i_set_name = find_helper(&output, "__setFunctionName");
         let i_prop_key = find_helper(&output, "__propKey");
+        let i_awaiter = find_helper(&output, "__awaiter");
+        let i_generator = find_helper(&output, "__generator");
+        let i_await = find_helper(&output, "__await");
+        let i_async_generator = find_helper(&output, "__asyncGenerator");
         let i_import_star = find_helper(&output, "__importStar");
         let i_rewrite = find_helper(&output, "__rewriteRelativeImportExtension");
         let i_export_star = find_helper(&output, "__exportStar");
 
         assert!(i_decorate < i_run);
         assert!(i_run < i_es_decorate);
-        assert!(i_es_decorate < i_set_name);
-        assert!(i_set_name < i_prop_key);
+        assert!(i_es_decorate < i_prop_key);
         assert!(i_prop_key < i_import_star);
         assert!(i_import_star < i_rewrite);
         assert!(i_rewrite < i_export_star);
+        assert!(i_export_star < i_awaiter);
+        assert!(i_awaiter < i_generator);
+        assert!(i_generator < i_set_name);
+        assert!(i_set_name < i_await);
+        assert!(i_await < i_async_generator);
     }
 
     #[test]

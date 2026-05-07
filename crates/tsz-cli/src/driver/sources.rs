@@ -531,6 +531,7 @@ struct ParsedSource {
         String,
         tsz::module_resolver::ImportKind,
         Option<tsz::module_resolver::ImportingModuleKind>,
+        bool,
     )>,
     type_refs: Vec<(String, Option<String>, usize, usize)>,
     reference_paths: Vec<(String, usize, usize)>,
@@ -742,7 +743,13 @@ pub(super) fn read_source_files(
             let entry = dependencies.entry(path.clone()).or_default();
 
             if !options.no_resolve {
-                for (specifier, import_kind, resolution_mode_override) in specifiers {
+                for (
+                    specifier,
+                    import_kind,
+                    resolution_mode_override,
+                    has_type_json_import_attribute,
+                ) in specifiers
+                {
                     let request = tsz::module_resolver::ModuleLookupRequest {
                         specifier: &specifier,
                         containing_file: &path,
@@ -755,7 +762,7 @@ pub(super) fn read_source_files(
                     tsz_common::perf_counters::inc(
                         &tsz_common::perf_counters::counters().resolver_lookup_calls,
                     );
-                    let outcome = module_resolver
+                    let mut outcome = module_resolver
                         .lookup(
                             &request,
                             |spec, fp| {
@@ -772,6 +779,31 @@ pub(super) fn read_source_files(
                             Some(&seen),
                         )
                         .classify();
+                    if outcome
+                        .error
+                        .as_ref()
+                        .is_some_and(|error| error.code == 2732)
+                        && has_type_json_import_attribute
+                        && json_type_attribute_enables_json_module(
+                            options,
+                            &path,
+                            base_dir,
+                            &mut resolution_cache,
+                        )
+                        && let Some(resolved_path) = resolve_module_specifier(
+                            &path,
+                            &specifier,
+                            options,
+                            base_dir,
+                            &mut resolution_cache,
+                            &seen,
+                        )
+                        && resolved_path.extension().is_some_and(|ext| ext == "json")
+                    {
+                        outcome.resolved_path = Some(resolved_path);
+                        outcome.is_resolved = true;
+                        outcome.error = None;
+                    }
                     if let Some(resolved) = outcome.resolved_path {
                         let canonical = normalize(&resolved, options);
                         entry.insert(canonical.clone());
