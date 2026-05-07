@@ -69,6 +69,41 @@ type Picked<K extends keyof FnMap> = ReturnTypeOf<FnMap[K]>;
     );
 }
 
+/// Conformance lock for
+/// `compiler/coAndContraVariantInferences{2,3,4}.ts`.
+///
+/// The user files in those tests declaration-merge `Node`, which makes
+/// `HTMLTrackElement` fail its `HTMLElement` heritage check. Once one
+/// `HTMLElementTagNameMap` value no longer satisfies `Element`, the closed-map
+/// indexed access `HTMLElementTagNameMap[K]` must fail `T extends Element`
+/// rather than being deferred.
+#[test]
+fn closed_map_indexed_access_reports_ts2344_when_a_value_fails_constraint() {
+    let source = r#"
+interface Element { kind: 0 }
+interface HTMLElement extends Element {}
+interface HTMLDivElement extends HTMLElement {}
+interface HTMLTrackElement extends HTMLElement { kind: string }
+
+interface HTMLElementTagNameMap {
+    div: HTMLDivElement;
+    track: HTMLTrackElement;
+}
+
+interface Box<T extends Element> {
+    item(index: number): T;
+}
+
+type Bad<K extends keyof HTMLElementTagNameMap> = Box<HTMLElementTagNameMap[K]>;
+"#;
+    let diags = check_strict(source);
+    let ts2344: Vec<_> = diags.iter().filter(|(code, _)| *code == 2344).collect();
+    assert!(
+        !ts2344.is_empty(),
+        "Closed-map indexed access must report TS2344 when a mapped value fails the constraint; got: {diags:?}"
+    );
+}
+
 /// Anti-regression: nested generic indexed access `M[T][F]` should still
 /// emit TS2344 because the outer operand `M[T]` is itself an unresolved
 /// indexed access, not a closed object shape. The carve-out must NOT
