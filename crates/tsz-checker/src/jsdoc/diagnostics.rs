@@ -1162,6 +1162,21 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                     }
+                    // Suppress the generic "Cannot find name" emitter for
+                    // qualified names whose root is a (possibly aliased)
+                    // namespace, module, or import alias. tsc owns these
+                    // diagnostics through namespace-member resolution — it
+                    // either accepts the reference silently (valid export) or
+                    // emits the namespace-specific TS2694 ("Namespace 'X' has
+                    // no exported member 'Y'"). Emitting TS2304/TS2552
+                    // "Cannot find name 's.X'" here would conflict with both
+                    // outcomes.
+                    if let Some(dot_idx) = simple_expr.find('.') {
+                        let root_name = simple_expr[..dot_idx].trim();
+                        if self.jsdoc_qualified_root_is_namespace_or_alias(root_name) {
+                            continue;
+                        }
+                    }
                     self.emit_jsdoc_cannot_find_name(
                         simple_expr,
                         comment.pos,
