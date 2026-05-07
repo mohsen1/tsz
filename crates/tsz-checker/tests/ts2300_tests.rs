@@ -545,6 +545,18 @@ fn duplicate_import_equals_alias() {
     );
 }
 
+/// Test that duplicate ES import local bindings emit TS2300.
+#[test]
+fn duplicate_named_import_local_binding() {
+    verify_errors(
+        "import { z } from './a'; import { z1 as z } from './a';",
+        &[
+            (1, 10, "Duplicate identifier 'z'."),
+            (1, 41, "Duplicate identifier 'z'."),
+        ],
+    );
+}
+
 /// Test that import alias conflicting with local declaration emits TS2440.
 #[test]
 fn import_equals_alias_conflicts_with_local() {
