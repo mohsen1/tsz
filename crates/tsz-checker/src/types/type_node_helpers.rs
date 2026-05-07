@@ -691,6 +691,70 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             || crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)
     }
 
+    /// If `idx` is a direct, unshadowed reference to the lib's `Array` /
+    /// `ReadonlyArray`, return the canonical `array(elem)` (or `readonly array(elem)`)
+    /// representation. Returns `None` for any other type node, including aliases that
+    /// happen to resolve to `Array<T>`.
+    ///
+    /// This canonicalization mirrors the path in `type_literal_checker.rs:308` and
+    /// ensures that downstream consumers which inspect the solver array variant
+    /// directly (e.g. tuple rest element extraction in `array_element_type`) see
+    /// the array shape instead of `Application(Lazy(Array_DefId), [T])`. Without
+    /// it, `[T, ...Array<U>]` and `[T, ...Array]` store the entire array type as
+    /// the rest element, causing false TS2322 on tuple initialization and false
+    /// TS2339 on destructured rest elements.
+    ///
+    /// When the reference has no type argument (e.g. bare `...Array`), we fall back
+    /// to `any` to match tsc's recovery behaviour after TS2314.
+    pub(super) fn try_canonicalize_array_type_reference(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.ctx.arena.get_type_ref(node)?;
+        let name_node = self.ctx.arena.get(type_ref.type_name)?;
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        let name = ident.escaped_text.as_str();
+        if name != "Array" && name != "ReadonlyArray" {
+            return None;
+        }
+
+        if self.ctx.type_parameter_scope.contains_key(name) {
+            return None;
+        }
+
+        // Skip canonicalization if the user has declared their own `Array` /
+        // `ReadonlyArray` symbol that shadows the lib's. Declaration merging with
+        // the lib counts as the lib symbol, so `interface Array<T> { custom: T }`
+        // still hits the canonicalization path.
+        let shadowed_by_user = self
+            .ctx
+            .binder
+            .file_locals
+            .get(name)
+            .is_some_and(|sym_id| !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id));
+        if shadowed_by_user {
+            return None;
+        }
+
+        let elem_type = type_ref
+            .type_arguments
+            .as_ref()
+            .and_then(|args| args.nodes.first().copied())
+            .map_or(TypeId::ANY, |arg_idx| self.check(arg_idx));
+
+        let factory = self.ctx.types.factory();
+        let array_type = factory.array(elem_type);
+        Some(if name == "ReadonlyArray" {
+            factory.readonly_type(array_type)
+        } else {
+            array_type
+        })
+    }
+
     pub(super) fn is_this_type_allowed(
         &self,
         this_node_idx: tsz_parser::parser::NodeIndex,
