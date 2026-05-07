@@ -2258,14 +2258,16 @@ impl<'a> CheckerState<'a> {
             module_specifier.to_string(),
             export_name.to_string(),
         );
-        if let Some(sym_id) = self
+        let cache_miss = visited_aliases.len() == 0;
+        if let Some(cached) = self
             .ctx
             .export_equals_named_cache
             .borrow()
             .get(&cache_key)
             .copied()
+            && (cached.is_some() || cache_miss)
         {
-            return Some(sym_id);
+            return cached;
         }
 
         let resolved = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
@@ -2275,11 +2277,11 @@ impl<'a> CheckerState<'a> {
                 visited_aliases,
             )
         });
-        if let Some(sym_id) = resolved {
+        if resolved.is_some() || cache_miss {
             self.ctx
                 .export_equals_named_cache
                 .borrow_mut()
-                .insert(cache_key, sym_id);
+                .insert(cache_key, resolved);
         }
         resolved
     }
