@@ -183,16 +183,33 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          RUN_ID="$(gh run list \
-            --workflow bench.yml \
-            --branch main \
-            --status success \
-            --limit 20 \
-            --json databaseId \
-            --jq '.[0].databaseId // ""')"
+          set -euo pipefail
+
+          RUN_ID="$(
+            gh run list \
+              --workflow bench.yml \
+              --branch main \
+              --status success \
+              --limit 50 \
+              --json databaseId \
+              --jq '.[].databaseId' |
+            while IFS= read -r candidate_run_id; do
+              artifact_id="$(gh api \
+                "repos/${{ github.repository }}/actions/runs/${candidate_run_id}/artifacts" \
+                --jq '.artifacts[]? | select(.name == "bench-results-merged" and .expired == false) | .id' |
+                head -n 1)"
+
+              if [[ -n "$artifact_id" ]]; then
+                echo "$candidate_run_id"
+                break
+              fi
+            done
+          )"
           echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
           if [[ -n "$RUN_ID" ]]; then
-            echo "Latest successful benchmark run: ${RUN_ID}"
+            echo "Latest benchmark run with merged artifact: ${RUN_ID}"
+          else
+            echo "No recent successful benchmark run has a bench-results-merged artifact."
           fi
         continue-on-error: true
 

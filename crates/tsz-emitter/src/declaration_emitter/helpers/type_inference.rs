@@ -4867,7 +4867,7 @@ impl<'a> DeclarationEmitter<'a> {
         Some(parts.join("/"))
     }
 
-    fn imported_value_module_specifier(
+    pub(in crate::declaration_emitter) fn imported_value_module_specifier(
         &self,
         sym_id: SymbolId,
         binder: &BinderState,
@@ -5072,7 +5072,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn node_modules_package_path_matches_import_specifier(
+    pub(in crate::declaration_emitter) fn node_modules_package_path_matches_import_specifier(
         &self,
         module_path: &str,
         module_specifier: &str,
@@ -5145,7 +5145,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn imported_module_exports_name(
+    pub(in crate::declaration_emitter) fn imported_module_exports_name(
         &self,
         binder: &BinderState,
         module_specifier: &str,

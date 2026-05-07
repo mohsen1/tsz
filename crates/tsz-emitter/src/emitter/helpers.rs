@@ -1103,9 +1103,13 @@ impl<'a> Printer<'a> {
             }
             syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = self.arena.get_module(node) {
-                    self.arena
+                    if self
+                        .arena
                         .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
-                        || !self.is_instantiated_module(module.body)
+                    {
+                        return !self.is_recovered_anonymous_declare_module(module);
+                    }
+                    !self.is_instantiated_module(module.body)
                 } else {
                     false
                 }
@@ -1370,6 +1374,19 @@ impl<'a> Printer<'a> {
             }
             _ => false,
         }
+    }
+
+    pub(in crate::emitter) fn is_recovered_anonymous_declare_module(
+        &self,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) -> bool {
+        self.arena
+            .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+            && self.get_identifier_text_idx(module.name).is_empty()
+            && self
+                .arena
+                .get(module.body)
+                .is_some_and(|body| body.kind == syntax_kind_ext::MODULE_BLOCK)
     }
 
     pub(super) fn has_recovered_declaration_trailing_comma(&self, node: &Node) -> bool {
