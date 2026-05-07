@@ -312,3 +312,46 @@ fn test_async_await_under_satisfies_emits_yield() {
         "Output must contain a yield instruction for `(await bar()) satisfies number`.\nOutput:\n{output}"
     );
 }
+
+// Issue #3540: ES5 async transform must lower tagged template literals
+// with substitutions to a __makeTemplateObject call. The previous
+// fallback re-emitted the raw source text (including the trailing `;`)
+// inside the generator return tuple, producing invalid JavaScript.
+#[test]
+fn test_async_tagged_template_with_substitutions_lowers_to_make_template_object() {
+    let output = transform_and_print("async function f() { return tag`a${1}b`; }");
+
+    assert!(
+        output.contains("__makeTemplateObject([\"a\", \"b\"], [\"a\", \"b\"])"),
+        "Tagged template with substitutions must lower to __makeTemplateObject(...)\
+         with cooked + raw arrays.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("tag(__makeTemplateObject"),
+        "Tag must call into __makeTemplateObject(...) wrapper.\nOutput:\n{output}"
+    );
+    // The substitution expression is appended as a trailing argument.
+    assert!(
+        output.contains("[\"a\", \"b\"], [\"a\", \"b\"]), 1)"),
+        "Substitution expressions must follow as call arguments.\nOutput:\n{output}"
+    );
+    // Pre-fix bug: raw source text (with semicolon) leaked into the
+    // generator return tuple. Make sure it does not.
+    assert!(
+        !output.contains("tag`a${1}b`"),
+        "Raw template syntax must not appear in lowered output.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("`;"),
+        "Trailing `;` from source-text fallback must not appear.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_tagged_template_no_substitutions_unchanged() {
+    let output = transform_and_print("async function f() { return tag`hello`; }");
+    assert!(
+        output.contains("__makeTemplateObject([\"hello\"], [\"hello\"])"),
+        "No-substitution tagged template should still lower to __makeTemplateObject.\nOutput:\n{output}"
+    );
+}
