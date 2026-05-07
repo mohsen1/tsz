@@ -129,13 +129,16 @@ impl Server {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
-            open_files
-                .get(file_path)
-                .map(|raw| Self::normalize_fourslash_virtual_content(file_path, raw))
-                .or_else(|| {
-                    Self::read_virtual_harness_path(file_path)
-                        .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
-                })
+            // Client-supplied `open_files` content is never normalized: a
+            // real client opening `/fourslash.ts` with `//// const x = 1;`
+            // expects tsc-equivalent behavior (treat as a comment), not the
+            // harness's `////`-line extraction. See #3799. Disk-loaded
+            // fourslash *fixtures* (loaded by `read_virtual_harness_path`)
+            // continue to be normalized.
+            open_files.get(file_path).cloned().or_else(|| {
+                Self::read_virtual_harness_path(file_path)
+                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+            })
         };
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = get_content(file_path, &self.open_files) {
@@ -208,13 +211,16 @@ impl Server {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
-            open_files
-                .get(file_path)
-                .map(|raw| Self::normalize_fourslash_virtual_content(file_path, raw))
-                .or_else(|| {
-                    Self::read_virtual_harness_path(file_path)
-                        .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
-                })
+            // Client-supplied `open_files` content is never normalized: a
+            // real client opening `/fourslash.ts` with `//// const x = 1;`
+            // expects tsc-equivalent behavior (treat as a comment), not the
+            // harness's `////`-line extraction. See #3799. Disk-loaded
+            // fourslash *fixtures* (loaded by `read_virtual_harness_path`)
+            // continue to be normalized.
+            open_files.get(file_path).cloned().or_else(|| {
+                Self::read_virtual_harness_path(file_path)
+                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+            })
         };
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = get_content(file_path, &self.open_files) {
@@ -377,13 +383,16 @@ impl Server {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
-            open_files
-                .get(file_path)
-                .map(|raw| Self::normalize_fourslash_virtual_content(file_path, raw))
-                .or_else(|| {
-                    Self::read_virtual_harness_path(file_path)
-                        .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
-                })
+            // Client-supplied `open_files` content is never normalized: a
+            // real client opening `/fourslash.ts` with `//// const x = 1;`
+            // expects tsc-equivalent behavior (treat as a comment), not the
+            // harness's `////`-line extraction. See #3799. Disk-loaded
+            // fourslash *fixtures* (loaded by `read_virtual_harness_path`)
+            // continue to be normalized.
+            open_files.get(file_path).cloned().or_else(|| {
+                Self::read_virtual_harness_path(file_path)
+                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+            })
         };
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = get_content(file_path, &self.open_files) {

@@ -737,13 +737,17 @@ impl Server {
         &self,
         file_path: &str,
     ) -> Option<(NodeArena, BinderState, NodeIndex, String)> {
-        let raw_content = self
-            .open_files
-            .get(file_path)
-            .cloned()
-            .or_else(|| std::fs::read_to_string(file_path).ok())
-            .or_else(|| Self::read_virtual_harness_path(file_path))?;
-        let content = Self::normalize_fourslash_virtual_content(file_path, &raw_content);
+        // Only disk-loaded fourslash fixtures get `////` normalization: a real
+        // client opening `/fourslash.ts` should see tsc-equivalent behavior
+        // (treat `////` as a comment), not the harness rewrite. See #3799.
+        let content = if let Some(raw) = self.open_files.get(file_path).cloned() {
+            raw
+        } else if let Ok(raw) = std::fs::read_to_string(file_path) {
+            raw
+        } else {
+            let raw = Self::read_virtual_harness_path(file_path)?;
+            Self::normalize_fourslash_virtual_content(file_path, &raw)
+        };
         let mut parser = ParserState::new(file_path.to_string(), content.clone());
         let root = parser.parse_source_file();
         let arena = parser.into_arena();
