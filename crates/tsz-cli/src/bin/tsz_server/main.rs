@@ -439,6 +439,20 @@ struct CheckOptions {
     strict_builtin_iterator_return: Option<bool>,
     #[serde(default)]
     declaration: bool,
+    // Server-protocol checker options that were previously hardcoded to false
+    // when constructing `CheckerOptions`. Wiring them through fixes #3579.
+    #[serde(default)]
+    verbatim_module_syntax: bool,
+    #[serde(default)]
+    erasable_syntax_only: bool,
+    #[serde(default)]
+    allow_importing_ts_extensions: bool,
+    #[serde(default)]
+    rewrite_relative_import_extensions: bool,
+    #[serde(default)]
+    allow_umd_global_access: bool,
+    #[serde(default)]
+    preserve_const_enums: bool,
 }
 
 /// Legacy response to client
