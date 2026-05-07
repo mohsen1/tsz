@@ -870,6 +870,8 @@ impl<'a> CheckerState<'a> {
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
         let mut number_index = None;
+        let mut extra_string_indices = Vec::new();
+        let mut extra_number_indices = Vec::new();
         let mut has_abstract_construct_sig = false;
         // Global member counter for preserving source declaration order across
         // both properties and methods. Using properties.len() would give methods
@@ -1148,9 +1150,17 @@ impl<'a> CheckerState<'a> {
                 };
                 if is_valid_index_type || is_valid_via_ast {
                     if key_type == TypeId::NUMBER {
-                        number_index = Some(info);
+                        if number_index.is_none() {
+                            number_index = Some(info);
+                        } else {
+                            extra_number_indices.push(info);
+                        }
                     } else {
-                        string_index = Some(info);
+                        if string_index.is_none() {
+                            string_index = Some(info);
+                        } else {
+                            extra_string_indices.push(info);
+                        }
                     }
                 }
                 continue;
@@ -1354,7 +1364,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if !call_signatures.is_empty() || !construct_signatures.is_empty() {
-            return factory.callable(CallableShape {
+            let mut result = factory.callable(CallableShape {
                 call_signatures,
                 construct_signatures,
                 properties,
@@ -1363,15 +1373,45 @@ impl<'a> CheckerState<'a> {
                 symbol: None,
                 is_abstract: has_abstract_construct_sig,
             });
+            for idx in extra_string_indices {
+                let member = factory.object_with_index(ObjectShape {
+                    string_index: Some(idx),
+                    ..ObjectShape::default()
+                });
+                result = self.ctx.types.intersect_types_raw2(result, member);
+            }
+            for idx in extra_number_indices {
+                let member = factory.object_with_index(ObjectShape {
+                    number_index: Some(idx),
+                    ..ObjectShape::default()
+                });
+                result = self.ctx.types.intersect_types_raw2(result, member);
+            }
+            return result;
         }
 
         if string_index.is_some() || number_index.is_some() {
-            return factory.object_with_index(ObjectShape {
+            let mut result = factory.object_with_index(ObjectShape {
                 properties,
                 string_index,
                 number_index,
                 ..ObjectShape::default()
             });
+            for idx in extra_string_indices {
+                let member = factory.object_with_index(ObjectShape {
+                    string_index: Some(idx),
+                    ..ObjectShape::default()
+                });
+                result = self.ctx.types.intersect_types_raw2(result, member);
+            }
+            for idx in extra_number_indices {
+                let member = factory.object_with_index(ObjectShape {
+                    number_index: Some(idx),
+                    ..ObjectShape::default()
+                });
+                result = self.ctx.types.intersect_types_raw2(result, member);
+            }
+            return result;
         }
 
         factory.object(properties)

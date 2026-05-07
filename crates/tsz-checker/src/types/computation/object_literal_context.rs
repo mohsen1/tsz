@@ -496,7 +496,9 @@ impl<'a> CheckerState<'a> {
             } = self.resolve_property_access_with_env(contextual_type, property_name)
             && let Some(type_id) = self.precise_callable_context_type(type_id)
         {
-            return Some(type_id);
+            return self
+                .prefer_more_specific_contextual_property_type(Some(type_id), property_context_type)
+                .or(Some(type_id));
         }
 
         if self
@@ -1250,6 +1252,28 @@ impl<'a> CheckerState<'a> {
         }
         if matches!(candidate, TypeId::ANY | TypeId::UNKNOWN)
             && !matches!(current, TypeId::ANY | TypeId::UNKNOWN)
+        {
+            return Some(current);
+        }
+
+        if crate::query_boundaries::common::union_members(self.ctx.types, current)
+            .is_some_and(|members| members.contains(&candidate))
+        {
+            return Some(candidate);
+        }
+        if crate::query_boundaries::common::union_members(self.ctx.types, candidate)
+            .is_some_and(|members| members.contains(&current))
+        {
+            return Some(current);
+        }
+
+        if crate::query_boundaries::common::intersection_members(self.ctx.types, current)
+            .is_some_and(|members| members.contains(&candidate))
+        {
+            return Some(candidate);
+        }
+        if crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
+            .is_some_and(|members| members.contains(&current))
         {
             return Some(current);
         }

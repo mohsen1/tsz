@@ -6,9 +6,13 @@
 //! bidirectional type inference.
 
 use crate::TypeDatabase;
+use crate::relations::relation_queries::{
+    RelationContext, RelationKind, RelationPolicy, query_relation,
+};
 use crate::types::{
-    CallableShapeId, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShapeId, ParamInfo,
-    TupleElement, TupleListId, TypeApplicationId, TypeData, TypeId, TypeListId,
+    CallableShapeId, FunctionShapeId, IndexSignature, IntrinsicKind, LiteralValue, ObjectShapeId,
+    ParamInfo, SymbolRef, TupleElement, TupleListId, TypeApplicationId, TypeData, TypeId,
+    TypeListId,
 };
 use crate::visitor::TypeVisitor;
 use tsz_common::interner::Atom;
@@ -612,6 +616,32 @@ impl<'a> PropertyExtractor<'a> {
     pub(crate) fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
         self.visit_type(self.db, type_id)
     }
+
+    fn property_key_type(&self) -> TypeId {
+        let name = self.db.resolve_atom_ref(self.name_atom);
+        if let Some(symbol_ref) = name.strip_prefix("__unique_")
+            && let Ok(id) = symbol_ref.parse::<u32>()
+        {
+            return self.db.unique_symbol(SymbolRef(id));
+        }
+        self.db.literal_string_atom(self.name_atom)
+    }
+
+    fn index_signature_applies(&self, idx: &IndexSignature) -> bool {
+        match idx.key_type {
+            TypeId::ANY | TypeId::STRING => true,
+            TypeId::NUMBER => self.is_numeric_name,
+            _ => query_relation(
+                self.db,
+                self.property_key_type(),
+                idx.key_type,
+                RelationKind::Subtype,
+                RelationPolicy::default(),
+                RelationContext::default(),
+            )
+            .is_related(),
+        }
+    }
 }
 
 impl<'a> TypeVisitor for PropertyExtractor<'a> {
@@ -642,10 +672,13 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         // For numeric property names (e.g., "1"), check number index signature first
         if self.is_numeric_name
             && let Some(ref idx) = shape.number_index
+            && self.index_signature_applies(idx)
         {
             return Some(idx.value_type);
         }
-        if let Some(ref idx) = shape.string_index {
+        if let Some(ref idx) = shape.string_index
+            && self.index_signature_applies(idx)
+        {
             return Some(idx.value_type);
         }
         None
@@ -660,11 +693,14 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         // For numeric property names, check number index signature first
         if self.is_numeric_name
             && let Some(ref idx) = shape.number_index
+            && self.index_signature_applies(idx)
         {
             return Some(idx.value_type);
         }
         // Fall back to string index signature value type
-        if let Some(ref idx) = shape.string_index {
+        if let Some(ref idx) = shape.string_index
+            && self.index_signature_applies(idx)
+        {
             return Some(idx.value_type);
         }
         None

@@ -353,6 +353,37 @@ var r5b = _.map<number, string>(c2, rf1);
 }
 
 #[test]
+fn template_index_signatures_contextualize_matching_object_literal_properties() {
+    let source = r#"
+type Funcs = {
+    [key: `s${string}`]: (x: string) => void,
+    [key: `n${string}`]: (x: number) => void,
+};
+
+const funcs: Funcs = {
+    sfoo: x => { x.length; },
+    nfoo: x => { x.toFixed(); },
+};
+"#;
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| matches!(d.code, 2339 | 7006))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Template pattern index signatures should contextually type only matching object literal properties, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn test_contextual_optional_parameter_question_token_in_named_function_expression() {
     let source = r#"
 function acceptNum(num: number) {}
