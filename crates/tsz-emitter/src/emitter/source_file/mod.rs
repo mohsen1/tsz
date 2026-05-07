@@ -143,6 +143,43 @@ mod tests {
     }
 
     #[test]
+    fn async_generator_yield_uses_async_helpers() {
+        let source =
+            "export async function* f() {\n    await 1;\n    yield 2;\n    yield* [3];\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            import_helpers: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("yield tslib_1.__await(1);"),
+            "await should be wrapped for lowered async generators.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("yield yield tslib_1.__await(2);"),
+            "yield should be wrapped for lowered async generators.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "yield tslib_1.__await(yield* tslib_1.__asyncDelegator(tslib_1.__asyncValues([3])));"
+            ),
+            "yield* should be delegated through async generator helpers.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn emit_class_with_accessor_members_preserves_leading_comments_in_ts_output() {
         let source = "// Regular class should still error when targeting ES5\n\
 class RegularClass {\n    accessor shouldError;\n}\n";
