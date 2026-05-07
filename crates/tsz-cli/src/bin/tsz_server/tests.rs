@@ -2928,6 +2928,78 @@ fn test_doc_comment_template_default_includes_returns() {
 }
 
 #[test]
+fn test_encoded_syntactic_classifications_full_returns_token_triples() {
+    // Issue #3717: tsserver protocol command was unimplemented; the
+    // dispatch returned `Unrecognized command`. The handler now walks
+    // tokens and emits `(start, length, classificationId)` triples.
+    // For `const x = 1;`, tsc emits 5 triples corresponding to the 5
+    // non-trivia tokens.
+    let mut server = make_server();
+    let file = "/a.ts";
+    server
+        .open_files
+        .insert(file.to_string(), "const x = 1;".to_string());
+
+    let response = server.handle_tsserver_request(make_request(
+        "encodedSyntacticClassifications-full",
+        serde_json::json!({"file": file, "start": 0, "length": 12}),
+    ));
+    assert!(response.success);
+    let body = response.body.expect("body");
+    let spans = body
+        .get("spans")
+        .and_then(|v| v.as_array())
+        .expect("spans array");
+    assert_eq!(body.get("endOfLineState").and_then(|v| v.as_u64()), Some(0));
+
+    let to_u32 = |v: &serde_json::Value| v.as_u64().unwrap_or(0) as u32;
+    let triples: Vec<(u32, u32, u32)> = spans
+        .chunks(3)
+        .filter_map(|c| {
+            if c.len() == 3 {
+                Some((to_u32(&c[0]), to_u32(&c[1]), to_u32(&c[2])))
+            } else {
+                None
+            }
+        })
+        .collect();
+    // tsc class IDs: keyword=3, identifier=2, operator=5, number=4, punctuation=10
+    assert_eq!(
+        triples,
+        vec![
+            (0, 5, 3),   // const
+            (6, 1, 2),   // x
+            (8, 1, 5),   // =
+            (10, 1, 4),  // 1
+            (11, 1, 10), // ;
+        ],
+        "tokens must be ordered (start, length, classId) triples matching tsc"
+    );
+}
+
+#[test]
+fn test_encoded_syntactic_classifications_command_is_routed() {
+    // Locks the routing: command must not surface as "Unrecognized" any
+    // more (issue #3717's primary symptom).
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "const x = 1;".to_string());
+    let response = server.handle_tsserver_request(make_request(
+        "encodedSyntacticClassifications-full",
+        serde_json::json!({"file": "/a.ts", "start": 0, "length": 12}),
+    ));
+    assert!(response.success);
+    assert!(
+        !response
+            .message
+            .as_deref()
+            .unwrap_or("")
+            .contains("Unrecognized")
+    );
+}
+
+#[test]
 fn test_signature_help_has_no_body_without_signature() {
     let mut server = make_server();
     server
