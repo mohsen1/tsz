@@ -236,6 +236,72 @@ fn linked_editing_range_returns_jsx_member_expression_tag_names() {
 }
 
 #[test]
+fn jsx_closing_tag_skips_quoted_attribute_with_greater_than() {
+    // Regression for #3965: an attribute whose quoted value contains `>`
+    // must not corrupt the backward angle-bracket scan. The handler should
+    // still locate the matching `<div` and return `</div>`.
+    let cases = [
+        ("/double.tsx", r#"<div title="a>b">"#, 18),
+        ("/single.tsx", "<div title='a>b'>", 18),
+        ("/expr.tsx", r#"<div title={"a>b"}>"#, 20),
+        ("/component.tsx", r#"<MyComp x="y>z">"#, 17),
+    ];
+
+    for (file, content, offset) in cases {
+        let mut server = make_server();
+        server
+            .open_files
+            .insert(file.to_string(), content.to_string());
+
+        let response = server.handle_tsserver_request(make_request(
+            "jsxClosingTag",
+            serde_json::json!({"file": file, "line": 1, "offset": offset}),
+        ));
+        assert!(response.success, "{file}: jsxClosingTag should succeed");
+        let body = response
+            .body
+            .unwrap_or_else(|| panic!("{file}: expected a body, got none for {content:?}"));
+        let new_text = body
+            .get("newText")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_else(|| panic!("{file}: expected newText, got {body:?}"));
+        // Tag name is whatever follows `<` in the input; normalize the check.
+        let tag_end = content[1..]
+            .find(|c: char| !(c.is_alphanumeric() || c == '.' || c == '_' || c == '-' || c == '$'))
+            .map(|i| i + 1)
+            .unwrap_or(content.len());
+        let tag_name = &content[1..tag_end];
+        let expected = format!("$0</{tag_name}>");
+        assert_eq!(
+            new_text, expected,
+            "{file}: jsxClosingTag for {content:?} should be {expected}, got {new_text}"
+        );
+    }
+}
+
+#[test]
+fn jsx_closing_tag_skips_attribute_string_across_lines() {
+    // Multi-line opening tag with a `>` inside a quoted attribute must still
+    // resolve to the correct closing tag.
+    let mut server = make_server();
+    server.open_files.insert(
+        "/multi.tsx".to_string(),
+        "<div\n  title=\"a>b\"\n>".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "jsxClosingTag",
+        serde_json::json!({"file": "/multi.tsx", "line": 3, "offset": 2}),
+    ));
+    assert!(response.success);
+    let body = response.body.expect("jsxClosingTag should return a body");
+    assert_eq!(
+        body.get("newText").and_then(serde_json::Value::as_str),
+        Some("$0</div>")
+    );
+}
+
+#[test]
 fn emit_output_preserves_type_only_module_marker() {
     let mut server = make_server();
     let response = server.handle_tsserver_request(make_request(
@@ -405,6 +471,40 @@ fn prepare_paste_edits_accepts_protocol_copied_text_span() {
 
     assert!(response.success);
     assert_eq!(response.body, Some(serde_json::json!(true)));
+}
+
+#[test]
+fn brace_completion_allows_template_substitution_expressions() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/index.ts",
+                    "fileContent": "const foo = 1; const x = `${foo}`;\n",
+                    "scriptKindName": "TS",
+                }),
+            ))
+            .success
+    );
+
+    for opening_brace in ["(", "{"] {
+        let response = server.handle_tsserver_request(make_request(
+            "braceCompletion",
+            serde_json::json!({
+                "file": "/src/index.ts",
+                "line": 1,
+                "offset": 32,
+                "openingBrace": opening_brace,
+            }),
+        ));
+        assert!(
+            response.success,
+            "expected {opening_brace} inside template substitution to succeed, got {response:?}"
+        );
+        assert_eq!(response.body, Some(serde_json::json!(true)));
+    }
 }
 
 #[test]
@@ -4355,8 +4455,10 @@ fn test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol() {
         .join("\n"),
     );
 
+    // Symbol metadata (`name`) lives on the `-full` shape, not on plain
+    // `definition` (see #4002). Use `definition-full` to inspect it.
     let req = make_request(
-        "definition",
+        "definition-full",
         serde_json::json!({
             "file": "/foo.ts",
             "line": 3,
@@ -4367,10 +4469,10 @@ fn test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol() {
     assert!(resp.success);
     let defs = resp
         .body
-        .expect("definition should return body")
+        .expect("definition-full should return body")
         .as_array()
         .cloned()
-        .expect("definition response should be an array");
+        .expect("definition-full response should be an array");
     assert!(
         defs.iter()
             .any(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("foo")),
@@ -4392,8 +4494,10 @@ fn test_definition_type_only_quoted_alias_marks_non_declare_target_as_local_non_
         .join("\n"),
     );
 
+    // `isAmbient` / `isLocal` live on the `-full` shape, not on plain
+    // `definition` (see #4002). Use `definition-full` to inspect them.
     let req = make_request(
-        "definition",
+        "definition-full",
         serde_json::json!({
             "file": "/foo.ts",
             "line": 3,
@@ -4404,10 +4508,10 @@ fn test_definition_type_only_quoted_alias_marks_non_declare_target_as_local_non_
     assert!(resp.success);
     let defs = resp
         .body
-        .expect("definition should return body")
+        .expect("definition-full should return body")
         .as_array()
         .cloned()
-        .expect("definition response should be an array");
+        .expect("definition-full response should be an array");
     let foo_def = defs
         .iter()
         .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("foo"))

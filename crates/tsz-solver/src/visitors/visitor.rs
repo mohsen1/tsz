@@ -1244,18 +1244,11 @@ impl<'a> ConstAssertionVisitor<'a> {
         }
 
         let result = match lookup {
-            // Arrays: Convert to readonly tuple
+            // Arrays whose type reached const assertion as an array, rather than
+            // an array-literal tuple, become readonly arrays.
             Some(TypeData::Array(element_type)) => {
                 let const_element = self.apply_const_assertion(element_type);
-                // Arrays become readonly tuples when const-asserted
-                let tuple_elem = TupleElement {
-                    type_id: const_element,
-                    name: None,
-                    optional: false,
-                    rest: false,
-                };
-                let tuple_type = self.db.tuple(vec![tuple_elem]);
-                self.db.readonly_type(tuple_type)
+                self.db.readonly_type(self.db.array(const_element))
             }
 
             // Tuples: Mark readonly and recurse on elements
@@ -1341,7 +1334,8 @@ impl<'a> ConstAssertionVisitor<'a> {
                         .as_ref()
                         .map(|idx| crate::types::IndexSignature {
                             key_type: idx.key_type,
-                            value_type: self.apply_const_assertion(idx.value_type),
+                            value_type: self
+                                .apply_const_assertion_to_index_signature_value(idx.value_type),
                             readonly: true,
                             param_name: idx.param_name,
                         });
@@ -1352,7 +1346,8 @@ impl<'a> ConstAssertionVisitor<'a> {
                         .as_ref()
                         .map(|idx| crate::types::IndexSignature {
                             key_type: idx.key_type,
-                            value_type: self.apply_const_assertion(idx.value_type),
+                            value_type: self
+                                .apply_const_assertion_to_index_signature_value(idx.value_type),
                             readonly: true,
                             param_name: idx.param_name,
                         });
@@ -1406,5 +1401,19 @@ impl<'a> ConstAssertionVisitor<'a> {
         } else {
             self.apply_const_assertion(type_id)
         }
+    }
+
+    fn apply_const_assertion_to_index_signature_value(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(TypeData::Union(list_id)) = self.db.lookup(type_id) {
+            let members = self.db.type_list(list_id);
+            let mut const_members: Vec<TypeId> = members
+                .iter()
+                .map(|&m| self.apply_const_assertion(m))
+                .collect();
+            let mut seen = FxHashSet::default();
+            const_members.retain(|id| *id != TypeId::NEVER && seen.insert(*id));
+            return self.db.union_from_sorted_vec(const_members);
+        }
+        self.apply_const_assertion(type_id)
     }
 }
