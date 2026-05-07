@@ -190,6 +190,29 @@ function f<T>() {
 }
 
 #[test]
+fn ts2352_in_overloaded_callback_body_survives_catch_all_resolution() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function foo(a: (x: number) => string[]): typeof a;
+declare function foo(a: any): any;
+const r = foo(<T, U>(x: T) => <U[]>null);
+"#,
+    );
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+    let matching: Vec<_> = relevant.iter().filter(|d| d.code == 2352).collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "Expected one TS2352 for `null as U[]` inside overloaded callback, got: {relevant:?}"
+    );
+    assert!(
+        matching[0].message_text.contains("type 'U[]'"),
+        "Expected TS2352 target display to preserve `U[]`, got: {:?}",
+        matching[0]
+    );
+}
+
+#[test]
 fn ts2352_concrete_generic_class_instantiation_still_reports() {
     let diags = check_source_diagnostics(
         r#"
