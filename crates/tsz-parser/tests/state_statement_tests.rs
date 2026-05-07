@@ -527,6 +527,78 @@ fn parameter_list_colon_start_prefers_ts1138_over_ts1003() {
     );
 }
 
+/// Definite-assignment markers (`!`) are not legal on parameters. tsc emits
+/// TS1005 (`',' expected.`) at the `!` and TS1138 (`Parameter declaration
+/// expected.`) at the following `:`, then consumes the type annotation.
+/// Regression for issue #4082.
+#[test]
+fn parse_definite_assignment_marker_in_parameter_emits_ts1005_and_ts1138() {
+    let source = "function f(x!: number) {}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    let bang_pos = source.find('!').expect("source contains '!'") as u32;
+    let colon_pos = source.find(":").expect("source contains ':'") as u32;
+
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.start == bang_pos),
+        "expected TS1005 anchored at the '!', got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(
+            |d| d.code == diagnostic_codes::PARAMETER_DECLARATION_EXPECTED && d.start == colon_pos
+        ),
+        "expected TS1138 anchored at the ':' after '!', got {diags:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "should not fall back to TS1003, got {codes:?}"
+    );
+}
+
+/// Same `!:` recovery in a class method, since both paths share
+/// `parse_parameter_list`. Regression for issue #4082.
+#[test]
+fn parse_definite_assignment_marker_in_method_parameter_emits_ts1138() {
+    let source = "class C { m(x!: number) {} }";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected TS1005 at '!', got {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::PARAMETER_DECLARATION_EXPECTED),
+        "expected TS1138 at the ':' after '!', got {codes:?}"
+    );
+}
+
+/// `x!` (definite-assignment marker without a type annotation) is also
+/// invalid as a parameter, but the `!:` recovery must not fire when the
+/// next token is not `:` — the scanner state must be restored so the
+/// existing skip-to-`)` loop still terminates the parameter list. We
+/// expect TS1005 for the missing comma but no spurious TS1138.
+#[test]
+fn parse_definite_assignment_marker_without_colon_does_not_emit_ts1138() {
+    let source = "function f(x!) {}";
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected TS1005 at '!', got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::PARAMETER_DECLARATION_EXPECTED),
+        "should not emit TS1138 when '!' is not followed by ':', got {codes:?}"
+    );
+}
+
 #[test]
 fn parse_mid_file_shebang_reports_ts18026_and_argument_semicolon_error() {
     let (parser, _root) = parse_source("var foo = 1;\n#!/usr/bin/env node\n");
