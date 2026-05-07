@@ -75,10 +75,18 @@ impl<'a> Printer<'a> {
             }
             self.write(")]");
         } else {
-            let prev_ns = self.suppress_ns_qualification;
-            self.suppress_ns_qualification = true;
-            self.emit(name);
-            self.suppress_ns_qualification = prev_ns;
+            let is_computed = self
+                .arena
+                .get(name)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            if is_computed {
+                self.emit(name);
+            } else {
+                let prev_ns = self.suppress_ns_qualification;
+                self.suppress_ns_qualification = true;
+                self.emit(name);
+                self.suppress_ns_qualification = prev_ns;
+            }
         }
         self.scoped_class_expression_self_alias = prev_alias;
     }
