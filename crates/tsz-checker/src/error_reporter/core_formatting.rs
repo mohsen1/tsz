@@ -629,6 +629,10 @@ impl<'a> CheckerState<'a> {
             formatted = format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
         formatted = self.normalize_assignability_union_display_order(formatted);
+        // tsc renders `Array<T>` / `ReadonlyArray<T>` as `T[]` / `readonly T[]`
+        // in assignability messages; mirror that at the boundary so callers
+        // that bypass the annotation-text path still pick it up.
+        formatted = Self::normalize_array_generic_to_shorthand(&formatted);
         self.normalize_template_placeholder_spacing_for_display(&formatted)
     }
 
