@@ -236,10 +236,13 @@ fn post_process_checker_diagnostics(
     // Only keep TS1xxx codes that tsc is known to emit for JS files.
     if is_js {
         checker_diagnostics.retain(|diag| {
-            // TS1361/TS1362 are semantic type-only value-use diagnostics, not
-            // parser grammar errors. Keep them for checked JS files even
-            // though their codes live in the TS1xxx range.
-            if !should_filter_type_errors && matches!(diag.code, 1361 | 1362) {
+            // Some semantic checker diagnostics live in the TS1xxx range. Keep
+            // them for checked JS files even though the coarse parser-grammar
+            // classifier also covers TS1xxx.
+            if !should_filter_type_errors
+                && (matches!(diag.code, 1361 | 1362)
+                    || is_semantic_ts1xxx_suppressed_in_unchecked_js(diag.code))
+            {
                 return true;
             }
             if tsz::checker::diagnostics::is_parser_grammar_diagnostic(diag.code) {
