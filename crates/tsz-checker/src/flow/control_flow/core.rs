@@ -1700,7 +1700,13 @@ impl<'a> FlowAnalyzer<'a> {
                                     {
                                         return assigned_type;
                                     }
-                                    self.narrow_assignment(narrowing_base, assigned_type)
+                                    if self
+                                        .is_unannotated_conditional_variable_initializer(flow.node)
+                                    {
+                                        narrowing_base
+                                    } else {
+                                        self.narrow_assignment(narrowing_base, assigned_type)
+                                    }
                                 }
                             } else {
                                 // This walk is provisional: assignment typing has not been computed

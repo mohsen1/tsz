@@ -11,6 +11,7 @@ use crate::state::CheckerState;
 use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 
@@ -21,6 +22,37 @@ use tsz_solver::Visibility;
 impl<'a> CheckerState<'a> {
     // Core Type Computation
     // =========================================================================
+
+    fn declared_annotation_type_for_identifier_expression(
+        &mut self,
+        expr: NodeIndex,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(expr)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self
+            .ctx
+            .binder
+            .node_symbols
+            .get(&expr.0)
+            .copied()
+            .or_else(|| self.resolve_identifier_symbol(expr))?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol.value_declaration.into_option()?;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let annotation = if let Some(param) = self.ctx.arena.get_parameter(decl_node) {
+            param.type_annotation
+        } else if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) {
+            var_decl.type_annotation
+        } else {
+            NodeIndex::NONE
+        };
+        if annotation.is_none() {
+            return None;
+        }
+        Some(self.get_type_from_type_node(annotation))
+    }
 
     /// Evaluate a type deeply for binary operation checking.
     ///
@@ -813,6 +845,12 @@ impl<'a> CheckerState<'a> {
             .map(|lit| lit.text.clone())
             .unwrap_or_default();
 
+        let template_contextual_type = request
+            .contextual_type
+            .filter(|&ct| expr_ops::is_template_literal_contextual_type(self.ctx.types, ct));
+        let preserve_declared_span_identifiers = template_contextual_type.is_some_and(|ct| {
+            crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ct)
+        });
         let span_request = request.read().normal_origin().contextual_opt(None);
 
         // Preserve literal types for template span expressions so that
@@ -821,7 +859,11 @@ impl<'a> CheckerState<'a> {
         // widening only happens at binding sites. We temporarily enable literal
         // preservation here to match that behavior.
         let prev_preserve = self.ctx.preserve_literal_types;
+        let prev_use_declared = self.ctx.use_declared_type_for_identifier;
         self.ctx.preserve_literal_types = true;
+        if preserve_declared_span_identifiers {
+            self.ctx.use_declared_type_for_identifier = true;
+        }
 
         // Type-check each template span's expression and collect types + text parts
         let mut part_types = Vec::new();
@@ -836,7 +878,13 @@ impl<'a> CheckerState<'a> {
             };
 
             // Type-check the expression - this will emit TS2304 if name is unresolved
-            let part_type = self.get_type_of_node_with_request(span.expression, &span_request);
+            let mut part_type = self.get_type_of_node_with_request(span.expression, &span_request);
+            if preserve_declared_span_identifiers
+                && let Some(declared) =
+                    self.declared_annotation_type_for_identifier_expression(span.expression)
+            {
+                part_type = declared;
+            }
             // TS2731: Implicit conversion of a 'symbol' to a 'string' will fail
             // at runtime. The runtime concatenation in a template literal calls
             // Symbol.prototype[@@toPrimitive]("string") which throws. Emit the
@@ -878,14 +926,12 @@ impl<'a> CheckerState<'a> {
 
         // Restore previous literal preservation state
         self.ctx.preserve_literal_types = prev_preserve;
+        self.ctx.use_declared_type_for_identifier = prev_use_declared;
 
         // Check if we're in a template literal context:
         // 1. Contextual type is/contains a template literal type or string literal type
         // 2. Inside a const assertion (as const)
-        let in_template_context = self.ctx.in_const_assertion
-            || request.contextual_type.is_some_and(|ct| {
-                expr_ops::is_template_literal_contextual_type(self.ctx.types, ct)
-            });
+        let in_template_context = self.ctx.in_const_assertion || template_contextual_type.is_some();
 
         if in_template_context {
             // Construct a template literal type preserving type parameter shapes

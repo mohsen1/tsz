@@ -27,6 +27,28 @@ struct DestructuringSource {
 }
 
 impl<'a> FlowAnalyzer<'a> {
+    pub(crate) fn is_unannotated_conditional_variable_initializer(
+        &self,
+        assignment_node: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(assignment_node) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        let Some(decl) = self.arena.get_variable_declaration(node) else {
+            return false;
+        };
+        if decl.type_annotation.is_some() || decl.initializer.is_none() {
+            return false;
+        }
+        let initializer = self.skip_parens_and_assertions(decl.initializer);
+        self.arena
+            .get(initializer)
+            .is_some_and(|node| node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION)
+    }
+
     fn assigned_type_respecting_access_read_surface(
         &self,
         assignment_node: NodeIndex,

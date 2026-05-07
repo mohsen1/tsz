@@ -338,6 +338,10 @@ name = "contextual_tuple_tests"
 path = "tests/contextual_tuple_tests.rs"
 
 [[test]]
+name = "contextual_ts2345_conformance_tests"
+path = "tests/contextual_ts2345_conformance_tests.rs"
+
+[[test]]
 name = "co_contra_inference_tests"
 path = "tests/co_contra_inference_tests.rs"
 

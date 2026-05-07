@@ -16,6 +16,7 @@ use tracing::trace;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{FunctionShape, ParamInfo, TypeId};
 
 use super::super::call_result::CallResultContext;
@@ -738,7 +739,22 @@ impl<'a> CheckerState<'a> {
         let prev_preserve_literals = self.ctx.preserve_literal_types;
         let prev_generic_excess_skip = self.ctx.generic_excess_skip.take();
         let callable_ctx = CallableContext::new(callee_type_for_context);
+        let union_call_has_literal_argument = callee_is_union
+            && args.iter().any(|&arg_idx| {
+                self.ctx
+                    .arena
+                    .get(self.ctx.arena.skip_parenthesized_and_assertions(arg_idx))
+                    .is_some_and(|node| {
+                        node.kind == SyntaxKind::StringLiteral as u16
+                            || node.kind == SyntaxKind::NumericLiteral as u16
+                            || node.kind == SyntaxKind::BigIntLiteral as u16
+                            || node.kind == SyntaxKind::TrueKeyword as u16
+                            || node.kind == SyntaxKind::FalseKeyword as u16
+                            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    })
+            });
         if is_generic_call
+            || union_call_has_literal_argument
             || args.iter().enumerate().any(|(i, &arg_idx)| {
                 base_contextual_param_types
                     .get(i)
