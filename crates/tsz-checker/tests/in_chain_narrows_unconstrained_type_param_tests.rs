@@ -262,6 +262,36 @@ function f<T>(x: T) {
 }
 
 #[test]
+fn in_operator_reports_ts2638_for_truthiness_guarded_generic_rhs() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+function f<T>(x: T) {
+  if (x && "a" in x) {
+    x.a;
+  }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2638 && message.contains("NonNullable<T>") }),
+        "Expected TS2638 against `NonNullable<T>` for truthiness-guarded generic `in` RHS, got {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("'T'") && message.contains("'object'")
+        }),
+        "Expected no bare TS2322 for truthiness-guarded generic `in` RHS, got {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2339),
+        "Expected `in` narrowing to expose property `a`, got {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn in_operator_keeps_generic_and_unknown_property_narrowing_through_truthiness_chains() {
     let diagnostics = tsz_checker::test_utils::check_source_code_messages(
         r#"
@@ -295,6 +325,12 @@ function genericCase<T>(x: T) {
             .iter()
             .any(|(code, message)| { *code == 2638 && message.contains("{}") }),
         "Expected TS2638 for unknown or truthiness-narrowed unknown, got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2638 && message.contains("NonNullable<T>") }),
+        "Expected TS2638 for truthiness-narrowed generic T, got {diagnostics:#?}"
     );
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2339),

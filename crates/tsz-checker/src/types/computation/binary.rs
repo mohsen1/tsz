@@ -503,6 +503,27 @@ impl<'a> CheckerState<'a> {
         common::is_primitive_type(self.ctx.types, ty)
     }
 
+    fn in_operator_type_contains_empty_object_shape(&self, ty: TypeId) -> bool {
+        use crate::query_boundaries::common;
+
+        if common::is_empty_object_type(self.ctx.types, ty) {
+            return true;
+        }
+
+        if let Some(members) = common::union_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .any(|&member| self.in_operator_type_contains_empty_object_shape(member));
+        }
+
+        let evaluated = crate::query_boundaries::dispatch::evaluate_type_with_resolver(
+            self.ctx.types,
+            &self.ctx,
+            ty,
+        );
+        evaluated != ty && self.in_operator_type_contains_empty_object_shape(evaluated)
+    }
+
     fn in_operator_intersection_member_excludes_primitive(&self, ty: TypeId) -> bool {
         use crate::query_boundaries::{common, dispatch as query};
 
@@ -578,8 +599,10 @@ impl<'a> CheckerState<'a> {
         node_idx: NodeIndex,
         narrowed_type: TypeId,
     ) -> bool {
-        // First check if the narrowed type is an empty object `{}`
-        if !crate::query_boundaries::common::is_empty_object_type(self.ctx.types, narrowed_type) {
+        // First check if the narrowed type includes the empty object `{}`.
+        // After previous `in` checks, flow can preserve both the truthiness-
+        // narrowed unknown branch and the record branch as a union.
+        if !self.in_operator_type_contains_empty_object_shape(narrowed_type) {
             return false;
         }
 
@@ -629,6 +652,277 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn expression_is_identifier_symbol(
+        &mut self,
+        expr_idx: NodeIndex,
+        symbol_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        node.kind == SyntaxKind::Identifier as u16
+            && self.resolve_identifier_symbol(expr_idx) == Some(symbol_id)
+    }
+
+    fn node_matches_after_outer_expressions(&self, left: NodeIndex, right: NodeIndex) -> bool {
+        self.ctx.arena.skip_parenthesized_and_assertions(left)
+            == self.ctx.arena.skip_parenthesized_and_assertions(right)
+    }
+
+    fn in_rhs_has_direct_truthiness_guard(&mut self, right_idx: NodeIndex) -> bool {
+        let stripped_right = self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
+        let Some(right_node) = self.ctx.arena.get(stripped_right) else {
+            return false;
+        };
+        if right_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(right_symbol) = self.resolve_identifier_symbol(stripped_right) else {
+            return false;
+        };
+
+        let mut current = right_idx;
+        let in_expression = loop {
+            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(parent_binary) = self.ctx.arena.get_binary_expr(parent_node)
+                && parent_binary.operator_token == SyntaxKind::InKeyword as u16
+                && self.node_matches_after_outer_expressions(parent_binary.right, current)
+            {
+                break parent_idx;
+            }
+
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    | syntax_kind_ext::AS_EXPRESSION
+                    | syntax_kind_ext::SATISFIES_EXPRESSION
+                    | syntax_kind_ext::NON_NULL_EXPRESSION
+                    | syntax_kind_ext::TYPE_ASSERTION
+            ) {
+                current = parent_idx;
+                continue;
+            }
+
+            return false;
+        };
+
+        current = in_expression;
+        loop {
+            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(parent_binary) = self.ctx.arena.get_binary_expr(parent_node)
+                && parent_binary.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+            {
+                if self.node_matches_after_outer_expressions(parent_binary.right, current)
+                    && self.expression_is_identifier_symbol(parent_binary.left, right_symbol)
+                {
+                    return true;
+                }
+                current = parent_idx;
+                continue;
+            }
+
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    | syntax_kind_ext::AS_EXPRESSION
+                    | syntax_kind_ext::SATISFIES_EXPRESSION
+                    | syntax_kind_ext::NON_NULL_EXPRESSION
+                    | syntax_kind_ext::TYPE_ASSERTION
+            ) {
+                current = parent_idx;
+                continue;
+            }
+
+            return false;
+        }
+    }
+
+    fn expression_is_object_string_literal(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        node.kind == SyntaxKind::StringLiteral as u16
+            && self
+                .ctx
+                .arena
+                .get_literal(node)
+                .is_some_and(|literal| literal.text == "object")
+    }
+
+    fn expression_is_typeof_identifier_symbol(
+        &mut self,
+        expr_idx: NodeIndex,
+        symbol_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return false;
+        }
+        let Some(unary) = self.ctx.arena.get_unary_expr(node) else {
+            return false;
+        };
+        unary.operator == SyntaxKind::TypeOfKeyword as u16
+            && self.expression_is_identifier_symbol(unary.operand, symbol_id)
+    }
+
+    fn expression_is_typeof_object_guard_for_symbol(
+        &mut self,
+        expr_idx: NodeIndex,
+        symbol_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
+            return false;
+        };
+        if binary.operator_token != SyntaxKind::EqualsEqualsEqualsToken as u16
+            && binary.operator_token != SyntaxKind::EqualsEqualsToken as u16
+        {
+            return false;
+        }
+
+        (self.expression_is_typeof_identifier_symbol(binary.left, symbol_id)
+            && self.expression_is_object_string_literal(binary.right))
+            || (self.expression_is_object_string_literal(binary.left)
+                && self.expression_is_typeof_identifier_symbol(binary.right, symbol_id))
+    }
+
+    fn expression_contains_typeof_object_guard_for_symbol(
+        &mut self,
+        expr_idx: NodeIndex,
+        symbol_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        if self.expression_is_typeof_object_guard_for_symbol(expr_idx, symbol_id) {
+            return true;
+        }
+
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+        {
+            return self.expression_contains_typeof_object_guard_for_symbol(binary.left, symbol_id)
+                || self
+                    .expression_contains_typeof_object_guard_for_symbol(binary.right, symbol_id);
+        }
+
+        false
+    }
+
+    fn in_rhs_has_typeof_object_guard(&mut self, right_idx: NodeIndex) -> bool {
+        let stripped_right = self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
+        let Some(right_node) = self.ctx.arena.get(stripped_right) else {
+            return false;
+        };
+        if right_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(right_symbol) = self.resolve_identifier_symbol(stripped_right) else {
+            return false;
+        };
+
+        let mut current = right_idx;
+        let in_expression = loop {
+            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(parent_binary) = self.ctx.arena.get_binary_expr(parent_node)
+                && parent_binary.operator_token == SyntaxKind::InKeyword as u16
+                && self.node_matches_after_outer_expressions(parent_binary.right, current)
+            {
+                break parent_idx;
+            }
+
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    | syntax_kind_ext::AS_EXPRESSION
+                    | syntax_kind_ext::SATISFIES_EXPRESSION
+                    | syntax_kind_ext::NON_NULL_EXPRESSION
+                    | syntax_kind_ext::TYPE_ASSERTION
+            ) {
+                current = parent_idx;
+                continue;
+            }
+
+            return false;
+        };
+
+        current = in_expression;
+        loop {
+            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(parent_binary) = self.ctx.arena.get_binary_expr(parent_node)
+                && parent_binary.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+            {
+                if self.node_matches_after_outer_expressions(parent_binary.right, current)
+                    && self.expression_contains_typeof_object_guard_for_symbol(
+                        parent_binary.left,
+                        right_symbol,
+                    )
+                {
+                    return true;
+                }
+                current = parent_idx;
+                continue;
+            }
+
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    | syntax_kind_ext::AS_EXPRESSION
+                    | syntax_kind_ext::SATISFIES_EXPRESSION
+                    | syntax_kind_ext::NON_NULL_EXPRESSION
+                    | syntax_kind_ext::TYPE_ASSERTION
+            ) {
+                current = parent_idx;
+                continue;
+            }
+
+            return false;
+        }
     }
 
     /// Get the type of a binary expression.
@@ -2524,44 +2818,54 @@ impl<'a> CheckerState<'a> {
 
         if right_type == TypeId::UNKNOWN {
             self.error_is_of_type_unknown(right_idx);
-        } else if self.type_may_represent_primitive(right_type)
-            || self.truthiness_narrowed_from_unknown(right_idx, right_type)
-        {
-            // tsc reports TS2322 ("Type 'T' is not assignable to type
-            // 'object'") rather than TS2638 ("may represent a primitive
-            // value") for type-parameter-shaped RHS values: bare `T`,
-            // unions of type parameters (`T | U`), unions mixing type
-            // parameters with primitives (`string | number | T`), and
-            // intersections of type parameters (`T & U`,
-            // `T & (0 | 1 | 2)`). Intersections with empty-object
-            // constraint shapes (`T & {}`, `NonNullable<T>` aliases)
-            // keep the existing TS2638 path because tsc emits that code
-            // with a `NonNullable<T>`-style message rather than a bare
-            // assignability failure.
-            if self.in_rhs_is_type_parameter_assignability_shape(right_type) {
+        } else {
+            let type_may_represent_primitive = self.type_may_represent_primitive(right_type);
+            let truthiness_narrowed_unknown = self
+                .truthiness_narrowed_from_unknown(right_idx, right_type)
+                && !self.in_rhs_has_typeof_object_guard(right_idx);
+            if type_may_represent_primitive || truthiness_narrowed_unknown {
+                let truthiness_guarded_type_parameter = self
+                    .in_rhs_is_type_parameter_assignability_shape(right_type)
+                    && self.in_rhs_has_direct_truthiness_guard(right_idx);
+                // tsc reports TS2322 ("Type 'T' is not assignable to type
+                // 'object'") rather than TS2638 ("may represent a primitive
+                // value") for type-parameter-shaped RHS values: bare `T`,
+                // unions of type parameters (`T | U`), unions mixing type
+                // parameters with primitives (`string | number | T`), and
+                // intersections of type parameters (`T & U`,
+                // `T & (0 | 1 | 2)`). Intersections with empty-object
+                // constraint shapes (`T & {}`, `NonNullable<T>` aliases)
+                // keep the existing TS2638 path because tsc emits that code
+                // with a `NonNullable<T>`-style message rather than a bare
+                // assignability failure.
+                if self.in_rhs_is_type_parameter_assignability_shape(right_type)
+                    && !truthiness_guarded_type_parameter
+                {
+                    let _ = self.check_assignable_or_report_at_exact_anchor(
+                        right_type,
+                        TypeId::OBJECT,
+                        right_idx,
+                        right_idx,
+                    );
+                } else {
+                    let type_str = if truthiness_narrowed_unknown {
+                        "{}".to_string()
+                    } else {
+                        self.format_apparent_type_for_in_operator(right_type)
+                    };
+                    let code = tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND;
+                    self.error_at_node_msg(right_idx, code, &[&type_str]);
+                }
+            } else if !self.is_valid_in_operator_rhs(right_type) {
+                // Route through the check_assignable_or_report(...) gateway family
+                // so computation-layer mismatches stay on the centralized path.
                 let _ = self.check_assignable_or_report_at_exact_anchor(
                     right_type,
                     TypeId::OBJECT,
                     right_idx,
                     right_idx,
                 );
-            } else {
-                let type_str = self.format_apparent_type_for_in_operator(right_type);
-                self.error_at_node_msg(
-                    right_idx,
-                    tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND,
-                    &[&type_str],
-                );
             }
-        } else if !self.is_valid_in_operator_rhs(right_type) {
-            // Route through the check_assignable_or_report(...) gateway family
-            // so computation-layer mismatches stay on the centralized path.
-            let _ = self.check_assignable_or_report_at_exact_anchor(
-                right_type,
-                TypeId::OBJECT,
-                right_idx,
-                right_idx,
-            );
         }
 
         TypeId::BOOLEAN

@@ -234,6 +234,92 @@ const unused = 1;
 }
 
 #[test]
+fn global_this_type_env_prewarm_does_not_suppress_in_operator_diagnostics() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true,
+            "target": "es2015"
+          },
+          "files": ["test.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"
+function unknownCase(x: unknown) {
+  if ("a" in x) {
+    x.a;
+  }
+  if (x && "b" in x) {
+    x.b;
+  }
+}
+
+function genericCase<T>(x: T) {
+  if ("a" in x) {
+    x.a;
+  }
+  if (x && "b" in x) {
+    x.b;
+  }
+}
+
+function globalThisCase(x: typeof globalThis, y: Window & typeof globalThis) {
+  x = y;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::IS_OF_TYPE_UNKNOWN
+                && diag.message_text.contains("'x' is of type 'unknown'")
+        }),
+        "expected TS18046 for `\"a\" in x` on unknown even with globalThis prewarm, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND
+                && diag.message_text.contains("Type '{}' may represent a primitive value")
+        }),
+        "expected TS2638 for truthiness-narrowed unknown even with globalThis prewarm, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND
+                && diag
+                    .message_text
+                    .contains("Type 'NonNullable<T>' may represent a primitive value")
+        }),
+        "expected TS2638 for truthiness-narrowed generic even with globalThis prewarm, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && diag
+                    .message_text
+                    .contains("Type 'T' is not assignable to type 'object'")
+        }),
+        "expected TS2322 for `\"a\" in x` on generic T even with globalThis prewarm, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn resolve_json_module_not_defaulted_for_node_resolution() {
     for (module, module_resolution) in [("commonjs", "node10"), ("node16", "node16")] {
         let temp = TempDir::new().expect("temp dir");
