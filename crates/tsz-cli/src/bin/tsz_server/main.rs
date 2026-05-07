@@ -1093,9 +1093,6 @@ impl Server {
             "uncommentSelection" | "uncommentSelection-full" => {
                 self.handle_uncomment_selection(seq, &request)
             }
-            "getSmartSelectionRange" => self.handle_smart_selection_range(seq, &request),
-            "getSyntacticClassifications" => self.handle_syntactic_classifications(seq, &request),
-            "getSemanticClassifications" => self.handle_semantic_classifications(seq, &request),
             "getCompilerOptionsDiagnostics" => {
                 self.handle_compiler_options_diagnostics(seq, &request)
             }
