@@ -155,8 +155,30 @@ impl<'a> CheckerState<'a> {
             } else {
                 TypingRequest::NONE
             };
+            let unwrapped_return_expr = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(return_data.expression);
+            let preserve_literal_return = self.ctx.in_async_context()
+                && request.contextual_type.is_some()
+                && self
+                    .ctx
+                    .arena
+                    .get(unwrapped_return_expr)
+                    .is_some_and(|expr_node| {
+                        matches!(
+                            expr_node.kind,
+                            syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        )
+                    });
+            let prev_preserve_literals = self.ctx.preserve_literal_types;
+            if preserve_literal_return {
+                self.ctx.preserve_literal_types = true;
+            }
             let mut return_type =
                 self.get_type_of_node_with_request(return_data.expression, &request);
+            self.ctx.preserve_literal_types = prev_preserve_literals;
             if self.ctx.in_async_context() {
                 // Use unwrap_async_return_type_for_body which handles unions
                 // by unwrapping Promise from each member individually.

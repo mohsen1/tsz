@@ -94,6 +94,20 @@ fn async_arrow_block_body_promise_return_no_false_error() {
 }
 
 #[test]
+fn async_block_body_return_literal_uses_unwrapped_promise_context() {
+    let diags = async_diagnostics(
+        "interface ErrorResult { error: true }
+         async function load(): Promise<{ success: true } | ErrorResult> {
+             return { success: true };
+         }",
+    );
+    assert!(
+        !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "async block return should preserve object literal discriminants from Promise<T> context: {diags:?}"
+    );
+}
+
+#[test]
 fn async_function_expression_promise_return_no_false_error() {
     let diags = async_diagnostics("const f = async function(): Promise<number> { return 42; };");
     assert!(
