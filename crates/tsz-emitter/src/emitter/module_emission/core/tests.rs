@@ -561,6 +561,7 @@ class C {
     let comment_pos = output
         .find("// https://github.com/microsoft/TypeScript/issues/44113")
         .expect("expected preserved leading comment");
+    let class_pos = output.find("class C").expect("expected class declaration");
     let private_init_pos = output
         .find("_C_qux = { value: 42 };")
         .expect("expected static private initialization");
@@ -568,9 +569,15 @@ class C {
         .find("Object.defineProperty(C, \"bar\"")
         .expect("expected lowered static field");
 
+    // tsc places the file-leading comment before any helpers/hoists, then
+    // emits the temp `var _a, _C_qux;` between the comment and the class.
     assert!(
-        var_pos < comment_pos,
-        "Private temp vars should precede attached leading comments.\nOutput:\n{output}"
+        comment_pos < var_pos,
+        "Leading file comment should precede the temp-var hoist.\nOutput:\n{output}"
+    );
+    assert!(
+        var_pos < class_pos,
+        "Private temp vars should precede the class declaration.\nOutput:\n{output}"
     );
     assert!(
         private_init_pos < static_field_pos,
@@ -1473,6 +1480,63 @@ fn decorated_class_export_no_duplicate_exports() {
     assert!(
         output.contains("exports.A = A = __decorate("),
         "Should contain the decorator assignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn cjs_deferred_enum_export_folds_into_iife_tail() {
+    let source = r#"class C {}
+enum E {
+    A, B
+}
+export { C, E };
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("})(E || (exports.E = E = {}));"),
+        "Deferred enum export should be folded into the IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\nexports.E = E;"),
+        "Deferred enum export should not emit a separate assignment.\nOutput:\n{output}"
+    );
+
+    let mut amd_printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::AMD,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    amd_printer.set_source_text(source);
+    amd_printer.emit(root);
+    let amd_output = amd_printer.get_output().to_string();
+
+    assert!(
+        amd_output.contains("    var E;"),
+        "AMD enum declaration should keep wrapper indentation.\nOutput:\n{amd_output}"
+    );
+    assert!(
+        !amd_output.contains("        var E;"),
+        "AMD enum rewrite should not double-indent the enum declaration.\nOutput:\n{amd_output}"
+    );
+    assert!(
+        !amd_output.contains("\n    exports.E = E;"),
+        "AMD deferred enum export should not emit a separate assignment.\nOutput:\n{amd_output}"
     );
 }
 

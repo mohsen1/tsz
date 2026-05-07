@@ -1392,6 +1392,12 @@ impl TypeInterner {
             ) || self.union_origin_overrides_canonical_application_sort(
                 current.as_ref(),
                 &origin_members,
+            ) || self.union_origin_overrides_canonical_array_pair_sort(
+                current.as_ref(),
+                &origin_members,
+            ) || self.union_origin_overrides_canonical_keyof_literal_sort(
+                current.as_ref(),
+                &origin_members,
             ) || self.union_origin_overrides_canonical_generic_display_sort(
                 current.as_ref(),
                 &origin_members,
@@ -1538,6 +1544,53 @@ impl TypeInterner {
             && expected_base.is_some()
     }
 
+    fn union_origin_overrides_canonical_array_pair_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != 2 || origin.len() != 2 || current == origin {
+            return false;
+        }
+
+        let mut current_sorted = current.to_vec();
+        let mut origin_sorted = origin.to_vec();
+        current_sorted.sort_unstable_by_key(|id| id.0);
+        origin_sorted.sort_unstable_by_key(|id| id.0);
+        if current_sorted != origin_sorted {
+            return false;
+        }
+
+        fn is_array_of(interner: &TypeInterner, array: TypeId, element: TypeId) -> bool {
+            matches!(interner.lookup(array), Some(TypeData::Array(inner)) if inner == element)
+        }
+
+        is_array_of(self, origin[0], origin[1]) || is_array_of(self, origin[1], origin[0])
+    }
+
+    fn union_origin_overrides_canonical_keyof_literal_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != 2 || origin.len() != 2 || current == origin {
+            return false;
+        }
+
+        let mut current_sorted = current.to_vec();
+        let mut origin_sorted = origin.to_vec();
+        current_sorted.sort_unstable_by_key(|id| id.0);
+        origin_sorted.sort_unstable_by_key(|id| id.0);
+        if current_sorted != origin_sorted {
+            return false;
+        }
+
+        let is_keyof = |id| matches!(self.lookup(id), Some(TypeData::KeyOf(_)));
+        let is_literal = |id| matches!(self.lookup(id), Some(TypeData::Literal(_)));
+        (is_keyof(origin[0]) && is_literal(origin[1]))
+            || (is_literal(origin[0]) && is_keyof(origin[1]))
+    }
+
     /// Preserve source-written order for generic display unions whose canonical
     /// member sort is not the order tsc prints in diagnostics.
     fn union_origin_overrides_canonical_generic_display_sort(
@@ -1560,7 +1613,12 @@ impl TypeInterner {
         origin.iter().any(|&id| {
             matches!(
                 self.lookup(id),
-                Some(TypeData::KeyOf(_) | TypeData::IndexAccess(_, _) | TypeData::Literal(_))
+                Some(
+                    TypeData::Application(_)
+                        | TypeData::KeyOf(_)
+                        | TypeData::IndexAccess(_, _)
+                        | TypeData::Literal(_)
+                )
             )
         })
     }

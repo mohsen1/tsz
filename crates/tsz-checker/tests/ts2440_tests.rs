@@ -138,6 +138,36 @@ namespace s {
     );
 }
 
+#[test]
+fn duplicate_import_equals_type_then_namespace_uses_later_value_alias() {
+    let source = r#"
+namespace Z {
+    export namespace M {
+        export function bar() {
+            return "";
+        }
+    }
+    export interface I {}
+}
+namespace A.M {
+    import M = Z.I;
+    import M = Z.M;
+    M.bar();
+}
+"#;
+    let diagnostics = get_diagnostics(source);
+    let ts2300_count = diagnostics.iter().filter(|diag| diag.0 == 2300).count();
+
+    assert_eq!(
+        ts2300_count, 2,
+        "Should emit TS2300 on both duplicate import aliases. Got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|diag| diag.0 == 2693),
+        "Later value-bearing import alias should prevent TS2693 at M.bar(). Got: {diagnostics:?}"
+    );
+}
+
 // =========================================================================
 // Regression: import-equals to a value (e.g. enum member) merging with a
 // same-named local type alias must still emit TS2440. The binder merges the

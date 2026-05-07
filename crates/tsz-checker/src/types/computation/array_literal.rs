@@ -13,6 +13,48 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
+    fn mutable_spread_declared_type_in_const_assertion(
+        &mut self,
+        expression: NodeIndex,
+    ) -> Option<TypeId> {
+        if !self.ctx.in_const_assertion {
+            return None;
+        }
+        let expression = self.ctx.arena.skip_parenthesized(expression);
+        let node = self.ctx.arena.get(expression)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expression)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_node = self.ctx.arena.get(decl_idx)?;
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if self.ctx.arena.is_const_variable_declaration(decl_idx) {
+                return None;
+            }
+            if var_decl.type_annotation.is_some() {
+                return None;
+            }
+            let init_idx = self.ctx.arena.skip_parenthesized(var_decl.initializer);
+            let init_node = self.ctx.arena.get(init_idx)?;
+            if init_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                return None;
+            }
+            let prev_in_const_assertion = self.ctx.in_const_assertion;
+            self.ctx.in_const_assertion = false;
+            let declared_type = self.get_type_of_variable_declaration(decl_idx);
+            self.ctx.in_const_assertion = prev_in_const_assertion;
+            return Some(declared_type);
+        }
+        None
+    }
+
     fn promise_like_array_context_shape(&self, type_id: TypeId) -> Option<TypeId> {
         match crate::query_boundaries::common::classify_promise_type(self.ctx.types, type_id) {
             crate::query_boundaries::common::PromiseTypeKind::Application { args, .. }
@@ -695,6 +737,13 @@ impl<'a> CheckerState<'a> {
                     self.get_type_of_node_with_request(spread_data.expression, &elem_request)
                 };
                 let spread_expr_type = self.resolve_lazy_type(spread_expr_type);
+                let spread_expr_type = if let Some(declared_type) =
+                    self.mutable_spread_declared_type_in_const_assertion(spread_data.expression)
+                {
+                    self.resolve_lazy_type(declared_type)
+                } else {
+                    spread_expr_type
+                };
                 // Check if spread argument is iterable, emit TS2488 if not.
                 // Skip this check when the array is a destructuring target
                 // (e.g., `[...c] = expr`), since the spread element is an assignment

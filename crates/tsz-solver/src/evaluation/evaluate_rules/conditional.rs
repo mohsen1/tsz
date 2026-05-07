@@ -407,8 +407,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // (Step 3). Taking the shortcut would return unbound infer types.
             // e.g., `Synthetic<number,number> extends Synthetic<T, infer V> ? V : never`
             //   Both sides evaluate to the same empty object, but V must be bound to number.
-            if check_type == extends_type && !self.type_contains_infer(cond.extends_type) {
+            if check_type == extends_type
+                && !self.type_contains_infer(cond.extends_type)
+                && !self.type_is_compound_generic(cond.extends_type)
+            {
                 return self.evaluate_preserving_intersection_branch_alias(cond.true_type);
+            }
+
+            if !extends_has_infer
+                && check_type == extends_type
+                && self.type_is_compound_generic(cond.extends_type)
+            {
+                let true_type = self.evaluate(cond.true_type);
+                let false_type = self.evaluate(cond.false_type);
+                return self.interner().conditional(ConditionalType {
+                    check_type,
+                    extends_type: cond.extends_type,
+                    true_type,
+                    false_type,
+                    is_distributive: cond.is_distributive,
+                });
             }
 
             // Step 2b: Non-naked compound type parameter deferral.

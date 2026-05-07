@@ -192,12 +192,34 @@ pub(crate) fn resolve_type_reference_from_node_modules_with_cache(
 
     // Generate all candidate package names (original + @types mangled form)
     let candidates = type_package_candidates(name);
+    let package_subpath = split_package_specifier(name)
+        .and_then(|(package_name, subpath)| subpath.map(|subpath| (package_name, subpath)));
+    let conditions = export_conditions(options);
 
     let mut current = from_file.parent().unwrap_or(base_dir);
 
     loop {
         let node_modules = current.join("node_modules");
         if resolution_cache.node_modules_dir_exists(&node_modules) {
+            if let Some((package_name, subpath)) = package_subpath.as_ref() {
+                let package_root = node_modules.join(package_name);
+                if resolution_cache.package_root_dir_exists(&package_root) {
+                    let package_json =
+                        resolution_cache.read_package_json(&package_root.join("package.json"));
+                    let resolved = resolve_package_specifier(
+                        &package_root,
+                        Some(subpath),
+                        package_json.as_ref(),
+                        &conditions,
+                        options,
+                        resolution_cache,
+                    );
+                    if resolved.as_deref().is_some_and(is_declaration_file) {
+                        return resolved;
+                    }
+                }
+            }
+
             for candidate in &candidates {
                 let package_root = node_modules.join(candidate);
                 if resolution_cache.package_root_dir_exists(&package_root) {

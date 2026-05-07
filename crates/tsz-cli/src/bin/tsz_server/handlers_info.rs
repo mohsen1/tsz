@@ -419,6 +419,7 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
+        let full = request.command.ends_with("-full");
         let result = (|| -> Option<serde_json::Value> {
             let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
@@ -432,7 +433,7 @@ impl Server {
             }
             if let Some(canonical_loc) =
                 self.canonical_definition_for_alias_position(&file, &arena, &source_text, offset)
-                && let Some(def) = self.definition_info_from_location(&canonical_loc)
+                && let Some(def) = self.definition_info_from_location(&canonical_loc, full)
             {
                 return Some(serde_json::json!([def]));
             }
@@ -459,7 +460,13 @@ impl Server {
             }
             let body: Vec<serde_json::Value> = infos
                 .iter()
-                .map(|info| Self::definition_info_to_json(info, &file))
+                .map(|info| {
+                    if full {
+                        Self::definition_info_to_json_full(info, &file, &line_map, &source_text)
+                    } else {
+                        Self::definition_info_to_json(info, &file)
+                    }
+                })
                 .collect();
             Some(serde_json::json!(body))
         })();
@@ -471,6 +478,7 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
+        let full = request.command.ends_with("-full");
         let result = (|| -> Option<serde_json::Value> {
             let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
@@ -484,9 +492,9 @@ impl Server {
             }
             if let Some(canonical_loc) =
                 self.canonical_definition_for_alias_position(&file, &arena, &source_text, offset)
-                && let Some(definition) = self.definition_info_from_location(&canonical_loc)
+                && let Some(definition) = self.definition_info_from_location(&canonical_loc, full)
             {
-                let text_span = if Self::is_quoted_import_or_export_specifier_offset(
+                let bound_range = if Self::is_quoted_import_or_export_specifier_offset(
                     &arena,
                     &source_text,
                     offset,
@@ -496,34 +504,27 @@ impl Server {
                         offset,
                         &source_text,
                     );
-                    if node_idx.is_some() {
-                        if let Some(node) = arena.get(node_idx) {
-                            serde_json::json!({
-                                "start": Self::lsp_to_tsserver_position(line_map.offset_to_position(node.pos, &source_text)),
-                                "end": Self::lsp_to_tsserver_position(line_map.offset_to_position(node.end, &source_text)),
-                            })
-                        } else {
-                            serde_json::json!({
-                                "start": Self::lsp_to_tsserver_position(position),
-                                "end": Self::lsp_to_tsserver_position(position),
-                            })
-                        }
-                    } else {
-                        serde_json::json!({
-                            "start": Self::lsp_to_tsserver_position(position),
-                            "end": Self::lsp_to_tsserver_position(position),
+                    node_idx
+                        .into_option()
+                        .and_then(|idx| arena.get(idx))
+                        .map(|node| {
+                            let start = line_map.offset_to_position(node.pos, &source_text);
+                            let end = line_map.offset_to_position(node.end, &source_text);
+                            (node.pos, node.end, start, end)
                         })
-                    }
+                        .unwrap_or_else(|| {
+                            let pos_offset = line_map
+                                .position_to_offset(position, &source_text)
+                                .unwrap_or(offset);
+                            (pos_offset, pos_offset, position, position)
+                        })
                 } else {
-                    serde_json::json!({
-                        "start": Self::lsp_to_tsserver_position(position),
-                        "end": Self::lsp_to_tsserver_position(position),
-                    })
+                    let pos_offset = line_map
+                        .position_to_offset(position, &source_text)
+                        .unwrap_or(offset);
+                    (pos_offset, pos_offset, position, position)
                 };
-                let text_span = serde_json::json!({
-                    "start": text_span["start"].clone(),
-                    "end": text_span["end"].clone(),
-                });
+                let text_span = Self::bound_text_span_json(full, bound_range);
                 return Some(serde_json::json!({
                     "definitions": [definition],
                     "textSpan": text_span,
@@ -551,10 +552,16 @@ impl Server {
                 return None;
             }
 
-            // Build definitions array with rich metadata
+            // Build definitions array using the shape that matches the protocol variant.
             let definitions: Vec<serde_json::Value> = infos
                 .iter()
-                .map(|info| Self::definition_info_to_json(info, &file))
+                .map(|info| {
+                    if full {
+                        Self::definition_info_to_json_full(info, &file, &line_map, &source_text)
+                    } else {
+                        Self::definition_info_to_json(info, &file)
+                    }
+                })
                 .collect();
 
             // Compute textSpan from hover range for symbol-accurate bound spans.
@@ -593,19 +600,23 @@ impl Server {
                 }
                 None
             });
-            let text_span = symbol_range
+            let bound_range = symbol_range
                 .map(|range| {
-                    serde_json::json!({
-                        "start": Self::lsp_to_tsserver_position(range.start),
-                        "end": Self::lsp_to_tsserver_position(range.end),
-                    })
+                    let start_off = line_map
+                        .position_to_offset(range.start, &source_text)
+                        .unwrap_or(0);
+                    let end_off = line_map
+                        .position_to_offset(range.end, &source_text)
+                        .unwrap_or(start_off);
+                    (start_off, end_off, range.start, range.end)
                 })
                 .unwrap_or_else(|| {
-                    serde_json::json!({
-                        "start": Self::lsp_to_tsserver_position(position),
-                        "end": Self::lsp_to_tsserver_position(position),
-                    })
+                    let pos_offset = line_map
+                        .position_to_offset(position, &source_text)
+                        .unwrap_or(0);
+                    (pos_offset, pos_offset, position, position)
                 });
+            let text_span = Self::bound_text_span_json(full, bound_range);
 
             Some(serde_json::json!({
                 "definitions": definitions,
@@ -613,6 +624,27 @@ impl Server {
             }))
         })();
         self.stub_response(seq, request, result)
+    }
+
+    /// Build the `textSpan` payload for `definitionAndBoundSpan` /
+    /// `definitionAndBoundSpan-full` from a `(start_offset, end_offset,
+    /// start_pos, end_pos)` tuple.
+    fn bound_text_span_json(
+        full: bool,
+        bound: (u32, u32, Position, Position),
+    ) -> serde_json::Value {
+        let (start_off, end_off, start_pos, end_pos) = bound;
+        if full {
+            serde_json::json!({
+                "start": start_off,
+                "length": end_off.saturating_sub(start_off),
+            })
+        } else {
+            serde_json::json!({
+                "start": Self::lsp_to_tsserver_position(start_pos),
+                "end": Self::lsp_to_tsserver_position(end_pos),
+            })
+        }
     }
 
     pub(crate) fn handle_references(
@@ -750,6 +782,9 @@ impl Server {
             let provider =
                 FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
             let (_symbol_id, ref_infos) = provider.find_references_with_symbol(root, position)?;
+            let project_locations = self
+                .build_project_for_file(&file)
+                .and_then(|mut project| project.find_references(&file, position));
 
             let (symbol_name, symbol_start_offset) = {
                 let ref_offset = line_map.position_to_offset(position, &source_text)?;
@@ -784,17 +819,37 @@ impl Server {
                 .map(|info| info.display_string)
                 .unwrap_or_default();
 
-            let refs: Vec<serde_json::Value> = ref_infos
+            let locations: Vec<_> = project_locations.unwrap_or_else(|| {
+                ref_infos
+                    .iter()
+                    .map(|ref_info| ref_info.location.clone())
+                    .collect()
+            });
+
+            let refs: Vec<serde_json::Value> = locations
                 .iter()
-                .map(|ref_info| {
-                    serde_json::json!({
-                        "file": ref_info.location.file_path,
-                        "start": Self::lsp_to_tsserver_position(ref_info.location.range.start),
-                        "end": Self::lsp_to_tsserver_position(ref_info.location.range.end),
-                        "lineText": ref_info.line_text,
-                        "isWriteAccess": ref_info.is_write_access,
-                        "isDefinition": ref_info.is_definition,
-                    })
+                .filter_map(|location| {
+                    let source = self
+                        .open_files
+                        .get(&location.file_path)
+                        .cloned()
+                        .or_else(|| std::fs::read_to_string(&location.file_path).ok())?;
+                    let line_text = source
+                        .lines()
+                        .nth(location.range.start.line as usize)
+                        .unwrap_or("")
+                        .to_string();
+                    let local_ref = ref_infos
+                        .iter()
+                        .find(|ref_info| ref_info.location == *location);
+                    Some(serde_json::json!({
+                        "file": location.file_path,
+                        "start": Self::lsp_to_tsserver_position(location.range.start),
+                        "end": Self::lsp_to_tsserver_position(location.range.end),
+                        "lineText": line_text,
+                        "isWriteAccess": local_ref.is_some_and(|ref_info| ref_info.is_write_access),
+                        "isDefinition": local_ref.is_some_and(|ref_info| ref_info.is_definition),
+                    }))
                 })
                 .collect();
             Some(serde_json::json!({
@@ -905,7 +960,8 @@ impl Server {
                 }));
             }
 
-            // Compute trigger span length from the range
+            let rename_seed =
+                Self::quoted_specifier_literal_at_offset(&arena, &source_text, query_offset);
             let start_offset = line_map
                 .position_to_offset(info.trigger_span.start, &source_text)
                 .unwrap_or(0) as usize;
@@ -913,8 +969,6 @@ impl Server {
                 .position_to_offset(info.trigger_span.end, &source_text)
                 .unwrap_or(0) as usize;
             let trigger_length = end_offset.saturating_sub(start_offset);
-            let rename_seed =
-                Self::quoted_specifier_literal_at_offset(&arena, &source_text, query_offset);
 
             if let Some(mut project) = self.build_project_for_file(&file)
                 && let Some(locs) = self.quoted_alias_chain_references(
@@ -2579,30 +2633,34 @@ impl Server {
             let file = request.arguments.get("file")?.as_str()?;
             let project = self.build_project_for_file(file)?;
 
-            // Dependency graph is populated by set_file() during project construction
-            let dependents = project.get_file_dependents(file);
-            let refs: Vec<serde_json::Value> = dependents
+            let refs: Vec<serde_json::Value> = project
+                .find_file_references(file)
                 .iter()
-                .map(|dep_file| {
-                    serde_json::json!({
-                        "file": dep_file,
-                        "start": { "line": 1, "offset": 1 },
-                        "end": { "line": 1, "offset": 1 },
-                        "lineText": "",
+                .filter_map(|loc| {
+                    let source = self
+                        .open_files
+                        .get(&loc.file_path)
+                        .cloned()
+                        .or_else(|| std::fs::read_to_string(&loc.file_path).ok())?;
+                    let line_text = source
+                        .lines()
+                        .nth(loc.range.start.line as usize)
+                        .unwrap_or("")
+                        .to_string();
+                    Some(serde_json::json!({
+                        "file": loc.file_path,
+                        "start": Self::lsp_to_tsserver_position(loc.range.start),
+                        "end": Self::lsp_to_tsserver_position(loc.range.end),
+                        "lineText": line_text,
                         "isWriteAccess": false,
                         "isDefinition": false,
-                    })
+                    }))
                 })
                 .collect();
 
-            let file_name = std::path::Path::new(file)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(file);
-
             Some(serde_json::json!({
                 "refs": refs,
-                "symbolName": format!("\"{}\"", file_name),
+                "symbolName": format!("\"{}\"", file),
             }))
         })();
         self.stub_response(

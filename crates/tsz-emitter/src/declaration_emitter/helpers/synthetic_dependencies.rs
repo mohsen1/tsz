@@ -74,6 +74,68 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn retain_asserted_class_property_type_dependencies_in_statements(
+        &mut self,
+        statements: &NodeList,
+    ) {
+        for &stmt_idx in &statements.nodes {
+            self.retain_asserted_class_property_type_dependencies_for_statement(stmt_idx);
+        }
+    }
+
+    fn retain_asserted_class_property_type_dependencies_for_statement(
+        &mut self,
+        stmt_idx: NodeIndex,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if self.statement_has_effective_export(stmt_idx)
+                    && let Some(class) = self.arena.get_class(stmt_node)
+                {
+                    self.retain_asserted_class_property_type_dependencies(&class.members);
+                }
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export) = self.arena.get_export_decl(stmt_node)
+                    && let Some(clause_node) = self.arena.get(export.export_clause)
+                    && clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    && let Some(class) = self.arena.get_class(clause_node)
+                {
+                    self.retain_asserted_class_property_type_dependencies(&class.members);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn retain_asserted_class_property_type_dependencies(&mut self, members: &NodeList) {
+        for &member_idx in &members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if prop.type_annotation.is_some() || prop.initializer.is_none() {
+                continue;
+            }
+            let is_private = self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::PrivateKeyword)
+                || self.member_has_private_identifier_name(prop.name);
+            if is_private {
+                continue;
+            }
+            if let Some(type_text) = self.explicit_asserted_type_text(prop.initializer) {
+                self.retain_local_type_names_for_public_api(&type_text);
+            }
+        }
+    }
+
     fn retain_synthetic_function_return_dependencies_for_statement(&mut self, stmt_idx: NodeIndex) {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return;
@@ -197,6 +259,12 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(access) = self.arena.get_access_expr(callee_node) else {
             return;
         };
+        if self
+            .call_receiver_default_import_alias(call.expression)
+            .is_some()
+        {
+            return;
+        }
         let Some(receiver_name) = self.get_identifier_text(access.expression) else {
             return;
         };

@@ -285,7 +285,8 @@ impl ParserState {
 
             let bytes = raw_text.as_bytes();
             let flags = &raw_text[body_end + 1..];
-            let any_unicode_mode = flags.contains('u') || flags.contains('v');
+            let unicode_sets_mode = flags.contains('v');
+            let any_unicode_mode = flags.contains('u') || unicode_sets_mode;
             let strict_mode = any_unicode_mode;
 
             #[derive(Clone, Copy)]
@@ -299,6 +300,18 @@ impl ParserState {
                 |parser: &mut ParserState, pos: usize, len: u32, message: &str, code: u32| {
                     parser.parse_error_at(start_pos + pos as u32, len, message, code);
                 };
+
+            struct RegexScanContext<'a, F>
+            where
+                F: Fn(&mut ParserState, usize, u32, &str, u32),
+            {
+                emit: &'a F,
+                body: &'a [u8],
+                body_end: usize,
+                strict_mode: bool,
+                unicode_sets_mode: bool,
+                start_pos: u32,
+            }
 
             fn scan_digits(body: &[u8], end: usize, pos: &mut usize) -> usize {
                 let start = *pos;
@@ -326,40 +339,21 @@ impl ParserState {
             }
 
             fn scan_braced_unicode_escape_value(
-                parser: &mut ParserState,
-                emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
+                _parser: &mut ParserState,
+                _emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
                 body: &[u8],
                 end: usize,
                 pos: &mut usize,
             ) {
+                // Skip past `\u{...}` body without validating the code-point
+                // range. tsc treats out-of-range escapes inside regex literals
+                // as a runtime concern and does not emit TS1198 here, even
+                // with the `u` flag.
                 *pos += 1;
-                let hex_start = *pos;
-                let mut value = 0u32;
-                let mut overflow = false;
                 while *pos < end && body[*pos] != b'}' {
-                    if let Some(digit) = (body[*pos] as char).to_digit(16)
-                        && !overflow
-                    {
-                        if let Some(next) = value.checked_mul(16).and_then(|v| v.checked_add(digit))
-                        {
-                            value = next;
-                        } else {
-                            overflow = true;
-                        }
-                    }
                     *pos += 1;
                 }
-
                 if *pos < end {
-                    if overflow || value > 0x10FFFF {
-                        emit(
-                            parser,
-                            hex_start,
-                            (*pos - hex_start) as u32,
-                            diagnostic_messages::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE,
-                            diagnostic_codes::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE,
-                        );
-                    }
                     *pos += 1;
                 }
             }
@@ -559,6 +553,7 @@ impl ParserState {
                 emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
                 body: &[u8],
                 strict_mode: bool,
+                unicode_sets_mode: bool,
                 _end: usize,
                 pos: &mut usize,
                 _start_pos: u32,
@@ -572,6 +567,21 @@ impl ParserState {
                     b'd' | b'D' | b's' | b'S' | b'w' | b'W' => {
                         *pos += 1;
                         Some(ClassAtomKind::Class)
+                    }
+                    b'q' if unicode_sets_mode => {
+                        *pos += 1;
+                        if *pos < body.len() && body[*pos] == b'{' {
+                            *pos += 1;
+                            while *pos < body.len() && body[*pos] != b'}' {
+                                *pos += 1;
+                            }
+                            if *pos < body.len() {
+                                *pos += 1;
+                            }
+                            Some(ClassAtomKind::Class)
+                        } else {
+                            Some(ClassAtomKind::Unknown)
+                        }
                     }
                     b'P' => {
                         *pos += 1;
@@ -638,53 +648,52 @@ impl ParserState {
                 }
             }
 
-            fn scan_class_atom(
+            fn scan_class_atom<F>(
                 parser: &mut ParserState,
-                emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
-                body: &[u8],
-                strict_mode: bool,
-                body_end: usize,
-                start_pos: u32,
+                ctx: &RegexScanContext<'_, F>,
                 pos: &mut usize,
                 range: &mut Vec<ClassAtomKind>,
-            ) {
-                if *pos >= body_end {
+            ) where
+                F: Fn(&mut ParserState, usize, u32, &str, u32),
+            {
+                if *pos >= ctx.body_end {
                     return;
                 }
-                let ch = body[*pos];
+                let ch = ctx.body[*pos];
                 if ch == b'\\' {
                     *pos += 1;
-                    if *pos >= body_end {
+                    if *pos >= ctx.body_end {
                         return;
                     }
 
                     let class_escape_start = *pos;
                     match scan_character_class_escape(
                         parser,
-                        emit,
-                        &body[..body_end],
-                        strict_mode,
-                        body_end,
+                        ctx.emit,
+                        &ctx.body[..ctx.body_end],
+                        ctx.strict_mode,
+                        ctx.unicode_sets_mode,
+                        ctx.body_end,
                         pos,
-                        start_pos,
+                        ctx.start_pos,
                     ) {
                         Some(atom) => range.push(atom),
                         None => {
                             let current_pos = *pos;
                             scan_character_escape(
                                 parser,
-                                emit,
-                                body,
-                                strict_mode,
-                                body_end,
+                                ctx.emit,
+                                ctx.body,
+                                ctx.strict_mode,
+                                ctx.body_end,
                                 pos,
                                 false,
                                 current_pos.saturating_sub(1),
-                                start_pos,
+                                ctx.start_pos,
                             );
                             if *pos > current_pos {
                                 range.push(ClassAtomKind::Character {
-                                    value: u32::from(body[class_escape_start]),
+                                    value: u32::from(ctx.body[class_escape_start]),
                                     utf16_len: 1,
                                 });
                             }
@@ -693,7 +702,7 @@ impl ParserState {
                     return;
                 }
 
-                if let Some((ch, char_len)) = next_utf8_char(body, body_end, *pos) {
+                if let Some((ch, char_len)) = next_utf8_char(ctx.body, ctx.body_end, *pos) {
                     range.push(ClassAtomKind::Character {
                         value: ch as u32,
                         utf16_len: ch.len_utf16(),
@@ -701,93 +710,114 @@ impl ParserState {
                     *pos += char_len;
                 }
 
-                if *pos <= body_end && *pos > 0 && body[*pos - 1] == b'-' {
+                if *pos <= ctx.body_end && *pos > 0 && ctx.body[*pos - 1] == b'-' {
                     range.push(ClassAtomKind::Unknown);
                 }
             }
 
-            fn scan_class_ranges(
+            fn scan_class_ranges<F>(
                 parser: &mut ParserState,
-                emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
-                body: &[u8],
-                strict_mode: bool,
-                body_end: usize,
-                start_pos: u32,
+                ctx: &RegexScanContext<'_, F>,
                 pos: &mut usize,
-            ) {
+            ) where
+                F: Fn(&mut ParserState, usize, u32, &str, u32),
+            {
+                fn is_class_set_operator_at(body: &[u8], pos: usize, end: usize) -> bool {
+                    pos + 1 < end
+                        && ((body[pos] == b'&' && body[pos + 1] == b'&')
+                            || (body[pos] == b'-' && body[pos + 1] == b'-'))
+                }
+
+                fn scan_class_set_operator(
+                    parser: &mut ParserState,
+                    emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
+                    body: &[u8],
+                    body_end: usize,
+                    pos: &mut usize,
+                ) {
+                    *pos += 2;
+                    if *pos >= body_end
+                        || body[*pos] == b']'
+                        || is_class_set_operator_at(body, *pos, body_end)
+                    {
+                        emit(
+                            parser,
+                            *pos,
+                            1,
+                            diagnostic_messages::EXPECTED_A_CLASS_SET_OPERAND,
+                            diagnostic_codes::EXPECTED_A_CLASS_SET_OPERAND,
+                        );
+                    }
+                }
+
                 // Consume optional leading ^
-                if *pos < body_end && body[*pos] == b'^' {
+                if *pos < ctx.body_end && ctx.body[*pos] == b'^' {
                     *pos += 1;
                 }
 
-                while *pos < body_end {
-                    if body[*pos] == b']' {
+                while *pos < ctx.body_end {
+                    if ctx.body[*pos] == b']' {
                         *pos += 1;
                         break;
+                    }
+                    if ctx.unicode_sets_mode
+                        && is_class_set_operator_at(ctx.body, *pos, ctx.body_end)
+                    {
+                        scan_class_set_operator(parser, ctx.emit, ctx.body, ctx.body_end, pos);
+                        continue;
                     }
 
                     let mut atoms = Vec::new();
                     let min_start = *pos;
-                    scan_class_atom(
-                        parser,
-                        emit,
-                        body,
-                        strict_mode,
-                        body_end,
-                        start_pos,
-                        pos,
-                        &mut atoms,
-                    );
-                    if *pos >= body_end || body[*pos] != b'-' {
+                    scan_class_atom(parser, ctx, pos, &mut atoms);
+                    if ctx.unicode_sets_mode
+                        && is_class_set_operator_at(ctx.body, *pos, ctx.body_end)
+                    {
+                        scan_class_set_operator(parser, ctx.emit, ctx.body, ctx.body_end, pos);
+                        continue;
+                    }
+                    if *pos >= ctx.body_end || ctx.body[*pos] != b'-' {
                         continue;
                     }
 
                     *pos += 1;
 
-                    if *pos < body_end && body[*pos] == b']' {
+                    if *pos < ctx.body_end && ctx.body[*pos] == b']' {
+                        *pos += 1;
                         break;
                     }
 
                     let max_start = *pos;
                     let mut max_atoms = Vec::new();
-                    scan_class_atom(
-                        parser,
-                        emit,
-                        body,
-                        strict_mode,
-                        body_end,
-                        start_pos,
-                        pos,
-                        &mut max_atoms,
-                    );
+                    scan_class_atom(parser, ctx, pos, &mut max_atoms);
 
                     let min_atom = atoms.first().copied();
                     let max_atom = max_atoms.first().copied();
 
-                    if strict_mode {
+                    if ctx.strict_mode {
                         if matches!(
                             min_atom,
                             Some(ClassAtomKind::Unknown | ClassAtomKind::Class)
                         ) {
-                            emit(
-                                    parser,
-                                    min_start,
-                                    1,
-                                    "A character class range must not be bounded by another character class.",
-                                    diagnostic_codes::A_CHARACTER_CLASS_RANGE_MUST_NOT_BE_BOUNDED_BY_ANOTHER_CHARACTER_CLASS,
-                                );
+                            (ctx.emit)(
+                                parser,
+                                min_start,
+                                1,
+                                "A character class range must not be bounded by another character class.",
+                                diagnostic_codes::A_CHARACTER_CLASS_RANGE_MUST_NOT_BE_BOUNDED_BY_ANOTHER_CHARACTER_CLASS,
+                            );
                         }
                         if matches!(
                             max_atom,
                             Some(ClassAtomKind::Unknown | ClassAtomKind::Class)
                         ) {
-                            emit(
-                                    parser,
-                                    max_start,
-                                    1,
-                                    "A character class range must not be bounded by another character class.",
-                                    diagnostic_codes::A_CHARACTER_CLASS_RANGE_MUST_NOT_BE_BOUNDED_BY_ANOTHER_CHARACTER_CLASS,
-                                );
+                            (ctx.emit)(
+                                parser,
+                                max_start,
+                                1,
+                                "A character class range must not be bounded by another character class.",
+                                diagnostic_codes::A_CHARACTER_CLASS_RANGE_MUST_NOT_BE_BOUNDED_BY_ANOTHER_CHARACTER_CLASS,
+                            );
                         }
                     }
 
@@ -803,7 +833,7 @@ impl ParserState {
                     ) = (min_atom, max_atom)
                         && left > right
                     {
-                        emit(
+                        (ctx.emit)(
                             parser,
                             min_start,
                             (max_start as u32).saturating_sub(min_start as u32),
@@ -814,20 +844,18 @@ impl ParserState {
                 }
             }
 
-            fn scan_alternative(
+            fn scan_alternative<F>(
                 parser: &mut ParserState,
-                emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
-                body: &[u8],
-                body_end: usize,
+                ctx: &RegexScanContext<'_, F>,
                 pos: &mut usize,
                 in_group: bool,
-                strict_mode: bool,
-                start_pos: u32,
-            ) {
+            ) where
+                F: Fn(&mut ParserState, usize, u32, &str, u32),
+            {
                 let mut is_previous_term_quantifiable = false;
 
-                while *pos < body_end {
-                    let current = body[*pos];
+                while *pos < ctx.body_end {
+                    let current = ctx.body[*pos];
                     match current {
                         b'^' | b'$' => {
                             *pos += 1;
@@ -835,22 +863,22 @@ impl ParserState {
                         }
                         b'\\' => {
                             *pos += 1;
-                            if *pos >= body_end {
+                            if *pos >= ctx.body_end {
                                 break;
                             }
 
                             let escape_start = *pos - 1;
 
-                            if body[*pos] == b'k' {
+                            if ctx.body[*pos] == b'k' {
                                 *pos += 1;
-                                if *pos < body_end && body[*pos] == b'<' {
+                                if *pos < ctx.body_end && ctx.body[*pos] == b'<' {
                                     *pos += 1;
-                                    scan_identifier(body, body_end, pos);
-                                    if *pos < body_end && body[*pos] == b'>' {
+                                    scan_identifier(ctx.body, ctx.body_end, pos);
+                                    if *pos < ctx.body_end && ctx.body[*pos] == b'>' {
                                         *pos += 1;
                                     }
-                                } else if strict_mode {
-                                    emit(
+                                } else if ctx.strict_mode {
+                                    (ctx.emit)(
                                         parser,
                                         escape_start,
                                         2,
@@ -861,14 +889,14 @@ impl ParserState {
                             } else {
                                 scan_character_escape(
                                     parser,
-                                    emit,
-                                    body,
-                                    strict_mode,
-                                    body_end,
+                                    ctx.emit,
+                                    ctx.body,
+                                    ctx.strict_mode,
+                                    ctx.body_end,
                                     pos,
                                     true,
                                     escape_start,
-                                    start_pos,
+                                    ctx.start_pos,
                                 );
                             }
 
@@ -876,66 +904,59 @@ impl ParserState {
                         }
                         b'(' => {
                             *pos += 1;
-                            if *pos >= body_end {
+                            if *pos >= ctx.body_end {
                                 break;
                             }
 
-                            if body[*pos] == b'?' {
+                            if ctx.body[*pos] == b'?' {
                                 *pos += 1;
-                                if *pos >= body_end {
+                                if *pos >= ctx.body_end {
                                     break;
                                 }
-                                match body[*pos] {
+                                match ctx.body[*pos] {
                                     b'=' | b'!' => {
                                         *pos += 1;
-                                        is_previous_term_quantifiable = !strict_mode;
-                                        scan_disjunction(
-                                            parser,
-                                            emit,
-                                            body,
-                                            body_end,
-                                            pos,
-                                            true,
-                                            strict_mode,
-                                            start_pos,
-                                        );
+                                        is_previous_term_quantifiable = !ctx.strict_mode;
+                                        scan_disjunction(parser, ctx, pos, true);
                                     }
                                     b'<' => {
                                         *pos += 1;
-                                        if *pos < body_end
-                                            && (body[*pos] == b'=' || body[*pos] == b'!')
+                                        if *pos < ctx.body_end
+                                            && (ctx.body[*pos] == b'=' || ctx.body[*pos] == b'!')
                                         {
                                             *pos += 1;
                                             is_previous_term_quantifiable = false;
                                         } else {
-                                            scan_identifier(body, body_end, pos);
-                                            if *pos < body_end && body[*pos] == b'>' {
+                                            scan_identifier(ctx.body, ctx.body_end, pos);
+                                            if *pos < ctx.body_end && ctx.body[*pos] == b'>' {
                                                 *pos += 1;
                                             }
                                             is_previous_term_quantifiable = true;
                                         }
-                                        scan_disjunction(
-                                            parser,
-                                            emit,
-                                            body,
-                                            body_end,
-                                            pos,
-                                            true,
-                                            strict_mode,
-                                            start_pos,
-                                        );
+                                        scan_disjunction(parser, ctx, pos, true);
                                     }
                                     _ => {
                                         let saved_pos = *pos;
                                         let has_first = scan_regex_modifier_segment(
-                                            parser, emit, body, body_end, pos,
+                                            parser,
+                                            ctx.emit,
+                                            ctx.body,
+                                            ctx.body_end,
+                                            pos,
                                         );
 
-                                        if has_first && *pos < body_end && body[*pos] == b'-' {
+                                        if has_first
+                                            && *pos < ctx.body_end
+                                            && ctx.body[*pos] == b'-'
+                                        {
                                             *pos += 1;
-                                            if *pos < body_end {
+                                            if *pos < ctx.body_end {
                                                 let has_second = scan_regex_modifier_segment(
-                                                    parser, emit, body, body_end, pos,
+                                                    parser,
+                                                    ctx.emit,
+                                                    ctx.body,
+                                                    ctx.body_end,
+                                                    pos,
                                                 );
 
                                                 if !has_second {
@@ -946,8 +967,9 @@ impl ParserState {
                                             }
                                         }
 
-                                        let is_modifier_group =
-                                            has_first && *pos < body_end && body[*pos] == b':';
+                                        let is_modifier_group = has_first
+                                            && *pos < ctx.body_end
+                                            && ctx.body[*pos] == b':';
 
                                         if !is_modifier_group {
                                             *pos = saved_pos;
@@ -960,33 +982,15 @@ impl ParserState {
                                             is_previous_term_quantifiable = true;
                                         }
 
-                                        scan_disjunction(
-                                            parser,
-                                            emit,
-                                            body,
-                                            body_end,
-                                            pos,
-                                            true,
-                                            strict_mode,
-                                            start_pos,
-                                        );
+                                        scan_disjunction(parser, ctx, pos, true);
                                     }
                                 }
                             } else {
                                 is_previous_term_quantifiable = true;
-                                scan_disjunction(
-                                    parser,
-                                    emit,
-                                    body,
-                                    body_end,
-                                    pos,
-                                    true,
-                                    strict_mode,
-                                    start_pos,
-                                );
+                                scan_disjunction(parser, ctx, pos, true);
                             }
 
-                            if *pos < body_end && body[*pos] == b')' {
+                            if *pos < ctx.body_end && ctx.body[*pos] == b')' {
                                 *pos += 1;
                             }
                         }
@@ -996,27 +1000,27 @@ impl ParserState {
                             let mut reported_nothing_at_brace = false;
                             *pos += 1;
                             let min_start = *pos;
-                            let min_length = scan_digits(body, body_end, pos);
+                            let min_length = scan_digits(ctx.body, ctx.body_end, pos);
                             let min_empty = min_length == 0;
 
                             let min_text = if !min_empty && min_start < *pos {
-                                &body[min_start..*pos]
+                                &ctx.body[min_start..*pos]
                             } else {
                                 b""
                             };
 
-                            if *pos < body_end && body[*pos] == b',' {
+                            if *pos < ctx.body_end && ctx.body[*pos] == b',' {
                                 let comma_pos = *pos;
                                 *pos += 1;
                                 let max_start = *pos;
-                                let max_length = scan_digits(body, body_end, pos);
+                                let max_length = scan_digits(ctx.body, ctx.body_end, pos);
                                 let max_empty = max_length == 0;
 
-                                let has_closing = *pos < body_end && body[*pos] == b'}';
+                                let has_closing = *pos < ctx.body_end && ctx.body[*pos] == b'}';
                                 if min_empty {
-                                    if strict_mode && (max_length > 0 || has_closing) {
+                                    if ctx.strict_mode && (max_length > 0 || has_closing) {
                                         if !had_quantifiable_term {
-                                            emit(
+                                            (ctx.emit)(
                                                 parser,
                                                 brace_start,
                                                 1,
@@ -1025,15 +1029,15 @@ impl ParserState {
                                             );
                                             reported_nothing_at_brace = true;
                                         }
-                                        emit(
+                                        (ctx.emit)(
                                             parser,
                                             comma_pos,
                                             1,
                                             "Incomplete quantifier. Digit expected.",
                                             diagnostic_codes::INCOMPLETE_QUANTIFIER_DIGIT_EXPECTED,
                                         );
-                                    } else if strict_mode {
-                                        emit(
+                                    } else if ctx.strict_mode {
+                                        (ctx.emit)(
                                             parser,
                                             brace_start,
                                             1,
@@ -1047,14 +1051,14 @@ impl ParserState {
                                         continue;
                                     }
                                 } else if max_length > 0 && !max_empty {
-                                    let max_value: u32 = body[max_start..*pos]
+                                    let max_value: u32 = ctx.body[max_start..*pos]
                                         .iter()
                                         .fold(0u32, |acc, b| acc * 10 + u32::from(*b - b'0'));
                                     let min_value: u32 = min_text
                                         .iter()
                                         .fold(0u32, |acc, b| acc * 10 + u32::from(*b - b'0'));
-                                    if max_value < min_value && (strict_mode || has_closing) {
-                                        emit(
+                                    if max_value < min_value && (ctx.strict_mode || has_closing) {
+                                        (ctx.emit)(
                                             parser,
                                             min_start,
                                             (min_start.max(*pos).saturating_sub(min_start)) as u32,
@@ -1064,13 +1068,13 @@ impl ParserState {
                                     }
                                 }
 
-                                if *pos >= body_end || body[*pos] != b'}' {
-                                    if strict_mode {
+                                if *pos >= ctx.body_end || ctx.body[*pos] != b'}' {
+                                    if ctx.strict_mode {
                                         if !had_quantifiable_term
                                             && !min_empty
                                             && !reported_nothing_at_brace
                                         {
-                                            emit(
+                                            (ctx.emit)(
                                                 parser,
                                                 brace_start,
                                                 1,
@@ -1078,16 +1082,16 @@ impl ParserState {
                                                 diagnostic_codes::THERE_IS_NOTHING_AVAILABLE_FOR_REPETITION,
                                             );
                                         }
-                                        emit(
+                                        (ctx.emit)(
                                             parser,
                                             *pos,
                                             0,
                                             "'}' expected.",
                                             diagnostic_codes::EXPECTED,
                                         );
-                                        if *pos + 1 < body_end
-                                            && body[*pos] == b'?'
-                                            && body[*pos + 1] == b'?'
+                                        if *pos + 1 < ctx.body_end
+                                            && ctx.body[*pos] == b'?'
+                                            && ctx.body[*pos + 1] == b'?'
                                         {
                                             *pos += 1;
                                         }
@@ -1099,7 +1103,7 @@ impl ParserState {
                                 }
 
                                 if !had_quantifiable_term && !reported_nothing_at_brace {
-                                    emit(
+                                    (ctx.emit)(
                                         parser,
                                         brace_start,
                                         1,
@@ -1109,13 +1113,13 @@ impl ParserState {
                                 }
                                 *pos += 1;
                                 is_previous_term_quantifiable = false;
-                                if *pos < body_end && body[*pos] == b'?' {
+                                if *pos < ctx.body_end && ctx.body[*pos] == b'?' {
                                     *pos += 1;
                                 }
                                 continue;
                             } else if min_empty {
-                                if strict_mode {
-                                    emit(
+                                if ctx.strict_mode {
+                                    (ctx.emit)(
                                         parser,
                                         brace_start,
                                         1,
@@ -1127,10 +1131,10 @@ impl ParserState {
                                 }
                                 is_previous_term_quantifiable = true;
                                 continue;
-                            } else if *pos >= body_end || body[*pos] != b'}' {
-                                if strict_mode {
+                            } else if *pos >= ctx.body_end || ctx.body[*pos] != b'}' {
+                                if ctx.strict_mode {
                                     if !had_quantifiable_term && !reported_nothing_at_brace {
-                                        emit(
+                                        (ctx.emit)(
                                             parser,
                                             brace_start,
                                             1,
@@ -1138,16 +1142,16 @@ impl ParserState {
                                             diagnostic_codes::THERE_IS_NOTHING_AVAILABLE_FOR_REPETITION,
                                         );
                                     }
-                                    emit(
+                                    (ctx.emit)(
                                         parser,
                                         *pos,
                                         0,
                                         "'}' expected.",
                                         diagnostic_codes::EXPECTED,
                                     );
-                                    if *pos + 1 < body_end
-                                        && body[*pos] == b'?'
-                                        && body[*pos + 1] == b'?'
+                                    if *pos + 1 < ctx.body_end
+                                        && ctx.body[*pos] == b'?'
+                                        && ctx.body[*pos + 1] == b'?'
                                     {
                                         *pos += 1;
                                     }
@@ -1159,7 +1163,7 @@ impl ParserState {
                             }
 
                             if !had_quantifiable_term && !reported_nothing_at_brace {
-                                emit(
+                                (ctx.emit)(
                                     parser,
                                     brace_start,
                                     1,
@@ -1169,18 +1173,18 @@ impl ParserState {
                             }
                             *pos += 1;
                             is_previous_term_quantifiable = false;
-                            if *pos < body_end && body[*pos] == b'?' {
+                            if *pos < ctx.body_end && ctx.body[*pos] == b'?' {
                                 *pos += 1;
                             }
                         }
                         b'*' | b'+' | b'?' => {
                             let quantifier_start = *pos;
                             *pos += 1;
-                            if *pos < body_end && body[*pos] == b'?' {
+                            if *pos < ctx.body_end && ctx.body[*pos] == b'?' {
                                 *pos += 1;
                             }
                             if !is_previous_term_quantifiable {
-                                emit(
+                                (ctx.emit)(
                                     parser,
                                     quantifier_start,
                                     (*pos as u32).saturating_sub(quantifier_start as u32),
@@ -1192,23 +1196,15 @@ impl ParserState {
                         }
                         b'[' => {
                             *pos += 1;
-                            scan_class_ranges(
-                                parser,
-                                emit,
-                                body,
-                                strict_mode,
-                                body_end,
-                                start_pos,
-                                pos,
-                            );
+                            scan_class_ranges(parser, ctx, pos);
                             is_previous_term_quantifiable = true;
                         }
                         b')' => {
                             if in_group {
                                 return;
                             }
-                            if strict_mode {
-                                emit(
+                            if ctx.strict_mode {
+                                (ctx.emit)(
                                     parser,
                                     *pos,
                                     1,
@@ -1220,8 +1216,8 @@ impl ParserState {
                             is_previous_term_quantifiable = true;
                         }
                         b']' => {
-                            if strict_mode {
-                                emit(
+                            if ctx.strict_mode {
+                                (ctx.emit)(
                                     parser,
                                     *pos,
                                     1,
@@ -1233,8 +1229,8 @@ impl ParserState {
                             is_previous_term_quantifiable = true;
                         }
                         b'}' => {
-                            if strict_mode {
-                                emit(
+                            if ctx.strict_mode {
+                                (ctx.emit)(
                                     parser,
                                     *pos,
                                     1,
@@ -1247,7 +1243,9 @@ impl ParserState {
                         }
                         b'/' | b'|' => return,
                         _ => {
-                            if let Some((_ch, ch_len)) = next_utf8_char(body, body_end, *pos) {
+                            if let Some((_ch, ch_len)) =
+                                next_utf8_char(ctx.body, ctx.body_end, *pos)
+                            {
                                 *pos += ch_len;
                             } else {
                                 break;
@@ -1258,29 +1256,18 @@ impl ParserState {
                 }
             }
 
-            fn scan_disjunction(
+            fn scan_disjunction<F>(
                 parser: &mut ParserState,
-                emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
-                body: &[u8],
-                body_end: usize,
+                ctx: &RegexScanContext<'_, F>,
                 pos: &mut usize,
                 in_group: bool,
-                strict_mode: bool,
-                start_pos: u32,
-            ) {
+            ) where
+                F: Fn(&mut ParserState, usize, u32, &str, u32),
+            {
                 loop {
-                    scan_alternative(
-                        parser,
-                        emit,
-                        body,
-                        body_end,
-                        pos,
-                        in_group,
-                        strict_mode,
-                        start_pos,
-                    );
+                    scan_alternative(parser, ctx, pos, in_group);
 
-                    if *pos >= body_end || body[*pos] != b'|' {
+                    if *pos >= ctx.body_end || ctx.body[*pos] != b'|' {
                         return;
                     }
 
@@ -1288,17 +1275,16 @@ impl ParserState {
                 }
             }
 
-            let mut pos = 1usize;
-            scan_disjunction(
-                parser,
-                &emit,
-                bytes,
+            let ctx = RegexScanContext {
+                emit: &emit,
+                body: bytes,
                 body_end,
-                &mut pos,
-                false,
                 strict_mode,
+                unicode_sets_mode,
                 start_pos,
-            );
+            };
+            let mut pos = 1usize;
+            scan_disjunction(parser, &ctx, &mut pos, false);
         }
 
         let start_pos = self.token_pos();
