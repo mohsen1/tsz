@@ -322,7 +322,6 @@ impl<'a> CheckerState<'a> {
             .split(" | ")
             .map(Self::strip_simple_alias_union_parens)
             .collect::<Vec<_>>();
-
         if let [left, right] = members.as_slice() {
             if let Some(base) = left.strip_suffix("[]")
                 && base == right

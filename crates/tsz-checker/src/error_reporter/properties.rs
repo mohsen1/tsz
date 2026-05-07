@@ -284,6 +284,14 @@ impl<'a> CheckerState<'a> {
             {
                 return annotation_display;
             }
+            if annotation_display.contains('|')
+                && Self::same_simple_alias_array_union_display(
+                    &annotation_display,
+                    &inferred_display,
+                )
+            {
+                return annotation_display;
+            }
             // When the inferred display is an anonymous object but the annotation is a
             // generic type alias (e.g. `Record<K, V>`, `Partial<T>`), prefer the annotation.
             // Only apply for generic types (containing `<`) — plain identifiers like `Item`
@@ -323,7 +331,58 @@ impl<'a> CheckerState<'a> {
                 return annotation_display;
             }
         }
-        Self::collapse_pick_literal_union_display(&inferred_display).unwrap_or(inferred_display)
+        let display = Self::collapse_pick_literal_union_display(&inferred_display)
+            .unwrap_or(inferred_display);
+        Self::filter_generic_excess_union_display(&display).unwrap_or(display)
+    }
+
+    fn filter_generic_excess_union_display(display: &str) -> Option<String> {
+        if !display.contains(" | ") {
+            return None;
+        }
+        let members = display.split(" | ").collect::<Vec<_>>();
+        let concrete = members
+            .iter()
+            .copied()
+            .filter(|member| !Self::display_looks_generic_excess_union_member(member))
+            .collect::<Vec<_>>();
+        (!concrete.is_empty() && concrete.len() < members.len()).then(|| concrete.join(" | "))
+    }
+
+    fn display_looks_generic_excess_union_member(display: &str) -> bool {
+        let head = display
+            .split_once(" & ")
+            .map_or(display, |(head, _)| head)
+            .trim_matches(['(', ')', ' ']);
+        !head.is_empty()
+            && head.len() <= 2
+            && head
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    }
+
+    fn same_simple_alias_array_union_display(left: &str, right: &str) -> bool {
+        fn normalized(display: &str) -> Option<(&str, &str)> {
+            let mut parts = display.split(" | ");
+            let first = parts.next()?.trim();
+            let second = parts.next()?.trim();
+            if parts.next().is_some() {
+                return None;
+            }
+            if let Some(base) = first.strip_suffix("[]")
+                && base == second
+            {
+                return Some((base, first));
+            }
+            if let Some(base) = second.strip_suffix("[]")
+                && base == first
+            {
+                return Some((base, second));
+            }
+            None
+        }
+
+        normalized(left) == normalized(right)
     }
 
     fn is_plain_type_alias_display(display: &str) -> bool {
@@ -444,6 +503,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) -> (u32, String) {
         let type_str = self.excess_property_target_display_for_site(target, idx);
+        let type_str = Self::filter_generic_excess_union_display(&type_str).unwrap_or(type_str);
         let suggestion_target = self.strip_non_object_union_members_for_excess_display(target);
         if !self.has_syntax_parse_errors()
             && let Some(suggestion) = self
@@ -1980,6 +2040,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let type_str = self.excess_property_target_display_for_site(target, idx);
+        let type_str = Self::filter_generic_excess_union_display(&type_str).unwrap_or(type_str);
         let message = format!(
             "Object literal may only specify known properties, and '{prop_name}' does not exist in type '{type_str}'."
         );

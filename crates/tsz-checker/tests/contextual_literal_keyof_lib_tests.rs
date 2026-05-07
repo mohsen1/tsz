@@ -12,12 +12,93 @@
 //! through the contextual property API.
 //!
 //! Repro for the original arrayToLocaleStringES2015 / ES2020 conformance cases.
+use tsz_binder::BinderState;
+use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::context::ScriptTarget;
 use tsz_checker::diagnostics::Diagnostic;
+use tsz_checker::state::CheckerState;
 use tsz_checker::test_utils::check_source;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
+
+use rustc_hash::FxHashSet;
+use std::path::Path;
+use std::sync::Arc;
 
 fn check(source: &str) -> Vec<Diagnostic> {
     check_source(source, "test.ts", CheckerOptions::default())
+}
+
+fn load_named_lib_files_for_test(lib_names: &[&str]) -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_roots = [
+        manifest_dir.join("../../TypeScript/lib"),
+        manifest_dir.join("../../TypeScript/src/lib"),
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
+    ];
+
+    let mut lib_files = Vec::new();
+    let mut seen_files = FxHashSet::default();
+    for file_name in lib_names {
+        for root in &lib_roots {
+            let lib_path = root.join(file_name);
+            if lib_path.exists()
+                && let Ok(content) = std::fs::read_to_string(&lib_path)
+            {
+                if !seen_files.insert((*file_name).to_string()) {
+                    break;
+                }
+                lib_files.push(Arc::new(LibFile::from_source(
+                    (*file_name).to_string(),
+                    content,
+                )));
+                break;
+            }
+        }
+    }
+
+    lib_files
+}
+
+fn check_with_named_libs(source: &str, lib_names: &[&str]) -> Vec<Diagnostic> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let lib_files = load_named_lib_files_for_test(lib_names);
+    assert!(
+        !lib_files.is_empty(),
+        "test libs should be available for {lib_names:?}"
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+
+    checker.check_source_file(root);
+    checker.ctx.diagnostics.clone()
 }
 
 const NS_PRELUDE: &str = r#"
@@ -108,5 +189,92 @@ const x: T = { style: "currency" };
     assert!(
         ts2322.is_empty(),
         "object literal must narrow via aliased intersection target; got {ts2322:?}",
+    );
+}
+
+#[test]
+fn temporal_style_generic_options_contextually_type_literal_properties() {
+    let source = r#"
+type DateUnit = "year" | "month" | "week" | "day";
+type TimeUnit = "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond";
+type PluralizeUnit<T extends DateUnit | TimeUnit> =
+    | T
+    | {
+        year: "years";
+        month: "months";
+        week: "weeks";
+        day: "days";
+        hour: "hours";
+        minute: "minutes";
+        second: "seconds";
+        millisecond: "milliseconds";
+        microsecond: "microseconds";
+        nanosecond: "nanoseconds";
+    }[T];
+
+interface RoundingOptions<Units extends TimeUnit> {
+    smallestUnit?: PluralizeUnit<Units> | undefined;
+}
+
+interface ToStringRoundingOptions<Units extends TimeUnit> extends Pick<RoundingOptions<Units>, "smallestUnit"> {}
+
+interface PlainTimeToStringOptions extends ToStringRoundingOptions<Exclude<TimeUnit, "hour">> {
+    fractionalSecondDigits?: "auto" | 0 | 1 | 2 | 3 | undefined;
+}
+
+interface InstantToStringOptions extends PlainTimeToStringOptions {
+    timeZone?: string | undefined;
+}
+
+declare const instant: { toString(options?: InstantToStringOptions): string };
+
+instant.toString({ smallestUnit: "second" });
+instant.toString({ fractionalSecondDigits: 3 });
+instant.toString({ timeZone: "UTC" });
+"#;
+
+    let diagnostics = check(source);
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345.is_empty(),
+        "Temporal-style option literals should be contextually typed; got {ts2345:?}",
+    );
+}
+
+#[test]
+fn temporal_lib_to_string_options_contextually_type_literal_arguments() {
+    let source = r#"
+const instant = Temporal.Instant.fromEpochMilliseconds(1574074321816);
+const opts: Temporal.InstantToStringOptions = { timeZone: "UTC" };
+declare const time: Temporal.PlainTime;
+declare const dt: Temporal.PlainDateTime;
+declare const duration: Temporal.Duration;
+
+instant.toString({ timeZone: "UTC" });
+instant.toString({ smallestUnit: "minute" });
+instant.toString({ fractionalSecondDigits: 4 });
+time.toString({ smallestUnit: "minute" });
+time.toString({ fractionalSecondDigits: 4 });
+dt.toString({ smallestUnit: "minute" });
+dt.toString({ fractionalSecondDigits: 4 });
+duration.toString({ smallestUnit: "second" });
+duration.toString({ fractionalSecondDigits: 4 });
+"#;
+
+    let diagnostics = check_with_named_libs(
+        source,
+        &[
+            "es6.d.ts",
+            "es2021.intl.d.ts",
+            "esnext.date.d.ts",
+            "esnext.intl.d.ts",
+            "esnext.temporal.d.ts",
+            "dom.d.ts",
+        ],
+    );
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345.is_empty(),
+        "Temporal lib option literals should be contextually typed; got {ts2345:?}",
     );
 }

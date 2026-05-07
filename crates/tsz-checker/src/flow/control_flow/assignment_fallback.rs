@@ -775,14 +775,16 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(result);
         }
         if operator == SyntaxKind::BarBarToken as u16 {
-            // x || y -> NonNullable<typeof x> | typeof y
+            // x || y -> typeof y | NonNullable<typeof x>
             // TypeScript narrows the left side in || result types: the truthy branch
             // removes null/undefined (and other falsy types, but removing nullish covers
-            // the most important case for flow analysis).
+            // the most important case for flow analysis). Keep the same display order
+            // as the main binary evaluator so diagnostics retain the whole-expression
+            // surface for type parameters.
             let left_type = self.resolve_operand_type(left)?;
             let right_type = self.resolve_operand_type(right)?;
             let non_nullish_left = self.interner.remove_nullish(left_type);
-            return Some(self.interner.union2(non_nullish_left, right_type));
+            return Some(self.interner.union2(right_type, non_nullish_left));
         }
         if operator == SyntaxKind::PlusToken as u16 {
             // If either operand is string, result is string

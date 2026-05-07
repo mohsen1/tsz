@@ -226,6 +226,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .or_else(|| self.extract_source_from_keyof(mapped.constraint))
             .or_else(|| self.post_instantiation_mapped_template_source(mapped));
 
+        if source_object.is_none()
+            && let Some(source) =
+                self.extract_template_index_source(mapped.template, mapped.type_param.name)
+            && matches!(
+                self.interner().lookup(source),
+                Some(TypeData::Application(_))
+            )
+            && self.evaluate(source) == source
+        {
+            return self.interner().mapped(*mapped);
+        }
+
         // tsc treats ANY `{ [K in keyof T]: ... }` as homomorphic for modifier
         // inheritance — the source T's optional/readonly flags propagate to the
         // output even when the template is NOT `T[K]`. For example:

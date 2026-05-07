@@ -125,6 +125,17 @@ impl<'a> CheckerState<'a> {
         if !crate::query_boundaries::common::type_id_is_known_to_db(self.ctx.types, type_id) {
             return false;
         }
+        for def_id in crate::query_boundaries::common::collect_lazy_def_ids(self.ctx.types, type_id)
+        {
+            let has_body_in_env = self
+                .ctx
+                .type_env
+                .try_borrow()
+                .is_ok_and(|env| env.get_def(def_id).is_some());
+            if !has_body_in_env && self.ctx.definition_store.get_body(def_id).is_none() {
+                return false;
+            }
+        }
         let Some(global_name) = name.strip_suffix("Constructor") else {
             return true;
         };
