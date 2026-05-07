@@ -565,31 +565,71 @@ impl Server {
 
             // Check if extract variable is applicable
             if provider.extract_variable(root, range).is_some() {
+                // Issue #3803: tsc emits one extract action per *applicable*
+                // scope and attaches a range. Approximate "applicable scopes"
+                // by detecting whether the request's expression has an
+                // enclosing function in its ancestor chain.
+                let action_range = serde_json::json!({
+                    "start": { "line": start_line, "offset": start_offset },
+                    "end": { "line": end_line, "offset": end_offset },
+                });
+                let inside_function =
+                    Self::request_is_inside_function(&arena, &line_map, &content, range);
+                let function_actions: Vec<serde_json::Value> = if inside_function {
+                    vec![
+                        serde_json::json!({
+                            "name": "function_scope_0",
+                            "description": "Extract to function in enclosing scope",
+                            "kind": "refactor.extract.function",
+                            "range": action_range,
+                        }),
+                        serde_json::json!({
+                            "name": "function_scope_1",
+                            "description": "Extract to function in global scope",
+                            "kind": "refactor.extract.function",
+                            "range": action_range,
+                        }),
+                    ]
+                } else {
+                    vec![serde_json::json!({
+                        "name": "function_scope_0",
+                        "description": "Extract to function in global scope",
+                        "kind": "refactor.extract.function",
+                        "range": action_range,
+                    })]
+                };
+                let constant_actions: Vec<serde_json::Value> = if inside_function {
+                    vec![
+                        serde_json::json!({
+                            "name": "constant_scope_0",
+                            "description": "Extract to constant in enclosing scope",
+                            "kind": "refactor.extract.constant",
+                            "range": action_range,
+                        }),
+                        serde_json::json!({
+                            "name": "constant_scope_1",
+                            "description": "Extract to constant in global scope",
+                            "kind": "refactor.extract.constant",
+                            "range": action_range,
+                        }),
+                    ]
+                } else {
+                    vec![serde_json::json!({
+                        "name": "constant_scope_0",
+                        "description": "Extract to constant in enclosing scope",
+                        "kind": "refactor.extract.constant",
+                        "range": action_range,
+                    })]
+                };
                 refactors.push(serde_json::json!({
                     "name": "Extract Symbol",
                     "description": "Extract function",
-                    "actions": [{
-                        "name": "function_scope_0",
-                        "description": "Extract to function in enclosing scope",
-                        "kind": "refactor.extract.function"
-                    }, {
-                        "name": "function_scope_1",
-                        "description": "Extract to function in global scope",
-                        "kind": "refactor.extract.function"
-                    }]
+                    "actions": function_actions,
                 }));
                 refactors.push(serde_json::json!({
                     "name": "Extract Symbol",
                     "description": "Extract constant",
-                    "actions": [{
-                        "name": "constant_scope_0",
-                        "description": "Extract to constant in enclosing scope",
-                        "kind": "refactor.extract.constant"
-                    }, {
-                        "name": "constant_scope_1",
-                        "description": "Extract to constant in global scope",
-                        "kind": "refactor.extract.constant"
-                    }]
+                    "actions": constant_actions,
                 }));
             }
 
@@ -597,6 +637,37 @@ impl Server {
         })();
 
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    /// Walk the AST upward from the request range looking for an
+    /// enclosing function-like node (function/method/arrow/constructor/
+    /// accessor). Returns `true` when one is found, `false` when the
+    /// request range is at module level. Used by
+    /// `handle_get_applicable_refactors` to decide which extract scopes
+    /// to advertise. Issue #3803.
+    fn request_is_inside_function(
+        arena: &tsz::parser::node::NodeArena,
+        line_map: &LineMap,
+        source_text: &str,
+        range: Range,
+    ) -> bool {
+        let Some(start_offset) = line_map.position_to_offset(range.start, source_text) else {
+            return false;
+        };
+        let mut current = tsz::lsp::utils::find_node_at_offset(arena, start_offset);
+        while current.is_some() {
+            let Some(node) = arena.get(current) else {
+                return false;
+            };
+            if node.is_function_like() {
+                return true;
+            }
+            let Some(ext) = arena.get_extended(current) else {
+                return false;
+            };
+            current = ext.parent;
+        }
+        false
     }
 
     pub(crate) fn handle_get_edits_for_refactor(
