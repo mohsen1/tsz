@@ -795,6 +795,186 @@ fn apply_tsserver_text_edits(mut source: String, edits: &[serde_json::Value]) ->
     source
 }
 
+fn assert_full_comment_text_changes(body: &serde_json::Value) {
+    let changes = body
+        .as_array()
+        .expect("comment edit body should be an array");
+    assert!(
+        !changes.is_empty(),
+        "expected at least one edit, got {body:#}"
+    );
+    for change in changes {
+        assert!(
+            change.get("start").is_none(),
+            "full comment edit should not use simplified start/end shape: {change:#}"
+        );
+        assert!(
+            change.get("end").is_none(),
+            "full comment edit should not use simplified start/end shape: {change:#}"
+        );
+        assert!(
+            change
+                .get("newText")
+                .and_then(serde_json::Value::as_str)
+                .is_some(),
+            "full comment edit should include newText: {change:#}"
+        );
+        let span = change
+            .get("span")
+            .expect("full comment edit should include span");
+        assert!(
+            span.get("start")
+                .and_then(serde_json::Value::as_u64)
+                .is_some(),
+            "full comment edit span should include numeric start: {change:#}"
+        );
+        assert!(
+            span.get("length")
+                .and_then(serde_json::Value::as_u64)
+                .is_some(),
+            "full comment edit span should include numeric length: {change:#}"
+        );
+    }
+}
+
+#[test]
+fn comment_edit_full_commands_return_text_changes() {
+    let mut server = make_server();
+    let file = "/comment-full.ts";
+
+    server
+        .open_files
+        .insert(file.to_string(), "let x = 1;\nlet y = 2;\n".to_string());
+    let response = server.handle_tsserver_request(make_request(
+        "toggleLineComment-full",
+        serde_json::json!({
+            "file": file,
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 11
+        }),
+    ));
+    assert!(response.success);
+    let body = response
+        .body
+        .expect("toggleLineComment-full should return edits");
+    assert_full_comment_text_changes(&body);
+    assert_eq!(body[0]["newText"], "//");
+    assert_eq!(
+        body[0]["span"],
+        serde_json::json!({"start": 0, "length": 0})
+    );
+
+    server
+        .open_files
+        .insert(file.to_string(), "let x = 1;\nlet y = 2;\n".to_string());
+    let response = server.handle_tsserver_request(make_request(
+        "toggleMultilineComment-full",
+        serde_json::json!({
+            "file": file,
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 10
+        }),
+    ));
+    assert!(response.success);
+    let body = response
+        .body
+        .expect("toggleMultilineComment-full should return edits");
+    assert_full_comment_text_changes(&body);
+
+    server
+        .open_files
+        .insert(file.to_string(), "let x = 1;\nlet y = 2;\n".to_string());
+    let response = server.handle_tsserver_request(make_request(
+        "commentSelection-full",
+        serde_json::json!({
+            "file": file,
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 2,
+            "endOffset": 11
+        }),
+    ));
+    assert!(response.success);
+    let body = response
+        .body
+        .expect("commentSelection-full should return edits");
+    assert_full_comment_text_changes(&body);
+
+    server
+        .open_files
+        .insert(file.to_string(), "//let x = 1;\nlet y = 2;\n".to_string());
+    let response = server.handle_tsserver_request(make_request(
+        "uncommentSelection-full",
+        serde_json::json!({
+            "file": file,
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 13
+        }),
+    ));
+    assert!(response.success);
+    let body = response
+        .body
+        .expect("uncommentSelection-full should return edits");
+    assert_full_comment_text_changes(&body);
+    assert_eq!(body[0]["newText"], "");
+    assert_eq!(
+        body[0]["span"],
+        serde_json::json!({"start": 0, "length": 2})
+    );
+}
+
+#[test]
+fn comment_edit_simplified_command_keeps_line_offset_shape() {
+    let mut server = make_server();
+    let file = "/comment-simplified.ts";
+    server
+        .open_files
+        .insert(file.to_string(), "let x = 1;\nlet y = 2;\n".to_string());
+
+    let response = server.handle_tsserver_request(make_request(
+        "toggleLineComment",
+        serde_json::json!({
+            "file": file,
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 11
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response
+        .body
+        .expect("toggleLineComment should return edits");
+    let changes = body
+        .as_array()
+        .expect("comment edit body should be an array");
+    assert_eq!(
+        changes.len(),
+        1,
+        "expected one simplified edit, got {body:#}"
+    );
+    assert_eq!(changes[0]["newText"], "//");
+    assert_eq!(
+        changes[0]["start"],
+        serde_json::json!({"line": 1, "offset": 1})
+    );
+    assert_eq!(
+        changes[0]["end"],
+        serde_json::json!({"line": 1, "offset": 1})
+    );
+    assert!(
+        changes[0].get("span").is_none(),
+        "simplified command should not return TextChange span"
+    );
+}
+
 #[test]
 fn test_line_offset_to_byte_first_char() {
     assert_eq!(Server::line_offset_to_byte("hello\nworld\n", 1, 1), 0);
