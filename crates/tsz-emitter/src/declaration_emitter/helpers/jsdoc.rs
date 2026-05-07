@@ -1155,14 +1155,45 @@ impl<'a> DeclarationEmitter<'a> {
                 .map(str::trim)
                 .filter(|name| !name.is_empty())
             {
-                let name_str = name.to_string();
-                if seen.insert(name_str.clone()) {
+                // Bracket-default form `@template [T=string]` declares type
+                // parameter `T` with default `string`. Without unwrapping the
+                // brackets, the verbatim segment `[T=string]` would be
+                // emitted between `<` and `>` and produce invalid `.d.ts`
+                // output (issue #4005).
+                let normalized = Self::normalize_jsdoc_template_bracket_default(name);
+                let name_str = normalized.into_owned();
+                let key = Self::jsdoc_template_param_name_key(&name_str).to_string();
+                if seen.insert(key) {
                     params.push(name_str);
                 }
             }
         }
 
         params
+    }
+
+    /// Strip `[…]` from a `@template` segment and rewrite `T=default` as
+    /// `T = default` so the result is valid TypeScript type-parameter
+    /// syntax. Non-bracket segments are returned unchanged.
+    fn normalize_jsdoc_template_bracket_default(segment: &str) -> std::borrow::Cow<'_, str> {
+        let trimmed = segment.trim();
+        if !(trimmed.starts_with('[') && trimmed.ends_with(']')) {
+            return std::borrow::Cow::Borrowed(segment);
+        }
+        let inner = &trimmed[1..trimmed.len() - 1];
+        if let Some((name, default)) = inner.split_once('=') {
+            std::borrow::Cow::Owned(format!("{} = {}", name.trim(), default.trim()))
+        } else {
+            std::borrow::Cow::Owned(inner.trim().to_string())
+        }
+    }
+
+    fn jsdoc_template_param_name_key(text: &str) -> &str {
+        let trimmed = text.trim();
+        let end = trimmed
+            .find(|c: char| c == '=' || c.is_whitespace())
+            .unwrap_or(trimmed.len());
+        trimmed[..end].trim()
     }
 
     fn take_jsdoc_template_name(text: &str) -> Option<(&str, &str)> {
