@@ -1,6 +1,6 @@
 # 100% Conformance Strategy
 
-Last updated: 2026-05-07 on `origin/main` at `ffb1937ee7`.
+Last updated: 2026-05-07 on `origin/main` at `9b2535e8fc`.
 
 ## Target
 
@@ -10,27 +10,31 @@ Reach 100% TypeScript conformance pass rate, publish focused pull requests, merg
 
 Snapshot files on `origin/main`:
 
-- `scripts/conformance/conformance-snapshot.json`: `12455/12582` passed, `127` failed, `99.0%`.
-- `scripts/conformance/conformance-detail.json`: `12455/12581` passed, `126` failed, `5` known failures.
+- `scripts/conformance/conformance-snapshot.json`: `12470/12582` passed, `112` failed, `99.1%`.
+- `scripts/conformance/conformance-detail.json`: `12470/12581` passed, `111` failed, `5` known failures.
 
 Dashboard from `python3 scripts/conformance/query-conformance.py --dashboard`:
 
-- False positives: `22` tests.
-- Fingerprint-only failures: `76` tests.
-- Wrong-code failures: `24` tests.
-- Close to passing, diff <= 2: `40` tests.
-- Big 3 wrong-code problems: `21` tests across `TS2322`, `TS2339`, and `TS2345`.
+- False positives: `14` tests.
+- Fingerprint-only failures: `71` tests.
+- Wrong-code failures: `22` tests.
+- Close to passing, diff <= 2: `30` tests.
+- Big 3 wrong-code problems: `20` tests across `TS2322`, `TS2339`, and `TS2345`.
 - Node lane estimate: `5` tests.
 
-Merged after this baseline and expected to move it:
+Recently merged reductions already in this baseline:
 
-- `#4363` fixed duplicate ES import binding diagnostics. Expected `+1`, merged in `79ba33b93d`.
-- `#4366` fixed `import.defer` and JSON import attributes. Expected `+2`, merged in `ffb1937ee7`.
+- `#4408` simplified the slow TypeBox structural display fixture so CI can finish.
+- `#4410` fixed `in` operator diagnostics after type-environment prewarm.
+- `#4412` fixed DOM indexed-access TS2344 variance drift.
+- `#4413` fixed unconstrained generic JSX attribute TS2322 emission.
 
 Open active PRs to account for before choosing duplicate work:
 
-- `#4364` `fix(checker): avoid false TS2589 on bounded conditionals`: expected `+5`, full CI running.
-- `#4369` `checker: report all duplicate import aliases`: expected `+1`, full CI running.
+- `#4415` `fix(solver): exclude pure-literal unions from generic-display origin override`: expected `+19`, auto-merge enabled, CI running.
+- `#4401` `test(checker): lock jsx excess prop assignability`: auto-merge enabled, CI running.
+- `#4392` `chore(conformance): prune stale suppression debt`: auto-merge enabled, CI running.
+- `#4414` `fix(bench): include full nextjs project shard`: not a conformance fix, auto-merge enabled.
 
 ## Work Selection
 
@@ -56,13 +60,14 @@ python3 scripts/conformance/query-conformance.py --campaigns
 
 ### Tier 1: Fingerprint Parity
 
-This is the largest bucket: `76` tests, about `62%` of failures.
+This is the largest bucket: `71` tests, about `64%` of detail failures.
 
 Primary targets:
 
-- `TS2322`: `46` fingerprint-only tests.
-- `TS2345`: `23` fingerprint-only tests.
+- `TS2322`: `45` fingerprint-only tests.
+- `TS2345`: `24` fingerprint-only tests.
 - `TS2339`: `8` fingerprint-only tests.
+- `TS2564`: `7` fingerprint-only tests.
 - Diagnostic-count parity for duplicated or missing instances.
 
 Rules:
@@ -73,16 +78,17 @@ Rules:
 
 ### Tier 2: False Positives
 
-The one-extra queue has `33` tests that can pass by removing one extra code.
+The one-extra queue has `21` tests that can pass by removing one extra code.
 
 Current priority codes:
 
-- `TS2345`: `6` tests.
-- `TS2589`: `5` tests, covered by open PR `#4364`.
+- `TS2345`: `5` tests.
 - `TS2344`: `4` tests.
 - `TS2322`: `4` tests.
 - `TS2339`: `2` tests.
+- `TS2638`: `2` tests.
 - `TS7006`: `2` tests.
+- `TS2741`: `2` tests.
 
 Rules:
 
@@ -103,9 +109,11 @@ Every agent gets a dedicated worktree and branch from current `origin/main`. Age
 
 Current assignments:
 
-- `codex/agent-ts2344-fp`: TS2344 false positives in `inferenceDoesNotAddUndefinedOrNull.ts`, `libdtsFix.ts`, `parserOverloadOnConstants1.ts`.
-- `codex/agent-contextual-fp`: contextual TS2322/TS2345 false-positive cluster.
-- `codex/agent-type-display-parity`: TS2322/TS2345 fingerprint-only type display cluster.
+- `fix/parser-recovery-conformance`: parser/binder recovery for `plainJSBinderErrors.ts`, then `reachabilityChecksNoCrash1.ts` and `unicodeEscapesInNames02.ts` if same root cause.
+- `fix/module-preserve4-conformance`: `modulePreserve4.ts` extra `TS1192`.
+- `fix/contextual-ts2345-conformance`: contextual/generic extra `TS2345` in `observableInferenceCanBeMade.ts`, `promiseTry.ts`, `templateLiteralTypes6.ts`, and `unionTypeReduction2.ts`.
+- `fix/variance-ts2344-conformance`: missing `TS2344` in `coAndContraVariantInferences2.ts`, `coAndContraVariantInferences3.ts`, and `coAndContraVariantInferences4.ts`.
+- Existing `fix/iterator-diagnostic-conformance`: iterator helper `TS2339`/`TS7006` cluster; avoid duplicate local work until that branch reports.
 
 Local coordination rules:
 
@@ -163,7 +171,7 @@ If a merged commit reduces pass rate or breaks the conformance goal, identify th
 
 ## Disk and Process Hygiene
 
-Current disk after cleanup: about `278Gi` available on `/Users`; `/Users/mohsen/code/tsz-worktrees` is about `11G`, salvage archive about `10M`.
+Current disk check: about `79Gi` available on `/Users` as of 2026-05-07. This is enough for active work, but old worktrees and generated targets need continuous pruning.
 
 Rules:
 
