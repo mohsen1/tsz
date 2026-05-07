@@ -2322,6 +2322,9 @@ impl<'a> TypeFormatter<'a> {
         // is decided by this offset).
         if let Some(TypeData::Array(elem)) = &data {
             let (tier, file, span) = self.get_source_position_for_type(*elem, def_store);
+            if tier == 0 {
+                return (tier, file, span.saturating_add(100));
+            }
             return (tier, file, span.saturating_add(1));
         }
 
@@ -2329,6 +2332,9 @@ impl<'a> TypeFormatter<'a> {
         // Use the inner type's position +1 for the same reason.
         if let Some(TypeData::ReadonlyType(inner)) = &data {
             let (tier, file, span) = self.get_source_position_for_type(*inner, def_store);
+            if tier == 0 {
+                return (tier, file, span.saturating_add(100));
+            }
             return (tier, file, span.saturating_add(1));
         }
 

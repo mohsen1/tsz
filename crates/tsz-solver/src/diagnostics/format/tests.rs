@@ -3991,6 +3991,32 @@ fn union_array_inherits_element_source_position() {
     );
 }
 
+#[test]
+fn union_array_of_intrinsic_stays_after_primitive_builtin() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let react_child = crate::def::DefinitionInfo::type_alias(
+        db.intern_string("ReactChild"),
+        vec![],
+        TypeId::STRING,
+    )
+    .with_file_id(0)
+    .with_span(100, 110);
+    let react_child_def = def_store.register(react_child);
+    let react_child_ref = db.lazy(react_child_def);
+    let any_array = db.array(TypeId::ANY);
+
+    let union_id = db.union_preserve_members(vec![react_child_ref, any_array, TypeId::BOOLEAN]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(union_id),
+        "boolean | any[] | ReactChild",
+        "Arrays of intrinsic element types should not inherit `any`'s low builtin key"
+    );
+}
+
 /// Regression: `Application(Container, [T])` should use the MAX position of
 /// the base and its arguments. This keeps generic instantiations sorted with
 /// the user-defined element type rather than with a built-in / lib base.
