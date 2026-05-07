@@ -5055,6 +5055,52 @@ fn test_check_options_experimental_decorators_default_false() {
 }
 
 #[test]
+fn test_check_options_legacy_options_round_trip_to_checker_options() {
+    // Issue #3579: the legacy `check` request previously hardcoded several
+    // checker options to `false` even when the client supplied them. Now
+    // they're plumbed through. Locks the deserialize+plumbing for the six
+    // options the issue called out.
+    let json = serde_json::json!({
+        "verbatimModuleSyntax": true,
+        "erasableSyntaxOnly": true,
+        "allowImportingTsExtensions": true,
+        "rewriteRelativeImportExtensions": true,
+        "allowUmdGlobalAccess": true,
+        "preserveConstEnums": true,
+    });
+    let options: CheckOptions = serde_json::from_value(json).unwrap();
+    assert!(options.verbatim_module_syntax);
+    assert!(options.erasable_syntax_only);
+    assert!(options.allow_importing_ts_extensions);
+    assert!(options.rewrite_relative_import_extensions);
+    assert!(options.allow_umd_global_access);
+    assert!(options.preserve_const_enums);
+
+    // Shape-check the conversion to `CheckerOptions` — we don't run a full
+    // check here (libs aren't loaded in the unit test), but the field
+    // round-trip is the meaningful behavior change.
+    let server = make_server();
+    let checker = server.build_checker_options(&options);
+    assert!(checker.verbatim_module_syntax);
+    assert!(checker.erasable_syntax_only);
+    assert!(checker.allow_importing_ts_extensions);
+    assert!(checker.rewrite_relative_import_extensions);
+    assert!(checker.allow_umd_global_access);
+    assert!(checker.preserve_const_enums);
+}
+
+#[test]
+fn test_check_options_legacy_options_default_false() {
+    let options: CheckOptions = serde_json::from_str(r#"{}"#).unwrap();
+    assert!(!options.verbatim_module_syntax);
+    assert!(!options.erasable_syntax_only);
+    assert!(!options.allow_importing_ts_extensions);
+    assert!(!options.rewrite_relative_import_extensions);
+    assert!(!options.allow_umd_global_access);
+    assert!(!options.preserve_const_enums);
+}
+
+#[test]
 fn test_check_options_deserializes_numeric_tsserver_enums() {
     let options: CheckOptions = serde_json::from_value(serde_json::json!({
         "noImplicitAny": true,

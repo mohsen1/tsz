@@ -895,18 +895,21 @@ impl Server {
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
             no_implicit_use_strict: false,
-            allow_importing_ts_extensions: false,
-            rewrite_relative_import_extensions: false,
+            // Issue #3579: route server-protocol options that were previously
+            // hardcoded to `false` so the legacy `check` request matches the
+            // CLI/checker behavior for the same options.
+            allow_importing_ts_extensions: options.allow_importing_ts_extensions,
+            rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
             implied_classic_resolution: false,
             jsx_import_source: String::new(),
-            verbatim_module_syntax: false,
+            verbatim_module_syntax: options.verbatim_module_syntax,
             ignore_deprecations: false,
-            allow_umd_global_access: false,
-            preserve_const_enums: false,
+            allow_umd_global_access: options.allow_umd_global_access,
+            preserve_const_enums: options.preserve_const_enums,
             strict_builtin_iterator_return: options
                 .strict_builtin_iterator_return
                 .unwrap_or(options.strict),
-            erasable_syntax_only: false,
+            erasable_syntax_only: options.erasable_syntax_only,
             no_fallthrough_cases_in_switch: options.no_fallthrough_cases_in_switch,
         }
     }
