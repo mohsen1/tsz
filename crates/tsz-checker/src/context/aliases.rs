@@ -48,8 +48,8 @@ pub type ModuleExportsIndexMap = FxHashMap<String, ModuleExportsByName>;
 /// `(file_idx, SymbolId)` where the export is declared.
 pub type GlobalModuleExportsIndex = Arc<ModuleExportsIndexMap>;
 
-/// Per-checker cache: module specifier → resolved cross-file namespace exports.
-pub type NamespaceExportsCache = FxHashMap<String, Option<SymbolTable>>;
+/// Per-checker cache: (requesting file, module specifier) → resolved cross-file namespace exports.
+pub type NamespaceExportsCache = FxHashMap<(usize, String), Option<SymbolTable>>;
 
 /// Per-checker positive cache for named exports reached through `export=`.
 /// Keyed by `(current_file_idx, module_specifier, export_name)`.
