@@ -4,23 +4,31 @@
 //! invalid-RHS diagnostics.
 //!
 //! Regression for `conditionalTypeDoesntSpinForever.ts`: tsz used to
-//! emit an invalid-RHS diagnostic for every
-//! `in` operator in an `&&` chain when the operand was an unconstrained
-//! type parameter, instead of just for the first one. tsc narrows
-//! after each successful `in`, so subsequent checks see `T & object`
-//! and pass the operand-type check.
+//! emit an invalid-RHS diagnostic for every `in` operator in an `&&` chain
+//! when the operand was an unconstrained type parameter, instead of just the
+//! first TS2322. tsc narrows after each successful `in`, so subsequent checks
+//! see `T & Record<..., unknown>` and pass the operand-type check.
 
 #[test]
-fn in_chain_emits_ts2638_only_at_first_link_for_unconstrained_type_param() {
+fn in_chain_emits_ts2322_only_at_first_link_for_unconstrained_type_param() {
     let source = r#"
 const f = <T>(x: T) => "a" in x && "b" in x && "c" in x;
 "#;
     let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
     let ts2638: Vec<_> = diagnostics.iter().filter(|d| d.code == 2638).collect();
     assert_eq!(
-        ts2638.len(),
+        ts2322.len(),
         1,
-        "expected exactly 1 TS2638 (only the first `in` on an unconstrained T), got: {:?}",
+        "expected exactly 1 TS2322 (only the first `in` on an unconstrained T), got: {:?}",
+        ts2322
+            .iter()
+            .map(|d| (d.start, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        ts2638.is_empty(),
+        "bare `T` should use TS2322, not TS2638; got: {:?}",
         ts2638
             .iter()
             .map(|d| (d.start, d.message_text.clone()))
@@ -46,12 +54,21 @@ fn in_chain_narrowing_keys_off_token_kind_not_param_or_property_names() {
             r#"const f = <{tparam}>(x: {tparam}) => "{p0}" in x && "{p1}" in x && "{p2}" in x;"#
         );
         let diagnostics = tsz_checker::test_utils::check_source_diagnostics(&source);
+        let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
         let ts2638: Vec<_> = diagnostics.iter().filter(|d| d.code == 2638).collect();
         assert_eq!(
-            ts2638.len(),
+            ts2322.len(),
             1,
-            "param={tparam} props={props:?}: expected 1 TS2638, got {} ({:?})",
-            ts2638.len(),
+            "param={tparam} props={props:?}: expected 1 TS2322, got {} ({:?})",
+            ts2322.len(),
+            ts2322
+                .iter()
+                .map(|d| d.message_text.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            ts2638.is_empty(),
+            "param={tparam} props={props:?}: bare RHS should not produce TS2638 ({:?})",
             ts2638
                 .iter()
                 .map(|d| d.message_text.clone())
@@ -61,7 +78,7 @@ fn in_chain_narrowing_keys_off_token_kind_not_param_or_property_names() {
 }
 
 #[test]
-fn in_chain_in_or_chain_still_emits_per_link() {
+fn in_chain_in_or_chain_still_emits_ts2322_per_link() {
     // The narrowing only applies in the `&&` truthy chain. In a `||` chain
     // each `in` check is independent (the right side runs when the left
     // failed) so the operand-type error must still fire for each one.
@@ -69,11 +86,20 @@ fn in_chain_in_or_chain_still_emits_per_link() {
 const f = <T>(x: T) => "a" in x || "b" in x;
 "#;
     let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
     let ts2638: Vec<_> = diagnostics.iter().filter(|d| d.code == 2638).collect();
     assert_eq!(
-        ts2638.len(),
+        ts2322.len(),
         2,
-        "|| chain should report each `in` independently, got: {:?}",
+        "|| chain should report each `in` independently with TS2322, got: {:?}",
+        ts2322
+            .iter()
+            .map(|d| d.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        ts2638.is_empty(),
+        "bare `T` in a `||` chain should not produce TS2638, got: {:?}",
         ts2638
             .iter()
             .map(|d| d.message_text.clone())
@@ -208,7 +234,7 @@ function f(x: object) {
 }
 
 #[test]
-fn in_operator_reports_ts2638_for_bare_generic_rhs() {
+fn in_operator_reports_ts2322_for_bare_generic_rhs() {
     let diagnostics = tsz_checker::test_utils::check_source_code_messages(
         r#"
 function f<T>(x: T) {
@@ -222,16 +248,60 @@ function f<T>(x: T) {
     assert!(
         diagnostics
             .iter()
-            .any(|(code, message)| { *code == 2638 && message.contains("NonNullable<T>") }),
-        "Expected TS2638 for bare generic `in` RHS, got {diagnostics:#?}"
+            .any(|(code, message)| { *code == 2322 && message.contains("Type 'T'") }),
+        "Expected TS2322 for bare generic `in` RHS, got {diagnostics:#?}"
     );
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 2322),
-        "Expected no TS2322 for bare generic `in` RHS, got {diagnostics:#?}"
+        !diagnostics.iter().any(|(code, _)| *code == 2638),
+        "Expected no TS2638 for bare generic `in` RHS, got {diagnostics:#?}"
     );
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2339),
         "Expected `in` narrowing to expose property `a`, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_reports_ts2322_not_ts2638_for_primitive_intersections() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+function intersection2<T>(thing: T & (0 | 1 | 2)) {
+  "key" in thing;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("T &") && message.contains("not assignable")
+        }),
+        "Expected TS2322 for primitive-only intersection RHS, got {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2638),
+        "Expected no TS2638 for primitive-only intersection RHS, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_reports_ts2322_not_ts2638_for_generic_symbol_key_lookup() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+function hasField<SO_FAR>(soFar: SO_FAR, fieldName: string | number | symbol) {
+  return fieldName in soFar;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2322 && message.contains("SO_FAR") }),
+        "Expected TS2322 for bare generic RHS with symbolic key, got {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2638),
+        "Expected no TS2638 for bare generic RHS with symbolic key, got {diagnostics:#?}"
     );
 }
 
@@ -269,6 +339,12 @@ function genericCase<T>(x: T) {
             .iter()
             .any(|(code, message)| { *code == 2638 && message.contains("{}") }),
         "Expected TS2638 for unknown or truthiness-narrowed unknown, got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2638 && message.contains("NonNullable<T>") }),
+        "Expected TS2638 for truthiness-narrowed generic, got {diagnostics:#?}"
     );
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2339),

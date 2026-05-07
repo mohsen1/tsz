@@ -365,12 +365,13 @@ impl<'a> CheckerState<'a> {
             || kind == syntax_kind_ext::TEMPLATE_EXPRESSION
     }
 
-    /// Check if a type "may represent a primitive value" for TS2638.
+    /// Check if an otherwise valid `in` RHS may still represent a primitive
+    /// value for TS2638.
     ///
-    /// In tsc, this fires for "instantiable" types (type parameters, conditional types)
-    /// whose constraint is missing or could accept primitive values. Concrete object
-    /// types like `{}` do NOT trigger TS2638 on their own — only when they appear as
-    /// the constraint of a type parameter that could be instantiated with a primitive.
+    /// Directly invalid operands use TS2322 instead. TS2638 is for operands that
+    /// look object-like enough to pass assignability, such as `T & {}` or a
+    /// truthiness-narrowed `unknown`, but whose apparent object type can still be
+    /// backed by a primitive at runtime.
     fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
         // The intrinsic `object` type excludes primitives by definition
         if ty == TypeId::OBJECT {
@@ -572,6 +573,97 @@ impl<'a> CheckerState<'a> {
         {
             let declared_type = self.get_type_from_type_node(var_decl.type_annotation);
             return declared_type == TypeId::UNKNOWN;
+        }
+
+        false
+    }
+
+    fn truthiness_guarded_type_parameter_rhs(
+        &mut self,
+        node_idx: NodeIndex,
+        right_type: TypeId,
+    ) -> bool {
+        if !crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, right_type)
+            || !self.type_may_represent_primitive(right_type)
+        {
+            return false;
+        }
+
+        self.has_truthiness_antecedent_for_reference(node_idx)
+    }
+
+    fn has_truthiness_antecedent_for_reference(&mut self, reference_idx: NodeIndex) -> bool {
+        let reference_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(reference_idx);
+        let Some(reference_symbol) = self.resolve_identifier_symbol(reference_idx) else {
+            return false;
+        };
+
+        let mut child = reference_idx;
+        let mut current = self.ctx.arena.parent_of(child);
+        while let Some(parent_idx) = current {
+            if parent_idx.is_none() {
+                break;
+            }
+
+            if let Some(parent_node) = self.ctx.arena.get(parent_idx)
+                && parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+                && binary.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                && binary.right == child
+                && self.truthiness_expression_references_symbol(binary.left, reference_symbol)
+            {
+                return true;
+            }
+
+            child = parent_idx;
+            current = self.ctx.arena.parent_of(parent_idx);
+        }
+
+        false
+    }
+
+    fn truthiness_expression_references_symbol(
+        &mut self,
+        expr_idx: NodeIndex,
+        reference_symbol: tsz_binder::SymbolId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.resolve_identifier_symbol(expr_idx) == Some(reference_symbol);
+        }
+
+        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && let Some(unary) = self.ctx.arena.get_unary_expr(node)
+            && unary.operator == SyntaxKind::ExclamationToken as u16
+        {
+            let operand = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(unary.operand);
+            if let Some(operand_node) = self.ctx.arena.get(operand)
+                && operand_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                && let Some(inner) = self.ctx.arena.get_unary_expr(operand_node)
+                && inner.operator == SyntaxKind::ExclamationToken as u16
+            {
+                return self
+                    .truthiness_expression_references_symbol(inner.operand, reference_symbol);
+            }
+            return false;
+        }
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+        {
+            return self.truthiness_expression_references_symbol(binary.left, reference_symbol)
+                || self.truthiness_expression_references_symbol(binary.right, reference_symbol);
         }
 
         false
@@ -2470,8 +2562,8 @@ impl<'a> CheckerState<'a> {
 
         if right_type == TypeId::UNKNOWN {
             self.error_is_of_type_unknown(right_idx);
-        } else if self.type_may_represent_primitive(right_type)
-            || self.truthiness_narrowed_from_unknown(right_idx, right_type)
+        } else if !self.is_valid_in_operator_rhs(right_type)
+            && self.truthiness_guarded_type_parameter_rhs(right_idx, right_type)
         {
             let type_str = self.format_apparent_type_for_in_operator(right_type);
             self.error_at_node_msg(
@@ -2487,6 +2579,15 @@ impl<'a> CheckerState<'a> {
                 TypeId::OBJECT,
                 right_idx,
                 right_idx,
+            );
+        } else if self.type_may_represent_primitive(right_type)
+            || self.truthiness_narrowed_from_unknown(right_idx, right_type)
+        {
+            let type_str = self.format_apparent_type_for_in_operator(right_type);
+            self.error_at_node_msg(
+                right_idx,
+                tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND,
+                &[&type_str],
             );
         }
 
