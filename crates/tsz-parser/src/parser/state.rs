@@ -1787,13 +1787,11 @@ impl ParserState {
         // instead of TS1003, matching tsc's behavior where the scanner's
         // TS1127 shadows the parser's TS1003 via position-based dedup.
         if self.is_token(SyntaxKind::Unknown) {
-            if self.should_report_error() {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
-                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
-                    diagnostic_codes::INVALID_CHARACTER,
-                );
-            }
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                diagnostic_codes::INVALID_CHARACTER,
+            );
             return;
         }
         // Only emit error if we haven't already emitted one at this position
@@ -2074,13 +2072,11 @@ impl ParserState {
         // suppresses errors at the same position as the last error, the parser's TS1005 is
         // always shadowed by the scanner's TS1127. We replicate this by emitting only TS1127.
         if self.is_token(SyntaxKind::Unknown) {
-            if self.should_report_error() {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
-                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
-                    diagnostic_codes::INVALID_CHARACTER,
-                );
-            }
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                diagnostic_codes::INVALID_CHARACTER,
+            );
             return;
         }
         // Only emit error if we haven't already emitted one at this position

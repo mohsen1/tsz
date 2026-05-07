@@ -2153,10 +2153,19 @@ impl ParserState {
                                     | SyntaxKind::CloseBraceToken
                                     | SyntaxKind::EndOfFileToken
                             ) {
-                                self.parse_error_at_current_token(
-                                    "Variable declaration expected.",
-                                    diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
-                                );
+                                if self.is_token(SyntaxKind::NewKeyword) {
+                                    let msg = tsz_common::diagnostics::diagnostic_messages::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME
+                                        .replace("{0}", self.current_keyword_text());
+                                    self.parse_error_at_current_token(
+                                        &msg,
+                                        diagnostic_codes::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME,
+                                    );
+                                } else {
+                                    self.parse_error_at_current_token(
+                                        "Variable declaration expected.",
+                                        diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                                    );
+                                }
                             }
                         }
                         break;

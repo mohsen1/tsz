@@ -561,7 +561,7 @@ fn parameter_list_colon_start_prefers_ts1138_over_ts1003() {
 
 /// Definite-assignment markers (`!`) are not legal on parameters. tsc emits
 /// TS1005 (`',' expected.`) at the `!` and TS1138 (`Parameter declaration
-/// expected.`) at the following `:`, then consumes the type annotation.
+/// expected.`) at the following `:`.
 /// Regression for issue #4082.
 #[test]
 fn parse_definite_assignment_marker_in_parameter_emits_ts1005_and_ts1138() {
@@ -588,6 +588,80 @@ fn parse_definite_assignment_marker_in_parameter_emits_ts1005_and_ts1138() {
     assert!(
         !codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
         "should not fall back to TS1003, got {codes:?}"
+    );
+}
+
+#[test]
+fn parse_definite_assignment_marker_generic_tail_reports_comma_recovery() {
+    let source = "function f<T>(x!: A<T>) {}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let bang_pos = source.find('!').expect("source contains '!'") as u32;
+    let colon_pos = source.find(":").expect("source contains ':'") as u32;
+    let less_than_pos = source.rfind('<').expect("source contains generic tail") as u32;
+    let greater_than_pos = source.rfind('>').expect("source contains generic tail") as u32;
+
+    for expected_pos in [bang_pos, less_than_pos, greater_than_pos] {
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == diagnostic_codes::EXPECTED && d.start == expected_pos),
+            "expected TS1005 at byte {expected_pos}, got {diags:?}"
+        );
+    }
+    assert!(
+        diags.iter().any(
+            |d| d.code == diagnostic_codes::PARAMETER_DECLARATION_EXPECTED && d.start == colon_pos
+        ),
+        "expected TS1138 anchored at the ':' after '!', got {diags:?}"
+    );
+}
+
+#[test]
+fn parse_definite_assignment_marker_return_type_reports_statement_recovery() {
+    let source = "export async function arrayFromAsync<T>(asyncIterable!: AsyncIterable<T>): Promise<T[]> {\n    const out = [];\n    for await (const v of asyncIterable) {\n        out.push(await v);\n    }\n    return out;\n}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    for expected in [
+        diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+        diagnostic_codes::EXPRESSION_EXPECTED,
+        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+        diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+        diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+    ] {
+        assert!(
+            codes.contains(&expected),
+            "expected diagnostic code {expected}, got {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn astral_identifier_debris_uses_scanner_shaped_recovery() {
+    let source = r#"declare var \u{102A7}: string;
+export var _\u{102A7} = new Foo().\u{102A7};"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    for expected in [
+        diagnostic_codes::INVALID_CHARACTER,
+        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+        diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I,
+    ] {
+        assert!(
+            codes.contains(&expected),
+            "expected diagnostic code {expected}, got {diags:?}"
+        );
+    }
+    assert!(
+        !codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "invalid astral debris should prefer scanner-shaped recovery over TS1003, got {diags:?}"
     );
 }
 

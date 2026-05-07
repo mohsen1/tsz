@@ -1815,8 +1815,9 @@ impl ScannerState {
         self.token_flags |= TokenFlags::UnicodeEscape as u32;
     }
 
-    /// Peek at a unicode escape sequence without advancing the position.
-    /// Returns the code point if the escape is valid (\uXXXX or \u{XXXXX}), None otherwise.
+    /// Peek at a unicode escape sequence in identifier text without advancing
+    /// the position. Returns the code point if the escape is valid
+    /// (`\uXXXX`, or a BMP `\u{XXXXX}`), None otherwise.
     fn peek_unicode_escape(&self) -> Option<u32> {
         // Must start with \u
         if self.pos + 1 >= self.end {
@@ -1837,9 +1838,7 @@ impl ScannerState {
                 return None;
             }
             let hex = &self.source[start..end];
-            u32::from_str_radix(hex, 16)
-                .ok()
-                .filter(|&cp| cp <= 0x0010_FFFF)
+            u32::from_str_radix(hex, 16).ok().filter(|&cp| cp <= 0xFFFF)
         } else {
             // \uXXXX form (exactly 4 hex digits)
             if self.pos + 5 >= self.end {
@@ -3365,6 +3364,10 @@ fn is_identifier_start(ch: u32) -> bool {
             || ch == CharacterCodes::DOLLAR;
     }
 
+    if ch > 0xFFFF {
+        return false;
+    }
+
     if let Some(c) = char::from_u32(ch) {
         return unicode_ident::is_xid_start(c);
     }
@@ -3376,6 +3379,10 @@ fn is_identifier_part(ch: u32) -> bool {
     // Fast path for ASCII
     if ch < 128 {
         return is_identifier_start(ch) || is_digit(ch);
+    }
+
+    if ch > 0xFFFF {
+        return false;
     }
 
     // Unicode path: ECMAScript ID_Continue includes: ID_Start + Mn + Mc + Nd + Pc + ZWNJ + ZWJ
