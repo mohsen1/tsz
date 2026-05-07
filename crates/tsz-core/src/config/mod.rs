@@ -2648,6 +2648,27 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             file_path,
             "compilerOptions",
         );
+        // `compileOnSave` is a top-level boolean. tsc reports TS5024 when it
+        // is set to a non-boolean (#3591 repro C); without this gate the
+        // value is silently ignored.
+        validate_top_level_boolean_option(
+            obj,
+            &mut diagnostics,
+            &stripped,
+            file_path,
+            "compileOnSave",
+        );
+        // `typeAcquisition` keys are enumerated. Unknown keys must surface
+        // as TS17010 to match tsc (#3591 repro B); an object that is not an
+        // object is also flagged via the shared object validator above.
+        validate_top_level_object_option(
+            obj,
+            &mut diagnostics,
+            &stripped,
+            file_path,
+            "typeAcquisition",
+        );
+        validate_type_acquisition_known_keys(obj, &mut diagnostics, &stripped, file_path);
     }
 
     let mut config: TsConfig =
@@ -2844,6 +2865,82 @@ fn validate_top_level_object_option(
         key.to_string(),
         serde_json::Value::Object(serde_json::Map::new()),
     );
+}
+
+fn validate_top_level_boolean_option(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+    source: &str,
+    file_path: &str,
+    key: &str,
+) {
+    let Some(value) = obj.get(key) else {
+        return;
+    };
+    if value.is_null() || value.is_boolean() {
+        return;
+    }
+
+    let value_start = find_top_level_value_offset_in_source(source, key);
+    let value_len = estimate_json_value_len(value);
+    let msg = format_message(
+        diagnostic_messages::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+        &[key, "boolean"],
+    );
+    diagnostics.push(Diagnostic::error(
+        file_path,
+        value_start,
+        value_len,
+        msg,
+        diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+    ));
+
+    obj.insert(key.to_string(), serde_json::Value::Null);
+}
+
+fn validate_type_acquisition_known_keys(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+    source: &str,
+    file_path: &str,
+) {
+    const KNOWN: &[&str] = &[
+        "enable",
+        "include",
+        "exclude",
+        "disableFilenameBasedTypeAcquisition",
+    ];
+    let Some(serde_json::Value::Object(map)) = obj.get("typeAcquisition") else {
+        return;
+    };
+    for key in map.keys() {
+        if KNOWN.iter().any(|k| k.eq_ignore_ascii_case(key)) {
+            continue;
+        }
+        let key_offset = find_nested_key_offset_in_source(source, "typeAcquisition", key);
+        let key_len = key.len() as u32 + 2;
+        let msg = format_message(diagnostic_messages::UNKNOWN_TYPE_ACQUISITION_OPTION, &[key]);
+        diagnostics.push(Diagnostic::error(
+            file_path,
+            key_offset,
+            key_len,
+            msg,
+            diagnostic_codes::UNKNOWN_TYPE_ACQUISITION_OPTION,
+        ));
+    }
+}
+
+fn find_nested_key_offset_in_source(source: &str, parent_key: &str, child_key: &str) -> u32 {
+    let parent_pat = format!("\"{parent_key}\"");
+    let Some(parent_pos) = source.find(&parent_pat) else {
+        return 0;
+    };
+    let child_pat = format!("\"{child_key}\"");
+    let after_parent = parent_pos + parent_pat.len();
+    source[after_parent..]
+        .find(&child_pat)
+        .map(|p| (after_parent + p) as u32)
+        .unwrap_or(0)
 }
 
 /// Estimate the display length of a JSON value for diagnostic span.
@@ -5265,6 +5362,149 @@ mod tests {
             parsed.config.files.as_deref(),
             Some(&["a.ts".to_string()][..]),
             "files array must still parse after compilerOptions recovery"
+        );
+    }
+
+    #[test]
+    fn test_ts5024_emitted_for_non_boolean_compile_on_save() {
+        // Issue #3591 repro C: `compileOnSave` is a top-level boolean. A
+        // string value must surface as TS5024, matching tsc.
+        let source = r#"{
+  "compilerOptions": {"noEmit": true},
+  "compileOnSave": "yes",
+  "files": ["a.ts"]
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let diag = parsed
+            .diagnostics
+            .iter()
+            .find(|d| d.code == 5024 && d.message_text.contains("compileOnSave"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected TS5024 mentioning compileOnSave, got: {:?}",
+                    parsed
+                        .diagnostics
+                        .iter()
+                        .map(|d| (d.code, d.message_text.clone()))
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert!(
+            diag.message_text.contains("boolean"),
+            "TS5024 message should mention expected type 'boolean': {}",
+            diag.message_text
+        );
+    }
+
+    #[test]
+    fn test_compile_on_save_boolean_value_does_not_emit_ts5024() {
+        // The validator must only fire for non-boolean values; a real boolean
+        // is accepted silently.
+        let source = r#"{
+  "compilerOptions": {"noEmit": true},
+  "compileOnSave": true,
+  "files": ["a.ts"]
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.code == 5024 && d.message_text.contains("compileOnSave")),
+            "boolean compileOnSave must not emit TS5024, got: {:?}",
+            parsed
+                .diagnostics
+                .iter()
+                .map(|d| (d.code, d.message_text.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_ts17010_emitted_for_unknown_type_acquisition_option() {
+        // Issue #3591 repro B: an unknown `typeAcquisition` key is silently
+        // dropped; tsc reports TS17010 for it.
+        let source = r#"{
+  "compilerOptions": {"noEmit": true},
+  "typeAcquisition": {"bogus": true},
+  "files": ["a.ts"]
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let diag = parsed
+            .diagnostics
+            .iter()
+            .find(|d| d.code == 17010 && d.message_text.contains("bogus"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected TS17010 mentioning bogus, got: {:?}",
+                    parsed
+                        .diagnostics
+                        .iter()
+                        .map(|d| (d.code, d.message_text.clone()))
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert!(
+            diag.message_text
+                .to_lowercase()
+                .contains("type acquisition"),
+            "TS17010 message should reference 'type acquisition': {}",
+            diag.message_text
+        );
+    }
+
+    #[test]
+    fn test_known_type_acquisition_keys_do_not_emit_ts17010() {
+        // The four known typeAcquisition options must not be flagged.
+        let source = r#"{
+  "compilerOptions": {"noEmit": true},
+  "typeAcquisition": {
+    "enable": true,
+    "include": ["jquery"],
+    "exclude": ["lodash"],
+    "disableFilenameBasedTypeAcquisition": false
+  },
+  "files": ["a.ts"]
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let count = parsed
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == 17010)
+            .count();
+        assert_eq!(
+            count,
+            0,
+            "no TS17010 expected for known typeAcquisition keys, got: {:?}",
+            parsed
+                .diagnostics
+                .iter()
+                .map(|d| (d.code, d.message_text.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_ts5024_emitted_for_scalar_type_acquisition() {
+        // A scalar typeAcquisition value (not an object) must surface as
+        // TS5024 via the shared object-shape validator.
+        let source = r#"{
+  "compilerOptions": {"noEmit": true},
+  "typeAcquisition": "bad",
+  "files": ["a.ts"]
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.code == 5024 && d.message_text.contains("typeAcquisition")),
+            "expected TS5024 for scalar typeAcquisition, got: {:?}",
+            parsed
+                .diagnostics
+                .iter()
+                .map(|d| (d.code, d.message_text.clone()))
+                .collect::<Vec<_>>()
         );
     }
 
