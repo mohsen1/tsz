@@ -1177,7 +1177,7 @@ impl Server {
         let mut file_names: Vec<String> = Vec::new();
 
         if !no_lib {
-            for path in self.resolve_virtual_lib_files(&lib_names) {
+            for path in self.resolve_virtual_lib_files(&lib_names, Some(active_file)) {
                 file_names.push(path);
             }
         }
@@ -1600,15 +1600,26 @@ impl Server {
         vec![default_lib_name_for_target(emitter_target).to_string()]
     }
 
-    /// Resolve lib names to their fourslash VFS paths (e.g. "es5" →
-    /// `/home/src/tslibs/TS/Lib/lib.es5.d.ts`). Uses the real lib directory on
-    /// disk (via tsz-core's resolver) to follow `<reference lib="..." />`
-    /// directives transitively, then rewrites paths to the virtual folder.
-    fn resolve_virtual_lib_files(&self, lib_names: &[String]) -> Vec<String> {
+    /// Resolve lib names to file paths, branching on whether the originating
+    /// file is part of the fourslash harness's virtual filesystem.
+    ///
+    /// - Fourslash paths (e.g. `/tests/cases/fourslash/foo.ts`): rewrite to
+    ///   the harness's virtual lib folder so expected paths line up with the
+    ///   VFS mount (`/home/src/tslibs/TS/Lib/lib.es5.d.ts`).
+    /// - Real on-disk paths: return the actual lib file paths the server is
+    ///   using, matching tsserver's `projectInfo` protocol behavior.
+    fn resolve_virtual_lib_files(
+        &self,
+        lib_names: &[String],
+        active_file: Option<&str>,
+    ) -> Vec<String> {
         use tsz_cli::config::resolve_lib_files_from_dir;
         if lib_names.is_empty() {
             return Vec::new();
         }
+        let use_virtual = active_file
+            .map(Self::is_fourslash_virtual_harness_path)
+            .unwrap_or(false);
         let lib_dirs = [self.lib_dir.as_path(), self.tests_lib_dir.as_path()];
         let mut last_err: Option<anyhow::Error> = None;
         for dir in lib_dirs {
@@ -1617,17 +1628,21 @@ impl Server {
                     return paths
                         .into_iter()
                         .filter_map(|p| {
-                            p.file_name().and_then(|s| s.to_str()).map(|name| {
-                                // tsz stores libs without the `lib.` prefix in some
-                                // layouts (source tree). Ensure the emitted name
-                                // matches tsc's runtime convention `lib.<id>.d.ts`.
-                                let out = if name.starts_with("lib.") {
-                                    name.to_string()
-                                } else {
-                                    format!("lib.{name}")
-                                };
-                                format!("{}/{}", Self::FOURSLASH_LIB_FOLDER, out)
-                            })
+                            if use_virtual {
+                                p.file_name().and_then(|s| s.to_str()).map(|name| {
+                                    // tsz stores libs without the `lib.` prefix in some
+                                    // layouts (source tree). Ensure the emitted name
+                                    // matches tsc's runtime convention `lib.<id>.d.ts`.
+                                    let out = if name.starts_with("lib.") {
+                                        name.to_string()
+                                    } else {
+                                        format!("lib.{name}")
+                                    };
+                                    format!("{}/{}", Self::FOURSLASH_LIB_FOLDER, out)
+                                })
+                            } else {
+                                Some(p.to_string_lossy().into_owned())
+                            }
                         })
                         .collect();
                 }
@@ -1919,7 +1934,8 @@ impl Server {
             let mut file_names: Vec<String> = Vec::new();
             let (lib_names, no_lib, _) = self.inferred_project_info(&inferred_roots[0]);
             if !no_lib {
-                file_names.extend(self.resolve_virtual_lib_files(&lib_names));
+                file_names
+                    .extend(self.resolve_virtual_lib_files(&lib_names, Some(&inferred_roots[0])));
             }
 
             let mut visited: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
