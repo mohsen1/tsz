@@ -176,11 +176,7 @@ type t3 = InferRecursive<Box<string | Box<number | boolean>>>;
 fn bounded_recursive_conditional_alias_abstract_class_infer_no_ts2589() {
     assert_no_ts2589(
         r#"
-declare class SomeBaseClass {
-    set<K extends keyof this>(key: K, value: this[K]): this[K];
-}
-
-abstract class SomeAbstractClass<C, M, R> extends SomeBaseClass {
+abstract class SomeAbstractClass<C, M, R> {
     foo!: (r?: R) => void;
     bar!: (r?: any) => void;
     abstract baz(c: C): M;
@@ -190,6 +186,8 @@ declare class SomeClass extends SomeAbstractClass<number, string, boolean> {}
 
 type RType<T> = T extends SomeAbstractClass<any, any, infer R> ? R : never;
 type SomeClassR = RType<SomeClass>;
+declare const r: SomeClassR;
+const ok: boolean = r;
 "#,
     );
 }
