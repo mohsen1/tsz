@@ -2368,7 +2368,51 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use tsz_cli::config::{load_tsconfig_with_diagnostics, resolve_compiler_options};
     use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
-    if args.ignore_config && args.files.is_empty() {
+    // Resolve a tsconfig path for `--showConfig`. We track whether the path
+    // was found by walking up the filesystem so the TS5112 "implicit
+    // tsconfig + explicit files" check below knows to fire only on
+    // walk-up discoveries (an explicit `--project` path is the user opting
+    // into a specific config, and tsc keeps loading it in that case).
+    let (tsconfig_path, discovered_via_walkup) = if args.ignore_config {
+        (None, false)
+    } else if let Some(p) = args.project.as_ref() {
+        // Canonicalize relative paths by joining with cwd first,
+        // so that p.parent() later returns a valid directory.
+        let resolved = if p.is_relative() {
+            cwd.join(p)
+        } else {
+            p.clone()
+        };
+        let resolved = if resolved.is_dir() {
+            resolved.join("tsconfig.json")
+        } else {
+            resolved
+        };
+        (Some(resolved), false)
+    } else {
+        (driver::find_tsconfig(cwd), true)
+    };
+
+    // tsc parity: when files are passed on the command line and a
+    // `tsconfig.json` was discovered by walking up the filesystem (i.e. the
+    // user did not opt in via `--project`), tsc refuses to silently load
+    // that config and emits TS5112. The user can suppress with
+    // `--ignoreConfig`. Without this check, tsz would inherit options from
+    // an unrelated parent project for what the user expected to be a
+    // single-file synthesis.
+    if discovered_via_walkup && tsconfig_path.is_some() && !args.files.is_empty() {
+        println!(
+            "error TS5112: tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error."
+        );
+        std::process::exit(1);
+    }
+
+    // tsc parity: with no files passed and no tsconfig resolved (either
+    // because `--ignoreConfig` was set or because none was found by walking
+    // up), tsc emits TS5081 even if other CLI options were provided. The
+    // synthesized output requires either a `tsconfig.json` to anchor the
+    // project or an explicit root-file list.
+    if tsconfig_path.is_none() && args.files.is_empty() {
         println!(
             "error TS5081: Cannot find a tsconfig.json file at the current directory: {}.",
             cwd.display()
@@ -2376,33 +2420,15 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         std::process::exit(1);
     }
 
-    let tsconfig_path = if args.ignore_config {
-        None
-    } else {
-        args.project
-            .as_ref()
-            .map(|p| {
-                // Canonicalize relative paths by joining with cwd first,
-                // so that p.parent() later returns a valid directory.
-                let resolved = if p.is_relative() {
-                    cwd.join(p)
-                } else {
-                    p.clone()
-                };
-                if resolved.is_dir() {
-                    resolved.join("tsconfig.json")
-                } else {
-                    resolved
-                }
-            })
-            .or_else(|| driver::find_tsconfig(cwd))
-    };
-
-    // When no tsconfig.json is found (and --ignoreConfig is not set), emit the
-    // appropriate tsc error code depending on how the path was resolved:
-    //   TS5081 – no --project flag, default cwd/tsconfig.json missing
-    //   TS5057 – --project dir exists but has no tsconfig.json
-    //   TS5058 – --project path does not exist at all
+    // When the resolved tsconfig path does not exist on disk, emit the
+    // appropriate tsc error code. This now only fires for explicit
+    // `--project` paths because `find_tsconfig` returns `Some` only for an
+    // existing file; the `args.project.is_none()` branch is kept as a
+    // defensive fallback in case of a TOCTOU race between discovery and
+    // the existence check.
+    //   TS5057 – `--project` dir exists but has no tsconfig.json
+    //   TS5058 – `--project` path does not exist at all
+    //   TS5081 – defensive fallback (walk-up race)
     if let Some(ref path) = tsconfig_path
         && !path.exists()
     {

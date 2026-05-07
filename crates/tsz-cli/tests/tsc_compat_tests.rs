@@ -182,6 +182,170 @@ fn special_modes_ignore_config_with_no_inputs_follow_no_input_behavior() {
     );
 }
 
+// --- Regression tests for issue #3580 ---
+//
+// `tsz --showConfig` must match tsc's tsconfig-discovery rules:
+//   - explicit files + no tsconfig anywhere: synthesize from CLI options.
+//   - explicit files + walked-up tsconfig: emit TS5112 (the implicit
+//     pickup is rejected; user must opt out via `--ignoreConfig`).
+//   - no files + no tsconfig anywhere: emit TS5081 even when other CLI
+//     options are present.
+
+#[test]
+fn show_config_explicit_files_without_any_tsconfig_synthesizes_config() {
+    let temp = TempDir::new("show_config_no_tsconfig_explicit_files").expect("temp dir");
+    write_file(&temp.path.join("main.ts"), "export const value = 1;\n");
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--showConfig", "--target", "es2020", "main.ts"],
+    )
+    .expect("tsz should run");
+    assert_eq!(
+        code, 0,
+        "showConfig with explicit file and no tsconfig should exit 0, got: {output}"
+    );
+    assert!(
+        !output.contains("error TS5081"),
+        "showConfig must not emit TS5081 when an explicit file is provided: {output}"
+    );
+    assert!(
+        output.contains("\"target\": \"es2020\""),
+        "showConfig should include CLI --target: {output}"
+    );
+    assert!(
+        output.contains("\"./main.ts\""),
+        "showConfig should list the explicit file: {output}"
+    );
+}
+
+#[test]
+fn show_config_explicit_files_with_walkup_tsconfig_emits_ts5112() {
+    let temp = TempDir::new("show_config_explicit_files_walkup_ts5112").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"strict":true,"target":"es5"}}"#,
+    );
+    let cwd = temp.path.join("sub");
+    std::fs::create_dir_all(&cwd).expect("create subdir");
+    write_file(&cwd.join("main.ts"), "export const value = 1;\n");
+
+    let (code, output) =
+        run_tsz_with_exit_code(&cwd, &["--showConfig", "--target", "es2020", "main.ts"])
+            .expect("tsz should run");
+    assert_eq!(
+        code, 1,
+        "showConfig must reject implicit walkup tsconfig with explicit files, got exit {code}: {output}"
+    );
+    assert!(
+        output.contains("error TS5112"),
+        "showConfig should emit TS5112 when a walked-up tsconfig is shadowed by explicit files: {output}"
+    );
+    assert!(
+        !output.contains("\"strict\": true"),
+        "showConfig must not silently inherit walked-up tsconfig options when TS5112 fires: {output}"
+    );
+}
+
+#[test]
+fn show_config_explicit_files_with_walkup_tsconfig_ignore_config_synthesizes() {
+    // `--ignoreConfig` is the documented escape hatch for TS5112; the user
+    // gets a CLI-only synthesis even when a parent tsconfig exists.
+    let temp = TempDir::new("show_config_explicit_files_walkup_ignore").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"strict":true,"target":"es5"}}"#,
+    );
+    let cwd = temp.path.join("sub");
+    std::fs::create_dir_all(&cwd).expect("create subdir");
+    write_file(&cwd.join("main.ts"), "export const value = 1;\n");
+
+    let (code, output) = run_tsz_with_exit_code(
+        &cwd,
+        &[
+            "--showConfig",
+            "--ignoreConfig",
+            "--target",
+            "es2020",
+            "main.ts",
+        ],
+    )
+    .expect("tsz should run");
+    assert_eq!(
+        code, 0,
+        "showConfig with --ignoreConfig should exit 0 even with a walkup tsconfig, got: {output}"
+    );
+    assert!(
+        !output.contains("error TS5112"),
+        "showConfig with --ignoreConfig must not emit TS5112: {output}"
+    );
+    assert!(
+        !output.contains("\"strict\": true"),
+        "showConfig with --ignoreConfig must not inherit walked-up tsconfig options: {output}"
+    );
+    assert!(
+        output.contains("\"target\": \"es2020\""),
+        "showConfig with --ignoreConfig should still include CLI --target: {output}"
+    );
+}
+
+#[test]
+fn show_config_no_files_no_tsconfig_with_cli_options_emits_ts5081() {
+    // tsc emits TS5081 when neither an explicit file list nor a tsconfig
+    // anchors the project, even if the user supplied unrelated CLI options
+    // like `--target`. Without this, a stray invocation in an empty
+    // directory silently prints `{}` and exits 0.
+    let temp = TempDir::new("show_config_no_anchor_with_cli_opts").expect("temp dir");
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--showConfig", "--target", "es2020"])
+            .expect("tsz should run");
+    assert_eq!(
+        code, 1,
+        "showConfig with no anchor should exit 1, got: {output}"
+    );
+    assert!(
+        output.contains("error TS5081"),
+        "showConfig should emit TS5081 when there is no project anchor: {output}"
+    );
+}
+
+#[test]
+fn tsc_parity_show_config_explicit_files_no_tsconfig() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("show_config_parity_explicit_files_no_tsconfig").expect("temp dir");
+    write_file(&temp.path.join("main.ts"), "export const value = 1;\n");
+
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--showConfig", "--target", "es2020", "main.ts"],
+        "tsz --showConfig must match tsc when explicit files are passed and no tsconfig exists",
+    );
+}
+
+#[test]
+fn tsc_parity_show_config_explicit_files_walkup_tsconfig_ts5112() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("show_config_parity_walkup_ts5112").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"strict":true,"target":"es5"}}"#,
+    );
+    let cwd = temp.path.join("sub");
+    std::fs::create_dir_all(&cwd).expect("create subdir");
+    write_file(&cwd.join("main.ts"), "export const value = 1;\n");
+
+    assert_tsc_tsz_match_with_exit_code(
+        &cwd,
+        &["--showConfig", "--target", "es2020", "main.ts"],
+        "tsz --showConfig must match tsc when an implicit walkup tsconfig collides with explicit files",
+    );
+}
+
 #[test]
 fn trace_resolution_prints_relative_import_resolution() {
     let Some(tsz_bin) = find_tsz_binary() else {
