@@ -431,6 +431,51 @@ function templated<T>(x: TemplatedConditional<T, T, T, never>) {
     );
 }
 
+#[test]
+fn conditional_keyof_pick_identity_assignable_to_type_parameter() {
+    let source = r#"
+const fn1 = <Params>(
+    params: Pick<Params, Exclude<keyof Params, never>>,
+): Params => params;
+
+type ExtractWithDefault<T, U, D = never> = T extends U ? T : D;
+type ExcludeWithDefault<T, U, D = never> = T extends U ? D : T;
+type TemplatedConditional<TCheck, TExtends, TTrue, TFalse> =
+    TCheck extends TExtends ? TTrue : TFalse;
+
+const fn3 = <Params>(
+    params: Pick<Params, Extract<keyof Params, keyof Params>>,
+): Params => params;
+
+const fn5 = <Params>(
+    params: Pick<Params, ExcludeWithDefault<keyof Params, never>>,
+): Params => params;
+
+const fn7 = <Params>(
+    params: Pick<Params, ExtractWithDefault<keyof Params, keyof Params>>,
+): Params => params;
+
+const fn9 = <Params>(
+    params: Pick<Params, TemplatedConditional<keyof Params, never, never, keyof Params>>,
+): Params => params;
+
+const fn11 = <Params>(
+    params: Pick<Params, TemplatedConditional<keyof Params, keyof Params, keyof Params, never>>,
+): Params => params;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        0,
+        "keyof Pick identity conditionals should be assignable to the original type parameter; got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Test that indexed access types in conditional contexts work correctly.
 #[test]
 fn test_indexed_access_in_conditional_context() {
