@@ -25,3 +25,4 @@ mod type_node_query_members;
 mod type_node_resolution;
 mod unique_symbol_arena;
 pub(crate) mod utilities;
+pub(crate) mod window_global_this_annotation;

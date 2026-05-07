@@ -3,8 +3,8 @@
   "git_sha": "c8cfb07bafd8257ca96a8d037cef59ba4ece4646",
   "summary": {
     "total_tests": 12582,
-    "passed": 12443,
-    "failed": 139,
+    "passed": 12444,
+    "failed": 138,
     "pass_rate": 98.9
   },
   "areas_by_pass_rate": [
@@ -25,9 +25,9 @@
     {
       "area": "es2019",
       "total": 11,
-      "passed": 10,
-      "failed": 1,
-      "pass_rate": 90.91
+      "passed": 11,
+      "failed": 0,
+      "pass_rate": 100.0
     },
     {
       "area": "importAttributes",
