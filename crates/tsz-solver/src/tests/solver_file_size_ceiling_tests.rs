@@ -222,7 +222,5 @@ fn test_emitter_file_size_ceiling() {
         oversized.join("\n")
     );
 
-    // declaration_emitter/helpers/type_inference.rs is currently the largest at 8405 lines.
-    const MAX_LOC_CEILING: usize = 8405;
     // declaration_emitter/helpers/type_inference.rs is currently the largest at 8449 lines.
     const MAX_LOC_CEILING: usize = 8449;
