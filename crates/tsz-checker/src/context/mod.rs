@@ -388,8 +388,8 @@ pub struct CheckerContext<'a> {
     /// like `React.Component`, `React.ComponentClass`, `React.ReactNode`, etc.
     pub namespace_member_resolution_cache: RefCell<FxHashMap<(String, String), Option<SymbolId>>>,
 
-    /// Per-checker positive cache for named exports resolved through `export=`.
-    /// Misses are not cached because alias-cycle state can affect failed walks.
+    /// Per-checker cache for named exports resolved through `export=`.
+    /// Misses are cached only for lookups that enter without alias-cycle state.
     pub export_equals_named_cache: RefCell<ExportEqualsNamedCache>,
 
     /// Per-checker cache for nested namespace candidates found through namespace exports.

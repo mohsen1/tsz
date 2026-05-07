@@ -66,8 +66,16 @@ impl<'a> CheckerState<'a> {
         // When contextual typing DID resolve concrete types and the mismatch
         // persists, the error is real — e.g., individual params `(a: 1|2, b: "1"|"2")`
         // vs a readonly tuple union rest parameter `(...args: readonly [1, "1"] | readonly [2, "2"])`.
+        //
+        // Additionally, only suppress when the target signature actually has a
+        // parameter at every position the source callback declares. If the
+        // target has fewer parameters than the source (and no rest), contextual
+        // typing cannot supply types for the extra source parameters and the
+        // parameter-count mismatch ("Target signature provides too few
+        // arguments") must surface as TS2345 — see issue #4027.
         if self.arg_is_callback_with_unannotated_params(idx)
             && self.callback_type_params_are_unresolved(arg_type)
+            && self.target_can_contextually_type_callback_params(idx, param_type)
         {
             return;
         }

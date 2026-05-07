@@ -129,6 +129,61 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Returns the parameter count of a callback argument's function expression.
+    /// Returns `None` if `arg_idx` is not an arrow/function expression (or a
+    /// parenthesized one).
+    fn callback_argument_param_count(&self, arg_idx: NodeIndex) -> Option<usize> {
+        let node = self.ctx.arena.get(arg_idx)?;
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = self.ctx.arena.get_parenthesized(node)?;
+            return self.callback_argument_param_count(paren.expression);
+        }
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let func = self.ctx.arena.get_function(node)?;
+        Some(func.parameters.nodes.len())
+    }
+
+    /// Returns true when `target` exposes at least one callable signature whose
+    /// parameter list can supply contextual types for every parameter of the
+    /// unannotated callback at `arg_idx`.
+    ///
+    /// A signature can supply contextual types when it has a rest parameter, or
+    /// when its fixed parameter count is at least the source callback's
+    /// parameter count. When the target is not a recognizably callable type, we
+    /// conservatively answer `true` so that the existing suppression behavior
+    /// for non-trivial target shapes (unions, generics, etc.) is preserved —
+    /// the bug we are guarding against is the concrete case where the target
+    /// has *fewer* parameters than the source.
+    pub(crate) fn target_can_contextually_type_callback_params(
+        &self,
+        arg_idx: NodeIndex,
+        target: TypeId,
+    ) -> bool {
+        let Some(source_param_count) = self.callback_argument_param_count(arg_idx) else {
+            return true;
+        };
+        let db = self.ctx.types;
+        if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(db, target) {
+            return signature_has_param_capacity(&shape.params, source_param_count);
+        }
+        if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(db, target) {
+            let any_call_ok = shape
+                .call_signatures
+                .iter()
+                .any(|sig| signature_has_param_capacity(&sig.params, source_param_count));
+            let any_construct_ok = shape
+                .construct_signatures
+                .iter()
+                .any(|sig| signature_has_param_capacity(&sig.params, source_param_count));
+            return any_call_ok || any_construct_ok;
+        }
+        true
+    }
+
     /// Returns true when a callback-like function type still has unresolved
     /// `any`/`unknown` parameter types, meaning contextual typing did not
     /// concretely bind its parameters yet.
@@ -2778,4 +2833,17 @@ impl<'a> CheckerState<'a> {
             self.ctx.strict_null_checks(),
         )
     }
+}
+
+/// A target signature can supply contextual types for `source_param_count`
+/// callback parameters when it has a rest parameter (which absorbs any
+/// trailing positions) or its fixed parameter list is at least that long.
+fn signature_has_param_capacity(
+    params: &[tsz_solver::ParamInfo],
+    source_param_count: usize,
+) -> bool {
+    if params.iter().any(|p| p.rest) {
+        return true;
+    }
+    params.len() >= source_param_count
 }
