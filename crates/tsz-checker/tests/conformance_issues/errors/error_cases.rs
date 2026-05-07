@@ -339,7 +339,7 @@ function test<Shape extends Record<string, string>>(shape: Shape, key: keyof Sha
                 && (message.contains("Record<\"knownLiteralKey\" | keyof Shape, number>")
                     || message.contains("Record<keyof Shape | \"knownLiteralKey\", number>"))
         }),
-        "Expected TS2551 to preserve the mapped type key union in the property-receiver display.\nActual diagnostics: {diagnostics:#?}"
+        "Expected TS2551 to preserve the generic Record receiver display.\nActual diagnostics: {diagnostics:#?}"
     );
 
     assert!(
