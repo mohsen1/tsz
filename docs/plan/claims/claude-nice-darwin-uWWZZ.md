@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-07
 - **Branch**: `claude/nice-darwin-uWWZZ`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #4373
+- **Status**: ready
 - **Workstream**: config diagnostics parity
 
 ## Intent
@@ -23,5 +23,7 @@ TypeScript's `getSpellingSuggestion` algorithm.
 
 ## Verification
 
-- `cargo nextest run -p tsz-core --lib config::`
-- targeted reruns of existing TS5023/TS5025 unit tests
+- `cargo test -p tsz-core --lib config::` — 148 passed
+- `cargo test -p tsz-core --lib` — 3118 passed
+- New tests: `test_typo_suggestions_emit_ts5025_for_close_compiler_option_names`,
+  `test_unrelated_unknown_compiler_option_still_falls_back_to_ts5023`
