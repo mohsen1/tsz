@@ -1106,12 +1106,20 @@ pub fn load_lib_files_for_binding_strict(
 /// The binders used during program construction are mutated while merging lib symbols into
 /// user-file binders. Checker-facing lib contexts and lib-file checks need fresh binder state
 /// so declaration merging and semantic lookups run against clean lib binders.
+///
+/// The clone re-parses and re-binds every lib file (parse+bind is the heavy step in
+/// `LibFile::from_source`). With ~40 lib files in the full ES2020+DOM lib set, doing
+/// this sequentially leaves all but one core idle. Run the parse+bind across rayon's
+/// global pool, mirroring `load_lib_files_for_binding_strict`. Output order matches
+/// input order via rayon's order-preserving `collect`.
 #[must_use]
 pub fn clone_lib_files_for_checker(
     lib_files: &[Arc<lib_loader::LibFile>],
 ) -> Vec<Arc<lib_loader::LibFile>> {
-    lib_files
-        .iter()
+    #[cfg(not(target_arch = "wasm32"))]
+    ensure_rayon_global_pool();
+
+    maybe_parallel_iter!(lib_files)
         .map(|lib| {
             let source = lib
                 .arena
