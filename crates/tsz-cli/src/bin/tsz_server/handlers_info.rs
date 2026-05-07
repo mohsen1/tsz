@@ -750,6 +750,9 @@ impl Server {
             let provider =
                 FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
             let (_symbol_id, ref_infos) = provider.find_references_with_symbol(root, position)?;
+            let project_locations = self
+                .build_project_for_file(&file)
+                .and_then(|mut project| project.find_references(&file, position));
 
             let (symbol_name, symbol_start_offset) = {
                 let ref_offset = line_map.position_to_offset(position, &source_text)?;
@@ -784,17 +787,37 @@ impl Server {
                 .map(|info| info.display_string)
                 .unwrap_or_default();
 
-            let refs: Vec<serde_json::Value> = ref_infos
+            let locations: Vec<_> = project_locations.unwrap_or_else(|| {
+                ref_infos
+                    .iter()
+                    .map(|ref_info| ref_info.location.clone())
+                    .collect()
+            });
+
+            let refs: Vec<serde_json::Value> = locations
                 .iter()
-                .map(|ref_info| {
-                    serde_json::json!({
-                        "file": ref_info.location.file_path,
-                        "start": Self::lsp_to_tsserver_position(ref_info.location.range.start),
-                        "end": Self::lsp_to_tsserver_position(ref_info.location.range.end),
-                        "lineText": ref_info.line_text,
-                        "isWriteAccess": ref_info.is_write_access,
-                        "isDefinition": ref_info.is_definition,
-                    })
+                .filter_map(|location| {
+                    let source = self
+                        .open_files
+                        .get(&location.file_path)
+                        .cloned()
+                        .or_else(|| std::fs::read_to_string(&location.file_path).ok())?;
+                    let line_text = source
+                        .lines()
+                        .nth(location.range.start.line as usize)
+                        .unwrap_or("")
+                        .to_string();
+                    let local_ref = ref_infos
+                        .iter()
+                        .find(|ref_info| ref_info.location == *location);
+                    Some(serde_json::json!({
+                        "file": location.file_path,
+                        "start": Self::lsp_to_tsserver_position(location.range.start),
+                        "end": Self::lsp_to_tsserver_position(location.range.end),
+                        "lineText": line_text,
+                        "isWriteAccess": local_ref.is_some_and(|ref_info| ref_info.is_write_access),
+                        "isDefinition": local_ref.is_some_and(|ref_info| ref_info.is_definition),
+                    }))
                 })
                 .collect();
             Some(serde_json::json!({
@@ -2579,30 +2602,34 @@ impl Server {
             let file = request.arguments.get("file")?.as_str()?;
             let project = self.build_project_for_file(file)?;
 
-            // Dependency graph is populated by set_file() during project construction
-            let dependents = project.get_file_dependents(file);
-            let refs: Vec<serde_json::Value> = dependents
+            let refs: Vec<serde_json::Value> = project
+                .find_file_references(file)
                 .iter()
-                .map(|dep_file| {
-                    serde_json::json!({
-                        "file": dep_file,
-                        "start": { "line": 1, "offset": 1 },
-                        "end": { "line": 1, "offset": 1 },
-                        "lineText": "",
+                .filter_map(|loc| {
+                    let source = self
+                        .open_files
+                        .get(&loc.file_path)
+                        .cloned()
+                        .or_else(|| std::fs::read_to_string(&loc.file_path).ok())?;
+                    let line_text = source
+                        .lines()
+                        .nth(loc.range.start.line as usize)
+                        .unwrap_or("")
+                        .to_string();
+                    Some(serde_json::json!({
+                        "file": loc.file_path,
+                        "start": Self::lsp_to_tsserver_position(loc.range.start),
+                        "end": Self::lsp_to_tsserver_position(loc.range.end),
+                        "lineText": line_text,
                         "isWriteAccess": false,
                         "isDefinition": false,
-                    })
+                    }))
                 })
                 .collect();
 
-            let file_name = std::path::Path::new(file)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(file);
-
             Some(serde_json::json!({
                 "refs": refs,
-                "symbolName": format!("\"{}\"", file_name),
+                "symbolName": format!("\"{}\"", file),
             }))
         })();
         self.stub_response(

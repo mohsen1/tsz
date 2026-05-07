@@ -409,7 +409,10 @@ function parseSourceTest(content: string, defaultSourceFileName?: string): Parse
     for (const line of lines) {
       const trimmed = line.trim();
       if (inHeader) {
-        if (directiveRegex.test(trimmed)) {
+        if (
+          directiveRegex.test(trimmed)
+          && !/^\/\/\s*@internal\s*$/i.test(trimmed)
+        ) {
           continue;
         }
         if (trimmed === '') {
