@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-07
 - **Branch**: `claude/nice-darwin-YNrdA`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #4448
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance — config-load TS5024 parity)
 
 ## Intent
