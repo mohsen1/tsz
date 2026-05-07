@@ -94,6 +94,7 @@ impl<'a> CheckerState<'a> {
                             | syntax_kind_ext::METHOD_DECLARATION
                             | syntax_kind_ext::METHOD_SIGNATURE
                             | syntax_kind_ext::CALL_SIGNATURE
+                            | syntax_kind_ext::CONSTRUCT_SIGNATURE
                             | syntax_kind_ext::ARROW_FUNCTION
                             | syntax_kind_ext::FUNCTION_TYPE
                     )
