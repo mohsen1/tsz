@@ -3,8 +3,8 @@
   "git_sha": "c8cfb07bafd8257ca96a8d037cef59ba4ece4646",
   "summary": {
     "total_tests": 12582,
-    "passed": 12443,
-    "failed": 139,
+    "passed": 12444,
+    "failed": 138,
     "pass_rate": 98.9
   },
   "areas_by_pass_rate": [
@@ -193,9 +193,9 @@
     {
       "area": "compiler",
       "total": 6519,
-      "passed": 6446,
-      "failed": 73,
-      "pass_rate": 98.88
+      "passed": 6447,
+      "failed": 72,
+      "pass_rate": 98.9
     },
     {
       "area": "es6/destructuring",
@@ -1272,7 +1272,7 @@
     "false_positive": 32,
     "all_missing": 2,
     "wrong_code": 43,
-    "fingerprint_only": 59,
+    "fingerprint_only": 58,
     "same_code_count_drift": 0,
     "close_to_passing": 27
   }

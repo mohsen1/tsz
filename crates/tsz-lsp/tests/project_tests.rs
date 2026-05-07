@@ -3325,6 +3325,29 @@ fn test_project_get_linked_editing_ranges_jsx() {
 }
 
 #[test]
+fn test_project_get_linked_editing_ranges_jsx_member_expression() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.tsx".to_string(),
+        "const x = <Foo.Bar>hi</Foo.Bar>;\n".to_string(),
+    );
+
+    let result = project
+        .get_linked_editing_ranges("test.tsx", Position::new(0, 11))
+        .expect("JSX member expression tag names should have linked editing ranges");
+
+    assert_eq!(result.ranges.len(), 2);
+    assert_eq!(result.ranges[0].start, Position::new(0, 11));
+    assert_eq!(result.ranges[0].end, Position::new(0, 18));
+    assert_eq!(result.ranges[1].start, Position::new(0, 23));
+    assert_eq!(result.ranges[1].end, Position::new(0, 30));
+    assert_eq!(
+        result.word_pattern.as_deref(),
+        Some("[a-zA-Z0-9:\\-\\._$]*")
+    );
+}
+
+#[test]
 fn test_project_format_document() {
     let mut project = Project::new();
     project.set_file(
