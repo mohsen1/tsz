@@ -406,7 +406,8 @@ fn load_project_state(args: &CliArgs, cwd: &Path) -> Result<ProjectState> {
     let tsconfig_path = if args.ignore_config {
         None
     } else {
-        driver::resolve_tsconfig_path(cwd, args.project.as_deref())?
+        driver::resolve_tsconfig_path(cwd, args.project.as_deref())
+            .map_err(|e| anyhow::anyhow!("{e}"))?
     };
     let config = driver::load_config(tsconfig_path.as_deref())?;
 

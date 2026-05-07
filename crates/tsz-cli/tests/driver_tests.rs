@@ -11855,7 +11855,9 @@ fn compile_missing_multiple_files_in_files_array_returns_error() {
 
 #[test]
 fn compile_missing_project_directory_returns_error() {
-    // Test that specifying a non-existent project directory returns an error diagnostic
+    // Test that specifying a non-existent project directory returns TS5058
+    // ("The specified path does not exist"), matching tsc behavior. TS5057 is
+    // reserved for the case where the directory exists but lacks tsconfig.json.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -11870,8 +11872,34 @@ fn compile_missing_project_directory_returns_error() {
     );
     assert_eq!(
         result.diagnostics[0].code,
-        diagnostic_codes::CANNOT_FIND_A_TSCONFIG_JSON_FILE_AT_THE_SPECIFIED_DIRECTORY,
-        "Should have correct error code"
+        diagnostic_codes::THE_SPECIFIED_PATH_DOES_NOT_EXIST,
+        "Should have TS5058 for non-existent --project path"
+    );
+    assert_eq!(
+        result.diagnostics[0].message_text,
+        "The specified path does not exist: 'nonexistent_project'."
+    );
+}
+
+#[test]
+fn compile_missing_project_file_returns_ts5058() {
+    // --project pointing at a non-existent .json file should also be TS5058.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    let mut args = default_args();
+    args.project = Some(PathBuf::from("missing/tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed with error diagnostic");
+
+    assert!(!result.diagnostics.is_empty());
+    assert_eq!(
+        result.diagnostics[0].code,
+        diagnostic_codes::THE_SPECIFIED_PATH_DOES_NOT_EXIST,
+    );
+    assert_eq!(
+        result.diagnostics[0].message_text,
+        "The specified path does not exist: 'missing/tsconfig.json'."
     );
 }
 
@@ -11899,6 +11927,10 @@ fn compile_missing_tsconfig_in_project_dir_returns_error() {
         result.diagnostics[0].code,
         diagnostic_codes::CANNOT_FIND_A_TSCONFIG_JSON_FILE_AT_THE_SPECIFIED_DIRECTORY,
         "Should have correct error code"
+    );
+    assert_eq!(
+        result.diagnostics[0].message_text,
+        "Cannot find a tsconfig.json file at the specified directory: 'myproject'."
     );
 }
 
