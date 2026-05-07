@@ -82,7 +82,7 @@ function compareByTszSpeedup(a, b) {
 }
 
 function hasSuccessfulTiming(row) {
-  return hasTiming(row?.tsz_ms) && hasTiming(row?.tsgo_ms);
+  return !row?.status && row?.winner !== "error" && hasTiming(row?.tsz_ms) && hasTiming(row?.tsgo_ms);
 }
 
 function isFailedBenchmark(row) {
@@ -95,49 +95,6 @@ function statusLabel(row) {
 }
 
 const TINY_BENCHMARK_MAX_LINES = 200;
-
-const PROJECT_FALLBACK_CONFIG = {
-  "Projects: utility-types": {
-    libraryCategory: "Single file: utility-types",
-    fallbackName: "utility-types-project",
-    libraryName: "utility-types",
-  },
-  "Projects: ts-toolbelt": {
-    libraryCategory: "Single file: ts-toolbelt",
-    fallbackName: "ts-toolbelt-project",
-    libraryName: "ts-toolbelt",
-  },
-  "Projects: ts-essentials": {
-    libraryCategory: "Single file: ts-essentials",
-    fallbackName: "ts-essentials-project",
-    libraryName: "ts-essentials",
-  },
-  "Projects: next.js": {
-    libraryCategory: null,
-    fallbackName: "nextjs",
-    libraryName: "nextjs",
-  },
-  "Projects: fresh Next.js app": {
-    libraryCategory: null,
-    fallbackName: "nextjs-fresh-app",
-    libraryName: "nextjs-fresh-app",
-  },
-  "Projects: rxjs": {
-    libraryCategory: null,
-    fallbackName: "rxjs-project",
-    libraryName: "rxjs",
-  },
-  "Projects: type-fest": {
-    libraryCategory: null,
-    fallbackName: "type-fest-project",
-    libraryName: "type-fest",
-  },
-  "Projects: zod": {
-    libraryCategory: null,
-    fallbackName: "zod-project",
-    libraryName: "zod",
-  },
-};
 
 const PROJECT_README_PATHS = {
   "large-ts-repo": [".target-bench/external/large-ts-repo/README.md"],
@@ -193,13 +150,6 @@ const REMOTE_FIXTURE_REFS = {
 };
 
 const remoteSourceCache = new Map();
-
-const LIBRARY_CATEGORY_TO_PROJECT_CATEGORY = Object.entries(PROJECT_FALLBACK_CONFIG).reduce((map, [projectCategory, conf]) => {
-  if (conf.libraryCategory) {
-    map.set(conf.libraryCategory, projectCategory);
-  }
-  return map;
-}, new Map());
 
 function escapeHtml(str) {
   return String(str)
@@ -320,39 +270,6 @@ function libraryNameForCategory(category) {
   return "";
 }
 
-function hasProjectRowForLibrary(category, grouped) {
-  const projectRowName = {
-    "Single file: utility-types": "utility-types-project",
-    "Single file: ts-toolbelt": "ts-toolbelt-project",
-    "Single file: ts-essentials": "ts-essentials-project",
-  }[category];
-  if (!projectRowName) return false;
-  const projectCategory = LIBRARY_CATEGORY_TO_PROJECT_CATEGORY.get(category);
-  if (!projectCategory) {
-    return grouped
-      .get(category)
-      ?.some((row) => row.name === projectRowName) ?? false;
-  }
-  return (grouped.get(projectCategory)?.length ?? 0) > 0;
-}
-
-function ensureProjectRows(grouped) {
-  for (const [projectCategory, conf] of Object.entries(PROJECT_FALLBACK_CONFIG)) {
-    const existing = grouped.get(projectCategory);
-    if (existing?.length) continue;
-    if (!conf.libraryCategory) continue;
-
-    const libraryRows = grouped.get(conf.libraryCategory) || [];
-    const aggregate = buildAggregateBenchmark(libraryRows, conf.libraryName);
-    if (!aggregate) continue;
-
-    grouped.set(projectCategory, [{
-      ...aggregate,
-      name: conf.fallbackName,
-    }]);
-  }
-}
-
 function categoryMeta(category) {
   return {
     "Projects: large-ts-repo": {
@@ -433,45 +350,6 @@ function categoryMeta(category) {
       description: "Upper-bound tests for recursive, mapped, and conditional type complexity.",
     },
   }[category] || { description: "" };
-}
-
-function buildAggregateBenchmark(rows, libraryName) {
-  const timedRows = rows.filter(hasSuccessfulTiming);
-  if (!timedRows.length) return null;
-
-  const tszTotal = timedRows.reduce((sum, row) => sum + row.tsz_ms, 0);
-  const tsgoTotal = timedRows.reduce((sum, row) => sum + row.tsgo_ms, 0);
-
-  if (!Number.isFinite(tszTotal) || !Number.isFinite(tsgoTotal)) return null;
-
-  const winner =
-    tszTotal > 0 && tsgoTotal > 0
-      ? tszTotal < tsgoTotal
-        ? "tsz"
-        : tsgoTotal < tszTotal
-          ? "tsgo"
-          : null
-      : null;
-
-  const factor =
-    winner === "tsz"
-      ? tsgoTotal / tszTotal
-      : winner === "tsgo"
-        ? tszTotal / tsgoTotal
-        : null;
-
-  return {
-    name: `${libraryName} (all files)`,
-    lines: timedRows.reduce((sum, row) => sum + row.lines, 0),
-    kb: timedRows.reduce((sum, row) => sum + row.kb, 0),
-    tsz_ms: tszTotal,
-    tsgo_ms: tsgoTotal,
-    tsz_lps: timedRows.reduce((sum, row) => sum + row.tsz_lps, 0),
-    tsgo_lps: timedRows.reduce((sum, row) => sum + row.tsgo_lps, 0),
-    winner,
-    factor,
-    status: null,
-  };
 }
 
 function displayName(name) {
@@ -1241,7 +1119,6 @@ function buildGroupedBenchmarks(data) {
     grouped.set(category, bucket);
   }
 
-  ensureProjectRows(grouped);
   const successfulNames = new Set([
     ...results.map((row) => row.name),
     ...[...grouped.values()].flat().map((row) => row.name),
@@ -1289,13 +1166,6 @@ export function getBenchmarkPages() {
 
   for (const category of categories) {
     const entries = (grouped.get(category) || []).slice();
-    if (isExternalLibraryCategory(category)) {
-      const libraryName = libraryNameForCategory(category);
-      const aggregate = buildAggregateBenchmark(entries, libraryName);
-      if (aggregate && !hasProjectRowForLibrary(category, grouped)) {
-        entries.push({ ...aggregate, is_aggregate: true });
-      }
-    }
 
     entries.sort((a, b) => {
       const aLines = Number(a.lines) || 0;
@@ -1350,15 +1220,7 @@ function generateCharts(data, mode = "projects") {
 
   const barMaxWidth = 420;
   const entriesForCategory = (category) => {
-    const entries = (grouped.get(category) || []).slice();
-    if (isExternalLibraryCategory(category)) {
-      const libraryName = libraryNameForCategory(category);
-      const aggregate = buildAggregateBenchmark(entries, libraryName);
-      if (aggregate && !hasProjectRowForLibrary(category, grouped)) {
-        entries.push(aggregate);
-      }
-    }
-    return entries;
+    return (grouped.get(category) || []).slice();
   };
   const categoryTszSpeedupScore = (category) => Math.max(
     -Infinity,
