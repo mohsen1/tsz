@@ -2410,10 +2410,10 @@ impl<'a> CheckerState<'a> {
                 // Compute the effective body context as a local variable instead of
                 // modifying the ambient ctx.contextual_type.
                 let outer_ctx = contextual_type;
-                let effective_body_ctx = if let Some(body_node) = self.ctx.arena.get(body)
-                    && body_node.kind != syntax_kind_ext::BLOCK
-                    && !has_type_annotation
-                {
+                let body_kind = self.ctx.arena.get(body).map(|body_node| body_node.kind);
+                let body_is_expression =
+                    body_kind.is_some_and(|kind| kind != syntax_kind_ext::BLOCK);
+                let effective_body_ctx = if body_is_expression && !has_type_annotation {
                     let body_return_context = ctx_helper
                         .as_ref()
                         .and_then(tsz_solver::ContextualTypeContext::get_return_type)
@@ -2434,7 +2434,7 @@ impl<'a> CheckerState<'a> {
                         });
                     let suppress_contextual_return_for_conditional_body = jsdoc_return_context
                         .is_none()
-                        && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                        && body_kind == Some(syntax_kind_ext::CONDITIONAL_EXPRESSION)
                         && body_return_context.is_some_and(|return_type| {
                             self.type_has_unresolved_inference_holes(return_type)
                         });
@@ -2473,7 +2473,12 @@ impl<'a> CheckerState<'a> {
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
                 let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
                 if !skip_body_check {
-                    self.check_statement_with_request(body, &TypingRequest::NONE);
+                    let body_request = if body_is_expression {
+                        TypingRequest::NONE.contextual_opt(effective_body_ctx)
+                    } else {
+                        TypingRequest::NONE
+                    };
+                    self.check_statement_with_request(body, &body_request);
                 }
                 if let Some(snap) = diag_snap {
                     snap.rollback(&mut self.ctx);
