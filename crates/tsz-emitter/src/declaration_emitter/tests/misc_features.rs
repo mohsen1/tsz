@@ -913,6 +913,31 @@ fn test_grouped_let_declarator_preserves_null_initializer_type() {
 }
 
 #[test]
+fn test_type_only_same_name_interface_reference_does_not_emit_local_value_dependency() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export interface Component {
+    play(): void;
+}
+
+declare function createComponent(): void;
+const Component = createComponent();
+
+export type ComponentDefinition = Partial<Component>;
+"#,
+    );
+
+    assert!(
+        output.contains("export type ComponentDefinition = Partial<Component>;"),
+        "Expected exported type alias to remain: {output}"
+    );
+    assert!(
+        !output.contains("declare const Component"),
+        "Did not expect type-only Component reference to emit local const: {output}"
+    );
+}
+
+#[test]
 fn test_destructuring_variable_declaration_groups_typed_bindings() {
     let source = r#"var [x, y] = [1, "hello"];"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
