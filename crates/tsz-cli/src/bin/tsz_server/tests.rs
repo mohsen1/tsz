@@ -374,10 +374,15 @@ fn jsx_closing_tag_skips_quoted_attribute_with_greater_than() {
             .map(|i| i + 1)
             .unwrap_or(content.len());
         let tag_name = &content[1..tag_end];
-        let expected = format!("$0</{tag_name}>");
+        let expected = format!("</{tag_name}>");
         assert_eq!(
             new_text, expected,
             "{file}: jsxClosingTag for {content:?} should be {expected}, got {new_text}"
+        );
+        assert_eq!(
+            body.get("caretOffset").and_then(serde_json::Value::as_u64),
+            Some(0),
+            "{file}: jsxClosingTag must include caretOffset: 0, got {body:?}"
         );
     }
 }
@@ -400,7 +405,11 @@ fn jsx_closing_tag_skips_attribute_string_across_lines() {
     let body = response.body.expect("jsxClosingTag should return a body");
     assert_eq!(
         body.get("newText").and_then(serde_json::Value::as_str),
-        Some("$0</div>")
+        Some("</div>")
+    );
+    assert_eq!(
+        body.get("caretOffset").and_then(serde_json::Value::as_u64),
+        Some(0)
     );
 }
 
@@ -5586,4 +5595,43 @@ fn emit_output_honors_tsconfig_module_and_out_dir() {
         !text.contains("export const"),
         "must not preserve ES module syntax when module=commonjs, got: {text}"
     );
+}
+
+// Issue #3731: tsserver's jsxClosingTag returns a closing tag for ALL JSX
+// elements including intrinsic HTML void elements like <input>; tsz used
+// to suppress them.
+#[test]
+fn jsx_closing_tag_returns_close_for_intrinsic_void_elements() {
+    let void_cases = [
+        ("/input.tsx", "<input>", 8, "</input>"),
+        ("/img.tsx", "<img>", 6, "</img>"),
+        ("/br.tsx", "<br>", 5, "</br>"),
+        ("/hr.tsx", "<hr>", 5, "</hr>"),
+    ];
+
+    for (file, content, offset, expected_close) in void_cases {
+        let mut server = make_server();
+        server
+            .open_files
+            .insert(file.to_string(), content.to_string());
+
+        let response = server.handle_tsserver_request(make_request(
+            "jsxClosingTag",
+            serde_json::json!({"file": file, "line": 1, "offset": offset}),
+        ));
+        assert!(response.success, "{file}: jsxClosingTag should succeed");
+        let body = response
+            .body
+            .unwrap_or_else(|| panic!("{file}: expected a body for {content:?}"));
+        assert_eq!(
+            body.get("newText").and_then(serde_json::Value::as_str),
+            Some(expected_close),
+            "{file}: expected {expected_close}, got body={body:?}"
+        );
+        assert_eq!(
+            body.get("caretOffset").and_then(serde_json::Value::as_u64),
+            Some(0),
+            "{file}: must include caretOffset: 0, got body={body:?}"
+        );
+    }
 }
