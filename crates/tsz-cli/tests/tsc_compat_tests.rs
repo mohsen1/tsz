@@ -682,6 +682,50 @@ fn batch_mode_uses_project_cwd_for_jsdoc_required_constructor_types() {
         "const { A } = require(\"./a-ext\");\n\n/** @param {A} p */\nfunction a(p) { p.x; }\n",
     );
     write_file(
+        &base.join("b-ext.js"),
+        "exports.B = class {\n    constructor() {\n        this.x = 1;\n    }\n};\n",
+    );
+    write_file(
+        &base.join("b.js"),
+        "const { B } = require(\"./b-ext\");\n\n/** @param {B} p */\nfunction b(p) { p.x; }\n",
+    );
+    write_file(
+        &base.join("c-ext.js"),
+        "export function C() {\n    this.x = 1;\n}\n",
+    );
+    write_file(
+        &base.join("c.js"),
+        "const { C } = require(\"./c-ext\");\n\n/** @param {C} p */\nfunction c(p) { p.x; }\n",
+    );
+    write_file(
+        &base.join("d-ext.js"),
+        "export var D = function() {\n    this.x = 1;\n};\n",
+    );
+    write_file(
+        &base.join("d.js"),
+        "const { D } = require(\"./d-ext\");\n\n/** @param {D} p */\nfunction d(p) { p.x; }\n",
+    );
+    write_file(
+        &base.join("e-ext.js"),
+        "export class E {\n    constructor() {\n        this.x = 1;\n    }\n}\n",
+    );
+    write_file(
+        &base.join("e.js"),
+        "const { E } = require(\"./e-ext\");\n\n/** @param {E} p */\nfunction e(p) { p.x; }\n",
+    );
+    write_file(
+        &base.join("f.js"),
+        "var F = function () {\n    this.x = 1;\n};\n\n/** @param {F} p */\nfunction f(p) { p.x; }\n",
+    );
+    write_file(
+        &base.join("g.js"),
+        "function G() {\n    this.x = 1;\n}\n\n/** @param {G} p */\nfunction g(p) { p.x; }\n",
+    );
+    write_file(
+        &base.join("h.js"),
+        "class H {\n    constructor() {\n        this.x = 1;\n    }\n}\n\n/** @param {H} p */\nfunction h(p) { p.x; }\n",
+    );
+    write_file(
         &base.join("tsconfig.json"),
         r#"{
   "compilerOptions": {
