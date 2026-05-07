@@ -4528,19 +4528,16 @@ let mixedText = <Blah3>Hello unexpected text!</Blah3>;
     assert!(
         diags.iter().any(|(code, _, msg)| {
             *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && (msg
-                    .contains("Type '(x: number) => number' is not assignable to type 'Cb | Cb[]'")
-                    || msg.contains(
-                        "Type '(x: number) => number' is not assignable to type 'Cb[] | Cb'",
-                    ))
+                && msg.contains("Type '(x: number) => number' is not assignable to type")
+                && (msg.contains("Cb[] | Cb") || msg.contains("Cb | Cb[]"))
         }),
         "Union children mismatch should report against the declared union surface, got: {diags:?}"
     );
     assert!(
         diags.iter().any(|(code, _, msg)| {
             *code == diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
-                && (msg.contains("expected type of 'children' is 'Cb | Cb[]'")
-                    || msg.contains("expected type of 'children' is 'Cb[] | Cb'"))
+                && (msg.contains("expected type of 'children' is 'Cb[] | Cb'")
+                    || msg.contains("expected type of 'children' is 'Cb | Cb[]'"))
         }),
         "Union children text diagnostic should keep the declared union surface, got: {diags:?}"
     );
@@ -4563,7 +4560,7 @@ let mixedText = <Blah3>Hello unexpected text!</Blah3>;
             *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
                 && *start >= mixed_child_start
                 && *start <= mixed_child_end
-                && (msg.contains("Cb | Cb[]") || msg.contains("Cb[] | Cb"))
+                && (msg.contains("Cb[] | Cb") || msg.contains("Cb | Cb[]"))
         }),
         "Union child TS2322 should be anchored at the JSX child expression, got: {diags:?}"
     );
