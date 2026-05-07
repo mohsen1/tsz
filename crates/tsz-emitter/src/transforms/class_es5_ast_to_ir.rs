@@ -658,10 +658,66 @@ impl<'a> AstToIr<'a> {
         IRNode::ASTRef(idx)
     }
 
-    const fn convert_for_in_of_statement(&self, idx: NodeIndex) -> IRNode {
-        // For-in/for-of need ES5 transformation - use ASTRef for now
-        // A complete implementation would convert to a regular for loop
-        IRNode::ASTRef(idx)
+    fn convert_for_in_of_statement(&self, idx: NodeIndex) -> IRNode {
+        // Issue #3539: previously we returned `ASTRef(idx)` which delegates
+        // to the AST printer that has no `_this` substitution context. The
+        // body of `for-in`/`for-of` inside a derived ES5 constructor must
+        // recurse through `convert_statement` so any `this` reference
+        // becomes `_this`.
+        let Some(node) = self.arena.get(idx) else {
+            return IRNode::ASTRef(idx);
+        };
+        let Some(loop_data) = self.arena.get_for_in_of(node) else {
+            return IRNode::ASTRef(idx);
+        };
+        let kind = if node.kind == syntax_kind_ext::FOR_OF_STATEMENT {
+            if loop_data.await_modifier {
+                std::borrow::Cow::Borrowed("await of")
+            } else {
+                std::borrow::Cow::Borrowed("of")
+            }
+        } else {
+            std::borrow::Cow::Borrowed("in")
+        };
+        // The initializer is either a VariableDeclarationList or an
+        // expression. The variable-declaration case never references
+        // `this`, so we keep it as ASTRef for simplicity. The expression
+        // case still benefits from substitution, so use convert_expression.
+        // The initializer is either a VariableDeclarationList or an
+        // expression. For the variable-declaration case we synthesize
+        // `var <name>` from the parsed VariableData rather than slicing
+        // the source — the parser includes the trailing `of`/`in` keyword
+        // in the VARIABLE_DECLARATION_LIST node's range, so an `ASTRef`
+        // would re-emit the keyword. The expression case still benefits
+        // from substitution, so use convert_expression.
+        let initializer_node = self.arena.get(loop_data.initializer);
+        let initializer = if let Some(init_node) = initializer_node
+            && init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            && let Some(var_data) = self.arena.get_variable(init_node)
+        {
+            let mut text = String::from("var ");
+            for (i, &decl_idx) in var_data.declarations.nodes.iter().enumerate() {
+                if i > 0 {
+                    text.push_str(", ");
+                }
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                {
+                    text.push_str(&crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena, decl.name,
+                    ));
+                }
+            }
+            IRNode::Raw(text.into())
+        } else {
+            self.convert_expression(loop_data.initializer)
+        };
+        IRNode::ForInOfStatement {
+            kind,
+            initializer: Box::new(initializer),
+            expression: Box::new(self.convert_expression(loop_data.expression)),
+            body: Box::new(self.convert_statement(loop_data.statement)),
+        }
     }
 
     fn convert_identifier(&self, idx: NodeIndex) -> IRNode {
