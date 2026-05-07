@@ -854,9 +854,7 @@ impl ScannerState {
                                 comment_closed = true;
                                 break;
                             }
-                            if c == CharacterCodes::LINE_FEED
-                                || c == CharacterCodes::CARRIAGE_RETURN
-                            {
+                            if is_line_break(c) {
                                 self.token_flags |= TokenFlags::PrecedingLineBreak as u32;
                             }
                             self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
@@ -3955,6 +3953,39 @@ mod tests {
         assert_eq!(tokens.len(), 2);
         assert_eq!(tokens[0].1, "a");
         assert_eq!(tokens[1].1, "b");
+    }
+
+    #[test]
+    fn single_line_comment_terminates_at_unicode_line_separator() {
+        let tokens = scan_all("a // comment\u{2028}b");
+        assert_eq!(tokens.len(), 2, "tokens were: {tokens:?}");
+        assert_eq!(tokens[0].1, "a");
+        assert_eq!(tokens[1].1, "b");
+    }
+
+    #[test]
+    fn single_line_comment_terminates_at_unicode_paragraph_separator() {
+        let tokens = scan_all("a // comment\u{2029}b");
+        assert_eq!(tokens.len(), 2, "tokens were: {tokens:?}");
+        assert_eq!(tokens[0].1, "a");
+        assert_eq!(tokens[1].1, "b");
+    }
+
+    #[test]
+    fn directive_comment_does_not_swallow_next_line_via_unicode_line_separator() {
+        let mut scanner =
+            ScannerState::new("// @ts-expect-error\u{2028}const ok = 1;".to_string(), true);
+        assert_eq!(scanner.scan(), SyntaxKind::ConstKeyword);
+        assert!(scanner.has_preceding_line_break());
+    }
+
+    #[test]
+    fn multi_line_comment_unicode_line_separator_sets_preceding_line_break() {
+        let mut scanner = ScannerState::new("a /*\u{2028}*/ b".to_string(), true);
+        scanner.scan(); // "a"
+        assert!(!scanner.has_preceding_line_break());
+        scanner.scan(); // "b"
+        assert!(scanner.has_preceding_line_break());
     }
 
     // ── Scanner state methods ─────────────────────────────────────────
