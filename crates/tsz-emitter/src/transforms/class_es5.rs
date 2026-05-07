@@ -125,6 +125,10 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.set_use_define_for_class_fields(enable);
     }
 
+    pub const fn set_skip_static_members(&mut self, skip: bool) {
+        self.transformer.set_skip_static_members(skip);
+    }
+
     pub fn set_class_self_reference_alias(&mut self, alias: String) {
         self.transformer.set_class_self_reference_alias(alias);
     }

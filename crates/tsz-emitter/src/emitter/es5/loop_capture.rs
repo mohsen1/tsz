@@ -535,9 +535,27 @@ impl<'a> Printer<'a> {
         self.write(") {");
         self.write_line();
         self.increase_indent();
+        let block_scoped_temp_byte_offset = self.writer.len();
+        let block_scoped_temp_line = self.writer.current_line();
 
         // Emit the body statements inside the IIFE
         self.emit_loop_body_for_iife(body_idx, body_info, captured_vars, _init_vars);
+
+        if !self.block_scoped_private_temps.is_empty() {
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let temp_decls = self
+                .block_scoped_private_temps
+                .iter()
+                .map(|temp| format!("{temp} = void 0"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.writer.insert_line_at(
+                block_scoped_temp_byte_offset,
+                block_scoped_temp_line,
+                &format!("{indent}var {temp_decls};"),
+            );
+            self.block_scoped_private_temps.clear();
+        }
 
         self.decrease_indent();
         self.write("};");
