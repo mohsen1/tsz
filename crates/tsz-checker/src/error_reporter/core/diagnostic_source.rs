@@ -1031,6 +1031,18 @@ impl<'a> CheckerState<'a> {
         if !crate::query_boundaries::common::is_tuple_type(self.ctx.types, target) {
             return None;
         }
+        // Track whether the source is a readonly-wrapped tuple. tsc renders
+        // `readonly [...]` for the source side when the value type is
+        // `readonly` (e.g. produced by `as const`); without this prefix the
+        // assignment-failure message reads `Type '[1]'...` instead of
+        // `Type 'readonly [1]'...` for sources whose readonliness is the
+        // very property the assignment is failing on.
+        let source_is_readonly_tuple =
+            crate::query_boundaries::type_computation::complex::is_readonly_type(
+                self.ctx.types,
+                source_type,
+            ) && crate::query_boundaries::common::tuple_elements(self.ctx.types, source_type)
+                .is_some();
         let elements = crate::query_boundaries::common::tuple_elements(self.ctx.types, source_type)
             .or_else(|| {
                 let evaluated = self.evaluate_type_for_assignability(source_type);
@@ -1065,7 +1077,12 @@ impl<'a> CheckerState<'a> {
             }
             parts.push(part);
         }
-        Some(format!("[{}]", parts.join(", ")))
+        let body = format!("[{}]", parts.join(", "));
+        if source_is_readonly_tuple {
+            Some(format!("readonly {body}"))
+        } else {
+            Some(body)
+        }
     }
 
     pub(crate) fn object_literal_source_type_display(
