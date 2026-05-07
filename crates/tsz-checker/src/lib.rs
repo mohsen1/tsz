@@ -406,6 +406,9 @@ mod dynamic_import_ts2307_per_callsite_tests;
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
 #[cfg(test)]
+#[path = "tests/excess_prop_object_union_display_tests.rs"]
+mod excess_prop_object_union_display_tests;
+#[cfg(test)]
 #[path = "../tests/flow_boundary_contract_tests.rs"]
 mod flow_boundary_contract_tests;
 #[cfg(test)]

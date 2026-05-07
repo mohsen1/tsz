@@ -382,7 +382,10 @@ impl<'a> CheckerState<'a> {
             None
         }
 
-        normalized(left) == normalized(right)
+        match (normalized(left), normalized(right)) {
+            (Some(l), Some(r)) => l == r,
+            _ => false,
+        }
     }
 
     fn is_plain_type_alias_display(display: &str) -> bool {
