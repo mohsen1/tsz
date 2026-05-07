@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-06
 - **Branch**: `fix/this-prototype-compound-assignment-20260506-234200`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #4324
+- **Status**: ready
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
@@ -17,9 +17,13 @@ the owning checker path without suppressing unrelated nullability diagnostics.
 
 ## Files Touched
 
-- TBD after investigation.
+- `crates/tsz-checker/src/types/computation/call/tail_helpers.rs`
+- `crates/tsz-checker/tests/js_constructor_property_tests.rs`
 
 ## Verification
 
-- Focused Rust regression in the owning path.
+- `cargo fmt --check`
+- `CARGO_BUILD_JOBS=2 cargo nextest run -p tsz-checker --test js_constructor_property_tests checked_js_prototype`
 - `./scripts/conformance/conformance.sh run --filter "thisPrototypeMethodCompoundAssignmentJs" --verbose`
+- `./scripts/conformance/conformance.sh run --filter "thisPrototypeMethodCompoundAssignment" --verbose`
+- Pre-commit hook: clippy, wasm rustc warnings gate, architecture guardrails, affected-crate nextest (16052 passed, 57 skipped).
