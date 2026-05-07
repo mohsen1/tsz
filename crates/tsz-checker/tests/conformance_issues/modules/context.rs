@@ -501,6 +501,27 @@ namedFoo.toExponential(2);
 }
 
 #[test]
+fn module_preserve_default_import_from_explicit_esm_export_equals_no_ts1192() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            ("e.mts", "export = 0;"),
+            ("main.ts", r#"import e from "./e.mts"; e;"#),
+        ],
+        "main.ts",
+        CheckerOptions {
+            module: ModuleKind::Preserve,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 1192),
+        "module: preserve should use export= as the default import target even for explicit ESM extensions. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn node_esm_default_import_from_cts_is_namespace_shaped() {
     let diagnostics = compile_node_esm_importing_cts_default_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
