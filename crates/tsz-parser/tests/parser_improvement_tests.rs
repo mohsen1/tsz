@@ -362,7 +362,7 @@ fn test_property_access_missing_name_at_eof_reports_ts1003_after_dot() {
 }
 
 #[test]
-fn test_missing_arrow_expression_body_consumes_synthetic_close_brace() {
+fn test_missing_arrow_expression_body_preserves_close_brace() {
     let source = r"
 namespace N {
     namespace Inner {
@@ -383,7 +383,7 @@ namespace N {
     );
     assert_eq!(
         ts1128_count, 1,
-        "Recovered expression-bodied arrows should report one trailing close-brace diagnostic: {diagnostics:?}"
+        "Recovered expression-bodied arrows should preserve the close brace for outer recovery: {diagnostics:?}"
     );
 }
 
@@ -547,7 +547,11 @@ fn test_middle_dot_identifier_part_parses_without_ts1127() {
 }
 
 #[test]
-fn test_regex_extended_unicode_escape_above_max_reports_ts1198() {
+fn test_regex_extended_unicode_escape_above_max_does_not_report_ts1198() {
+    // tsc treats out-of-range `\u{...}` inside regex literals as a runtime
+    // concern and does not emit TS1198 even with the `u` flag. Match that
+    // behavior — the parser must skip past the braced escape without
+    // validating its code-point range.
     let source = r#"
 const regexes: RegExp[] = [
   /\u{110000}/u,
@@ -566,20 +570,9 @@ const regexes: RegExp[] = [
         })
         .collect();
 
-    assert_eq!(
-        ts1198.len(),
-        2,
-        "Expected exactly two TS1198 diagnostics for out-of-range regex unicode escapes, got {diagnostics:?}"
-    );
-
-    let expected_starts = [
-        source.find("110000").expect("first escape") as u32,
-        source.rfind("110000").expect("second escape") as u32,
-    ];
-    let actual_starts: Vec<_> = ts1198.iter().map(|d| d.start).collect();
-    assert_eq!(
-        actual_starts, expected_starts,
-        "Expected TS1198 to point at the braced escape digits, got {diagnostics:?}"
+    assert!(
+        ts1198.is_empty(),
+        "Expected no TS1198 inside regex literals to match tsc, got {diagnostics:?}"
     );
 }
 

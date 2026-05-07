@@ -1164,10 +1164,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
-        if prop_name == "toString" || prop_name == "valueOf" {
-            return PropertyAccessResult::simple(TypeId::ANY);
-        }
-
         let boxed_loaded = if let Some(boxed_type) =
             crate::def::resolver::TypeResolver::get_boxed_type(self.db, IntrinsicKind::Symbol)
         {

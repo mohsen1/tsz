@@ -3847,6 +3847,7 @@ impl<'a> DeclarationEmitter<'a> {
 
             let mut type_param_names = Vec::new();
             let mut type_param_substitutions = Vec::new();
+            let mut type_param_constraints = Vec::new();
             let mut type_param_fallbacks = Vec::new();
             if let Some(type_params) = callable.type_parameters {
                 for &param_idx in &type_params.nodes {
@@ -3868,6 +3869,15 @@ impl<'a> DeclarationEmitter<'a> {
                         } else {
                             None
                         };
+                        if param.constraint.is_some()
+                            && let Some(constraint) = self
+                                .emit_type_node_text_from_arena(source_arena, param.constraint)
+                                .or_else(|| {
+                                    self.source_slice_from_arena(source_arena, param.constraint)
+                                })
+                        {
+                            type_param_constraints.push((name_text.clone(), constraint));
+                        }
                         if let Some(fallback) = fallback {
                             type_param_fallbacks.push((name_text.clone(), fallback));
                         }
@@ -3888,6 +3898,7 @@ impl<'a> DeclarationEmitter<'a> {
                             callable.parameters,
                             call,
                             &type_param_names,
+                            &type_param_constraints,
                         ),
                     );
                 }
@@ -4039,8 +4050,53 @@ impl<'a> DeclarationEmitter<'a> {
                 type_text =
                     Self::rewrite_relative_import_type_specifiers(&type_text, module_specifier);
             }
-            Some(type_text)
+            type_text = Self::ensure_single_line_type_literal_member_semicolon(&type_text);
+            Some(self.format_reused_call_structural_return_type_text(&type_text))
         })
+    }
+
+    fn format_reused_call_structural_return_type_text(&self, type_text: &str) -> String {
+        if !type_text.contains(" & ") || !type_text.contains("=> {") {
+            return type_text.to_string();
+        }
+
+        let mut out = String::with_capacity(type_text.len() + 16);
+        let mut rest = type_text;
+        let member_indent = "    ".repeat((self.indent_level + 1) as usize);
+        let closing_indent = "    ".repeat(self.indent_level as usize);
+
+        while let Some(start) = rest.find("=> {") {
+            let (before, after_marker) = rest.split_at(start + 4);
+            out.push_str(before);
+            let Some(end) = after_marker.find('}') else {
+                out.push_str(after_marker);
+                return out;
+            };
+            let body = after_marker[..end].trim();
+            if body.is_empty()
+                || body.contains('\n')
+                || body.contains(';')
+                || body.contains(',')
+                || !body.contains(':')
+            {
+                out.push_str(&after_marker[..=end]);
+                rest = &after_marker[end + 1..];
+                continue;
+            }
+
+            let member = body.trim_end_matches(';').trim();
+            out.push('\n');
+            out.push_str(&member_indent);
+            out.push_str(member);
+            out.push(';');
+            out.push('\n');
+            out.push_str(&closing_indent);
+            out.push('}');
+            rest = &after_marker[end + 1..];
+        }
+
+        out.push_str(rest);
+        out
     }
 
     fn preserve_literal_mapped_return_type_substitutions(
@@ -4121,6 +4177,25 @@ impl<'a> DeclarationEmitter<'a> {
             current = parent_idx;
         }
         None
+    }
+
+    fn ensure_single_line_type_literal_member_semicolon(type_text: &str) -> String {
+        let trimmed = type_text.trim();
+        if trimmed.contains('\n') {
+            return type_text.to_string();
+        }
+        let Some(inner) = trimmed
+            .strip_prefix('{')
+            .and_then(|text| text.strip_suffix('}'))
+            .map(str::trim)
+        else {
+            return type_text.to_string();
+        };
+        if inner.is_empty() || inner.ends_with(';') || inner.contains(';') || !inner.contains(':') {
+            type_text.to_string()
+        } else {
+            format!("{{ {inner}; }}")
+        }
     }
 
     pub(in crate::declaration_emitter) fn imported_static_method_declared_return_type_text(

@@ -304,6 +304,73 @@ Research notes, draft/abandoned PRs, and "deferred" claim files do
 **not** count as shipped. A green local build + a single-test
 conformance pass + a non-draft PR pushed to `origin` does.
 
+## 20.27) Conformance Commit Gate — every commit must defend the delta
+
+The project has already reached 99% once. The reason it does not stay
+there is not lack of isolated fixes; it is unreviewed net-negative
+snapshot churn. Every commit that can affect conformance must make the
+conformance delta explicit before it is committed.
+
+This gate applies to every commit touching checker, solver, parser,
+binder, emitter, transforms, compiler diagnostics, conformance harness
+code, TypeScript baselines, or conformance snapshot files.
+
+### Required before each conformance-relevant commit
+
+1. Refresh or inspect the conformance snapshot for the exact tree being
+   committed. Use targeted runs while developing, but commit-time claims
+   must be based on the committed snapshot files when they change.
+2. Compare against `main` and record:
+   - total passed before/after and net pass delta,
+   - new failing tests,
+   - newly fixed tests,
+   - tests that still fail but changed expected/actual code sets,
+   - category deltas for false positives, all-missing, wrong-code,
+     fingerprint-only, and close-to-passing.
+3. If the commit is net-negative, stop. Do not commit it unless the user
+   explicitly requested the regression and the commit/PR message names
+   every new failure with a rationale.
+4. Never hide regressions inside "refresh snapshots", "integrate batch",
+   or "update baselines" commits. Snapshot-only commits still need the
+   same before/after failure-set report.
+5. A fixed test plus a new failing test is not automatically acceptable.
+   Net-zero swaps must explain why the new failure is expected and why
+   the fixed failure is a higher-priority root-cause move.
+
+### Required commit/PR wording
+
+Every conformance-relevant commit message or PR body must include a
+short conformance block:
+
+```text
+Conformance:
+- passed: <before> -> <after> (<delta>)
+- fixed: <count> (<test names or "none">)
+- new failures: <count> (<test names or "none">)
+- changed failures: <count> (<summary or "none">)
+- category delta: false_positive <delta>, all_missing <delta>, wrong_code <delta>, fingerprint_only <delta>, close_to_passing <delta>
+```
+
+If any line is unknown, do not commit yet. Generate or inspect the data
+first.
+
+### Work campaigns, not leaf churn
+
+Conformance commits should move a root-cause bucket:
+
+- diagnostic-count parity,
+- type-display/fingerprint parity,
+- TS2339 false positives,
+- TS7006 contextual typing leakage,
+- TS2322/TS2345/TS2430 relation-boundary inconsistencies,
+- parser recovery,
+- module-resolution parity.
+
+Close-to-passing leaf tests are useful only when they validate one of
+those root-cause moves. A `+0` conformance commit is suspect unless it
+reduces a tracked bucket or removes technical debt that is blocking one
+of these campaigns.
+
 ### Quick reference
 ```bash
 # Pick one random failure (prints path + codes + a verbose-run command):

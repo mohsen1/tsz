@@ -464,6 +464,46 @@ fn test_node16_pattern_exports_resolves_with_dts() {
 }
 
 #[test]
+fn test_bundler_package_exports_apply_module_suffixes_to_declaration_sidecars() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_exports_module_suffixes_dts");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{"./foo":"./foo.js"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules/pkg/foo.native.d.ts"),
+        "export declare const value: number;",
+    )
+    .unwrap();
+    fs::write(dir.join("src/index.ts"), "import { value } from 'pkg/foo';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        module_suffixes: vec![".native".to_string(), String::new()],
+        resolve_package_json_exports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let result = resolver
+        .resolve("pkg/foo", &dir.join("src/index.ts"), Span::new(22, 29))
+        .expect("package exports target should resolve through suffixed declaration sidecar");
+    assert_eq!(
+        result.resolved_path,
+        dir.join("node_modules/pkg/foo.native.d.ts")
+    );
+    assert_eq!(result.extension, ModuleExtension::Dts);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_exports_pattern_key_is_not_treated_as_exact_match_for_literal_star_specifier() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_exports_literal_star_specifier");

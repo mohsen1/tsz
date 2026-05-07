@@ -2,6 +2,7 @@
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::parser::node_view::NodeAccess;
+use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::position::LineMap;
@@ -34,6 +35,28 @@ fn parse_statement_recovery_on_malformed_top_level_diagnostics() {
     let sf = parser.get_arena().get_source_file_at(root).unwrap();
     assert!(sf.statements.nodes.len() >= 2);
     assert!(!parser.get_diagnostics().is_empty());
+}
+
+#[test]
+fn top_level_modifier_before_break_recovers_as_empty_statement() {
+    let (parser, root) = parse_source("public break;");
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED],
+        "expected only TS1128 from modifier recovery, got {diagnostics:?}"
+    );
+
+    let arena = parser.get_arena();
+    let source_file = arena.get_source_file_at(root).expect("source file");
+    let statement = source_file.statements.nodes[0];
+    let statement_node = arena.get(statement).expect("statement");
+    assert_eq!(
+        statement_node.kind,
+        syntax_kind_ext::EMPTY_STATEMENT,
+        "top-level `public break;` should not leave a break statement for checker diagnostics"
+    );
 }
 
 #[test]
