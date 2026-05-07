@@ -2556,6 +2556,90 @@ fn tsc_parity_init() {
     );
 }
 
+/// Regression test for #3905. When `--init` is invoked together with
+/// recognized compiler options, the generated tsconfig.json should reflect
+/// those options instead of the hardcoded template. This exercises three
+/// distinct override paths: replacing a commented template line (`rootDir`,
+/// `outDir`), overwriting an active template line (`module`, `target`,
+/// `strict`), and appending an option that has no template slot (`pretty`).
+#[test]
+fn tsc_parity_init_with_options() {
+    if !tsc_available() {
+        return;
+    }
+    let temp_tsc = TempDir::new("init_opts_tsc").expect("temp dir");
+    let temp_tsz = TempDir::new("init_opts_tsz").expect("temp dir");
+
+    let opts: &[&str] = &[
+        "--init",
+        "--target",
+        "es2015",
+        "--module",
+        "commonjs",
+        "--rootDir",
+        "src",
+        "--outDir",
+        "dist",
+        "--strict",
+        "false",
+        "--pretty",
+        "false",
+    ];
+
+    let tsc_out = run_tsc(&temp_tsc.path, opts).expect("tsc --init failed");
+    let tsz_out = run_tsz(&temp_tsz.path, opts).expect("tsz --init failed");
+
+    if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
+        panic!("--init console output mismatch:\n{diff}\n\ntsc:\n{tsc_out}\n\ntsz:\n{tsz_out}");
+    }
+
+    let tsc_config =
+        std::fs::read_to_string(temp_tsc.path.join("tsconfig.json")).expect("tsc tsconfig.json");
+    let tsz_config =
+        std::fs::read_to_string(temp_tsz.path.join("tsconfig.json")).expect("tsz tsconfig.json");
+    assert_eq!(
+        tsc_config, tsz_config,
+        "--init with options: generated tsconfig.json files differ"
+    );
+}
+
+/// Multiple command-line-only options (`--diagnostics`, `--listFiles`,
+/// `--noEmit`, `--pretty`) get appended after the template body in the order
+/// they appeared on the command line.
+#[test]
+fn tsc_parity_init_appends_command_line_options_in_order() {
+    if !tsc_available() {
+        return;
+    }
+    let temp_tsc = TempDir::new("init_append_tsc").expect("temp dir");
+    let temp_tsz = TempDir::new("init_append_tsz").expect("temp dir");
+
+    let opts: &[&str] = &[
+        "--init",
+        "--listFiles",
+        "--noEmit",
+        "--diagnostics",
+        "--pretty",
+        "false",
+    ];
+
+    let tsc_out = run_tsc(&temp_tsc.path, opts).expect("tsc --init failed");
+    let tsz_out = run_tsz(&temp_tsz.path, opts).expect("tsz --init failed");
+
+    if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
+        panic!("--init console output mismatch:\n{diff}\n\ntsc:\n{tsc_out}\n\ntsz:\n{tsz_out}");
+    }
+
+    let tsc_config =
+        std::fs::read_to_string(temp_tsc.path.join("tsconfig.json")).expect("tsc tsconfig.json");
+    let tsz_config =
+        std::fs::read_to_string(temp_tsz.path.join("tsconfig.json")).expect("tsz tsconfig.json");
+    assert_eq!(
+        tsc_config, tsz_config,
+        "--init append-only options: generated tsconfig.json files differ"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Diagnostic output: plain mode exact match
 // ---------------------------------------------------------------------------
