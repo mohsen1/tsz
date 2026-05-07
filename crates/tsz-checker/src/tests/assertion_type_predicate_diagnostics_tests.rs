@@ -347,6 +347,37 @@ fn js_require_export_equals_assertion_from_dts_does_not_emit_ts2775() {
 }
 
 #[test]
+fn js_file_require_destructured_assertion_does_not_emit_ts2775() {
+    // Regression for `requireAssertsFromTypescript`: a `const { art } = require(...)`
+    // binding in a JS file pulls a `.d.ts`-declared assertion function. The
+    // local destructure binding has no syntactic place to attach an
+    // annotation in JS, but the imported declaration carries the
+    // `asserts value` predicate. tsc accepts the call; tsz emitted a
+    // spurious TS2775 because the local binding's primary declaration
+    // (the destructure pattern) lacked an explicit type annotation.
+    //
+    // The fix in `symbol_has_explicit_assertion_annotation` falls back
+    // to the resolved symbol type's call signatures: when one of them
+    // carries a type predicate, accept the call. The fallback is gated
+    // to JS files so a TS-file `const f = assertString` still triggers
+    // TS2775 (TS users have the syntax to annotate explicitly).
+    let diagnostics = check_js_source_diagnostics(
+        r#"
+/** @typedef {(value: any) => asserts value} Assert */
+/** @type {Assert} */
+const art = (value) => { if (!value) throw new Error(); };
+let x = 1;
+art(x);
+"#,
+    );
+    let ts2775: Vec<_> = diagnostics.iter().filter(|d| d.code == 2775).collect();
+    assert!(
+        ts2775.is_empty(),
+        "did not expect TS2775 for a JS-file assertion target whose resolved type carries the asserts predicate, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn constructor_type_predicate_return_emits_ts1228() {
     let codes = check_source_codes("declare let Q: new (x: unknown) => asserts x;");
     assert!(

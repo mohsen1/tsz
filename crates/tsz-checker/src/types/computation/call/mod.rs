@@ -278,7 +278,43 @@ impl<'a> CheckerState<'a> {
         let Some(decl_idx) = symbol.primary_declaration() else {
             return true;
         };
-        self.declaration_has_explicit_assertion_annotation(decl_idx)
+        if self.declaration_has_explicit_assertion_annotation(decl_idx) {
+            return true;
+        }
+        // JS-file fallback: when the local binding doesn't carry an explicit
+        // annotation directly (e.g. `const { art } = require('./ex')`
+        // destructuring import that pulls a `.d.ts`-declared assertion
+        // function), the resolved symbol type still carries the
+        // `asserts` predicate from the imported declaration. tsc accepts
+        // such call targets in JS files because there is no syntax to
+        // attach an annotation to the destructure binding itself; the
+        // imported function's signature is the explicit annotation in
+        // spirit. Restrict this to JS-file checks so a TS-file local
+        // arrow assertion (`const f = assertString;`) still emits
+        // TS2775 — TS users have the syntax to annotate.
+        if !self.is_js_file() {
+            return false;
+        }
+        let symbol_type = self.get_type_of_symbol(sym_id);
+        if symbol_type == tsz_solver::TypeId::ERROR {
+            return true;
+        }
+        if let Some(shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, symbol_type)
+            && shape
+                .call_signatures
+                .iter()
+                .any(|sig| sig.type_predicate.is_some())
+        {
+            return true;
+        }
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, symbol_type)
+            && shape.type_predicate.is_some()
+        {
+            return true;
+        }
+        false
     }
 
     fn declaration_has_explicit_assertion_annotation(&mut self, decl_idx: NodeIndex) -> bool {
