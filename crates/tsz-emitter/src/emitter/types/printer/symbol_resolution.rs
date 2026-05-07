@@ -698,7 +698,10 @@ impl<'a> TypePrinter<'a> {
             }
             return format!("readonly {inner_str}");
         }
-        if visitor::unique_symbol_ref(self.interner, type_id).is_some() {
+        if let Some(sym_ref) = visitor::unique_symbol_ref(self.interner, type_id) {
+            if let Some(name) = self.print_named_symbol_reference(SymbolId(sym_ref.0), true) {
+                return name;
+            }
             return "unique symbol".to_string();
         }
         if visitor::is_this_type(self.interner, type_id) {
