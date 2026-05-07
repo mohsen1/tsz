@@ -881,12 +881,9 @@ function f() {
 f.marked = true;
 "#,
     );
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
-    assert_eq!(
-        ts2339.len(),
-        0,
-        "Expected no TS2339 for new.target expando property, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    assert!(
+        diags.is_empty(),
+        "Expected no diagnostics for new.target expando property narrowing, got: {diags:?}"
     );
 }
 
