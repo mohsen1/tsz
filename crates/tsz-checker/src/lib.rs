@@ -529,6 +529,9 @@ mod strict_callback_param_method_tests;
 #[path = "../tests/strict_null_manual.rs"]
 mod strict_null_manual;
 #[cfg(test)]
+#[path = "tests/string_literal_union_display_order_tests.rs"]
+mod string_literal_union_display_order_tests;
+#[cfg(test)]
 #[path = "../tests/symbol_index_signature_tests.rs"]
 mod symbol_index_signature_tests;
 #[cfg(test)]
