@@ -4544,18 +4544,18 @@ let mixedText = <Blah3>Hello unexpected text!</Blah3>;
     let mixed_start = source
         .find("let mixed =")
         .expect("test source should contain the mixed declaration");
-    let mixed_child_start = source[mixed_start..]
-        .find("{x => x}")
+    let mixed_child_expression_start = source[mixed_start..]
+        .find("x => x")
         .map(|offset| mixed_start + offset)
         .expect("test source should contain the mixed child expression")
         as u32;
     assert!(
         diags.iter().any(|(code, start, msg)| {
             *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && *start == mixed_child_start
-                && msg.contains("Cb | Cb[]")
+                && *start == mixed_child_expression_start
+                && msg.contains("Cb[] | Cb")
         }),
-        "Union child TS2322 should be anchored at the JSX expression wrapper, got: {diags:?}"
+        "Union child TS2322 should be anchored at the JSX child expression, got: {diags:?}"
     );
 }
 
