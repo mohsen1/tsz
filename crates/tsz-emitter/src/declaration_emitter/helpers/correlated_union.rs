@@ -219,6 +219,48 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let mut substitutions: Vec<(String, String)> = Vec::new();
+        for (param_pos, &param_idx) in parameters.nodes.iter().enumerate() {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            if !param.dot_dot_dot_token {
+                continue;
+            }
+            let Some(param_type_text) = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+            else {
+                continue;
+            };
+            let param_type_text = param_type_text.trim();
+            if !type_param_names
+                .iter()
+                .any(|name| name.as_str() == param_type_text)
+                || substitutions
+                    .iter()
+                    .any(|(name, _)| name.as_str() == param_type_text)
+            {
+                continue;
+            }
+
+            let rest_args = args.nodes.get(param_pos..).unwrap_or_default();
+            let Some(rest_arg_texts) = rest_args
+                .iter()
+                .copied()
+                .map(|arg_idx| self.call_argument_type_text_for_substitution(arg_idx))
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            substitutions.push((
+                param_type_text.to_string(),
+                format!("[{}]", rest_arg_texts.join(", ")),
+            ));
+        }
+
         for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
             let Some(param_node) = source_arena.get(param_idx) else {
                 continue;
@@ -226,6 +268,9 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(param) = source_arena.get_parameter(param_node) else {
                 continue;
             };
+            if param.dot_dot_dot_token {
+                continue;
+            }
             let Some(param_type_text) = self
                 .emit_type_node_text_from_arena(source_arena, param.type_annotation)
                 .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))

@@ -258,6 +258,7 @@ impl Server {
                     }
                     if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
                         template_depth += 1;
+                        in_template = false;
                         i += 2;
                         continue;
                     }
