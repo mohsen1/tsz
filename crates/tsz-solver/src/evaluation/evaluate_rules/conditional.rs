@@ -1717,7 +1717,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         };
 
-        if !self.type_contains_infer(cond.extends_type) {
+        let contains_infer =
+            if let Some(contains_infer) = self.cached_contains_infer(cond.extends_type) {
+                contains_infer
+            } else {
+                let contains_infer = self.type_contains_infer(cond.extends_type);
+                self.cache_contains_infer(cond.extends_type, contains_infer);
+                contains_infer
+            };
+        if !contains_infer {
             return None;
         }
 

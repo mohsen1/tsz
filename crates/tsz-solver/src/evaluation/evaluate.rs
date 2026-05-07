@@ -66,6 +66,11 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// the same (check, extends) pair many times across distributed branches and
     /// tail-recursion iterations. Caching avoids redundant structural comparison.
     conditional_subtype_cache: FxHashMap<(TypeId, TypeId), bool>,
+    /// PERF: Cache whether a type contains `infer`.
+    /// Recursive conditionals can revisit the same application-shaped `extends`
+    /// pattern thousands of times while checking whether the application-level
+    /// infer fast path applies.
+    contains_infer_cache: FxHashMap<TypeId, bool>,
     /// Ceiling for eager mapped-key expansion before bailing out.
     max_mapped_keys: usize,
     /// When true, flag `depth_exceeded` on Application cycle detection.
@@ -148,6 +153,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             def_depth: FxHashMap::default(),
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
+            contains_infer_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
@@ -194,6 +200,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             def_depth: FxHashMap::default(),
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
+            contains_infer_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
@@ -321,6 +328,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) {
         self.conditional_subtype_cache
             .insert((check, extends), result);
+    }
+
+    /// PERF: Look up whether a type contains `infer`.
+    #[inline]
+    pub(crate) fn cached_contains_infer(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_infer_cache.get(&type_id).copied()
+    }
+
+    /// PERF: Cache whether a type contains `infer`.
+    #[inline]
+    pub(crate) fn cache_contains_infer(&mut self, type_id: TypeId, result: bool) {
+        self.contains_infer_cache.insert(type_id, result);
     }
 
     /// Check if `no_unchecked_indexed_access` is enabled.
