@@ -850,6 +850,15 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
+        if resolved_target == TypeId::OBJECT
+            && crate::visitors::visitor_predicates::contains_type_parameters(
+                self.db,
+                resolved_source,
+            )
+        {
+            return self.db.intersection2(source_type, TypeId::OBJECT);
+        }
+
         // Check if source is assignable to target using resolved types for comparison
         if self.is_assignable_to(resolved_source, resolved_target) {
             trace!("Source type is assignable to target, returning source");

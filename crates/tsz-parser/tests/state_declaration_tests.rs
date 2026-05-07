@@ -212,6 +212,63 @@ fn parse_empty_arrow_body_close_brace_closes_namespace_block() {
 }
 
 #[test]
+fn parse_empty_arrow_body_close_brace_terminates_namespace_block() {
+    let (parser, root) = parse_source(
+        "namespace outer {\n  namespace inner {\n    var a = () => };\n  var b = () => }\nvar c = () => ;\n",
+    );
+    assert!(
+        !parser.get_diagnostics().is_empty(),
+        "expected diagnostics for malformed arrow bodies"
+    );
+
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    assert_eq!(sf.statements.nodes.len(), 2);
+    assert_eq!(
+        arena.get(sf.statements.nodes[0]).unwrap().kind,
+        syntax_kind_ext::MODULE_DECLARATION
+    );
+    assert_eq!(
+        arena.get(sf.statements.nodes[1]).unwrap().kind,
+        syntax_kind_ext::VARIABLE_STATEMENT
+    );
+
+    let outer = arena
+        .get_module(arena.get(sf.statements.nodes[0]).unwrap())
+        .unwrap();
+    let outer_block = arena
+        .get_module_block(arena.get(outer.body).unwrap())
+        .unwrap();
+    let outer_statements = &outer_block.statements.as_ref().unwrap().nodes;
+    assert_eq!(outer_statements.len(), 3);
+    assert_eq!(
+        arena.get(outer_statements[0]).unwrap().kind,
+        syntax_kind_ext::MODULE_DECLARATION
+    );
+    assert_eq!(
+        arena.get(outer_statements[1]).unwrap().kind,
+        syntax_kind_ext::EMPTY_STATEMENT
+    );
+    assert_eq!(
+        arena.get(outer_statements[2]).unwrap().kind,
+        syntax_kind_ext::VARIABLE_STATEMENT
+    );
+
+    let inner = arena
+        .get_module(arena.get(outer_statements[0]).unwrap())
+        .unwrap();
+    let inner_block = arena
+        .get_module_block(arena.get(inner.body).unwrap())
+        .unwrap();
+    let inner_statements = &inner_block.statements.as_ref().unwrap().nodes;
+    assert_eq!(inner_statements.len(), 1);
+    assert_eq!(
+        arena.get(inner_statements[0]).unwrap().kind,
+        syntax_kind_ext::VARIABLE_STATEMENT
+    );
+}
+
+#[test]
 fn parse_declare_using_as_single_variable_statement() {
     // `declare using y: null;` should parse as one VARIABLE_STATEMENT with declare modifier,
     // not as two statements (declare; + using y;)
