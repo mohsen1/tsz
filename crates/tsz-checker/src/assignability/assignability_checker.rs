@@ -2372,6 +2372,9 @@ impl<'a> CheckerState<'a> {
         if def.kind != tsz_solver::def::DefKind::TypeAlias {
             return false;
         }
+        if self.type_alias_args_are_unwitnessed(def_id, source_args.len()) {
+            return false;
+        }
         if self.format_type_diagnostic(source_base) == "Static" {
             return true;
         }
@@ -2381,6 +2384,22 @@ impl<'a> CheckerState<'a> {
             .any(|(&source_arg, &target_arg)| {
                 !target_arg.is_any() && !self.is_assignable_to(source_arg, target_arg)
             })
+    }
+
+    fn type_alias_args_are_unwitnessed(
+        &self,
+        def_id: tsz_solver::def::DefId,
+        arg_len: usize,
+    ) -> bool {
+        tsz_solver::relations::variance::compute_type_param_variances_with_resolver(
+            self.ctx.types.as_type_database(),
+            &self.ctx,
+            def_id,
+        )
+        .as_ref()
+        .is_some_and(|variances| {
+            variances.len() == arg_len && variances.iter().all(|v| v.is_independent())
+        })
     }
 
     fn application_display_info(&self, type_id: TypeId) -> Option<(TypeId, Vec<TypeId>)> {

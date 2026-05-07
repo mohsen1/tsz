@@ -63,9 +63,41 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
+        if self.application_type_args_are_unwitnessed(s_app)
+            && self.application_type_args_are_unwitnessed(t_app)
+        {
+            return false;
+        }
+
         s_app.args.iter().chain(t_app.args.iter()).all(|&arg| {
             !crate::contains_type_parameters(self.interner, arg)
                 && !crate::contains_this_type(self.interner, arg)
+        })
+    }
+
+    fn application_type_args_are_unwitnessed(&self, app: &crate::types::TypeApplication) -> bool {
+        let Some(def_id) = self.application_base_def_id(app.base) else {
+            return false;
+        };
+
+        use crate::caches::db::QueryDatabase;
+        let variances = self
+            .resolver
+            .get_type_param_variance(def_id)
+            .or_else(|| {
+                self.query_db
+                    .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
+            })
+            .or_else(|| {
+                crate::relations::variance::compute_type_param_variances_with_resolver(
+                    self.interner,
+                    self.resolver,
+                    def_id,
+                )
+            });
+
+        variances.as_ref().is_some_and(|variances| {
+            variances.len() == app.args.len() && variances.iter().all(|v| v.is_independent())
         })
     }
 
