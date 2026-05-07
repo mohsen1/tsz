@@ -654,6 +654,20 @@ impl<'a> Printer<'a> {
         extract_jsx_import_source(text)
     }
 
+    /// Extract `@jsx <factory>` pragma (classic JSX) from the file's leading
+    /// comments. Issue #4010.
+    pub(in super::super) fn extract_jsx_factory_pragma(&self) -> Option<String> {
+        let text = self.source_text?;
+        super::extract_jsx_factory(text)
+    }
+
+    /// Extract `@jsxFrag <factory>` pragma (classic JSX) from the file's
+    /// leading comments. Issue #4010.
+    pub(in super::super) fn extract_jsx_fragment_factory_pragma(&self) -> Option<String> {
+        let text = self.source_text?;
+        super::extract_jsx_fragment_factory(text)
+    }
+
     /// Check if the file needs JSX runtime auto-imports and return the import text.
     /// Called at the start of source file emission for jsx=react-jsx/react-jsxdev.
     /// Only imports the functions that are actually used in the file.

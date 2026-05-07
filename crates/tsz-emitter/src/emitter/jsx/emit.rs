@@ -559,8 +559,13 @@ impl<'a> Printer<'a> {
     // Shared JSX Helpers
     // =========================================================================
 
-    /// Get the JSX factory function name (e.g. "React.createElement" or custom)
+    /// Get the JSX factory function name (e.g. "React.createElement" or custom).
+    /// Per-file `@jsx <factory>` pragma takes precedence over the
+    /// `compilerOptions.jsxFactory` value (issue #4010), matching tsc.
     pub(in super::super) fn get_jsx_factory(&self) -> String {
+        if let Some(pragma) = self.extract_jsx_factory_pragma() {
+            return pragma;
+        }
         self.ctx
             .options
             .jsx_factory
@@ -569,8 +574,13 @@ impl<'a> Printer<'a> {
             .to_string()
     }
 
-    /// Get the JSX fragment factory (e.g. "React.Fragment" or custom)
+    /// Get the JSX fragment factory (e.g. "React.Fragment" or custom).
+    /// Per-file `@jsxFrag <factory>` pragma takes precedence over the
+    /// `compilerOptions.jsxFragmentFactory` value (issue #4010).
     pub(in super::super) fn get_jsx_fragment_factory(&self) -> String {
+        if let Some(pragma) = self.extract_jsx_fragment_factory_pragma() {
+            return pragma;
+        }
         self.ctx
             .options
             .jsx_fragment_factory
