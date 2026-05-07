@@ -861,5 +861,9 @@ path = "tests/jsdoc_import_default_and_named_tests.rs"
 name = "local_undefined_globalthis_shadow_tests"
 path = "tests/local_undefined_globalthis_shadow_tests.rs"
 
+[[test]]
+name = "window_indexed_access_callback_contextual_typing_tests"
+path = "tests/window_indexed_access_callback_contextual_typing_tests.rs"
+
 [lints]
 workspace = true

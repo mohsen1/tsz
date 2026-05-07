@@ -489,6 +489,62 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        // Handle `window[k]` where `k` is a typed identifier whose type is a
+        // single string literal or a union of string literals, e.g.
+        // `const k: 'resizeTo' | 'resizeBy'`. The literal-string branch above
+        // only fires when the AST argument is a string literal node, so
+        // variable indices fall through to the general union-keys path. That
+        // path resolves the property on the full `Window & typeof globalThis`
+        // intersection, where the structural callable shape contributed by
+        // `Window`'s methods is lost during evaluation and the contextual
+        // arrow-function callback collapses to implicit-any. Resolving each
+        // key directly against the `Window` lib type — mirroring the literal
+        // branch above — yields a usable callable shape for the assignment
+        // target so callbacks like `(x, y) => {}` are contextually typed.
+        if literal_string.is_none()
+            && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && (self.is_global_this_like_expression(access.expression)
+                || is_this_global
+                || is_declared_window_global_this)
+            && let Some((string_keys, number_keys)) =
+                self.get_literal_key_union_from_type(index_type)
+            && !string_keys.is_empty()
+            && number_keys.is_empty()
+            && let Some(window_type) = self.resolve_lib_type_by_name("Window")
+        {
+            let mut resolved_types: Vec<TypeId> = Vec::with_capacity(string_keys.len());
+            let mut all_resolved = true;
+            for key_atom in &string_keys {
+                let key_name = self.ctx.types.resolve_atom(*key_atom).to_string();
+                let prop_result = crate::query_boundaries::property_access::resolve_property_access(
+                    self.ctx.types,
+                    window_type,
+                    &key_name,
+                );
+                if let Some(type_id) = prop_result.success_type() {
+                    resolved_types.push(type_id);
+                } else {
+                    all_resolved = false;
+                    break;
+                }
+            }
+            if all_resolved && !resolved_types.is_empty() {
+                // Write context: value must satisfy every possible key →
+                // intersection. Read context: result is one of the keyed
+                // properties → union.
+                let combined = if skip_flow_narrowing {
+                    tsz_solver::utils::intersection_or_single(self.ctx.types, resolved_types)
+                } else {
+                    tsz_solver::utils::union_or_single(self.ctx.types, resolved_types)
+                };
+                return if skip_flow_narrowing {
+                    combined
+                } else {
+                    self.apply_flow_narrowing(idx, combined)
+                };
+            }
+        }
+
         if self.report_namespace_value_access_for_type_only_import_equals_expr(access.expression) {
             return TypeId::ERROR;
         }
