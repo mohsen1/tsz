@@ -4,10 +4,10 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
-#[path = "namespace/helpers.rs"]
-mod namespace_helpers;
 #[path = "namespace_export_destructuring.rs"]
 mod namespace_export_destructuring;
+#[path = "namespace/helpers.rs"]
+mod namespace_helpers;
 #[cfg(test)]
 #[path = "namespace_import_alias_tests.rs"]
 mod namespace_import_alias_tests;
