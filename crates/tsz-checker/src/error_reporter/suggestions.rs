@@ -372,6 +372,30 @@ impl<'a> CheckerState<'a> {
             &mut best_distance,
             &mut best_candidate,
         );
+        if is_builtin_lib_file_name(&self.ctx.file_name)
+            && (meaning_flags == 0 || meaning_flags & tsz_binder::symbol_flags::TYPE != 0)
+        {
+            Self::search_symbol_arena_candidates(
+                name,
+                name_len,
+                maximum_length_difference,
+                meaning_flags,
+                self.ctx.binder.symbols.iter(),
+                &mut best_distance,
+                &mut best_candidate,
+            );
+            for lib_ctx in self.ctx.lib_contexts.iter() {
+                Self::search_symbol_arena_candidates(
+                    name,
+                    name_len,
+                    maximum_length_difference,
+                    meaning_flags,
+                    lib_ctx.binder.symbols.iter(),
+                    &mut best_distance,
+                    &mut best_candidate,
+                );
+            }
+        }
 
         // Suppress suggestions from lib-only TYPE symbols (DOM interfaces like
         // ParentNode, Cache, CSSStyleDeclaration, etc.) that were merged into
@@ -390,7 +414,10 @@ impl<'a> CheckerState<'a> {
         if let Some(ref candidate) = best_candidate {
             // TYPE-only lookup: meaning_flags is exactly TYPE (from type context)
             let is_type_only_lookup = meaning_flags == tsz_binder::symbol_flags::TYPE;
-            if is_type_only_lookup && self.is_lib_origin_symbol(candidate) {
+            if is_type_only_lookup
+                && self.is_lib_origin_symbol(candidate)
+                && !is_builtin_lib_file_name(&self.ctx.file_name)
+            {
                 return None;
             }
         }
@@ -482,6 +509,33 @@ impl<'a> CheckerState<'a> {
                     best_candidate,
                 );
             }
+        }
+    }
+
+    fn search_symbol_arena_candidates<'b>(
+        name: &str,
+        name_len: usize,
+        maximum_length_difference: usize,
+        meaning_flags: u32,
+        symbols: impl Iterator<Item = &'b tsz_binder::Symbol>,
+        best_distance: &mut f64,
+        best_candidate: &mut Option<String>,
+    ) {
+        for symbol in symbols {
+            if symbol.escaped_name.is_empty() {
+                continue;
+            }
+            if meaning_flags != 0 && symbol.flags & meaning_flags == 0 {
+                continue;
+            }
+            Self::consider_identifier_suggestion(
+                name,
+                &symbol.escaped_name,
+                name_len,
+                maximum_length_difference,
+                best_distance,
+                best_candidate,
+            );
         }
     }
 
@@ -772,6 +826,12 @@ impl<'a> CheckerState<'a> {
         let result = previous[s2_chars.len()];
         (result <= max).then_some(result)
     }
+}
+
+fn is_builtin_lib_file_name(file_name: &str) -> bool {
+    let normalized = file_name.replace('\\', "/");
+    let basename = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
+    basename.starts_with("lib.") && basename.ends_with(".d.ts")
 }
 
 /// Look up the minimum lib version required for a (type, property) pair.

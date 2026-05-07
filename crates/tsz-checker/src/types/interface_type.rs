@@ -1136,6 +1136,24 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types_extending_array.insert(result);
                 result
             }
+            (_, InterfaceMergeKind::Other)
+                if crate::query_boundaries::common::mapped_type_id(
+                    self.ctx.types,
+                    base_resolved,
+                )
+                .is_some()
+                    && derived != TypeId::ANY =>
+            {
+                factory.intersection2(derived, base_resolved)
+            }
+            (_, InterfaceMergeKind::Other)
+                if crate::query_boundaries::common::is_generic_application(
+                    self.ctx.types,
+                    base_resolved,
+                ) && derived != TypeId::ANY =>
+            {
+                factory.intersection2(derived, base_resolved)
+            }
             _ => derived,
         }
     }

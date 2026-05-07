@@ -883,7 +883,7 @@ impl<'a> BinaryOpEvaluator<'a> {
             } else if truthy_left == TypeId::NEVER {
                 right
             } else {
-                self.union2_subtype_reduce(truthy_left, right)
+                self.union2_subtype_reduce(right, truthy_left)
             }
         } else {
             // left ?? right

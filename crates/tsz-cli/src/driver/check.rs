@@ -1480,6 +1480,25 @@ pub(super) fn collect_diagnostics(
                 parallel_qc_stats.merge(&query_cache.statistics());
             }
         }
+        if !options.no_check && !checker_libs.files.is_empty() {
+            for lib_idx in 0..checker_libs.files.len() {
+                let query_cache = if let Some(shared) = shared_query_cache.as_ref() {
+                    QueryCache::new_with_shared(&program.type_interner, shared)
+                } else {
+                    QueryCache::new(&program.type_interner)
+                };
+                let (lib_diags, lib_counters, _lib_ds_stats) =
+                    check_checker_lib_file_missing_name_diagnostics(
+                        &checker_lib_file_env,
+                        lib_idx,
+                        &query_cache,
+                        Some(Arc::clone(&shared_lib_cache)),
+                    );
+                diagnostics.extend(lib_diags);
+                request_cache_counters.merge(lib_counters);
+                parallel_qc_stats.merge(&query_cache.statistics());
+            }
+        }
         aggregated_qc_stats = Some(parallel_qc_stats);
         // PERF: `DefinitionStore::statistics()` walks every entry (and
         // `estimated_size_bytes()` walks again) — only worth paying for
@@ -1787,6 +1806,19 @@ pub(super) fn collect_diagnostics(
                     check_checker_lib_file(&checker_lib_file_env, lib_idx, &query_cache, None);
                 let mut lib_diags = lib_diags;
                 retain_program_induced_lib_diagnostics(&mut lib_diags, &baseline_lib_diagnostics);
+                diagnostics.extend(lib_diags);
+                request_cache_counters.merge(lib_counters);
+            }
+        }
+        if !options.no_check && !checker_libs.files.is_empty() {
+            for lib_idx in 0..checker_libs.files.len() {
+                let (lib_diags, lib_counters, _lib_ds_stats) =
+                    check_checker_lib_file_missing_name_diagnostics(
+                        &checker_lib_file_env,
+                        lib_idx,
+                        &query_cache,
+                        None,
+                    );
                 diagnostics.extend(lib_diags);
                 request_cache_counters.merge(lib_counters);
             }
@@ -2428,6 +2460,28 @@ fn check_checker_lib_file(
     RequestCacheCounters,
     tsz_solver::StoreStatistics,
 ) {
+    check_checker_lib_file_for_interfaces(
+        env,
+        lib_idx,
+        env.affected_interfaces,
+        env.extension_interfaces,
+        query_cache,
+        shared_lib_cache,
+    )
+}
+
+fn check_checker_lib_file_for_interfaces(
+    env: &CheckerLibFileCheckEnv<'_>,
+    lib_idx: usize,
+    interface_names: &FxHashSet<String>,
+    extension_interfaces: &FxHashSet<String>,
+    query_cache: &QueryCache,
+    shared_lib_cache: Option<Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>>,
+) -> (
+    Vec<Diagnostic>,
+    RequestCacheCounters,
+    tsz_solver::StoreStatistics,
+) {
     let program = env.program;
     let options = env.options;
     let checker_libs = env.checker_libs;
@@ -2441,7 +2495,7 @@ fn check_checker_lib_file(
     }
 
     let lib_bound_file =
-        build_lib_bound_file_for_interface_checks(program, lib_file, env.affected_interfaces);
+        build_lib_bound_file_for_interface_checks(program, lib_file, interface_names);
     let binder = create_binder_from_bound_file_with_augmentations(
         &lib_bound_file,
         program,
@@ -2483,8 +2537,8 @@ fn check_checker_lib_file(
     tsz::checker::reset_stack_overflow_flag();
     checker.check_source_file_interfaces_only_filtered_post_merge(
         lib_bound_file.source_file,
-        env.affected_interfaces,
-        env.extension_interfaces,
+        interface_names,
+        extension_interfaces,
     );
 
     let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
@@ -2507,6 +2561,39 @@ fn check_checker_lib_file(
         checker.ctx.request_cache_counters,
         tsz_solver::StoreStatistics::default(),
     )
+}
+
+fn check_checker_lib_file_missing_name_diagnostics(
+    env: &CheckerLibFileCheckEnv<'_>,
+    lib_idx: usize,
+    query_cache: &QueryCache,
+    shared_lib_cache: Option<Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>>,
+) -> (
+    Vec<Diagnostic>,
+    RequestCacheCounters,
+    tsz_solver::StoreStatistics,
+) {
+    let lib_file = &env.checker_libs.files[lib_idx];
+    let interface_names = collect_all_lib_interface_names(lib_file.as_ref());
+    if interface_names.is_empty() {
+        return (
+            Vec::new(),
+            RequestCacheCounters::default(),
+            tsz_solver::StoreStatistics::default(),
+        );
+    }
+
+    let extension_interfaces = FxHashSet::default();
+    let (mut diagnostics, counters, stats) = check_checker_lib_file_for_interfaces(
+        env,
+        lib_idx,
+        &interface_names,
+        &extension_interfaces,
+        query_cache,
+        shared_lib_cache,
+    );
+    diagnostics.retain(is_lib_missing_name_diagnostic);
+    (diagnostics, counters, stats)
 }
 
 fn check_checker_lib_file_baseline(
@@ -2575,6 +2662,7 @@ fn collect_lib_interface_node_symbols(
     arena: &NodeArena,
     statements: &[NodeIndex],
     globals: &SymbolTable,
+    fallback_node_symbols: &FxHashMap<u32, tsz::binder::SymbolId>,
     affected_interfaces: &FxHashSet<String>,
     node_symbols: &mut FxHashMap<u32, tsz::binder::SymbolId>,
 ) {
@@ -2587,7 +2675,9 @@ fn collect_lib_interface_node_symbols(
             if let Some(interface) = arena.get_interface(stmt_node)
                 && let Some(name) = arena.get_identifier_at(interface.name)
                 && affected_interfaces.contains(&name.escaped_text)
-                && let Some(sym_id) = globals.get(&name.escaped_text)
+                && let Some(sym_id) = globals
+                    .get(&name.escaped_text)
+                    .or_else(|| fallback_node_symbols.get(&stmt_idx.0).copied())
             {
                 node_symbols.insert(stmt_idx.0, sym_id);
                 node_symbols.insert(interface.name.0, sym_id);
@@ -2619,7 +2709,9 @@ fn collect_lib_interface_node_symbols(
                                 type_idx
                             };
                             if let Some(base_name) = entity_name_text_in_arena(arena, expr_idx)
-                                && let Some(base_sym_id) = globals.get(&base_name)
+                                && let Some(base_sym_id) = globals
+                                    .get(&base_name)
+                                    .or_else(|| fallback_node_symbols.get(&expr_idx.0).copied())
                             {
                                 node_symbols.insert(expr_idx.0, base_sym_id);
                             }
@@ -2656,10 +2748,66 @@ fn collect_lib_interface_node_symbols(
             arena,
             &inner.nodes,
             globals,
+            fallback_node_symbols,
             affected_interfaces,
             node_symbols,
         );
     }
+}
+
+fn collect_all_lib_interface_names_from_statements(
+    arena: &NodeArena,
+    statements: &[NodeIndex],
+    names: &mut FxHashSet<String>,
+) {
+    for &stmt_idx in statements {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+
+        if stmt_node.kind == tsz::parser::syntax_kind_ext::INTERFACE_DECLARATION {
+            if let Some(name) = interface_name_text(arena, stmt_idx) {
+                names.insert(name);
+            }
+            continue;
+        }
+
+        if stmt_node.kind != tsz::parser::syntax_kind_ext::MODULE_DECLARATION {
+            continue;
+        }
+
+        let Some(module_decl) = arena.get_module(stmt_node) else {
+            continue;
+        };
+        if module_decl.body.is_none() {
+            continue;
+        }
+        let Some(body_node) = arena.get(module_decl.body) else {
+            continue;
+        };
+        if body_node.kind != tsz::parser::syntax_kind_ext::MODULE_BLOCK {
+            continue;
+        }
+        let Some(block) = arena.get_module_block(body_node) else {
+            continue;
+        };
+        let Some(inner) = &block.statements else {
+            continue;
+        };
+        collect_all_lib_interface_names_from_statements(arena, &inner.nodes, names);
+    }
+}
+
+fn collect_all_lib_interface_names(lib_file: &LibFile) -> FxHashSet<String> {
+    let mut names = FxHashSet::default();
+    if let Some(source_file) = lib_file.arena.get_source_file_at(lib_file.root_index) {
+        collect_all_lib_interface_names_from_statements(
+            lib_file.arena.as_ref(),
+            &source_file.statements.nodes,
+            &mut names,
+        );
+    }
+    names
 }
 
 fn interface_name_text(arena: &NodeArena, stmt_idx: NodeIndex) -> Option<String> {
@@ -3265,6 +3413,7 @@ fn build_lib_bound_file_for_interface_checks(
             lib_file.arena.as_ref(),
             &source_file.statements.nodes,
             &program.globals,
+            lib_file.binder.node_symbols.as_ref(),
             affected_interfaces,
             &mut node_symbols,
         );
@@ -3354,6 +3503,13 @@ fn retain_program_induced_lib_diagnostics(
     baseline_fingerprints: &FxHashSet<LibDiagnosticFingerprint>,
 ) {
     diagnostics.retain(|diag| !baseline_fingerprints.contains(&lib_diagnostic_fingerprint(diag)));
+}
+
+fn is_lib_missing_name_diagnostic(diag: &Diagnostic) -> bool {
+    matches!(
+        diag.code,
+        diagnostic_codes::CANNOT_FIND_NAME | diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
+    )
 }
 
 #[cfg(test)]

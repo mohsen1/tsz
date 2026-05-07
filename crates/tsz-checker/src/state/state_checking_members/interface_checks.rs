@@ -33,6 +33,15 @@ impl<'a> CheckerState<'a> {
         };
 
         let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
+        let interface_type_param_names: Vec<String> = type_param_updates
+            .iter()
+            .map(|(name, _, _)| name.clone())
+            .collect();
+        self.check_heritage_clauses_for_unresolved_names(
+            &iface.heritage_clauses,
+            false,
+            &interface_type_param_names,
+        );
 
         for &member_idx in &iface.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -43,6 +52,7 @@ impl<'a> CheckerState<'a> {
                 let (_type_params, method_type_param_updates) =
                     self.push_type_parameters(&sig.type_parameters);
                 if sig.type_annotation.is_some() {
+                    self.check_type_node(sig.type_annotation);
                     self.get_type_from_type_node(sig.type_annotation);
                 }
                 for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
@@ -50,6 +60,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         && param.type_annotation.is_some()
                     {
+                        self.check_type_node(param.type_annotation);
                         self.get_type_from_type_node(param.type_annotation);
                     }
                 }
@@ -59,6 +70,7 @@ impl<'a> CheckerState<'a> {
 
             if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
                 if accessor.type_annotation.is_some() {
+                    self.check_type_node(accessor.type_annotation);
                     self.get_type_from_type_node(accessor.type_annotation);
                 }
                 for &param_idx in &accessor.parameters.nodes {
@@ -66,6 +78,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         && param.type_annotation.is_some()
                     {
+                        self.check_type_node(param.type_annotation);
                         self.get_type_from_type_node(param.type_annotation);
                     }
                 }

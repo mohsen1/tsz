@@ -318,11 +318,18 @@ impl<'a> CheckerState<'a> {
         if !display.contains(" | ") {
             return display;
         }
-        display
+        let members = display
             .split(" | ")
             .map(Self::strip_simple_alias_union_parens)
-            .collect::<Vec<_>>()
-            .join(" | ")
+            .collect::<Vec<_>>();
+        if let [first, second] = members.as_slice()
+            && let Some(base) = first.strip_suffix("[]")
+            && base == second
+            && Self::is_simple_jsx_children_type_name(base)
+        {
+            return format!("{base} | {base}[]");
+        }
+        members.join(" | ")
     }
 
     fn strip_simple_alias_union_parens(member: &str) -> String {

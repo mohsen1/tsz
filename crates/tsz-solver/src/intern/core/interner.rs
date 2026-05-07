@@ -1389,10 +1389,12 @@ impl TypeInterner {
             ) || self.union_origin_overrides_canonical_number_literal_sort(
                 current.as_ref(),
                 &origin_members,
-            ) || self.union_origin_overrides_canonical_application_sort(
-                current.as_ref(),
-                &origin_members,
-            );
+            ) || self
+                .union_origin_overrides_canonical_keyof_sort(current.as_ref(), &origin_members)
+                || self.union_origin_overrides_canonical_application_sort(
+                    current.as_ref(),
+                    &origin_members,
+                );
             if !needs_origin {
                 return;
             }
@@ -1482,6 +1484,24 @@ impl TypeInterner {
                 Some(TypeData::Literal(LiteralValue::Number(_)))
             )
         })
+    }
+
+    /// Decide whether storing the as-written origin is needed for a union that
+    /// contains a `keyof` member. TypeScript preserves source order for
+    /// displays such as `keyof Shape | "knownLiteralKey"`, while the semantic
+    /// union comparator can place the literal first.
+    fn union_origin_overrides_canonical_keyof_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != origin.len() || current == origin {
+            return false;
+        }
+        current
+            .iter()
+            .chain(origin.iter())
+            .any(|&id| matches!(self.lookup(id), Some(TypeData::KeyOf(_))))
     }
 
     /// Decide whether storing origin is needed for a generated union of

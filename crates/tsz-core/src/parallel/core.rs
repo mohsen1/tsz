@@ -4391,6 +4391,7 @@ fn collect_lib_interface_node_symbols(
     arena: &NodeArena,
     statements: &[NodeIndex],
     globals: &SymbolTable,
+    fallback_node_symbols: &FxHashMap<u32, SymbolId>,
     affected_interfaces: &FxHashSet<String>,
     node_symbols: &mut FxHashMap<u32, SymbolId>,
 ) {
@@ -4403,7 +4404,9 @@ fn collect_lib_interface_node_symbols(
             if let Some(interface) = arena.get_interface(stmt_node)
                 && let Some(name) = arena.get_identifier_at(interface.name)
                 && affected_interfaces.contains(&name.escaped_text)
-                && let Some(sym_id) = globals.get(&name.escaped_text)
+                && let Some(sym_id) = globals
+                    .get(&name.escaped_text)
+                    .or_else(|| fallback_node_symbols.get(&stmt_idx.0).copied())
             {
                 node_symbols.insert(stmt_idx.0, sym_id);
                 node_symbols.insert(interface.name.0, sym_id);
@@ -4433,7 +4436,9 @@ fn collect_lib_interface_node_symbols(
                                     type_idx
                                 };
                             if let Some(base_name) = entity_name_text_in_arena(arena, expr_idx)
-                                && let Some(base_sym_id) = globals.get(&base_name)
+                                && let Some(base_sym_id) = globals
+                                    .get(&base_name)
+                                    .or_else(|| fallback_node_symbols.get(&expr_idx.0).copied())
                             {
                                 node_symbols.insert(expr_idx.0, base_sym_id);
                             }
@@ -4470,10 +4475,74 @@ fn collect_lib_interface_node_symbols(
             arena,
             &inner.nodes,
             globals,
+            fallback_node_symbols,
             affected_interfaces,
             node_symbols,
         );
     }
+}
+
+fn collect_all_lib_interface_names_from_statements(
+    arena: &NodeArena,
+    statements: &[NodeIndex],
+    names: &mut FxHashSet<String>,
+) {
+    for &stmt_idx in statements {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+
+        if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+            if let Some(name) = interface_name_text(arena, stmt_idx) {
+                names.insert(name);
+            }
+            continue;
+        }
+
+        if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+            continue;
+        }
+
+        let Some(module_decl) = arena.get_module(stmt_node) else {
+            continue;
+        };
+        if module_decl.body.is_none() {
+            continue;
+        }
+        let Some(body_node) = arena.get(module_decl.body) else {
+            continue;
+        };
+        if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+            continue;
+        }
+        let Some(block) = arena.get_module_block(body_node) else {
+            continue;
+        };
+        let Some(inner) = &block.statements else {
+            continue;
+        };
+        collect_all_lib_interface_names_from_statements(arena, &inner.nodes, names);
+    }
+}
+
+fn collect_all_lib_interface_names(lib_file: &LibFile) -> FxHashSet<String> {
+    let mut names = FxHashSet::default();
+    if let Some(source_file) = lib_file.arena.get_source_file_at(lib_file.root_index) {
+        collect_all_lib_interface_names_from_statements(
+            lib_file.arena.as_ref(),
+            &source_file.statements.nodes,
+            &mut names,
+        );
+    }
+    names
+}
+
+fn is_lib_missing_name_diagnostic(diag: &Diagnostic) -> bool {
+    matches!(
+        diag.code,
+        crate::checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+            | crate::checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
+    )
 }
 
 fn interface_name_text(arena: &NodeArena, stmt_idx: NodeIndex) -> Option<String> {
@@ -4969,6 +5038,7 @@ fn build_lib_bound_file_for_interface_checks(
             lib_file.arena.as_ref(),
             &source_file.statements.nodes,
             &program.globals,
+            lib_file.binder.node_symbols.as_ref(),
             affected_interfaces,
             &mut node_symbols,
         );
@@ -5665,6 +5735,90 @@ pub fn check_files_parallel(
         }
     };
 
+    let check_one_lib_missing_names =
+        |lib_idx: usize, lib_file: &Arc<LibFile>| -> FileCheckResult {
+            let interface_names = collect_all_lib_interface_names(lib_file.as_ref());
+            if interface_names.is_empty() {
+                return FileCheckResult {
+                    file_idx: program.files.len() + lib_idx,
+                    file_name: lib_file.file_name.clone(),
+                    function_results: Vec::new(),
+                    diagnostics: Vec::new(),
+                };
+            }
+
+            let query_cache = if let Some(ref shared) = shared_query_cache {
+                tsz_solver::QueryCache::new_with_shared(&program.type_interner, shared)
+            } else {
+                tsz_solver::QueryCache::new(&program.type_interner)
+            };
+            let extension_interfaces = FxHashSet::default();
+
+            let lib_bound_file =
+                build_lib_bound_file_for_interface_checks(program, lib_file, &interface_names);
+            let mut binder =
+                create_binder_from_bound_file(&lib_bound_file, program, program.files.len());
+            if lib_bound_file.semantic_defs.is_empty() {
+                binder.semantic_defs = Arc::clone(&program.semantic_defs);
+            } else {
+                let mut composed_semantic_defs = (*program.semantic_defs).clone();
+                for (sym_id, entry) in lib_bound_file.semantic_defs.iter() {
+                    composed_semantic_defs.insert(*sym_id, entry.clone());
+                }
+                binder.semantic_defs = Arc::new(composed_semantic_defs);
+            }
+
+            let mut checker = CheckerState::with_options(
+                &lib_bound_file.arena,
+                &binder,
+                &query_cache,
+                lib_bound_file.file_name.clone(),
+                checker_options,
+            );
+            checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+            if let Some(ref modules) = shared_declared_modules {
+                checker
+                    .ctx
+                    .set_declared_modules_from_skeleton(Arc::clone(modules));
+            }
+            checker.ctx.set_all_binders(Arc::clone(&all_binders));
+            checker
+                .ctx
+                .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
+            checker.ctx.set_resolved_modules(resolved_modules.clone());
+            checker
+                .ctx
+                .set_global_symbol_file_index(Arc::clone(&global_symbol_file_index));
+
+            let other_lib_contexts: Vec<LibContext> = lib_contexts
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| *idx != lib_idx)
+                .map(|(_, ctx)| ctx.clone())
+                .collect();
+            checker.ctx.set_lib_contexts(other_lib_contexts);
+            checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+            checker.prime_boxed_types();
+
+            checker.check_source_file_interfaces_only_filtered_post_merge(
+                lib_bound_file.source_file,
+                &interface_names,
+                &extension_interfaces,
+            );
+
+            let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+            diagnostics.retain(is_lib_missing_name_diagnostic);
+            diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+            diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
+
+            FileCheckResult {
+                file_idx: program.files.len() + lib_idx,
+                file_name: lib_file.file_name.clone(),
+                function_results: Vec::new(),
+                diagnostics,
+            }
+        };
+
     let fingerprint = |file_name: &str, diag: &Diagnostic| {
         (
             file_name.to_owned(),
@@ -5696,12 +5850,7 @@ pub fn check_files_parallel(
             checker_lib_files
                 .iter()
                 .enumerate()
-                .map(|(lib_idx, lib_file)| FileCheckResult {
-                    file_idx: program.files.len() + lib_idx,
-                    file_name: lib_file.file_name.clone(),
-                    function_results: Vec::new(),
-                    diagnostics: Vec::new(),
-                }),
+                .map(|(lib_idx, lib_file)| check_one_lib_missing_names(lib_idx, lib_file)),
         );
     } else {
         let baseline_lib_diagnostics: FxHashSet<(String, u32, u32, String)> = checker_lib_files
@@ -5727,6 +5876,16 @@ pub fn check_files_parallel(
                     file_result.diagnostics.retain(|diag| {
                         !baseline_lib_diagnostics.contains(&fingerprint(&file_name, diag))
                     });
+                    let mut missing_name_result = check_one_lib_missing_names(lib_idx, lib_file);
+                    file_result
+                        .diagnostics
+                        .append(&mut missing_name_result.diagnostics);
+                    file_result
+                        .diagnostics
+                        .sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+                    file_result
+                        .diagnostics
+                        .dedup_by(|a, b| a.start == b.start && a.code == b.code);
                     file_result
                 }),
         );
