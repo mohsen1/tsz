@@ -2058,6 +2058,54 @@ fn test_new_commands_are_recognized() {
 }
 
 #[test]
+fn breakpoint_and_comment_span_commands_return_numeric_text_spans() {
+    let mut server = make_server();
+    let file = "/text-span-shapes.tsx";
+    server.open_files.insert(
+        file.to_string(),
+        "function f() {\n  const x = 1; // TODO: work\n  /* block comment */\n}\n".to_string(),
+    );
+
+    let cases = [
+        make_request(
+            "breakpointStatement",
+            serde_json::json!({"file": file, "line": 2, "offset": 9}),
+        ),
+        make_request(
+            "getSpanOfEnclosingComment",
+            serde_json::json!({"file": file, "line": 2, "offset": 17, "onlyMultiLine": false}),
+        ),
+        make_request(
+            "getSpanOfEnclosingComment",
+            serde_json::json!({"file": file, "line": 3, "offset": 5, "onlyMultiLine": true}),
+        ),
+    ];
+
+    for req in cases {
+        let command = req.command.clone();
+        let resp = server.handle_tsserver_request(req);
+        assert!(resp.success, "{command} should succeed");
+        let body = resp.body.expect("command should return a body");
+        assert!(
+            body.get("start")
+                .and_then(serde_json::Value::as_u64)
+                .is_some(),
+            "{command} should return numeric TextSpan start: {body:?}"
+        );
+        assert!(
+            body.get("length")
+                .and_then(serde_json::Value::as_u64)
+                .is_some(),
+            "{command} should return numeric TextSpan length: {body:?}"
+        );
+        assert!(
+            body.get("textSpan").is_none(),
+            "{command} should not wrap the TextSpan: {body:?}"
+        );
+    }
+}
+
+#[test]
 fn test_full_protocol_dispatcher_commands_are_recognized() {
     let mut server = make_server();
     let file = "/full-routes.ts";
