@@ -6,6 +6,8 @@
 //! - The `Function` type
 //! - Apparent primitive shapes (for object-like operations on primitives)
 
+use std::sync::Arc;
+
 use crate::TypeDatabase;
 use crate::objects::apparent::apparent_primitive_shape;
 use crate::operations::iterators::get_iterator_info;
@@ -35,6 +37,17 @@ fn make_subtype_method_type(db: &dyn TypeDatabase, return_type: TypeId) -> TypeI
         is_constructor: false,
         is_method: false,
     })
+}
+
+const fn apparent_primitive_shape_slot(kind: IntrinsicKind) -> Option<usize> {
+    match kind {
+        IntrinsicKind::String => Some(0),
+        IntrinsicKind::Number => Some(1),
+        IntrinsicKind::Boolean => Some(2),
+        IntrinsicKind::Bigint => Some(3),
+        IntrinsicKind::Symbol => Some(4),
+        _ => None,
+    }
 }
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
@@ -344,7 +357,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn apparent_primitive_shape_for_type(
         &mut self,
         type_id: TypeId,
-    ) -> Option<ObjectShape> {
+    ) -> Option<Arc<ObjectShape>> {
         let kind = self.apparent_primitive_kind(type_id)?;
         Some(self.apparent_primitive_shape(kind))
     }
@@ -382,8 +395,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// Delegates to the shared `apparent_primitive_shape` with a simple
     /// method-type factory (no params, given return type).
-    pub(crate) fn apparent_primitive_shape(&mut self, kind: IntrinsicKind) -> ObjectShape {
-        apparent_primitive_shape(self.interner, kind, make_subtype_method_type)
+    pub(crate) fn apparent_primitive_shape(&mut self, kind: IntrinsicKind) -> Arc<ObjectShape> {
+        let slot = apparent_primitive_shape_slot(kind)
+            .expect("apparent primitive shapes are only defined for boxed primitives");
+        if let Some(shape) = &self.apparent_primitive_shapes[slot] {
+            return Arc::clone(shape);
+        }
+
+        let shape = Arc::new(apparent_primitive_shape(
+            self.interner,
+            kind,
+            make_subtype_method_type,
+        ));
+        self.apparent_primitive_shapes[slot] = Some(Arc::clone(&shape));
+        shape
     }
 
     /// Get the apparent primitive kind for a type (helper for template literal checking).
@@ -660,5 +685,39 @@ pub(crate) const fn boxable_intrinsic_kind(kind: IntrinsicKind) -> Option<Intrin
         | IntrinsicKind::Bigint
         | IntrinsicKind::Symbol => Some(kind),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intern::TypeInterner;
+
+    #[test]
+    fn apparent_primitive_shape_is_cached_per_checker() {
+        let interner = TypeInterner::new();
+        let mut checker = SubtypeChecker::new(&interner);
+
+        let first = checker
+            .apparent_primitive_shape_for_type(TypeId::STRING)
+            .expect("string should have an apparent shape");
+        let cached_after_first = checker.apparent_primitive_shapes.clone();
+        let second = checker
+            .apparent_primitive_shape_for_type(TypeId::STRING)
+            .expect("string should reuse its apparent shape");
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(
+            cached_after_first, checker.apparent_primitive_shapes,
+            "repeated lookup should not intern another apparent shape"
+        );
+        assert_eq!(
+            checker
+                .apparent_primitive_shapes
+                .iter()
+                .filter(|entry| entry.is_some())
+                .count(),
+            1
+        );
     }
 }

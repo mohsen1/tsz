@@ -1473,9 +1473,7 @@ impl<'a> Printer<'a> {
                     // like /*2*/ that should be preserved in the output.
                     self.skip_comments_in_range(type_node.pos, delimiter_pos);
                     // Emit trailing comments between erased type and delimiter
-                    if self.has_pending_comment_before(delimiter_pos)
-                        && !self.pending_parameter_leading_comment_starts_line(delimiter_pos)
-                    {
+                    if self.has_pending_comment_before(delimiter_pos) {
                         self.write(" ");
                         self.emit_comments_before_pos(delimiter_pos);
                         self.pending_block_comment_space = false;

@@ -934,11 +934,17 @@ impl<'a> Printer<'a> {
         }
 
         // Emit all needed helpers (unless no_emit_helpers is set)
+        let mut emitted_inline_helpers = false;
+        let mut post_helpers_hoist_byte_offset = self.writer.len();
+        let mut post_helpers_hoist_line = self.writer.current_line();
         if !(self.ctx.options.no_emit_helpers || self.ctx.options.import_helpers && is_file_module)
         {
             let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);
             if !helpers_code.is_empty() {
                 self.write(&helpers_code);
+                emitted_inline_helpers = true;
+                post_helpers_hoist_byte_offset = self.writer.len();
+                post_helpers_hoist_line = self.writer.current_line();
                 // emit_helpers() already adds newlines, no need to add more
             }
         }
@@ -1352,11 +1358,15 @@ impl<'a> Printer<'a> {
 
         let mut hoisted_var_byte_offset = if is_file_module {
             self.writer.len()
+        } else if emitted_inline_helpers {
+            post_helpers_hoist_byte_offset
         } else {
             script_pre_header_hoist_byte_offset
         };
         let mut hoisted_var_line = if is_file_module {
             self.writer.current_line()
+        } else if emitted_inline_helpers {
+            post_helpers_hoist_line
         } else {
             script_pre_header_hoist_line
         };
