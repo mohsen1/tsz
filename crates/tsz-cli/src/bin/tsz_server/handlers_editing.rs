@@ -97,6 +97,18 @@ impl Server {
                 return None;
             }
 
+            // Pre-compute string and comment byte ranges so the backward scan
+            // can skip over `<`/`>` bytes that live inside attribute strings,
+            // JSX-expression strings, or comments. Without this, an attribute
+            // like `<div title="a>b">` corrupts the depth counter and the
+            // opening `<` is never found at depth 0.
+            let skip_ranges = collect_skip_ranges(bytes, byte_offset);
+            let in_skip_range = |idx: usize| -> bool {
+                skip_ranges
+                    .iter()
+                    .any(|&(start, end)| idx >= start && idx < end)
+            };
+
             // Scan backwards past attributes to find '<TagName'
             let mut i = byte_offset - 1; // skip the '>'
             let mut depth = 0;
@@ -104,6 +116,9 @@ impl Server {
             // Skip past attributes, strings, etc. to find the '<'
             while i > 0 {
                 i -= 1;
+                if in_skip_range(i) {
+                    continue;
+                }
                 match bytes[i] {
                     b'<' if depth == 0 => {
                         // Found the opening '<', now extract the tag name
@@ -2415,4 +2430,65 @@ impl Server {
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
+}
+
+/// Forward-scan `bytes[..end]` and collect byte ranges that should be ignored
+/// when matching JSX angle brackets — namely string/template literals and
+/// `//` / `/* ... */` comments. The returned ranges are half-open `[start, end)`
+/// and include the surrounding quotes/comment delimiters.
+///
+/// This is intentionally a lightweight tokenizer rather than a full JSX
+/// scanner: it is sufficient to keep `<` and `>` inside attribute strings
+/// (and JSX-expression strings) from being treated as tag boundaries.
+pub(crate) fn collect_skip_ranges(bytes: &[u8], end: usize) -> Vec<(usize, usize)> {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let limit = end.min(bytes.len());
+    let mut j = 0;
+    while j < limit {
+        match bytes[j] {
+            quote @ (b'"' | b'\'' | b'`') => {
+                let start = j;
+                j += 1;
+                while j < limit && bytes[j] != quote {
+                    if bytes[j] == b'\\' && j + 1 < limit {
+                        j += 2;
+                    } else if bytes[j] == b'\n' && quote != b'`' {
+                        // Unterminated single/double-quoted string: stop at
+                        // newline so a stray quote does not swallow the rest
+                        // of the file.
+                        break;
+                    } else {
+                        j += 1;
+                    }
+                }
+                if j < limit {
+                    j += 1; // consume closing quote (or stop byte)
+                }
+                ranges.push((start, j));
+            }
+            b'/' if j + 1 < limit && bytes[j + 1] == b'/' => {
+                let start = j;
+                j += 2;
+                while j < limit && bytes[j] != b'\n' {
+                    j += 1;
+                }
+                ranges.push((start, j));
+            }
+            b'/' if j + 1 < limit && bytes[j + 1] == b'*' => {
+                let start = j;
+                j += 2;
+                while j + 1 < limit && !(bytes[j] == b'*' && bytes[j + 1] == b'/') {
+                    j += 1;
+                }
+                if j + 1 < limit {
+                    j += 2; // consume closing */
+                } else {
+                    j = limit;
+                }
+                ranges.push((start, j));
+            }
+            _ => j += 1,
+        }
+    }
+    ranges
 }
