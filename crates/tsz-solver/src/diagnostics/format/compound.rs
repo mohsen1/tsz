@@ -600,6 +600,20 @@ impl<'a> TypeFormatter<'a> {
             return collapsed;
         }
 
+        // Drop synthetic `"__unique_<n>"` string-literal members. These come
+        // from `keyof` over interfaces with unique-symbol-keyed properties:
+        // tsc renders the union without the synthetic atom (e.g. `"first" |
+        // "second"` instead of `"first" | "second" | "__unique_3006"`). Only
+        // strip when at least one non-synthetic string literal remains so we
+        // don't reduce a union to nothing.
+        let synthetic_unique_count = ordered
+            .iter()
+            .filter(|&&m| self.is_synthetic_unique_atom_string_literal(m))
+            .count();
+        if synthetic_unique_count > 0 && synthetic_unique_count < ordered.len() {
+            ordered.retain(|&m| !self.is_synthetic_unique_atom_string_literal(m));
+        }
+
         if ordered.len() > self.max_union_members {
             let first: Vec<String> = ordered
                 .iter()
@@ -1083,6 +1097,19 @@ impl<'a> TypeFormatter<'a> {
     /// Format a union member, parenthesizing types that need disambiguation.
     /// TSC parenthesizes intersection types `(A & B) | (C & D)`, function types
     /// `(() => string) | (() => number)`, and constructor types in union positions.
+    /// True when `id` is a string literal whose atom is one of the
+    /// synthetic `__unique_<n>` placeholders for unique-symbol keys.
+    fn is_synthetic_unique_atom_string_literal(&self, id: TypeId) -> bool {
+        let Some(TypeData::Literal(LiteralValue::String(atom))) = self.interner.lookup(id) else {
+            return false;
+        };
+        let s = self.interner.resolve_atom(atom);
+        let Some(suffix) = s.strip_prefix("__unique_") else {
+            return false;
+        };
+        !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit())
+    }
+
     fn format_union_member(&mut self, id: TypeId) -> String {
         if let Some(enum_name) = self.short_enum_name_for_union_display(id) {
             return enum_name;
