@@ -1247,6 +1247,25 @@ impl std::hash::Hash for IndexSignature {
     }
 }
 
+fn index_signature_display_eq(
+    left: &Option<IndexSignature>,
+    right: &Option<IndexSignature>,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left == right && left.param_name == right.param_name,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn hash_index_signature_display<H: std::hash::Hasher>(
+    index: &Option<IndexSignature>,
+    state: &mut H,
+) {
+    std::hash::Hash::hash(index, state);
+    std::hash::Hash::hash(&index.as_ref().and_then(|idx| idx.param_name), state);
+}
+
 /// Combined index signature information for a type
 /// Provides convenient access to both string and number index signatures
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
@@ -1310,8 +1329,8 @@ impl PartialEq for ObjectShape {
         // The Solver does structural subtyping explicitly, not via PartialEq
         self.flags == other.flags
             && self.properties == other.properties
-            && self.string_index == other.string_index
-            && self.number_index == other.number_index
+            && index_signature_display_eq(&self.string_index, &other.string_index)
+            && index_signature_display_eq(&self.number_index, &other.number_index)
             && self.symbol == other.symbol
     }
 }
@@ -1324,8 +1343,8 @@ impl std::hash::Hash for ObjectShape {
         // This ensures different classes get different TypeIds
         self.flags.hash(state);
         self.properties.hash(state);
-        self.string_index.hash(state);
-        self.number_index.hash(state);
+        hash_index_signature_display(&self.string_index, state);
+        hash_index_signature_display(&self.number_index, state);
         self.symbol.hash(state);
     }
 }
@@ -1504,8 +1523,8 @@ impl PartialEq for CallableShape {
         self.call_signatures == other.call_signatures
             && self.construct_signatures == other.construct_signatures
             && self.properties == other.properties
-            && self.string_index == other.string_index
-            && self.number_index == other.number_index
+            && index_signature_display_eq(&self.string_index, &other.string_index)
+            && index_signature_display_eq(&self.number_index, &other.number_index)
             && self.symbol == other.symbol
             && self.is_abstract == other.is_abstract
     }
@@ -1520,8 +1539,8 @@ impl std::hash::Hash for CallableShape {
         self.call_signatures.hash(state);
         self.construct_signatures.hash(state);
         self.properties.hash(state);
-        self.string_index.hash(state);
-        self.number_index.hash(state);
+        hash_index_signature_display(&self.string_index, state);
+        hash_index_signature_display(&self.number_index, state);
         self.symbol.hash(state);
         self.is_abstract.hash(state);
     }

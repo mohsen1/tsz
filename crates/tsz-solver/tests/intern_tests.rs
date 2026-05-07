@@ -41,6 +41,42 @@ fn test_interner_fresh_object_distinct_from_non_fresh() {
 }
 
 #[test]
+fn test_interner_preserves_index_signature_parameter_names_for_display() {
+    let interner = TypeInterner::new();
+    let key_name = interner.intern_string("key");
+    let x_name = interner.intern_string("x");
+
+    let key_object = interner.object_with_index(ObjectShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: Some(key_name),
+        }),
+        ..ObjectShape::default()
+    });
+    let x_object = interner.object_with_index(ObjectShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: Some(x_name),
+        }),
+        ..ObjectShape::default()
+    });
+
+    assert_ne!(key_object, x_object);
+    let Some(TypeData::ObjectWithIndex(shape_id)) = interner.lookup(x_object) else {
+        panic!("expected object with index signature");
+    };
+    let shape = interner.object_shape(shape_id);
+    assert_eq!(
+        shape.string_index.and_then(|idx| idx.param_name),
+        Some(x_name)
+    );
+}
+
+#[test]
 fn widen_freshness_preserves_display_alias() {
     let interner = TypeInterner::new();
     let prop = PropertyInfo::new(interner.intern_string("p"), TypeId::NUMBER);
