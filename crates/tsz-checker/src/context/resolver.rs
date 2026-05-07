@@ -927,6 +927,17 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         self.definition_store.get_kind(def_id)
     }
 
+    fn is_builtin_readonly_array_def(&self, def_id: tsz_solver::DefId) -> bool {
+        let has_readonly_array_name = self
+            .definition_store
+            .get_name(def_id)
+            .is_some_and(|name| self.types.resolve_atom_ref(name).as_ref() == "ReadonlyArray");
+        has_readonly_array_name
+            && self
+                .def_to_symbol_id(def_id)
+                .is_some_and(|sym_id| self.symbol_is_from_actual_or_cloned_lib(sym_id))
+    }
+
     /// Get the `SymbolId` for a `DefId`.
     ///
     /// Uses the `DefinitionStore` to look up the `symbol_id` stored in `DefinitionInfo`.

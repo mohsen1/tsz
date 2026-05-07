@@ -643,6 +643,43 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         (!has_type_params).then_some(def_id)
     }
 
+    pub(crate) fn readonly_array_application_base(&self, base: TypeId) -> bool {
+        match self.interner.lookup(base) {
+            Some(TypeData::Lazy(def_id)) => self.resolver.is_builtin_readonly_array_def(def_id),
+            Some(TypeData::UnresolvedTypeName(name)) => {
+                self.interner.resolve_atom_ref(name).as_ref() == "ReadonlyArray"
+            }
+            _ => self
+                .interner
+                .get_display_alias(base)
+                .is_some_and(|alias| self.readonly_array_application_base(alias)),
+        }
+    }
+
+    pub(crate) fn readonly_array_application_element(&self, type_id: TypeId) -> Option<TypeId> {
+        let app_id = application_id(self.interner, type_id)?;
+        let app = self.interner.type_application(app_id);
+        (app.args.len() == 1 && self.readonly_array_application_base(app.base))
+            .then_some(app.args[0])
+    }
+
+    pub(crate) fn readonly_array_syntax_element(&self, type_id: TypeId) -> Option<TypeId> {
+        let inner = readonly_inner_type(self.interner, type_id)?;
+        array_element_type(self.interner, inner)
+    }
+
+    pub(crate) fn type_contains_readonly_array_syntax(&self, type_id: TypeId) -> bool {
+        if self.readonly_array_syntax_element(type_id).is_some() {
+            return true;
+        }
+        union_list_id(self.interner, type_id).is_some_and(|members| {
+            self.interner
+                .type_list(members)
+                .iter()
+                .any(|&member| self.type_contains_readonly_array_syntax(member))
+        })
+    }
+
     /// Inner subtype check (after cycle detection and type evaluation).
     ///
     /// Wrapped with `stacker::maybe_grow()` so that deeply recursive structural
@@ -2129,6 +2166,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             readonly_inner_type(self.interner, target),
         ) {
             return self.check_subtype(s_inner, t_inner);
+        }
+
+        // Lib lowering can preserve `ReadonlyArray<T>` as a generic application,
+        // while syntax lowering represents `readonly T[]` as ReadonlyType(Array<T>).
+        // They are the same readonly-array surface and should compare by element.
+        if let (Some(s_elem), Some(t_elem)) = (
+            self.readonly_array_application_element(source),
+            self.readonly_array_syntax_element(target),
+        ) {
+            return self.check_subtype(s_elem, t_elem);
+        }
+
+        if let (Some(s_elem), Some(t_elem)) = (
+            self.readonly_array_syntax_element(source),
+            self.readonly_array_application_element(target),
+        ) {
+            return self.check_subtype(s_elem, t_elem);
         }
 
         // Readonly target peeling: T <: Readonly<U> if T <: U

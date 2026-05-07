@@ -746,6 +746,76 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        let readonly_array_bridge_result = if let Some(source_members) =
+            union_list_id(self.interner, source)
+            && self.type_contains_readonly_array_syntax(target)
+            && self
+                .interner
+                .type_list(source_members)
+                .iter()
+                .any(|&member| self.readonly_array_application_element(member).is_some())
+        {
+            let member_list = self.interner.type_list(source_members);
+            let all_related = member_list
+                .iter()
+                .all(|&member| self.check_subtype(member, target).is_true());
+            Some(if all_related {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            })
+        } else if let (Some(s_elem), Some(t_elem)) = (
+            self.readonly_array_application_element(source),
+            self.readonly_array_syntax_element(target),
+        ) {
+            Some(self.check_subtype(s_elem, t_elem))
+        } else if let (Some(s_elem), Some(t_elem)) = (
+            self.readonly_array_syntax_element(source),
+            self.readonly_array_application_element(target),
+        ) {
+            Some(self.check_subtype(s_elem, t_elem))
+        } else if let Some(s_elem) = self.readonly_array_application_element(source)
+            && let Some(target_members) = union_list_id(self.interner, target)
+        {
+            let member_list = self.interner.type_list(target_members);
+            if member_list
+                .iter()
+                .any(|&member| self.readonly_array_syntax_element(member).is_some())
+            {
+                let any_related = member_list.iter().any(|&member| {
+                    self.readonly_array_syntax_element(member)
+                        .is_some_and(|t_elem| self.check_subtype(s_elem, t_elem).is_true())
+                        || self.check_subtype(source, member).is_true()
+                });
+                Some(if any_related {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(result) = readonly_array_bridge_result {
+            if let Some(dp) = def_entered {
+                self.def_guard.leave(dp);
+            }
+            self.guard.leave(pair);
+            if !has_this_type && let Some(db) = self.query_db {
+                let key = self.make_cache_key(source, target);
+                match result {
+                    SubtypeResult::True => db.insert_subtype_cache(key, true),
+                    SubtypeResult::False => db.insert_subtype_cache(key, false),
+                    SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {}
+                }
+            }
+            leave_global!();
+            return result;
+        }
+
         // Arrays must compare their element types before evaluation turns them into
         // structural Array interface objects. Otherwise a generic mapped element type
         // can be accepted through the recursive Array shape even when the direct
