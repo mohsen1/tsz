@@ -665,6 +665,7 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|c| !c.is_declared)
             || self.is_within_non_ambient_class_body(decl_idx);
+        let in_static_block = self.find_enclosing_static_block(var_decl.name).is_some();
 
         // When an identifier is spelled with unicode escapes (e.g., \u0079ield for yield),
         // TSC treats it as a regular identifier and does NOT emit TS1212/TS1213/TS1214.
@@ -689,6 +690,7 @@ impl<'a> CheckerState<'a> {
             && let Some(ref name) = var_name
             && crate::state_checking::is_eval_or_arguments(name)
             && in_non_ambient_class
+            && !in_static_block
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             let message = format_message(
