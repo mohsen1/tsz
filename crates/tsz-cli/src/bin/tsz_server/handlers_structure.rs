@@ -659,7 +659,9 @@ impl Server {
     /// (`line`/`offset`) when the explicit range fields are absent. tsserver
     /// accepts `FileLocationOrRangeRequestArgs` for refactor commands; a
     /// position is treated as a zero-length range. Issue #3718.
-    fn parse_refactor_request_range(request: &TsServerRequest) -> Option<(u32, u32, u32, u32)> {
+    pub(super) fn parse_refactor_request_range(
+        request: &TsServerRequest,
+    ) -> Option<(u32, u32, u32, u32)> {
         let line_only = request
             .arguments
             .get("line")
