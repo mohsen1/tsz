@@ -36,6 +36,70 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|params| !params.nodes.is_empty())
     }
 
+    fn generic_function_argument_has_own_type_params_and_annotated_params(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        let arg_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let Some(node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+        if func
+            .type_parameters
+            .as_ref()
+            .is_none_or(|params| params.nodes.is_empty())
+        {
+            return false;
+        }
+        func.parameters.nodes.iter().all(|param_idx| {
+            self.ctx
+                .arena
+                .get(*param_idx)
+                .and_then(|param| self.ctx.arena.get_parameter(param))
+                .is_some_and(|param| param.type_annotation.is_some())
+        })
+    }
+
+    fn bare_type_param_constraint_has_callable_return_context(
+        &mut self,
+        expected_type: Option<TypeId>,
+    ) -> bool {
+        let Some(expected_type) = expected_type else {
+            return false;
+        };
+        let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
+            self.ctx.types,
+            expected_type,
+        ) else {
+            return false;
+        };
+        let Some(return_type) =
+            ContextualTypeContext::with_expected(self.ctx.types, constraint).get_return_type()
+        else {
+            return false;
+        };
+        let evaluated = self.evaluate_type_with_env(return_type);
+        crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            return_type,
+        )
+        .or_else(|| {
+            crate::query_boundaries::checkers::call::get_contextual_signature(
+                self.ctx.types,
+                evaluated,
+            )
+        })
+        .is_some()
+    }
+
     pub(crate) fn call_arg_source_type_annotation_markers(
         &self,
         args: &[NodeIndex],
@@ -510,11 +574,17 @@ impl<'a> CheckerState<'a> {
                     arg_idx,
                     expected_context_type,
                 );
-            let skip_bare_type_param_context_for_generic_function =
-                expected_type.is_some_and(|ty| {
-                    crate::query_boundaries::common::type_param_info(self.ctx.types, ty).is_some()
-                        && self.generic_function_argument_has_own_type_params(arg_idx)
-                });
+            let expected_is_bare_type_param = expected_type.is_some_and(|ty| {
+                crate::query_boundaries::common::type_param_info(self.ctx.types, ty).is_some()
+            });
+            let generic_arg_has_own_type_params =
+                self.generic_function_argument_has_own_type_params(arg_idx);
+            let annotated_generic_arg_can_use_return_context = expected_is_bare_type_param
+                && self.generic_function_argument_has_own_type_params_and_annotated_params(arg_idx)
+                && self.bare_type_param_constraint_has_callable_return_context(expected_type);
+            let skip_bare_type_param_context_for_generic_function = expected_is_bare_type_param
+                && generic_arg_has_own_type_params
+                && !annotated_generic_arg_can_use_return_context;
             let apply_contextual = self.argument_needs_contextual_type(arg_idx)
                 && !skip_bare_type_param_context_for_generic_function
                 && !skip_generic_callable_context_for_annotated_generic_function

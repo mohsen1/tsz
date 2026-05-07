@@ -1468,6 +1468,19 @@ let result = map([1, 2, 3], x => String(x));
     );
 }
 
+#[test]
+fn generic_function_return_arrow_gets_contextual_parameter_type() {
+    let source = r#"
+const f = <F extends (...args: any[]) => <G>(x: G) => void>(_: F): F => _;
+const a = f(<K extends string>(_: K) => _ => ({}));
+"#;
+    let diagnostics = get_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 7006),
+        "generic contextual return arrow should type the inner parameter, got: {diagnostics:?}"
+    );
+}
+
 /// Tests that overloaded function calls resolve to the correct signature.
 #[test]
 fn overload_resolution_picks_correct_signature() {
