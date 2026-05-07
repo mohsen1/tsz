@@ -1121,8 +1121,42 @@ impl<'a> CheckerState<'a> {
                 return builtin;
             }
 
+            // A stale ambient/lib generic binding must not shadow a real lexical
+            // type symbol. The symbol resolver already handles true enclosing type
+            // parameters, so prefer a non-type-parameter symbol before consulting
+            // the flat fallback type-parameter scope.
+            let non_type_param_symbol = if let TypeSymbolResolution::Type(sym_id) =
+                self.resolve_identifier_symbol_in_type_position(type_name_idx)
+            {
+                let lib_binders = self.get_lib_binders();
+                if self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(sym_id, &lib_binders)
+                    .is_some_and(|symbol| {
+                        symbol.has_any_flags(
+                            tsz_binder::symbol_flags::CLASS
+                                | tsz_binder::symbol_flags::INTERFACE
+                                | tsz_binder::symbol_flags::TYPE_ALIAS
+                                | tsz_binder::symbol_flags::ENUM,
+                        )
+                    })
+                {
+                    if !has_type_args {
+                        return self.type_reference_symbol_type(sym_id);
+                    }
+                    Some(sym_id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             // Type parameter (generic like T in function<T>)
-            if let Some(type_param) = self.lookup_type_parameter(name) {
+            if non_type_param_symbol.is_none()
+                && let Some(type_param) = self.lookup_type_parameter(name)
+            {
                 self.check_type_parameter_reference_for_computed_property(name, type_name_idx);
                 // TS1212/TS1213/TS1214: Strict-mode reserved word used as type reference
                 if crate::state_checking::is_strict_mode_reserved_name(name)

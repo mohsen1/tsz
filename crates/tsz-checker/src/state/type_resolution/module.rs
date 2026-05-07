@@ -266,9 +266,6 @@ impl<'a> CheckerState<'a> {
         name: &str,
         name_idx: NodeIndex,
     ) -> Option<TypeId> {
-        if let Some(type_id) = self.lookup_type_parameter(name) {
-            return Some(type_id);
-        }
         // Check if this is a global augmentation (interface declared in `declare global` block)
         // If so, use resolve_lib_type_by_name to merge with lib.d.ts declarations
         let is_global_augmentation = self.ctx.binder.global_augmentations.contains_key(name);
@@ -336,6 +333,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
             return Some(result);
+        }
+        if let Some(type_id) = self.lookup_type_parameter(name) {
+            return Some(type_id);
         }
         // Fall back to lib contexts for global type resolution
         // BUT only if lib files are actually loaded (noLib is false)

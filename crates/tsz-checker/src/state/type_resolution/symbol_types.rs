@@ -118,6 +118,25 @@ impl<'a> CheckerState<'a> {
                         flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0;
                     let should_force_interface_decl_path =
                         has_interface_decl && (flags & symbol_flags::INTERFACE) == 0;
+                    let should_use_local_interface_decl_path = has_interface_decl
+                        && !self.ctx.is_declaration_file()
+                        && declarations.iter().all(|&decl_idx| {
+                            self.ctx
+                                .arena
+                                .get(decl_idx)
+                                .and_then(|node| self.ctx.arena.get_interface(node))
+                                .is_some()
+                                && !self
+                                    .ctx
+                                    .binder
+                                    .declaration_arenas
+                                    .get(&(sym_id, decl_idx))
+                                    .is_some_and(|arenas| {
+                                        arenas.iter().any(|arena| {
+                                            !std::ptr::eq(arena.as_ref(), self.ctx.arena)
+                                        })
+                                    })
+                        });
                     // Cross-file interface symbols can share SymbolId values with
                     // local symbols in the current binder. Resolve them through a
                     // delegated checker anchored to the symbol's home arena first.
@@ -129,7 +148,10 @@ impl<'a> CheckerState<'a> {
                     let mut structural_type = if prefer_cross_file_interface {
                         let delegated = self.delegate_cross_arena_interface_type(sym_id);
                         delegated.unwrap_or_else(|| {
-                            if is_merged_with_namespace || should_force_interface_decl_path {
+                            if is_merged_with_namespace
+                                || should_force_interface_decl_path
+                                || should_use_local_interface_decl_path
+                            {
                                 // Compute the interface type directly, bypassing
                                 // get_type_of_symbol which would return the namespace
                                 // type for merged symbols.
@@ -138,7 +160,10 @@ impl<'a> CheckerState<'a> {
                                 self.get_type_of_symbol(sym_id)
                             }
                         })
-                    } else if is_merged_with_namespace || should_force_interface_decl_path {
+                    } else if is_merged_with_namespace
+                        || should_force_interface_decl_path
+                        || should_use_local_interface_decl_path
+                    {
                         // Compute the interface type directly, bypassing get_type_of_symbol
                         // which would return the namespace type for merged symbols.
                         self.compute_interface_type_from_declarations(sym_id)
@@ -201,7 +226,7 @@ impl<'a> CheckerState<'a> {
                         && structural_type != TypeId::ANY
                         && structural_type != TypeId::UNKNOWN
                     {
-                        if prefer_cross_file_interface {
+                        if prefer_cross_file_interface || should_use_local_interface_decl_path {
                             // Cross-file SymbolId collisions can leave a stale local
                             // cache entry for this symbol. Refresh the symbol cache
                             // with the delegated interface body — but only if the
@@ -214,7 +239,7 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.symbol_types.get(&sym_id).is_none_or(|&cached| {
                                     cached == TypeId::ERROR || cached == TypeId::UNKNOWN
                                 });
-                            if should_overwrite {
+                            if should_overwrite || should_use_local_interface_decl_path {
                                 self.ctx.symbol_types.insert(sym_id, structural_type);
                             }
                         }
@@ -224,7 +249,10 @@ impl<'a> CheckerState<'a> {
                             .type_env
                             .try_borrow()
                             .is_ok_and(|env| env.get_def(def_id).is_none());
-                        if needs_registration || prefer_cross_file_interface {
+                        if needs_registration
+                            || prefer_cross_file_interface
+                            || should_use_local_interface_decl_path
+                        {
                             let type_params =
                                 self.ctx.get_def_type_params(def_id).unwrap_or_default();
                             if type_params.is_empty() {

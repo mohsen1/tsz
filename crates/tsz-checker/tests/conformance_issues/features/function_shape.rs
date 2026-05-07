@@ -1021,3 +1021,61 @@ function mock<T>(spyObj: SpyMap<T>, methodName: keyof T): SpyMap<T> {
         "Expected TS2339 for missing property through generic mapped index access. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn local_interface_named_t_with_method_signature_not_shadowed_by_lib_generic_t() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+interface T {
+    f(x: number): void;
+}
+declare var t: T;
+declare var a: { f(x: number): void };
+
+a = t;
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2741),
+        "Did not expect stale lib generic T to erase local interface method members. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn local_interface_named_t_with_construct_property_not_shadowed_by_lib_generic_t() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+interface T {
+    f: new (x: number) => void;
+}
+declare var t: T;
+declare var a: { f: new (x: number) => void };
+
+a = t;
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2741),
+        "Did not expect stale lib generic T to erase local interface construct properties. Actual diagnostics: {diagnostics:#?}"
+    );
+}
