@@ -5393,3 +5393,87 @@ mod brace_code_map {
         assert_eq!(match_brace(src, open), Some(outer_close));
     }
 }
+
+// Issue #3803: getApplicableRefactors must NOT emit the `_scope_1` actions
+// when the request range has no enclosing function — only the global scope
+// is meaningful — and every action must carry a `range`.
+#[test]
+fn applicable_refactors_top_level_expression_emits_one_scope_with_range() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/top.ts",
+                    "fileContent": "const y = 1 + 2;\n",
+                }),
+            ))
+            .success
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "getApplicableRefactors",
+        serde_json::json!({
+            "file": "/src/top.ts",
+            "startLine": 1,
+            "startOffset": 11,
+            "endLine": 1,
+            "endOffset": 16,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("refactors should return a body");
+    let refactors = body.as_array().expect("refactors must be an array");
+    let actions: Vec<_> = refactors
+        .iter()
+        .flat_map(|r| {
+            r.get("actions")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .collect();
+
+    let names: Vec<&str> = actions
+        .iter()
+        .filter_map(|a| a.get("name").and_then(serde_json::Value::as_str))
+        .collect();
+    assert!(
+        names.contains(&"function_scope_0"),
+        "expected function_scope_0, got {names:?}"
+    );
+    assert!(
+        names.contains(&"constant_scope_0"),
+        "expected constant_scope_0, got {names:?}"
+    );
+    assert!(
+        !names.contains(&"function_scope_1"),
+        "must not emit function_scope_1 at module level, got {names:?}"
+    );
+    assert!(
+        !names.contains(&"constant_scope_1"),
+        "must not emit constant_scope_1 at module level, got {names:?}"
+    );
+
+    for action in &actions {
+        assert!(
+            action.get("range").is_some(),
+            "action missing range: {action:#}"
+        );
+    }
+
+    let fn_action = actions
+        .iter()
+        .find(|a| a.get("name").and_then(serde_json::Value::as_str) == Some("function_scope_0"))
+        .expect("function_scope_0 must exist");
+    let desc = fn_action
+        .get("description")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    assert!(
+        desc.contains("global scope"),
+        "function_scope_0 should target global scope at module level, got: {desc}"
+    );
+}
