@@ -1468,6 +1468,47 @@ fn test_readonly_array_subtyping() {
     assert!(!checker.is_subtype_of(readonly_array, mutable_array));
 }
 
+struct ReadonlyArrayDefResolver {
+    def_id: DefId,
+}
+
+impl TypeResolver for ReadonlyArrayDefResolver {
+    fn resolve_ref(
+        &self,
+        _symbol: SymbolRef,
+        _interner: &dyn crate::TypeDatabase,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    fn is_builtin_readonly_array_def(&self, def_id: DefId) -> bool {
+        def_id == self.def_id
+    }
+}
+
+#[test]
+fn test_readonly_array_application_matches_readonly_array_syntax() {
+    let interner = TypeInterner::new();
+    let resolver = ReadonlyArrayDefResolver { def_id: DefId(1) };
+    let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
+
+    let readonly_array_def = interner.lazy(DefId(1));
+    let readonly_array_app = interner.application(readonly_array_def, vec![TypeId::STRING]);
+    let readonly_string_array = interner.readonly_type(interner.array(TypeId::STRING));
+    let readonly_number_array = interner.readonly_type(interner.array(TypeId::NUMBER));
+    let app_or_null = interner.union(vec![readonly_array_app, TypeId::NULL]);
+    let syntax_or_null = interner.union(vec![readonly_string_array, TypeId::NULL]);
+
+    assert!(checker.is_subtype_of(readonly_array_app, readonly_string_array));
+    assert!(checker.is_subtype_of(readonly_string_array, readonly_array_app));
+    assert!(checker.is_subtype_of(app_or_null, syntax_or_null));
+    assert!(!checker.is_subtype_of(readonly_array_app, readonly_number_array));
+
+    let shadow_resolver = ReadonlyArrayDefResolver { def_id: DefId(99) };
+    let mut shadow_checker = SubtypeChecker::with_resolver(&interner, &shadow_resolver);
+    assert!(!shadow_checker.is_subtype_of(readonly_array_app, readonly_string_array));
+}
+
 #[test]
 fn test_readonly_tuple_subtyping() {
     let interner = TypeInterner::new();

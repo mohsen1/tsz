@@ -744,6 +744,46 @@ fn load_typescript_fixture(rel_path: &str) -> Option<String> {
 }
 
 #[test]
+fn compile_document_create_element_overload_augmentation_no_false_ts2430() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+    write_file(
+        &base.join("parserOverloadOnConstants1.ts"),
+        r#"
+interface Document {
+    createElement(tagName: string): HTMLElement;
+    createElement(tagName: 'canvas'): HTMLCanvasElement;
+    createElement(tagName: 'div'): HTMLDivElement;
+    createElement(tagName: 'span'): HTMLSpanElement;
+}
+"#,
+    );
+
+    let args = parse_args(&[
+        "tsz",
+        "--target",
+        "es2015",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--ignoreConfig",
+        "parserOverloadOnConstants1.ts",
+    ]);
+    let result = compile(&args, base).expect("compilation should succeed");
+    let ts2430: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE)
+        .collect();
+
+    assert!(
+        ts2430.is_empty(),
+        "Expected DOM Document createElement overload augmentation to avoid false TS2430, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_duplicate_amd_module_name_directives_reports_ts2458() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();

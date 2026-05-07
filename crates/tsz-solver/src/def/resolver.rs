@@ -128,6 +128,11 @@ pub trait TypeResolver {
         None
     }
 
+    /// Whether this `DefId` is the standard library `ReadonlyArray` interface.
+    fn is_builtin_readonly_array_def(&self, _def_id: DefId) -> bool {
+        false
+    }
+
     /// Resolve an `UnresolvedTypeName(atom)` text to a `DefId`, when the
     /// resolver has access to a wider binder graph than the lowering pass
     /// did. Used by the type evaluator to recover from
@@ -304,6 +309,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 
     fn get_def_name(&self, def_id: DefId) -> Option<tsz_common::interner::Atom> {
         (**self).get_def_name(def_id)
+    }
+
+    fn is_builtin_readonly_array_def(&self, def_id: DefId) -> bool {
+        (**self).is_builtin_readonly_array_def(def_id)
     }
 
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
