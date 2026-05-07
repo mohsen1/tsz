@@ -51,6 +51,28 @@ function test<P extends Props>(props: Readonly<P>) {
 }
 
 #[test]
+fn test_unwitnessed_recursive_type_parameter_variance_no_ts2322() {
+    let source = r#"
+type A<T> = B<T>;
+
+interface B<T> {
+    prop: A<T>;
+}
+
+declare let a: A<number>;
+declare let b: A<3>;
+
+b = a;
+"#;
+
+    let diags = crate::test_utils::check_source_strict(source);
+    assert!(
+        diags.iter().all(|d| d.code != 2322),
+        "unwitnessed recursive type parameter assignment should not emit TS2322; got {diags:?}"
+    );
+}
+
+#[test]
 fn test_generic_with_default_type_parameter() {
     let source = r#"
 function foo<T = string>(x: T): T {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::CompatChecker;
 use crate::TypeInterner;
 use crate::def::{DefId, DefKind};
 use crate::visitor::application_id;
@@ -698,6 +699,75 @@ fn test_recursive_generic_extension_uses_structural_expansion_not_variance_arg_c
     assert!(
         checker.check_subtype(source, target).is_true(),
         "Recursive expansion currently treats this pair as subtype-compatible"
+    );
+}
+
+#[test]
+fn test_unwitnessed_recursive_type_parameter_cycle_accepts_differing_args() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let a_def = DefId(210);
+    let b_def = DefId(211);
+
+    let a_t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let a_t_type = interner.intern(TypeData::TypeParameter(a_t_param));
+    let b_t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let b_t_type = interner.intern(TypeData::TypeParameter(b_t_param));
+
+    // type A<T> = B<T>
+    let a_body = interner.application(interner.lazy(b_def), vec![a_t_type]);
+    env.insert_def_with_params(a_def, a_body, vec![a_t_param]);
+    env.insert_def_kind(a_def, DefKind::TypeAlias);
+
+    // interface B<T> { prop: A<T> }
+    //
+    // The only occurrence of T is through the same recursive A/B cycle. Tsc
+    // treats B<number> and B<3> as compatible because no concrete member ever
+    // witnesses the type argument difference.
+    let b_body = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prop"),
+        interner.application(interner.lazy(a_def), vec![b_t_type]),
+    )]);
+    env.insert_def_with_params(b_def, b_body, vec![b_t_param]);
+    env.insert_def_kind(b_def, DefKind::Interface);
+
+    let source = interner.application(interner.lazy(a_def), vec![TypeId::NUMBER]);
+    let target = interner.application(interner.lazy(a_def), vec![interner.literal_number(3.0)]);
+    let resolved_source = interner.application(interner.lazy(b_def), vec![TypeId::NUMBER]);
+    let resolved_target =
+        interner.application(interner.lazy(b_def), vec![interner.literal_number(3.0)]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+    assert!(
+        checker.check_subtype(source, target).is_true(),
+        "unwitnessed recursive type parameter differences should not reject assignability"
+    );
+    assert!(
+        checker
+            .check_subtype(resolved_source, resolved_target)
+            .is_true(),
+        "resolved unwitnessed recursive applications should also be compatible"
+    );
+    assert!(
+        checker.check_subtype(source, resolved_target).is_true(),
+        "alias/interface mixed unwitnessed recursive applications should be compatible"
+    );
+
+    let mut compat = CompatChecker::with_resolver(&interner, &env);
+    assert!(
+        compat.is_assignable(resolved_source, resolved_target),
+        "assignability must also accept resolved unwitnessed recursive applications"
     );
 }
 
