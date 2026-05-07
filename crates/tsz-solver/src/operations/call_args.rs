@@ -700,17 +700,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let Some(&arg_type) = rest_args.get(fixed_index) else {
                 break;
             };
+            let expected = self.tuple_arg_element_type(fixed_element);
             let assignable = if strict {
-                self.checker
-                    .is_assignable_to_strict(arg_type, fixed_element.type_id)
+                self.checker.is_assignable_to_strict(arg_type, expected)
             } else {
-                self.checker
-                    .is_assignable_to(arg_type, fixed_element.type_id)
+                self.checker.is_assignable_to(arg_type, expected)
             };
             if !assignable {
                 return Some(Some(CallResult::ArgumentTypeMismatch {
                     index: rest_start + fixed_index,
-                    expected: fixed_element.type_id,
+                    expected,
                     actual: arg_type,
                     fallback_return: TypeId::ERROR,
                 }));
@@ -1157,7 +1156,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> Option<TypeId> {
         let rest_index = elements.iter().position(|elem| elem.rest);
         let Some(rest_index) = rest_index else {
-            return elements.get(offset).map(|elem| elem.type_id);
+            return elements
+                .get(offset)
+                .map(|elem| self.tuple_arg_element_type(elem));
         };
 
         let (prefix, rest_and_tail) = elements.split_at(rest_index);
@@ -1178,17 +1179,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let suffix_index = offset - suffix_start;
                 // First check expansion.tail, then outer_tail
                 if suffix_index < expansion_tail_len {
-                    return Some(expansion.tail[suffix_index].type_id);
+                    return Some(self.tuple_arg_element_type(&expansion.tail[suffix_index]));
                 }
                 let outer_index = suffix_index - expansion_tail_len;
-                return outer_tail.get(outer_index).map(|elem| elem.type_id);
+                return outer_tail
+                    .get(outer_index)
+                    .map(|elem| self.tuple_arg_element_type(elem));
             }
             if offset < prefix_len {
-                return Some(prefix[offset].type_id);
+                return Some(self.tuple_arg_element_type(&prefix[offset]));
             }
             let fixed_end = prefix_len + rest_fixed_len;
             if offset < fixed_end {
-                return Some(expansion.fixed[offset - prefix_len].type_id);
+                return Some(self.tuple_arg_element_type(&expansion.fixed[offset - prefix_len]));
             }
             return Some(variadic);
         }
@@ -1196,18 +1199,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // No variadic: prefix + expansion.fixed + expansion.tail + outer_tail
         let mut index = offset;
         if index < prefix_len {
-            return Some(prefix[index].type_id);
+            return Some(self.tuple_arg_element_type(&prefix[index]));
         }
         index -= prefix_len;
         if index < rest_fixed_len {
-            return Some(expansion.fixed[index].type_id);
+            return Some(self.tuple_arg_element_type(&expansion.fixed[index]));
         }
         index -= rest_fixed_len;
         if index < expansion_tail_len {
-            return Some(expansion.tail[index].type_id);
+            return Some(self.tuple_arg_element_type(&expansion.tail[index]));
         }
         index -= expansion_tail_len;
-        outer_tail.get(index).map(|elem| elem.type_id)
+        outer_tail
+            .get(index)
+            .map(|elem| self.tuple_arg_element_type(elem))
+    }
+
+    fn tuple_arg_element_type(&self, elem: &TupleElement) -> TypeId {
+        if elem.optional {
+            self.interner.union2(elem.type_id, TypeId::UNDEFINED)
+        } else {
+            elem.type_id
+        }
     }
 
     pub(crate) fn rest_element_type(&self, type_id: TypeId) -> TypeId {

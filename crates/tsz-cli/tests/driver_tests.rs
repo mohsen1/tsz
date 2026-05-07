@@ -1153,11 +1153,19 @@ import "unaliasedModule2";
         "Expected one TS5107 deprecation diagnostic, got diagnostics: {:?}",
         result.diagnostics
     );
-    // The fictitious module specifiers are not resolvable, so TS2882/TS2792
-    // diagnostics are not emitted. Only the AMD deprecation (TS5107) appears.
+    // tsc only emits TS5107 here (no TS2307/TS2792). Under `module: amd`
+    // without `ignoreDeprecations`, the deprecation diagnostic is the
+    // user-visible signal and tsc suppresses the secondary missing-module
+    // diagnostic. See `ts2792_emitted_for_missing_import_under_module_amd`
+    // for the inverse case where `ignoreDeprecations: 6.0` re-enables TS2792.
     assert!(
         !codes.contains(&2307),
-        "Did not expect TS2307, got diagnostics: {:?}",
+        "Did not expect TS2307 under module: amd, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2792),
+        "Did not expect TS2792 under module: amd without ignoreDeprecations (TS5107 is the visible signal), got diagnostics: {:?}",
         result.diagnostics
     );
 }
@@ -10913,7 +10921,6 @@ fn compile_bundler_dts_value_import_reports_ts2846_not_ts2307() {
             "target": "es2015",
             "module": "esnext",
             "moduleResolution": "bundler",
-            "allowImportingTsExtensions": true,
             "noEmit": true
           },
           "files": ["a.ts", "types.d.ts"]
@@ -15695,6 +15702,66 @@ exports.value = {};
 }
 
 #[test]
+fn js_commonjs_keyword_named_exports_emit_valid_declarations() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist",
+    "module": "commonjs",
+    "target": "es2022",
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "files": ["index.js"]
+}"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"exports.class = 123;
+exports.for = "loop";
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics, got: {:#?}",
+        result.diagnostics
+    );
+
+    let dts = std::fs::read_to_string(base.join("dist/index.d.ts"))
+        .expect("index declaration should be emitted");
+    assert!(
+        dts.contains("declare const _class: 123;"),
+        "expected keyword export to use a local alias: {dts}"
+    );
+    assert!(
+        dts.contains("declare const _for: \"loop\";"),
+        "expected keyword export to use a local alias: {dts}"
+    );
+    assert!(
+        dts.contains("export { _class as class, _for as for };"),
+        "expected keyword exports to be re-exported by alias: {dts}"
+    );
+    assert!(
+        !dts.contains("export const class"),
+        "expected invalid keyword binding declaration to be absent: {dts}"
+    );
+    assert!(
+        !dts.contains("export const for"),
+        "expected invalid keyword binding declaration to be absent: {dts}"
+    );
+}
+
+#[test]
 fn bare_import_type_export_equals_class_does_not_report_ts1340() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
@@ -19673,5 +19740,257 @@ export const useEntries = () => {
         result.diagnostics,
         result.files_read,
         result.file_infos
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Issue #3050: imported JS modules report TS7016 (not TS6504) when allowJs is
+// disabled. TS6504 is reserved for explicit JS *root* files.
+// ---------------------------------------------------------------------------
+
+/// Build the issue-3050 reproducer in `base` and compile it. Returns the
+/// resulting diagnostics so each test can assert the specific shape it cares
+/// about.
+fn run_imported_js_no_allow_js_fixture(base: &Path) -> Vec<tsz_common::diagnostics::Diagnostic> {
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler"
+  },
+  "files": [
+    "relative-extension.ts",
+    "relative-extensionless.ts",
+    "dynamic-import.ts",
+    "re-export.ts",
+    "package-import.ts"
+  ]
+}"#,
+    );
+    write_file(&base.join("dep.js"), "export const value = 1;\n");
+    write_file(
+        &base.join("relative-extension.ts"),
+        "import { value } from \"./dep.js\";\nvoid value;\n",
+    );
+    write_file(
+        &base.join("relative-extensionless.ts"),
+        "import { value } from \"./dep\";\nvoid value;\n",
+    );
+    write_file(
+        &base.join("dynamic-import.ts"),
+        "export async function load() { return import(\"./dep.js\"); }\n",
+    );
+    write_file(
+        &base.join("re-export.ts"),
+        "export { value } from \"./dep.js\";\n",
+    );
+    write_file(
+        &base.join("package-import.ts"),
+        "import { packageValue } from \"untyped-pkg\";\nvoid packageValue;\n",
+    );
+    write_file(
+        &base.join("node_modules/untyped-pkg/package.json"),
+        r#"{"name":"untyped-pkg","main":"index.js"}"#,
+    );
+    write_file(
+        &base.join("node_modules/untyped-pkg/index.js"),
+        "module.exports.packageValue = 1;\n",
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+    let result = compile(&args, base).expect("compile should succeed");
+    result.diagnostics
+}
+
+#[test]
+fn ts7016_emitted_for_imported_js_when_allow_js_disabled_relative_extension() {
+    let temp = TempDir::new().expect("temp dir");
+    let diagnostics = run_imported_js_no_allow_js_fixture(temp.path.as_path());
+
+    let on_relative: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.file.ends_with("relative-extension.ts"))
+        .collect();
+    assert!(
+        on_relative.iter().any(|d| d.code == 7016),
+        "expected TS7016 at the import site for ./dep.js, got: {diagnostics:#?}"
+    );
+    assert!(
+        !on_relative.iter().any(|d| d.code == 6504),
+        "TS6504 must not appear for an *imported* JS module, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ts7016_emitted_for_imported_js_extensionless_relative() {
+    let temp = TempDir::new().expect("temp dir");
+    let diagnostics = run_imported_js_no_allow_js_fixture(temp.path.as_path());
+
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|d| d.file.ends_with("relative-extensionless.ts"))
+            .any(|d| d.code == 7016),
+        "expected TS7016 for extensionless relative import ./dep, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ts7016_emitted_for_imported_js_dynamic_import_and_re_export() {
+    let temp = TempDir::new().expect("temp dir");
+    let diagnostics = run_imported_js_no_allow_js_fixture(temp.path.as_path());
+
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|d| d.file.ends_with("dynamic-import.ts"))
+            .any(|d| d.code == 7016),
+        "expected TS7016 for dynamic import(\"./dep.js\"), got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|d| d.file.ends_with("re-export.ts"))
+            .any(|d| d.code == 7016),
+        "expected TS7016 for re-export of ./dep.js, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ts7016_emitted_for_imported_js_untyped_package() {
+    let temp = TempDir::new().expect("temp dir");
+    let diagnostics = run_imported_js_no_allow_js_fixture(temp.path.as_path());
+
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|d| d.file.ends_with("package-import.ts"))
+            .any(|d| d.code == 7016),
+        "expected TS7016 for untyped node_modules package, got: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 6504),
+        "TS6504 must not appear anywhere for imported JS, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ts7016_message_quotes_specifier_and_resolved_path() {
+    // The user-facing TS7016 message is structurally derived from the
+    // specifier and the resolved path — never from a printer-rendered form.
+    // This test pins both placeholders so a future printer change can't
+    // silently drop the resolved-path hint.
+    let temp = TempDir::new().expect("temp dir");
+    let diagnostics = run_imported_js_no_allow_js_fixture(temp.path.as_path());
+
+    let msg = diagnostics
+        .iter()
+        .find(|d| d.code == 7016 && d.file.ends_with("relative-extension.ts"))
+        .map(|d| d.message_text.clone())
+        .expect("missing TS7016 for ./dep.js");
+    assert!(
+        msg.contains("Could not find a declaration file for module './dep.js'."),
+        "TS7016 should quote the user's specifier verbatim, got: {msg}"
+    );
+    assert!(
+        msg.contains("dep.js'") && msg.contains("implicitly has an 'any' type."),
+        "TS7016 should mention the resolved path and 'any' fallback, got: {msg}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Issue #3077: AMD/System/Classic module/resolution modes still emit TS2792
+// for unresolved value imports. The deprecation diagnostic (TS5107) those
+// modes produce is additive — not a substitute for missing-module reporting.
+// ---------------------------------------------------------------------------
+
+/// Compile a one-file program importing a known-missing package under the
+/// supplied compiler options. Used by the three AMD/System/Classic
+/// regression tests.
+fn run_missing_import_under_options(
+    options_json: &str,
+) -> Vec<tsz_common::diagnostics::Diagnostic> {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(
+        &base.join("tsconfig.json"),
+        &format!(
+            r#"{{
+  "compilerOptions": {options_json},
+  "files": ["index.ts"]
+}}"#
+        ),
+    );
+    write_file(
+        &base.join("index.ts"),
+        "import { value } from \"definitely-missing-package\";\nvoid value;\n",
+    );
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+    let result = compile(&args, base).expect("compile should succeed");
+    result.diagnostics
+}
+
+#[test]
+fn ts2792_emitted_for_missing_import_under_module_amd() {
+    let diagnostics = run_missing_import_under_options(
+        r#"{
+            "ignoreDeprecations": "6.0",
+            "module": "amd",
+            "noEmit": true,
+            "strict": true,
+            "target": "es2022"
+        }"#,
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2792),
+        "expected TS2792 under module: amd, got codes: {codes:?}\ndiagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !codes.contains(&5107),
+        "ignoreDeprecations: 6.0 should silence TS5107, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn ts2792_emitted_for_missing_import_under_module_system() {
+    let diagnostics = run_missing_import_under_options(
+        r#"{
+            "ignoreDeprecations": "6.0",
+            "module": "system",
+            "noEmit": true,
+            "strict": true,
+            "target": "es2022"
+        }"#,
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2792),
+        "expected TS2792 under module: system, got codes: {codes:?}\ndiagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ts2792_emitted_for_missing_import_under_classic_resolution() {
+    let diagnostics = run_missing_import_under_options(
+        r#"{
+            "ignoreDeprecations": "6.0",
+            "module": "esnext",
+            "moduleResolution": "classic",
+            "noEmit": true,
+            "strict": true,
+            "target": "es2022"
+        }"#,
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2792),
+        "expected TS2792 under moduleResolution: classic, got codes: {codes:?}\ndiagnostics: {diagnostics:#?}"
     );
 }
