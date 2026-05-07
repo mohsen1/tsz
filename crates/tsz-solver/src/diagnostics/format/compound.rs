@@ -632,7 +632,17 @@ impl<'a> TypeFormatter<'a> {
         // tsc shows `Foo.Yep | Bar.Yep` instead of `Yep | Yep` when two different
         // types share the same name in different namespaces.
         let disambiguated = self.disambiguate_union_member_names(&ordered, formatted);
-        disambiguated.join(" | ")
+        // If qualification couldn't break a tie (or slots were already
+        // identical), tsc collapses the duplicates to a single member.
+        // Mirror that — `Symbol | Symbol` should display as just `Symbol`.
+        let mut deduped: Vec<String> = Vec::with_capacity(disambiguated.len());
+        let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+        for name in disambiguated {
+            if seen.insert(name.clone()) {
+                deduped.push(name);
+            }
+        }
+        deduped.join(" | ")
     }
 
     /// When the union members exactly match the eight string literals that
