@@ -6,7 +6,7 @@
 //! - Object-like type detection for instanceof support
 
 use super::NarrowingContext;
-use crate::types::{ObjectShapeId, PropertyInfo, TypeId, Visibility};
+use crate::types::{ObjectFlags, ObjectShapeId, PropertyInfo, TypeId, Visibility};
 use crate::visitor::{
     intersection_list_id, object_shape_id, object_with_index_shape_id, type_param_info,
     union_list_id,
@@ -214,7 +214,7 @@ impl<'a> NarrowingContext<'a> {
                     "No members have property, creating intersection with Record<prop, unknown>"
                 );
                 let record_type = self.make_record_type(property_name);
-                return self.db.intersection2(source_type, record_type);
+                return self.db.intersect_types_raw2(source_type, record_type);
             } else if matching_non_never.len() == 1 {
                 trace!(
                     "Found single member after filtering, returning {}",
@@ -314,6 +314,10 @@ impl<'a> NarrowingContext<'a> {
     /// source type. TypeScript narrows to `source & Record<prop, unknown>` to
     /// indicate the type must have the property after the check.
     fn make_record_type(&self, property_name: Atom) -> TypeId {
+        let is_symbol_named = self
+            .db
+            .resolve_atom_ref(property_name)
+            .starts_with("__unique_");
         let required_prop = PropertyInfo {
             name: property_name,
             type_id: TypeId::UNKNOWN,
@@ -326,10 +330,11 @@ impl<'a> NarrowingContext<'a> {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
-            is_symbol_named: false,
+            is_symbol_named,
             single_quoted_name: false,
         };
-        self.db.object(vec![required_prop])
+        self.db
+            .object_with_flags(vec![required_prop], ObjectFlags::IN_OPERATOR_RECORD)
     }
 
     /// Check if a type has a specific property.

@@ -259,7 +259,7 @@ export {};
         ts2345[0].message_text.contains(
             "Argument of type 'Mark<any>' is not assignable to parameter of type 'Node<any> & Mark<any>'."
         ),
-        "signatureCombiningRestParameters4 must preserve tsc's parameter-intersection order, got {:?}",
+        "signatureCombiningRestParameters4 must preserve source-ordered parameter-intersection display, got {:?}",
         ts2345[0].message_text
     );
 }
