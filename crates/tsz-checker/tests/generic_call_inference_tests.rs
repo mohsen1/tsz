@@ -453,9 +453,15 @@ declare function bar<T>(item1: T, item2: T): T;
 bar(1, "");
 "#;
     let diags = relevant_diagnostics(source);
+    let ts2345 = diags.iter().find(|(code, _)| *code == 2345);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2345),
+        ts2345.is_some(),
         "Expected TS2345 for conflicting direct inference candidates. Diagnostics: {diags:#?}"
+    );
+    let msg = &ts2345.unwrap().1;
+    assert!(
+        msg.contains("Argument of type '\"\"' is not assignable to parameter of type '1'."),
+        "TS2345 should preserve direct literal candidates. Got: {msg:?}"
     );
 }
 
@@ -475,6 +481,25 @@ g("", 3, a => a);
     assert!(
         msg.contains("Argument of type '3' is not assignable to parameter of type '\"\"'."),
         "TS2345 should preserve the first direct literal inference candidate in the diagnostic. Got: {msg:?}"
+    );
+}
+
+#[test]
+fn rest_generic_argument_mismatch_displays_primitive_bases() {
+    let source = r#"
+declare function rest<T>(...items: T[]): T;
+rest(1, "");
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345 = diags.iter().find(|(code, _)| *code == 2345);
+    assert!(
+        ts2345.is_some(),
+        "Expected TS2345 for conflicting rest inference candidates. Diagnostics: {diags:#?}"
+    );
+    let msg = &ts2345.unwrap().1;
+    assert!(
+        msg.contains("Argument of type 'string' is not assignable to parameter of type 'number'."),
+        "TS2345 should display primitive bases for conflicting rest generic candidates. Got: {msg:?}"
     );
 }
 

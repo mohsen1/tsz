@@ -177,6 +177,12 @@ impl<'a> CheckerState<'a> {
         if arg_str.starts_with('{') && param_str.contains("<{") {
             param_str = Self::widen_object_member_literals_inside_generic_display(&param_str);
         }
+        if let Some((generic_arg_str, generic_param_str)) =
+            self.generic_direct_primitive_mismatch_display(arg_type, param_type, idx)
+        {
+            arg_str = generic_arg_str;
+            param_str = generic_param_str;
+        }
         let (arg_str, param_str) =
             self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
         let message = format_message(
