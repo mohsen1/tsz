@@ -382,8 +382,8 @@ namespace N {
         "Expected only the missing-expression TS1109 for recovered arrow body, got {diagnostics:?}"
     );
     assert_eq!(
-        ts1128_count, 0,
-        "Recovered expression-bodied arrows should consume their synthetic close brace: {diagnostics:?}"
+        ts1128_count, 1,
+        "Recovered expression-bodied arrows should report one trailing close-brace diagnostic: {diagnostics:?}"
     );
 }
 

@@ -44,53 +44,7 @@ impl ParserState {
             "'#!' can only be used at the start of a file.",
             diagnostic_codes::CAN_ONLY_BE_USED_AT_THE_START_OF_A_FILE,
         );
-
-        let source = self.scanner.source_text().as_bytes();
-        let mut pos = self.token_pos() as usize + 2;
-        let line_end = source[pos..]
-            .iter()
-            .position(|b| *b == b'\n' || *b == b'\r')
-            .map_or(source.len(), |offset| pos + offset);
-
-        while pos < line_end && source[pos].is_ascii_whitespace() {
-            pos += 1;
-        }
-        while pos < line_end && !source[pos].is_ascii_whitespace() {
-            pos += 1;
-        }
-
-        let mut arg_ranges = Vec::new();
-        while pos < line_end {
-            while pos < line_end && source[pos].is_ascii_whitespace() {
-                pos += 1;
-            }
-            if pos >= line_end {
-                break;
-            }
-            let arg_start = pos;
-            while pos < line_end && !source[pos].is_ascii_whitespace() {
-                pos += 1;
-            }
-            arg_ranges.push((arg_start, pos - arg_start));
-        }
-
-        for (arg_start, arg_len) in arg_ranges {
-            self.parse_error_at(
-                self.u32_from_usize(arg_start),
-                self.u32_from_usize(arg_len),
-                "';' expected.",
-                diagnostic_codes::EXPECTED,
-            );
-        }
-
-        self.next_token(); // consume '#'
-        if self.is_token(SyntaxKind::ExclamationToken) {
-            self.next_token();
-        }
-        while !self.is_token(SyntaxKind::EndOfFileToken) && !self.scanner.has_preceding_line_break()
-        {
-            self.next_token();
-        }
+        self.next_token(); // consume '#', then let `!` start normal expression recovery
     }
 
     fn recover_invalid_shebang_token(&mut self) {
