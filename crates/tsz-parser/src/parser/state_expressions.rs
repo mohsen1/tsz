@@ -20,21 +20,6 @@ use tsz_scanner::keyword_text_len;
 use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
-    fn count_following_close_braces(&mut self) -> u32 {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        let mut count = 0;
-        while self.is_token(SyntaxKind::CloseBraceToken) {
-            count += 1;
-            self.next_token();
-        }
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        count
-    }
-
     fn look_ahead_question_is_optional_parameter_marker(
         &mut self,
         previous_top_level_can_end_parameter_name: bool,
@@ -275,7 +260,6 @@ impl ParserState {
         let saved_diagnostics_len = self.parse_diagnostics.len();
         let saved_nodes_len = self.arena.nodes.len();
         let saved_extended_info_len = self.arena.extended_info.len();
-        let saved_deferred_module_close_braces = self.deferred_module_close_braces;
         let saved_abort_intersection_continuation = self.abort_intersection_continuation;
         let saved_fallback_import_type_options_once = self.fallback_import_type_options_once;
         let saved_in_import_type_options_context = self.in_import_type_options_context;
@@ -296,7 +280,6 @@ impl ParserState {
         self.parse_diagnostics.truncate(saved_diagnostics_len);
         self.arena.nodes.truncate(saved_nodes_len);
         self.arena.extended_info.truncate(saved_extended_info_len);
-        self.deferred_module_close_braces = saved_deferred_module_close_braces;
         self.abort_intersection_continuation = saved_abort_intersection_continuation;
         self.fallback_import_type_options_once = saved_fallback_import_type_options_once;
         self.in_import_type_options_context = saved_in_import_type_options_context;
@@ -1115,13 +1098,6 @@ impl ParserState {
             // If no expression was parsed (e.g. `() => ;`), emit TS1109
             if expr.is_none() {
                 self.error_expression_expected();
-                if self.is_token(SyntaxKind::CloseBraceToken) {
-                    let deferred_close_braces =
-                        self.count_following_close_braces().saturating_sub(1);
-                    self.deferred_module_close_braces =
-                        self.deferred_module_close_braces.max(deferred_close_braces);
-                    self.next_token();
-                }
             }
             expr
         };

@@ -3060,6 +3060,14 @@ fn apply_cli_overrides_with_config_options(
     if args.check_js {
         options.check_js = true;
         options.checker.check_js = true;
+        if !args
+            .explicitly_disabled_bool_flags
+            .iter()
+            .any(|name| name == "allowJs")
+        {
+            options.allow_js = true;
+            options.checker.allow_js = true;
+        }
     }
     if let Some(depth) = args.max_node_module_js_depth {
         options.max_node_module_js_depth = depth;

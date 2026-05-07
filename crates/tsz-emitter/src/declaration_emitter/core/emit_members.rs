@@ -699,7 +699,7 @@ impl<'a> DeclarationEmitter<'a> {
                             "@internal",
                         )
                     {
-                        previous_param_end = param_node.end;
+                        previous_param_end = self.parameter_semantic_end(param_node.end, param);
                         continue;
                     }
 
@@ -782,7 +782,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(";");
                     self.write_line();
                 }
-                previous_param_end = param_node.end;
+                previous_param_end = self.parameter_semantic_end(param_node.end, param);
             }
         }
     }
@@ -1854,6 +1854,10 @@ impl<'a> DeclarationEmitter<'a> {
                 if !has_export_modifier && !has_js_named_export {
                     regular_decls.retain(|(_is_exported, _decl_idx, _decl_node, decl)| {
                         self.should_emit_public_api_dependency(decl.name)
+                            && !self.default_import_alias_dependency_is_type_only(
+                                decl.name,
+                                decl.initializer,
+                            )
                     });
                 }
 

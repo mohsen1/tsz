@@ -83,7 +83,7 @@ impl<'a> Printer<'a> {
                 .contains(original_text.as_str())
             && let Some(ref ns_name) = self.current_namespace_name
         {
-            // Inside namespace IIFE, qualify exported variable references:
+            // Inside namespace IIFE, qualify namespace-object references:
             // `foo` → `ns.foo`
             let ns_name = ns_name.clone();
             self.write(&ns_name);
@@ -434,7 +434,16 @@ impl<'a> Printer<'a> {
                 let b = bytes[j];
                 if escaped {
                     escaped = false;
-                    j += 1;
+                    // ECMAScript LineContinuation: `\<LineTerminatorSequence>`,
+                    // where the sequence may be `\n`, `\r`, or `\r\n`. Treat
+                    // `\\` followed by `\r\n` as a single escaped unit so the
+                    // raw-string read does not trip the line-terminator
+                    // fallback branch on the trailing `\n`.
+                    if b == b'\r' && bytes.get(j + 1) == Some(&b'\n') {
+                        j += 2;
+                    } else {
+                        j += 1;
+                    }
                     continue;
                 }
 
