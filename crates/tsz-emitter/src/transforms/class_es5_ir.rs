@@ -1918,6 +1918,16 @@ impl<'a> ES5ClassTransformer<'a> {
         } else {
             None
         };
+        // The deferred static block IIFEs (rendered after the class IIFE) may
+        // reference the class self-reference alias when their `this` was
+        // rewritten by `convert_statement_static_with_class_alias`. In that
+        // case the alias must be declared/assigned outside the class IIFE so
+        // the post-IIFE blocks can resolve it (issue #3967).
+        let deferred_block_class_alias = if !deferred_static_blocks.is_empty() {
+            self.current_static_class_alias.clone()
+        } else {
+            None
+        };
         Some(IRNode::ES5ClassIIFE {
             name: self.class_name.clone().into(),
             base_class: base_class.map(Box::new),
@@ -1927,6 +1937,7 @@ impl<'a> ES5ClassTransformer<'a> {
             weakmap_inits,
             leading_comment,
             deferred_static_blocks,
+            deferred_block_class_alias,
         })
     }
 

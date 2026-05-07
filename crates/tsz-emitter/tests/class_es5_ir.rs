@@ -664,3 +664,49 @@ fn test_no_class_alias_when_no_this_in_static_members() {
         "Should not declare class alias when this is not used in static members.\nOutput:\n{output}"
     );
 }
+
+// Issue #3967: a class with only a static block (no static properties) that
+// references `this` must declare/assign the class alias outside the IIFE so
+// the deferred static block can reference it. Previously only the
+// has_static_props path emitted the alias preamble, leaving classes like
+// `class C { static { this.name; } }` with an undeclared `_a` reference at
+// runtime.
+#[test]
+fn test_static_block_only_class_alias_preamble() {
+    let source = r#"class C {
+            static { console.log("block", this.name); }
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        output.contains("var _a;"),
+        "static-block-only class with this should declare alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = C;"),
+        "static-block-only class with this should assign alias to class.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.name"),
+        "this in static block should be replaced with _a.\nOutput:\n{output}"
+    );
+
+    // The alias must be assigned BEFORE the static-block IIFE runs, so the
+    // block does not read undefined `_a`. The class IIFE wrapper also begins
+    // with `(function () {`, so we anchor the search past the closing
+    // `}());` of the class IIFE.
+    let class_iife_end = output
+        .find("}());")
+        .expect("class IIFE should close before the static-block IIFE")
+        + "}());".len();
+    let assign_idx = output.find("_a = C;").expect("assignment should exist");
+    let block_idx = output[class_iife_end..]
+        .find("(function () {")
+        .map(|i| i + class_iife_end)
+        .expect("static-block IIFE should exist after the class IIFE");
+    assert!(
+        assign_idx < block_idx,
+        "alias must be assigned before the static-block IIFE.\nOutput:\n{output}"
+    );
+}

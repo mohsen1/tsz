@@ -271,6 +271,13 @@ pub enum IRNode {
         /// Static block IIFEs deferred to after the class IIFE
         /// (used when the class has no non-block static members)
         deferred_static_blocks: Vec<Self>,
+        /// Class alias name to emit outside the IIFE for use by the deferred
+        /// static block IIFEs. When set, the printer emits
+        /// `var <alias>;` before the class declaration and
+        /// `<alias> = <name>;` after the class IIFE and before the deferred
+        /// blocks, so blocks that reference `this` (rewritten to the alias)
+        /// can resolve it. Issue #3967.
+        deferred_block_class_alias: Option<String>,
     },
 
     /// Static block IIFE: `(function () { ...statements... })();`

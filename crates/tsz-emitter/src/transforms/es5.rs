@@ -173,6 +173,7 @@ impl<'a> ES5ClassTransformer<'a> {
             weakmap_inits,
             leading_comment: None,
             deferred_static_blocks: Vec::new(),
+            deferred_block_class_alias: None,
         })
     }
 

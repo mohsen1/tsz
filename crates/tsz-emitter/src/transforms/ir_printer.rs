@@ -1214,11 +1214,21 @@ impl<'a> IRPrinter<'a> {
                 weakmap_inits,
                 leading_comment,
                 deferred_static_blocks,
+                deferred_block_class_alias,
             } => {
                 // Emit WeakMap declarations if any
                 if !weakmap_decls.is_empty() {
                     self.write("var ");
                     self.write(&weakmap_decls.join(", "));
+                    self.write(";");
+                    self.write_line();
+                }
+                // Issue #3967: declare the class self-reference alias used
+                // by deferred static-block IIFEs, BEFORE the class IIFE so
+                // it is hoisted into scope for the assignment below.
+                if let Some(alias) = deferred_block_class_alias {
+                    self.write("var ");
+                    self.write(alias);
                     self.write(";");
                     self.write_line();
                 }
@@ -1269,6 +1279,16 @@ impl<'a> IRPrinter<'a> {
                     self.write(";");
                 }
 
+                // Issue #3967: assign the alias to the class instance
+                // AFTER the IIFE so deferred static-block IIFEs can read it.
+                if let Some(alias) = deferred_block_class_alias {
+                    self.write_line();
+                    self.write_indent();
+                    self.write(alias);
+                    self.write(" = ");
+                    self.write(name);
+                    self.write(";");
+                }
                 // Emit deferred static block IIFEs after the class IIFE
                 for deferred in deferred_static_blocks {
                     self.write_line();
