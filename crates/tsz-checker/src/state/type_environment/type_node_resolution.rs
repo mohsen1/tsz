@@ -946,6 +946,9 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.get_type_of_symbol(sym_id)
             };
+            if name == "window" && base_type == TypeId::ANY {
+                return TypeId::UNKNOWN;
+            }
             return self.augment_js_global_value_type_with_expandos(name, sym_id, base_type);
         }
 

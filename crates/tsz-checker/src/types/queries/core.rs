@@ -895,6 +895,34 @@ impl<'a> CheckerState<'a> {
         self.ctx.binder.get_symbol(global_sym_id).is_some()
     }
 
+    pub(crate) fn is_window_and_global_this_declared_expression(&self, idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
+            return false;
+        };
+        let Some(annotation_idx) =
+            crate::types_domain::window_global_this_annotation::declared_type_annotation_for_symbol(
+                &self.ctx, sym_id,
+            )
+        else {
+            return false;
+        };
+        self.is_window_and_typeof_global_this_type_node(annotation_idx)
+    }
+
+    pub(crate) fn is_window_and_typeof_global_this_type_node(&self, idx: NodeIndex) -> bool {
+        crate::types_domain::window_global_this_annotation::is_window_and_typeof_global_this_type_node(
+            self.ctx.arena,
+            idx,
+        )
+    }
+
     /// Check if a name is a known global value (e.g., console, Math, JSON).
     /// These are globals that should be available in most JavaScript environments.
     pub(crate) fn is_known_global_value_name(&self, name: &str) -> bool {
