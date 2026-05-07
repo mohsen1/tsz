@@ -462,6 +462,49 @@ d.prop;
 }
 
 #[test]
+fn jsdoc_type_from_required_js_es_module_export_resolves_class_instance() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "ex.js",
+        r#"
+export class Crunch {
+    /** @param {number} n */
+    constructor(n) {
+        this.n = n;
+    }
+}
+"#,
+        "use.js",
+        r#"
+var ex = require("./ex");
+
+/** @param {ex.Crunch} wrap */
+function f(wrap) {
+    wrap.n;
+}
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let rendered: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message_text.clone()))
+        .collect();
+
+    for unexpected in [2304, 2339, 2552] {
+        assert!(
+            !diagnostics.iter().any(|d| d.code == unexpected),
+            "Expected no TS{unexpected} for checked-JS require namespace JSDoc class type, got diagnostics: {rendered:?}"
+        );
+    }
+}
+
+#[test]
 fn anonymous_typedef_inherits_name_from_following_declaration() {
     let codes = check_js_file_with_types(
         "enumDef.js",

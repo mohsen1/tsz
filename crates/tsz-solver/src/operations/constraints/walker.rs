@@ -2151,7 +2151,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let tuple_elements: Vec<TupleElement> = source_params[target_fixed_count..]
             .iter()
             .map(|p| TupleElement {
-                type_id: p.type_id,
+                type_id: if p.optional {
+                    self.interner.union2(p.type_id, TypeId::UNDEFINED)
+                } else {
+                    p.type_id
+                },
                 name: p.name,
                 optional: p.optional,
                 rest: p.rest,

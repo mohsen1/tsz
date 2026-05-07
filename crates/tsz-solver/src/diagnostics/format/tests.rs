@@ -3959,3 +3959,72 @@ fn typeof_prefix_for_namespace_and_class_constructor_defs() {
     assert_eq!(fmt.format(iface_obj), "IFoo");
     assert_eq!(fmt.format(class_instance_obj), "Bar");
 }
+
+/// Regression: a union mixing a named type (tier 1, has source position) with
+/// a literal type (tier 2, no source position) should display the named type
+/// first, matching tsc. Source order alone — `"foo" | Refrigerator` — is not
+/// what tsc renders; tsc displays `Refrigerator | "foo"`.
+///
+/// Source: `stringLiteralsWithEqualityChecks03` (and 04).
+#[test]
+fn union_named_type_renders_before_string_literal() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    // Build an interface with a real source position so it lands in tier 1.
+    let iface = crate::def::DefinitionInfo::interface(
+        db.intern_string("Refrigerator"),
+        vec![],
+        vec![PropertyInfo::new(
+            db.intern_string("makesFoodGoBrrr"),
+            TypeId::BOOLEAN,
+        )],
+    )
+    .with_file_id(0)
+    .with_span(10, 20);
+    let iface_def_id = def_store.register(iface);
+    let iface_ref = db.lazy(iface_def_id);
+
+    // Insertion order matches the source `let y: "foo" | Refrigerator`.
+    let union_id = db.union_preserve_members(vec![db.literal_string("foo"), iface_ref]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let result = fmt.format(union_id);
+    assert_eq!(
+        result, "Refrigerator | \"foo\"",
+        "Named type (tier 1) must render before a literal (tier 2) regardless of source order"
+    );
+}
+
+/// Sibling test: multiple named types stay sorted by source position, and any
+/// number of trailing literals retain their relative declaration order.
+#[test]
+fn union_multiple_named_types_sorted_then_literals_in_source_order() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let alpha = crate::def::DefinitionInfo::interface(db.intern_string("Alpha"), vec![], vec![])
+        .with_file_id(0)
+        .with_span(10, 20);
+    let beta = crate::def::DefinitionInfo::interface(db.intern_string("Beta"), vec![], vec![])
+        .with_file_id(0)
+        .with_span(30, 40);
+    let alpha_def = def_store.register(alpha);
+    let beta_def = def_store.register(beta);
+    let alpha_ref = db.lazy(alpha_def);
+    let beta_ref = db.lazy(beta_def);
+
+    // Source order: `"x" | Beta | "y" | Alpha`.
+    let union_id = db.union_preserve_members(vec![
+        db.literal_string("x"),
+        beta_ref,
+        db.literal_string("y"),
+        alpha_ref,
+    ]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let result = fmt.format(union_id);
+    // Named types come first, sorted by span (Alpha at 10 < Beta at 30).
+    // Literals follow in the order they appeared in the input.
+    assert_eq!(result, "Alpha | Beta | \"x\" | \"y\"");
+}

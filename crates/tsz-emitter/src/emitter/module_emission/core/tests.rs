@@ -561,6 +561,7 @@ class C {
     let comment_pos = output
         .find("// https://github.com/microsoft/TypeScript/issues/44113")
         .expect("expected preserved leading comment");
+    let class_pos = output.find("class C").expect("expected class declaration");
     let private_init_pos = output
         .find("_C_qux = { value: 42 };")
         .expect("expected static private initialization");
@@ -568,9 +569,15 @@ class C {
         .find("Object.defineProperty(C, \"bar\"")
         .expect("expected lowered static field");
 
+    // tsc places the file-leading comment before any helpers/hoists, then
+    // emits the temp `var _a, _C_qux;` between the comment and the class.
     assert!(
-        var_pos < comment_pos,
-        "Private temp vars should precede attached leading comments.\nOutput:\n{output}"
+        comment_pos < var_pos,
+        "Leading file comment should precede the temp-var hoist.\nOutput:\n{output}"
+    );
+    assert!(
+        var_pos < class_pos,
+        "Private temp vars should precede the class declaration.\nOutput:\n{output}"
     );
     assert!(
         private_init_pos < static_field_pos,

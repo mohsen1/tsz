@@ -1268,7 +1268,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .copied()
                 .and_then(|var| infer_ctx.get_constraints(var))
                 .is_some_and(|constraints| !constraints.lower_bounds.is_empty());
-            if !appears_in_other_params || !has_covariant_candidates {
+            let should_defer_to_other_param =
+                appears_in_other_params && (has_covariant_candidates || saw_deferred_arg);
+            if !should_defer_to_other_param {
                 self.constrain_types(
                     &mut infer_ctx,
                     &var_map,
@@ -2578,6 +2580,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // parameter types rather than the raw types that still contain type parameters.
         // Store BEFORE the final check so they're available even if the check fails
         // (the checker uses these to perform EPC on ArgumentTypeMismatch too).
+        self.apply_callback_optional_rest_slots(func, arg_types, &mut instantiated_params);
         self.last_instantiated_params = Some(instantiated_params.clone());
 
         if let Some((index, expected, actual)) = first_direct_primitive_mismatch {
@@ -2658,6 +2661,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
         }
         for (i, (&arg_type, raw_param)) in final_args.iter().zip(func.params.iter()).enumerate() {
+            if raw_param.rest {
+                continue;
+            }
             let raw_param_type = raw_param.type_id;
             let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(raw_param_type) else {
                 continue;
@@ -2726,6 +2732,73 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         CallResult::Success(return_type)
+    }
+
+    fn apply_callback_optional_rest_slots(
+        &mut self,
+        func: &FunctionShape,
+        final_args: &[TypeId],
+        instantiated_params: &mut [ParamInfo],
+    ) {
+        let Some(raw_rest_param) = func.params.last().filter(|param| param.rest) else {
+            return;
+        };
+        let rest_index = func.params.len().saturating_sub(1);
+        let Some(instantiated_rest_param) = instantiated_params.get_mut(rest_index) else {
+            return;
+        };
+        if !instantiated_rest_param.rest {
+            return;
+        }
+
+        let rest_type = self.unwrap_readonly(instantiated_rest_param.type_id);
+        let rest_type = self.evaluate_rest_param_type(rest_type);
+        let Some(TypeData::Tuple(elements_id)) = self.interner.lookup(rest_type) else {
+            return;
+        };
+        let mut elements = self.interner.tuple_list(elements_id).to_vec();
+        let mut changed = false;
+
+        for (param_index, raw_param) in func.params[..rest_index].iter().enumerate() {
+            let Some(target_fn) =
+                Self::get_contextual_signature_cached(self.interner, raw_param.type_id)
+            else {
+                continue;
+            };
+            let target_uses_same_rest = target_fn
+                .params
+                .last()
+                .is_some_and(|param| param.rest && param.type_id == raw_rest_param.type_id);
+            if !target_uses_same_rest {
+                continue;
+            }
+
+            let Some(&source_arg) = final_args.get(param_index) else {
+                continue;
+            };
+            let Some(source_fn) = Self::get_contextual_signature_cached(self.interner, source_arg)
+            else {
+                continue;
+            };
+            let source_params: Vec<ParamInfo> = source_fn
+                .params
+                .iter()
+                .flat_map(|param| {
+                    crate::type_queries::unpack_tuple_rest_parameter(self.interner, param)
+                })
+                .collect();
+
+            for (element, source_param) in elements.iter_mut().zip(source_params.iter()) {
+                if source_param.optional && !element.rest && !element.optional {
+                    element.optional = true;
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            instantiated_rest_param.type_id = self.interner.tuple(elements);
+        }
     }
 
     fn application_expands_to_conditional_alias_for_return_display(
