@@ -5819,3 +5819,65 @@ fn doc_comment_template_function_decl_still_extracts_params() {
         "function decl should extract @param y, got: {new_text}"
     );
 }
+
+// Issue #3798: getMoveToRefactoringFileSuggestions should derive newFileName
+// from the selected declaration and include configured project files in the
+// candidate list, not just open files.
+#[test]
+fn move_to_file_suggestions_derive_new_file_name_from_declaration() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let root = temp.path();
+    let config = root.join("tsconfig.json");
+    let a = root.join("a.ts");
+    let b = root.join("b.ts");
+    std::fs::write(
+        &config,
+        r#"{"compilerOptions":{"target":"es2020","module":"esnext"},"files":["a.ts","b.ts"]}"#,
+    )
+    .expect("config");
+    std::fs::write(&a, "export function moveMe() {}\n").expect("a");
+    std::fs::write(&b, "export const other = 1;\n").expect("b");
+
+    let mut server = make_server();
+    let a_str = a.to_string_lossy().to_string();
+    let b_str = b.to_string_lossy().to_string();
+
+    // Open ONLY a.ts. tsserver should still surface b.ts via the project's file list.
+    let open =
+        server.handle_tsserver_request(make_request("open", serde_json::json!({ "file": &a_str })));
+    assert!(open.success);
+
+    let response = server.handle_tsserver_request(make_request(
+        "getMoveToRefactoringFileSuggestions",
+        serde_json::json!({
+            "file": &a_str,
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 28,
+        }),
+    ));
+    assert!(response.success);
+    let body = response.body.expect("move-to suggestions body");
+
+    let new_file = body["newFileName"]
+        .as_str()
+        .expect("newFileName must be a string");
+    assert!(
+        new_file.ends_with("/moveMe.ts") || new_file.ends_with("\\moveMe.ts"),
+        "newFileName should be derived from the selected declaration `moveMe`, got: {new_file}"
+    );
+
+    let files = body["files"].as_array().expect("files must be an array");
+    let file_set: std::collections::HashSet<&str> =
+        files.iter().filter_map(serde_json::Value::as_str).collect();
+    assert!(
+        file_set.contains(b_str.as_str()),
+        "files must include the configured project's b.ts even though it's not open, got: {files:?}"
+    );
+    // Don't include the source file itself
+    assert!(
+        !file_set.contains(a_str.as_str()),
+        "files must not include the source file itself, got: {files:?}"
+    );
+}
