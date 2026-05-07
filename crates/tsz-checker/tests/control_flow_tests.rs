@@ -3418,6 +3418,73 @@ function f(e: E): number {
     );
 }
 
+#[test]
+fn test_static_condition_branch_does_not_report_unreachable_exhaustive_switch() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    let source = r#"
+function f1(x: 1 | 2): string {
+    if (!!true) {
+        switch (x) {
+            case 1: return "a";
+            case 2: return "b";
+        }
+        x;  // Unreachable
+    }
+    else {
+        throw 0;
+    }
+}
+
+enum E { A, B }
+
+function g(e: E): number {
+    if (!true)
+        return -1;
+    else
+        switch (e) {
+            case E.A: return 0;
+            case E.B: return 1;
+        }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        allow_unreachable_code: Some(false),
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts7027: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 7027)
+        .collect();
+    let expected_start = source.find("x;  // Unreachable").expect("expected x tail") as u32;
+    assert_eq!(
+        ts7027.len(),
+        1,
+        "only the reachable post-switch tail should report TS7027; diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert_eq!(
+        ts7027[0].start, expected_start,
+        "TS7027 should anchor at the post-switch tail"
+    );
+}
+
 /// Exhaustive enum switch assignments should satisfy definite-assignment checks.
 #[test]
 fn test_ts2454_not_emitted_for_exhaustive_enum_switch_assignment() {
