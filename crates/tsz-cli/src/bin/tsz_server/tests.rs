@@ -2058,6 +2058,54 @@ fn test_new_commands_are_recognized() {
 }
 
 #[test]
+fn breakpoint_and_comment_span_commands_return_numeric_text_spans() {
+    let mut server = make_server();
+    let file = "/text-span-shapes.tsx";
+    server.open_files.insert(
+        file.to_string(),
+        "function f() {\n  const x = 1; // TODO: work\n  /* block comment */\n}\n".to_string(),
+    );
+
+    let cases = [
+        make_request(
+            "breakpointStatement",
+            serde_json::json!({"file": file, "line": 2, "offset": 9}),
+        ),
+        make_request(
+            "getSpanOfEnclosingComment",
+            serde_json::json!({"file": file, "line": 2, "offset": 17, "onlyMultiLine": false}),
+        ),
+        make_request(
+            "getSpanOfEnclosingComment",
+            serde_json::json!({"file": file, "line": 3, "offset": 5, "onlyMultiLine": true}),
+        ),
+    ];
+
+    for req in cases {
+        let command = req.command.clone();
+        let resp = server.handle_tsserver_request(req);
+        assert!(resp.success, "{command} should succeed");
+        let body = resp.body.expect("command should return a body");
+        assert!(
+            body.get("start")
+                .and_then(serde_json::Value::as_u64)
+                .is_some(),
+            "{command} should return numeric TextSpan start: {body:?}"
+        );
+        assert!(
+            body.get("length")
+                .and_then(serde_json::Value::as_u64)
+                .is_some(),
+            "{command} should return numeric TextSpan length: {body:?}"
+        );
+        assert!(
+            body.get("textSpan").is_none(),
+            "{command} should not wrap the TextSpan: {body:?}"
+        );
+    }
+}
+
+#[test]
 fn test_full_protocol_dispatcher_commands_are_recognized() {
     let mut server = make_server();
     let file = "/full-routes.ts";
@@ -2102,6 +2150,10 @@ fn test_full_protocol_dispatcher_commands_are_recognized() {
         make_request("outliningSpans", serde_json::json!({"file": file})),
         make_request("fileReferences-full", serde_json::json!({"file": file})),
         make_request("navbar-full", serde_json::json!({"file": file})),
+        make_request(
+            "selectionRange-full",
+            serde_json::json!({"file": file, "locations": [{"line": 2, "offset": 12}]}),
+        ),
     ];
 
     for req in requests {
@@ -2112,6 +2164,55 @@ fn test_full_protocol_dispatcher_commands_are_recognized() {
             "{command} should be routed to a handler, got: {resp:?}"
         );
     }
+}
+
+#[test]
+fn selection_range_full_returns_numeric_text_spans() {
+    let mut server = make_server();
+    let file = "/selection-full.ts";
+    server.open_files.insert(
+        file.to_string(),
+        "function f() {\n  return 1 + 2;\n}\n".to_string(),
+    );
+
+    let resp = server.handle_tsserver_request(make_request(
+        "selectionRange-full",
+        serde_json::json!({
+            "file": file,
+            "locations": [{ "line": 2, "offset": 12 }]
+        }),
+    ));
+
+    assert!(resp.success);
+    let body = resp.body.expect("selectionRange-full should return a body");
+    let ranges = body
+        .as_array()
+        .expect("selectionRange-full body should be an array");
+    assert_eq!(ranges.len(), 1);
+    let text_span = ranges[0]
+        .get("textSpan")
+        .expect("selectionRange-full should include textSpan");
+    assert!(
+        text_span
+            .get("start")
+            .and_then(serde_json::Value::as_u64)
+            .is_some(),
+        "full selection range should use numeric TextSpan start: {text_span:?}"
+    );
+    assert!(
+        text_span
+            .get("length")
+            .and_then(serde_json::Value::as_u64)
+            .is_some(),
+        "full selection range should use numeric TextSpan length: {text_span:?}"
+    );
+    assert!(
+        text_span
+            .get("start")
+            .and_then(|start| start.get("line"))
+            .is_none(),
+        "full selection range should not use simplified line/offset shape: {text_span:?}"
+    );
 }
 
 #[test]
@@ -4542,4 +4643,73 @@ fn test_project_info_no_lib_suppresses_lib_files() {
         lib_count, 0,
         "noLib must suppress all lib files, got {files:?}"
     );
+}
+
+mod brace_code_map {
+    use super::super::{build_code_map, scan_forward};
+
+    fn match_brace(src: &str, open_pos: usize) -> Option<usize> {
+        let bytes = src.as_bytes();
+        let map = build_code_map(bytes);
+        assert!(
+            map[open_pos],
+            "test setup error: open position {open_pos} is not in code"
+        );
+        scan_forward(bytes, &map, open_pos, b'{', b'}')
+    }
+
+    #[test]
+    fn brace_match_skips_close_brace_inside_regex_literal() {
+        // Repro from issue #4013: the `}` inside `/}/` must be ignored when
+        // matching the outer block braces.
+        let src = "if (true) { const r = /}/; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_skips_close_brace_inside_regex_character_class() {
+        // `[}]` is a character class containing only `}`; outer braces still
+        // pair with the trailing `}`.
+        let src = "{ const r = /[}]/; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_handles_regex_with_flags() {
+        let src = "{ const r = /}/gi; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_treats_division_as_code_not_regex() {
+        // After a value-producing token (`)`), `/` is division, not a regex.
+        // The `}` inside the comment is non-code; `b` and `c` are identifiers.
+        // This guards against the regex heuristic mis-firing on division.
+        let src = "{ let x = (a) / b / c; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_handles_regex_after_return_keyword() {
+        let src = "function f() { return /}/.test(\"\"); }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
+
+    #[test]
+    fn brace_match_handles_regex_with_escaped_slash() {
+        let src = "{ const r = /\\/}/; }";
+        let open = src.find('{').unwrap();
+        let outer_close = src.rfind('}').unwrap();
+        assert_eq!(match_brace(src, open), Some(outer_close));
+    }
 }
