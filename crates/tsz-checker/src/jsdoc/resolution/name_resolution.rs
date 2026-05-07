@@ -1119,6 +1119,7 @@ impl<'a> CheckerState<'a> {
         let mut segments = name.split('.');
         let root_name = segments.next()?;
         let first_member = segments.next()?;
+        let remaining_segments: Vec<_> = segments.collect();
         let root_sym = self.ctx.binder.file_locals.get(root_name).or_else(|| {
             self.ctx
                 .lib_contexts
@@ -1158,11 +1159,15 @@ impl<'a> CheckerState<'a> {
         }
         let module_specifier = self.get_require_module_specifier(var_decl.initializer)?;
         if !self.jsdoc_module_specifier_prefers_direct_type_exports(&module_specifier) {
-            return None;
+            return self.resolve_jsdoc_js_require_export_type(
+                &module_specifier,
+                first_member,
+                &remaining_segments,
+            );
         }
 
         let mut current_sym = self.resolve_jsdoc_import_member(&module_specifier, first_member)?;
-        for segment in segments {
+        for segment in remaining_segments {
             let lib_binders = self.get_lib_binders();
             let mut visited_aliases = AliasCycleTracker::new();
             current_sym = self
@@ -1187,6 +1192,55 @@ impl<'a> CheckerState<'a> {
 
         let resolved = self.resolve_jsdoc_symbol_type(current_sym);
         (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved)
+    }
+
+    fn resolve_jsdoc_js_require_export_type(
+        &mut self,
+        module_specifier: &str,
+        first_member: &str,
+        remaining_segments: &[&str],
+    ) -> Option<TypeId> {
+        let mut current_type = self
+            .resolve_js_export_named_type(
+                module_specifier,
+                first_member,
+                Some(self.ctx.current_file_idx),
+            )
+            .and_then(|export_type| {
+                self.instance_type_from_constructor_type(export_type)
+                    .or(Some(export_type))
+            })
+            .filter(|&export_type| export_type != TypeId::ERROR && export_type != TypeId::UNKNOWN)
+            .or_else(|| {
+                let export_sym_id = self
+                    .resolve_jsdoc_import_member(module_specifier, first_member)
+                    .or_else(|| {
+                        self.resolve_named_export_via_export_equals(module_specifier, first_member)
+                    })
+                    .or_else(|| {
+                        let mut visited_aliases = AliasCycleTracker::new();
+                        self.resolve_reexported_member_symbol(
+                            module_specifier,
+                            first_member,
+                            &mut visited_aliases,
+                        )
+                    })?;
+                let export_type = self.resolve_jsdoc_symbol_type(export_sym_id);
+                (export_type != TypeId::ERROR && export_type != TypeId::UNKNOWN)
+                    .then_some(export_type)
+            })?;
+
+        for segment in remaining_segments {
+            let access = self.resolve_property_access_with_env(current_type, segment);
+            current_type = match access {
+                crate::query_boundaries::common::PropertyAccessResult::Success {
+                    type_id, ..
+                } => self.resolve_type_query_type(type_id),
+                _ => return None,
+            };
+        }
+
+        Some(current_type)
     }
 
     pub(crate) fn resolve_jsdoc_entity_name_symbol(
