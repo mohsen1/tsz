@@ -1731,6 +1731,30 @@ exports.foo = foo;
 }
 
 #[test]
+fn test_js_commonjs_default_function_export_is_renamed_to_default_alias() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.default = function (x) {
+    return x;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare function _default(x: any);"),
+        "Expected CJS default function export to use a synthetic default alias: {output}"
+    );
+    assert!(
+        output.contains("export default _default;"),
+        "Expected CJS default export to emit a default alias line: {output}"
+    );
+    assert!(
+        !output.contains("export function default"),
+        "Expected reserved default export name to be rewritten: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_named_function_export_is_not_static_augmentation_skip() {
     let output = emit_js_dts(
         r#"
