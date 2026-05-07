@@ -434,6 +434,84 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let jsdoc = self.function_like_jsdoc_for_node(initializer);
+        let reserved_export_alias = if is_exported {
+            self.js_reserved_export_local_name(name_idx)
+        } else {
+            None
+        };
+
+        if let Some((export_name, local_name)) = reserved_export_alias {
+            self.write_indent();
+            self.write("declare ");
+            self.write("function ");
+            self.write(&local_name);
+            self.write("(");
+            self.emit_parameters_with_body(&func.parameters, func.body);
+            self.write(")");
+
+            if func.type_annotation.is_some() {
+                self.write(": ");
+                self.emit_type(func.type_annotation);
+            } else if let Some(return_type_text) = jsdoc
+                .as_deref()
+                .and_then(Self::parse_jsdoc_return_type_text)
+            {
+                self.write(": ");
+                self.write(&return_type_text);
+            } else if let Some(return_type_text) = self
+                .js_function_body_preferred_return_text_for_declaration(
+                    func.body,
+                    name_idx,
+                    &func.parameters,
+                )
+            {
+                self.write(": ");
+                self.write(&return_type_text);
+            } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
+                let func_type_id = cache
+                    .node_types
+                    .get(&initializer.0)
+                    .copied()
+                    .or_else(|| self.get_node_type_or_names(&[name_idx, initializer]));
+                if let Some(func_type_id) = func_type_id
+                    && let Some(return_type_id) =
+                        type_queries::get_return_type(*interner, func_type_id)
+                {
+                    if return_type_id == tsz_solver::types::TypeId::ANY
+                        && func.body.is_some()
+                        && self.body_returns_void(func.body)
+                    {
+                        self.write(": void");
+                    } else {
+                        self.write(": ");
+                        self.write(&self.print_type_id(return_type_id));
+                    }
+                } else if func.body.is_some() && self.body_returns_void(func.body) {
+                    self.write(": void");
+                }
+            } else if func.body.is_some() && self.body_returns_void(func.body) {
+                self.write(": void");
+            }
+
+            self.write(";");
+            self.write_line();
+
+            self.write_indent();
+            if export_name == "default" {
+                self.write("export default ");
+                self.write(&local_name);
+            } else {
+                self.write("export { ");
+                self.write(&local_name);
+                self.write(" as ");
+                self.write(&export_name);
+                self.write(" }");
+            }
+            self.write(";");
+            self.write_line();
+            self.emitted_module_indicator = true;
+            return;
+        }
 
         self.write_indent();
         if is_exported {
