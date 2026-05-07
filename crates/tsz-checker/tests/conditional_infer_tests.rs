@@ -114,14 +114,29 @@ type A = __Awaited<DeeplyNested<number>>;
     );
 }
 
+fn assert_no_ts2589(source: &str) {
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2589),
+        "bounded recursive conditional alias should not emit TS2589. \
+         Actual diagnostics: {diagnostics:#?}\nSource:\n{source}"
+    );
+}
+
 #[test]
-fn bounded_recursive_conditional_aliases_do_not_emit_ts2589() {
-    let cases = [
+fn bounded_recursive_conditional_alias_array_branch_no_ts2589() {
+    assert_no_ts2589(
         r#"
 type Test<T> = [T] extends [any[]] ? { array: Test<T[0]> } : { notArray: T };
 declare const x: Test<number[]>;
 const y: { array: { notArray: number } } = x;
 "#,
+    );
+}
+
+#[test]
+fn bounded_recursive_conditional_alias_action_payload_no_ts2589() {
+    assert_no_ts2589(
         r#"
 type Action<T, P> = P extends void ? { type: T } : { type: T, payload: P };
 
@@ -134,6 +149,12 @@ type ReducerAction =
     | Action<ActionType.Foo, string>
     | Action<ActionType.Batch, ReducerAction[]>;
 "#,
+    );
+}
+
+#[test]
+fn bounded_recursive_conditional_alias_infer_recursive_box_no_ts2589() {
+    assert_no_ts2589(
         r#"
 interface Box<T> {
     __: T;
@@ -148,6 +169,12 @@ type t1 = Box<string | Box<number | boolean>>;
 type t2 = InferRecursive<t1>;
 type t3 = InferRecursive<Box<string | Box<number | boolean>>>;
 "#,
+    );
+}
+
+#[test]
+fn bounded_recursive_conditional_alias_abstract_class_infer_no_ts2589() {
+    assert_no_ts2589(
         r#"
 declare class SomeBaseClass {
     set<K extends keyof this>(key: K, value: this[K]): this[K];
@@ -164,6 +191,12 @@ declare class SomeClass extends SomeAbstractClass<number, string, boolean> {}
 type RType<T> = T extends SomeAbstractClass<any, any, infer R> ? R : never;
 type SomeClassR = RType<SomeClass>;
 "#,
+    );
+}
+
+#[test]
+fn bounded_recursive_conditional_alias_jsonify_no_ts2589() {
+    assert_no_ts2589(
         r#"
 type JsonifiedObject<T extends object> = { [K in keyof T]: Jsonified<T[K]> };
 
@@ -189,15 +222,7 @@ type JsonifiedExample = Jsonified<Example>;
 declare let ex: JsonifiedExample;
 const z1: "correct" = ex.customClass;
 "#,
-    ];
-
-    for source in cases {
-        let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
-        assert!(
-            diagnostics.iter().all(|diag| diag.code != 2589),
-            "bounded recursive conditional alias should not emit TS2589. Actual diagnostics: {diagnostics:#?}\nSource:\n{source}"
-        );
-    }
+    );
 }
 
 #[test]
