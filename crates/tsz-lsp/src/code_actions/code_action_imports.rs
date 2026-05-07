@@ -37,12 +37,14 @@ pub(super) enum ImportRemoval {
     Default { name: String },
     Namespace { name: String },
     Named { specifier: NodeIndex, name: String },
+    All { module_specifier: String },
 }
 
 impl ImportRemoval {
     fn name(&self) -> &str {
         match self {
             Self::Default { name } | Self::Namespace { name } | Self::Named { name, .. } => name,
+            Self::All { module_specifier } => module_specifier,
         }
     }
 }
@@ -172,6 +174,15 @@ impl<'a> CodeActionProvider<'a> {
                 }
             }
 
+            if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                let import_data = self.arena.get_import_decl(node)?;
+                let module_specifier = self
+                    .arena
+                    .get_literal_text(import_data.module_specifier)?
+                    .to_string();
+                return Some((current, ImportRemoval::All { module_specifier }));
+            }
+
             current = self.arena.get_extended(current)?.parent;
         }
 
@@ -210,6 +221,17 @@ impl<'a> CodeActionProvider<'a> {
     ) -> Option<(TextEdit, String)> {
         let import_node = self.arena.get(import_decl)?;
         let import_data = self.arena.get_import_decl(import_node)?;
+
+        if let ImportRemoval::All { module_specifier } = &removal {
+            let (range, _trailing) = self.import_decl_range(import_node);
+            let edit = TextEdit {
+                range,
+                new_text: String::new(),
+            };
+            let title = format!("Remove import from '{module_specifier}'");
+            return Some((edit, title));
+        }
+
         if import_data.import_clause.is_none() {
             return None;
         }
@@ -268,6 +290,7 @@ impl<'a> CodeActionProvider<'a> {
             ImportRemoval::Named { specifier, .. } => {
                 named_specs.retain(|spec| spec.specifier != specifier);
             }
+            ImportRemoval::All { .. } => unreachable!("ImportRemoval::All handled above"),
         }
 
         let has_named = !named_specs.is_empty();
