@@ -878,6 +878,25 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_statement_with_request(self, stmt_idx, request);
     }
 
+    fn check_unreachable_condition_branch_with_request(
+        &mut self,
+        stmt_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
+        let prev_unreachable = self.ctx.is_unreachable;
+        let prev_reported = self.ctx.has_reported_unreachable;
+        let prev_allow_unreachable = self.ctx.compiler_options.allow_unreachable_code;
+
+        self.ctx.is_unreachable = true;
+        self.ctx.has_reported_unreachable = true;
+        self.ctx.compiler_options.allow_unreachable_code = Some(true);
+        CheckerState::check_statement_with_request(self, stmt_idx, request);
+
+        self.ctx.compiler_options.allow_unreachable_code = prev_allow_unreachable;
+        self.ctx.is_unreachable = prev_unreachable;
+        self.ctx.has_reported_unreachable = prev_reported;
+    }
+
     fn clear_loop_body_recheck_caches(&mut self, stmt_idx: NodeIndex) {
         self.clear_type_cache_recursive(stmt_idx);
         self.ctx.flow_analysis_cache.borrow_mut().clear();
