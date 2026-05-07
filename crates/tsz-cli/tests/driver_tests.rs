@@ -378,6 +378,43 @@ n();
 }
 
 #[test]
+fn compile_public_break_modifier_recovery_suppresses_ts1105() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("repro.ts"), "public break;\n");
+
+    let args = parse_args(&[
+        "tsz",
+        "--target",
+        "es2015",
+        "--pretty",
+        "false",
+        "--noEmitOnError",
+        "repro.ts",
+    ]);
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "expected TS1128 for modifier recovery, got {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::A_BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_AN_ENCLOSING_ITERATION_OR_SWITCH_STATE
+        ),
+        "expected no downstream TS1105 after modifier recovery, got {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_for_of_unknown_expression_reports_ts18046() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -17674,6 +17711,37 @@ void exact;
     assert!(
         result.diagnostics.iter().all(|d| d.code != 2305),
         "Did not expect TS2305 for JSON default import/re-export bindings, got diagnostics: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn ignore_config_explicit_file_mode_implies_resolve_json_module_for_bundler() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("index.ts"),
+        r#"import data from "./data.json";
+const answer: number = data.answer;
+void answer;
+"#,
+    );
+    write_file(&base.join("data.json"), r#"{ "answer": 42 }"#);
+
+    let args = parse_args(&[
+        "tsz",
+        "--ignoreConfig",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "index.ts",
+    ]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no TS2732 for JSON import in no-config explicit-file mode, got: {:#?}",
         result.diagnostics
     );
 }
