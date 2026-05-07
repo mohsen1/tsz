@@ -45,6 +45,59 @@ pub(super) fn same_object_key_space(
     left == right || same_type_param_name(db, left, right)
 }
 
+pub(super) fn indexed_access_object_alias_application_exceeds_depth(
+    checker: &mut CheckerState<'_>,
+    object_node_idx: NodeIndex,
+) -> bool {
+    let Some(object_node) = checker.ctx.arena.get(object_node_idx) else {
+        return false;
+    };
+    let type_name = checker
+        .ctx
+        .arena
+        .get_type_ref(object_node)
+        .map_or(object_node_idx, |type_ref| type_ref.type_name);
+    let Some(raw_sym_id) = checker.resolve_type_symbol_for_lowering(type_name) else {
+        return false;
+    };
+    let sym_id = tsz_binder::SymbolId(raw_sym_id);
+    let Some(symbol) = checker.ctx.binder.get_symbol(sym_id) else {
+        return false;
+    };
+    if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
+        return false;
+    }
+    let declarations = symbol.declarations.clone();
+
+    declarations.into_iter().any(|decl_idx| {
+        let Some(decl_node) = checker.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(type_alias) = checker.ctx.arena.get_type_alias(decl_node) else {
+            return false;
+        };
+        let body_type = checker.get_type_from_type_node(type_alias.type_node);
+        let Some((base, _)) =
+            crate::query_boundaries::common::application_info(checker.ctx.types, body_type)
+        else {
+            return false;
+        };
+        let Some(app_def_id) =
+            crate::query_boundaries::common::lazy_def_id(checker.ctx.types, base)
+        else {
+            return false;
+        };
+        let Some(app_sym_id) = checker.ctx.def_to_symbol_id(app_def_id) else {
+            return false;
+        };
+        if !checker.type_alias_symbol_direct_conditional_branches_are_array_like(app_sym_id) {
+            return false;
+        }
+        checker.ctx.depth_exceeded.set(false);
+        checker.evaluate_type_for_ts2589_check(body_type, app_def_id)
+    })
+}
+
 impl<'a> CheckerState<'a> {
     fn array_like_kind_has_length(
         &self,

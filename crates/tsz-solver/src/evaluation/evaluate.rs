@@ -679,16 +679,39 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // For conditional type bodies with Application extends containing infer,
                     // preserve Application args so the conditional evaluator can match
                     // at the Application level (e.g., Promise<string> vs Promise<infer U>).
-                    let body_is_conditional_with_app_infer =
-                        self.is_conditional_with_application_infer(resolved);
-                    let expanded_args: std::borrow::Cow<'_, [TypeId]> =
-                        if body_is_conditional_with_app_infer {
-                            std::borrow::Cow::Owned(
-                                self.expand_type_args_preserve_applications(&app.args),
-                            )
-                        } else {
-                            self.expand_type_args(&app.args)
-                        };
+                    let arg_preservation = crate::type_queries::classify_body_for_arg_preservation(
+                        self.interner,
+                        resolved,
+                    );
+                    let body_is_conditional = matches!(
+                        self.interner.lookup(resolved),
+                        Some(TypeData::Conditional(_))
+                    );
+                    let expanded_args: std::borrow::Cow<'_, [TypeId]> = if body_is_conditional {
+                        std::borrow::Cow::Owned(
+                            app.args
+                                .iter()
+                                .map(|&arg| {
+                                    if crate::visitor::contains_type_parameters(self.interner, arg)
+                                    {
+                                        arg
+                                    } else {
+                                        self.try_expand_type_arg(arg)
+                                    }
+                                })
+                                .collect(),
+                        )
+                    } else if matches!(
+                        arg_preservation,
+                        crate::type_queries::BodyArgPreservation::ConditionalInfer
+                            | crate::type_queries::BodyArgPreservation::ConditionalApplicationInfer
+                    ) {
+                        std::borrow::Cow::Owned(
+                            self.expand_type_args_preserve_applications(&app.args),
+                        )
+                    } else {
+                        self.expand_type_args(&app.args)
+                    };
                     let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
                     if let Some(db) = self.query_db

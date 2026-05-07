@@ -10,7 +10,8 @@ use tsz_solver::TypeId;
 mod indexed_access_helpers;
 
 use indexed_access_helpers::{
-    has_nonpublic_property, is_broad_index_type, same_object_key_space, same_type_param_name,
+    has_nonpublic_property, indexed_access_object_alias_application_exceeds_depth,
+    is_broad_index_type, same_object_key_space, same_type_param_name,
 };
 
 impl<'a> CheckerState<'a> {
@@ -657,6 +658,15 @@ impl<'a> CheckerState<'a> {
         let object_type = self.get_type_from_type_node(data.object_type);
         let index_type = self.get_type_from_type_node(data.index_type);
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if indexed_access_object_alias_application_exceeds_depth(self, data.object_type) {
+            self.error_at_node(
+                data.object_type,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            );
+            return;
+        }
 
         if object_type == TypeId::ERROR
             && index_type != TypeId::ERROR
