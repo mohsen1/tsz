@@ -1,6 +1,6 @@
 # 100% Conformance Strategy
 
-Last updated: 2026-05-07 on `origin/main` at `adce419f88`.
+Last updated: 2026-05-08 on `origin/main` at `79d848589f`.
 
 ## Target
 
@@ -19,28 +19,27 @@ conformance.
 
 ## Current Baseline
 
-Current checked-in snapshot on `origin/main` after `#4475`:
+Current checked-in snapshot on `origin/main` after `#4532`:
 
-- `scripts/conformance/conformance-snapshot.json`: `12504/12582` passed, `78` failed, `99.4%`.
-- `scripts/conformance/conformance-detail.json`: `12504/12581` passed, `77` failed, `5` known failures.
+- `scripts/conformance/conformance-snapshot.json`: `12501/12582` passed, `81` failed, `99.4%`.
+- `scripts/conformance/conformance-detail.json`: `12501/12580` passed, `79` failed, `5` known failures.
 
 Dashboard from `python3 scripts/conformance/query-conformance.py --dashboard`:
 
-- Big 3 wrong-code problems: `10` tests across `TS2322`, `TS2339`, and `TS2345`.
+- Big 3 wrong-code problems: `8` tests across `TS2322`, `TS2339`, and `TS2345`.
 - Other tracked parser/excess-property codes: `1` test.
 - Likely crashes: `0`.
-- Node lane estimate: `5`.
-- Fingerprint-only failures: `55` tests, about `74%` of remaining failures.
-- False positives where tsc expects no diagnostics: `7` tests.
-- Diff <= 2: `13` tests.
+- Node lane estimate: `7`.
+- Fingerprint-only failures: `60` tests, about `80%` of remaining failures.
+- False positives where tsc expects no diagnostics: `4` tests.
+- Diff <= 2: `11` tests.
 
-The behavior queue improved materially during 2026-05-07. The checked-in snapshot
-has not yet been refreshed for `#4479`, `#4480`, `#4494`, `#4496`, `#4497`,
-`#4498`, `#4499`, `#4500`, `#4488`, `#4502`, `#4503`, `#4505`, `#4507`,
-`#4508`, `#4509`, `#4511`, `#4513`, `#4514`, `#4515`, or `#4516`, so use
-focused conformance runs for current-main candidate selection until the next
-snapshot/README refresh PR lands. Older notes that cite `12451/12582`,
-`12470/12582`, `12488/12581`, or 99.0-99.3% are stale.
+The behavior queue improved materially during 2026-05-07 and early 2026-05-08.
+The checked-in snapshot is current through the latest merged conformance/emitter
+PRs on `79d848589f`; keep using focused conformance runs for candidate
+selection because active behavior PRs can stale this snapshot quickly. Older
+notes that cite `12451/12582`, `12470/12582`, `12488/12581`, or 99.0-99.3%
+are stale.
 
 ## Active PR Queue
 
@@ -48,8 +47,10 @@ Monitor these PRs without sitting idle for CI:
 
 | PR | Purpose | Action |
 | --- | --- | --- |
-| #4510 | `fix(checker): preserve temporal TS2552 lib baseline` | Auto-merge enabled. CI aggregate rerun is in progress after a missing conformance shard artifact. |
-| #4512 | `fix(scanner): treat U+2028/U+2029 as line terminators in // comments and line maps` | Auto-merge enabled. Branch was updated after #4505; CI is running. |
+| #4534 | `fix(checker): preserve accepted overload callback diagnostics` | Non-draft behavior PR; blocked at last check. |
+| #4533 | `fix(cli): surface --isolatedDeclarations diagnostics under --noCheck` | Non-draft behavior PR; status unknown at last check. |
+| #4530 | `fix(diagnostics): preserve property alias display in TS2339` | Non-draft behavior PR; status unknown at last check. |
+| #4529 | `fix(checker): preserve async return literal context` | Non-draft behavior PR; blocked at last check. |
 | #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Draft and not auto-merge enabled because the last version had broad unit/conformance regressions. |
 
 Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434`,
@@ -57,7 +58,9 @@ Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434
 `#4451`, `#4475`, `#4479`, `#4480`, `#4490`, `#4491`, `#4492`, `#4494`,
 `#4495`, `#4496`, `#4497`, `#4498`, `#4499`, `#4500`, `#4501`, `#4488`,
 `#4504`, `#4502`, `#4503`, `#4505`, `#4507`, `#4508`, `#4509`, `#4511`,
-`#4513`, `#4514`, `#4515`, `#4516`, `#4518`, and `#4519`.
+`#4513`, `#4514`, `#4515`, `#4516`, `#4518`, `#4519`, `#4521`, `#4522`,
+`#4523`, `#4520`, `#4525`, `#4526`, `#4527`, `#4528`, `#4531`, and `#4532`.
+`#4510` and `#4512` also merged and are no longer active.
 
 ## Work Selection
 
@@ -85,10 +88,11 @@ Best remaining targets on current `main`, excluding work already covered by open
 
 | Target | Current impact | Suggested lane |
 | --- | --- | --- |
-| Type display parity | About `27` tests | Shared type-printer/display policy for `TS2322`, `TS2345`, and `TS2339` fingerprint-only failures. |
-| Diagnostic count accuracy | About `11` tests | Remove duplicate diagnostics or add missing instances where tsc emits the same code set. |
-| Big 3 wrong-code problems | `10` tests | Relation/property/call diagnostic selection. |
-| Parser recovery | `3` tests | Specific TS1xxx parser recovery selection. |
+| Type display parity | About `30` tests | Shared type-printer/display policy for `TS2322`, `TS2345`, and `TS2339` fingerprint-only failures. |
+| Diagnostic count accuracy | About `12` tests | Remove duplicate diagnostics or add missing instances where tsc emits the same code set. |
+| Big 3 wrong-code problems | `8` tests | Relation/property/call diagnostic selection. |
+| One-extra false positives | `5` tests | Suppress one extra diagnostic only when a focused current-main conformance run reproduces it. |
+| Parser recovery | `2` tests | Specific TS1xxx parser recovery selection. |
 
 Active local worker assignments from this tranche:
 
@@ -99,6 +103,8 @@ Active local worker assignments from this tranche:
 - `codex/one-extra-diagnostic-*` for a focused one-extra or false-positive diagnostic fix; bundled-lib filtering merged as `#4507`.
 - `codex/indexed-write-followup-*` for remaining `keyofAndIndexedAccessErrors` indexed-write mismatches after #4503 landed; first follow-up merged as `#4511`.
 - `codex/ts2552-temporal-*` for the one-missing TS2552 lane in `temporal.ts`; published as `#4510`.
+- `codex/js-salsa-one-extra-*` for remaining JS/Salsa one-extra false positives.
+- `codex/snapshot-readme-refresh-*` for strategy, README, and snapshot refreshes based on current `origin/main`.
 
 Already published or merged from earlier tranches:
 
@@ -118,24 +124,30 @@ Already published or merged from earlier tranches:
 - `fix/server-geterr-emits-events-*` as `#4514`
 - `codex/conformance-type-display-*` as `#4515`
 - `fix/cli-output-only-tsconfig-*` as `#4516`
+- `fix/scanner-u2028-line-terminators-*` as `#4512`
+- `fix/checker-temporal-ts2552-*` as `#4510`
+- `fix/server-encoded-syntactic-classifications-*` as `#4521`
+- `fix/cli-no-check-js-syntactic-diagnostics-*` as `#4520`
+- `fix/checker-template-index-properties-*` as `#4525`
+- `fix/emitter-keyof-generic-parens-*` as `#4527`
 
 ## Campaigns
 
 ### Tier 1: Fingerprint Parity
 
-Fingerprint parity is most of the remaining work: `55` tests and about three quarters of
+Fingerprint parity is most of the remaining work: `60` tests and about four fifths of
 failures. The main sub-buckets are:
 
-- `TS2322`: `34` tests.
-- `TS2345`: `17` tests.
+- `TS2322`: `33` tests.
+- `TS2345`: `16` tests.
 - `TS2339`: `9` tests.
 - `TS2564`: `3` tests.
 - `TS2454`: `1` test.
 
 Root-cause campaigns from `--campaigns`:
 
-- Type display parity: estimated `27` tests.
-- Diagnostic count accuracy: estimated `11` tests.
+- Type display parity: estimated `30` tests from the checked-in dashboard, with the campaign query still flagging broader message-format impact.
+- Diagnostic count accuracy: estimated `12` tests from the checked-in dashboard, with broader count-rule impact in the campaign query.
 
 Rules:
 
