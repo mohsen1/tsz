@@ -1,6 +1,6 @@
 # 100% Conformance Strategy
 
-Last updated: 2026-05-07 on `origin/main` at `1e61d77674`.
+Last updated: 2026-05-07 on `origin/main` at `c5a480fc2f`.
 
 ## Target
 
@@ -34,8 +34,11 @@ Dashboard from `python3 scripts/conformance/query-conformance.py --dashboard`:
 - False positives where tsc expects no diagnostics: `7` tests.
 - Diff <= 2: `13` tests.
 
-The main queue improved materially during 2026-05-07. Older notes that cite
-`12451/12582`, `12470/12582`, `12488/12581`, or 99.0-99.3% are stale.
+The behavior queue improved materially during 2026-05-07. The checked-in snapshot
+has not yet been refreshed for `#4479`, `#4480`, `#4494`, `#4496`, `#4497`,
+`#4498`, `#4499`, or `#4500`, so use focused conformance runs for current-main
+candidate selection until the next snapshot/README refresh PR lands. Older notes
+that cite `12451/12582`, `12470/12582`, `12488/12581`, or 99.0-99.3% are stale.
 
 ## Active PR Queue
 
@@ -43,15 +46,13 @@ Monitor these PRs without sitting idle for CI:
 
 | PR | Purpose | Action |
 | --- | --- | --- |
-| #4488 | `fix(checker): preserve non-strict unknown operation errors` | Auto-merge enabled. Worker pushed head `2b72b3c5f0` to fix `architecture_contract_tests_src::test_checker_file_size_ceiling`; new CI is running. |
-| #4480 | `fix(solver): compare readonly array representations` | Auto-merge enabled. New head `428f797a6f` is running CI after a worker push; do not duplicate while checks are in progress. |
-| #4479 | `fix(checker): prefer spelling suggestions over default-export hint` | Auto-merge enabled. Conformance passed, but lint/unit failed on the checker file-size ceiling; worker has a local size fix and is expected to push. |
-| #4490 | `[WIP] fix(cli): align --showConfig tsconfig discovery with tsc (#3580)` | Draft and not auto-merge enabled; leave out of the merge queue until intentionally readied. |
+| #4488 | `fix(checker): preserve non-strict unknown operation errors` | Auto-merge enabled. Branch was cleaned and rebased to `c528cfc112` after a contaminated force-push; CI is running. |
 | #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Draft and not auto-merge enabled because the last version had broad unit/conformance regressions. |
 
 Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434`,
 `#4438`, `#4439`, `#4443`, `#4444`, `#4447`, `#4448`, `#4449`, `#4450`,
-`#4451`, `#4475`, `#4491`, and `#4492`.
+`#4451`, `#4475`, `#4479`, `#4480`, `#4490`, `#4491`, `#4492`, `#4494`,
+`#4495`, `#4496`, `#4497`, `#4498`, `#4499`, and `#4500`.
 
 ## Work Selection
 
@@ -88,9 +89,10 @@ Active local worker assignments from this tranche:
 
 - `codex/conformance-type-display-*` for type display parity.
 - `codex/conformance-diagnostic-count-*` for diagnostic count accuracy.
-- `codex/issue-3985-unknown-nonstrict-ops` for the #4488 architecture gate, now pushed at `2b72b3c5f0`.
-- `codex/issue-3280-default-export-spelling` for the #4479 architecture gate.
-- `fix/parser-overload-on-constants1` for #4480 CI validation after the latest worker push.
+- `codex/conformance-parser-recovery-*` for parser recovery.
+- `codex/big3-relation-*` for a focused Big 3 wrong-code semantic fix.
+- `codex/one-extra-diagnostic-*` for a focused one-extra or false-positive diagnostic fix.
+- `codex/issue-3985-unknown-nonstrict-ops` for #4488, now clean at `c528cfc112`.
 
 Already published or merged from earlier tranches:
 
@@ -98,6 +100,7 @@ Already published or merged from earlier tranches:
 - `fix/new-target-narrowing-ts2339` as `#4445`
 - `fix/type-param-tag-ts2339` as `#4450`
 - `codex/fix-3985-unknown-non-strict-errors` as `#4475`
+- `codex/delete-operator-ts1102` as `#4500`
 
 ## Campaigns
 
