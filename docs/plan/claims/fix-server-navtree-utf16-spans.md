@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-07
 - **Branch**: `fix/server-navtree-utf16-spans`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #4437
+- **Status**: ready
 - **Workstream**: server protocol parity (issue #3912)
 
 ## Intent
