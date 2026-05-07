@@ -115,6 +115,92 @@ type A = __Awaited<DeeplyNested<number>>;
 }
 
 #[test]
+fn bounded_recursive_conditional_aliases_do_not_emit_ts2589() {
+    let cases = [
+        r#"
+type Test<T> = [T] extends [any[]] ? { array: Test<T[0]> } : { notArray: T };
+declare const x: Test<number[]>;
+const y: { array: { notArray: number } } = x;
+"#,
+        r#"
+type Action<T, P> = P extends void ? { type: T } : { type: T, payload: P };
+
+enum ActionType {
+    Foo,
+    Batch
+}
+
+type ReducerAction =
+    | Action<ActionType.Foo, string>
+    | Action<ActionType.Batch, ReducerAction[]>;
+"#,
+        r#"
+interface Box<T> {
+    __: T;
+}
+
+type Recursive<T> =
+    | T
+    | Box<Recursive<T>>;
+
+type InferRecursive<T> = T extends Recursive<infer R> ? R : "never!";
+type t1 = Box<string | Box<number | boolean>>;
+type t2 = InferRecursive<t1>;
+type t3 = InferRecursive<Box<string | Box<number | boolean>>>;
+"#,
+        r#"
+declare class SomeBaseClass {
+    set<K extends keyof this>(key: K, value: this[K]): this[K];
+}
+
+abstract class SomeAbstractClass<C, M, R> extends SomeBaseClass {
+    foo!: (r?: R) => void;
+    bar!: (r?: any) => void;
+    abstract baz(c: C): M;
+}
+
+declare class SomeClass extends SomeAbstractClass<number, string, boolean> {}
+
+type RType<T> = T extends SomeAbstractClass<any, any, infer R> ? R : never;
+type SomeClassR = RType<SomeClass>;
+"#,
+        r#"
+type JsonifiedObject<T extends object> = { [K in keyof T]: Jsonified<T[K]> };
+
+type Jsonified<T> =
+    T extends string | number | boolean | null ? T
+    : T extends undefined | Function ? never
+    : T extends { toJSON(): infer R } ? R
+    : T extends object ? JsonifiedObject<T>
+    : "what is this";
+
+declare class MyClass {
+    toJSON(): "correct";
+}
+
+type Example = {
+    customClass: MyClass,
+    obj: {
+        nested: { attr: MyClass }
+    },
+};
+
+type JsonifiedExample = Jsonified<Example>;
+declare let ex: JsonifiedExample;
+const z1: "correct" = ex.customClass;
+"#,
+    ];
+
+    for source in cases {
+        let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+        assert!(
+            diagnostics.iter().all(|diag| diag.code != 2589),
+            "bounded recursive conditional alias should not emit TS2589. Actual diagnostics: {diagnostics:#?}\nSource:\n{source}"
+        );
+    }
+}
+
+#[test]
 fn nested_tuple_rest_infer_result_satisfies_array_constraint() {
     let source = r#"
 interface Array<T> {
