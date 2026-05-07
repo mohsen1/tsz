@@ -1607,6 +1607,66 @@ fn js_only_syntactic_error_suppresses_semantic_diagnostics_program_wide() {
     }
 }
 
+/// Regression test for `conformance/salsa/plainJSGrammarErrors.ts`.
+///
+/// When a JavaScript file emits a TS-only-syntactic diagnostic (e.g. `TS8009`
+/// for a `const` modifier in a class body), tsc's `emitFilesAndReportErrors`
+/// short-circuits `getSemanticDiagnostics` program-wide. Checker/binder
+/// grammar checks like the break/continue family (`TS1104`/`TS1105`/`TS1107`)
+/// must therefore NOT be reported alongside the gate-trigger `TS8xxx` codes.
+#[test]
+fn js_only_syntactic_gate_suppresses_break_continue_grammar_checks() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    // A `const` field in a class is TS-only syntax in a JS file → TS8009.
+    // The break/continue at top level and the cross-function-boundary jump
+    // would normally trigger TS1104/TS1105/TS1107 — but tsc skips all
+    // semantic diagnostics once any TS8xxx fires from
+    // `getJSSyntacticDiagnosticsForFile`.
+    fs::write(
+        base.join("test.js"),
+        "class C {\n    const x = 1\n}\nfunction crossFunctionBoundary() {\n    outer: for(;;) {\n        function test() {\n            break outer\n        }\n    }\n}\nbreak\ncontinue\n",
+    )
+    .expect("write test.js");
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "esnext",
+            "allowJs": true,
+            "noEmit": true
+          },
+          "files": ["test.js"]
+        }"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    // The gate trigger must still be reported.
+    assert!(
+        codes.contains(&8009),
+        "Expected TS8009 'The const modifier can only be used in TypeScript files' to be reported, got: {:?}",
+        result.diagnostics,
+    );
+
+    // tsc skips semantic checking program-wide when any JS-only-syntactic
+    // error is present, so these checker-emitted grammar checks must NOT
+    // appear (each one would otherwise be a fingerprint mismatch with tsc).
+    for &suppressed in &[1104_u32, 1105, 1107] {
+        assert!(
+            !codes.contains(&suppressed),
+            "TS{} should be suppressed program-wide when any JS-only-syntactic error exists; got diagnostics: {:?}",
+            suppressed,
+            result.diagnostics,
+        );
+    }
+}
+
 #[test]
 fn module_preserve_checked_js_resolved_require_does_not_emit_missing_node_global() {
     let dir = tempfile::TempDir::new().expect("temp dir");

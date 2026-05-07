@@ -75,6 +75,7 @@ impl<'a> CheckerContext<'a> {
             export_equals_named_cache: RefCell::new(FxHashMap::default()),
             nested_namespace_candidates_cache: RefCell::new(FxHashMap::default()),
             symbol_name_candidates_cache: RefCell::new(FxHashMap::default()),
+            nested_namespace_candidates_cache_complete: Cell::new(false),
             lowering_entity_name_resolution_cache: RefCell::new(FxHashMap::default()),
             namespace_exports_cache: RefCell::new(FxHashMap::default()),
             shared_lib_type_cache: None,
@@ -622,6 +623,8 @@ impl<'a> CheckerContext<'a> {
             parent.export_equals_named_cache.borrow().clone();
         *ctx.nested_namespace_candidates_cache.borrow_mut() =
             parent.nested_namespace_candidates_cache.borrow().clone();
+        ctx.nested_namespace_candidates_cache_complete =
+            Cell::new(parent.nested_namespace_candidates_cache_complete.get());
         *ctx.lowering_entity_name_resolution_cache.borrow_mut() = parent
             .lowering_entity_name_resolution_cache
             .borrow()

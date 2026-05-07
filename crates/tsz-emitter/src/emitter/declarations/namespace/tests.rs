@@ -1,5 +1,6 @@
 use crate::emitter::ModuleKind;
 use crate::output::printer::{PrintOptions, Printer};
+use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
 
 /// Regression test: type-only import-equals inside a namespace must not
@@ -247,6 +248,42 @@ fn dotted_namespace_reopen_qualifies_prior_value_exports() {
     assert!(
         !output.contains("\n            buz();"),
         "Parent namespace export should not remain a bare identifier.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_exported_var_rewrites_computed_class_method_name() {
+    let source = "namespace M {\n    export var Symbol;\n\n    class C {\n        [Symbol.iterator]() { }\n    }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("[M.Symbol.iterator]()"),
+        "Computed method name should qualify exported namespace value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("[Symbol.iterator]()"),
+        "Computed method name should not keep the bare exported name.\nOutput:\n{output}"
+    );
+
+    let mut es5_printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    es5_printer.set_source_text(source);
+    es5_printer.print(root);
+    let es5_output = es5_printer.finish().code;
+    assert!(
+        es5_output.contains("M.Symbol.iterator"),
+        "ES5 namespace class lowering should also qualify computed method names.\nOutput:\n{es5_output}"
     );
 }
 
