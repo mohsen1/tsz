@@ -6,6 +6,19 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::{PropertyInfo, TypeId};
 
+fn order_preserving_union(
+    factory: tsz_solver::TypeFactory<'_>,
+    mut members: Vec<TypeId>,
+) -> TypeId {
+    let mut seen = rustc_hash::FxHashSet::default();
+    members.retain(|id| *id != TypeId::NEVER && seen.insert(*id));
+    match members.as_slice() {
+        [] => TypeId::NEVER,
+        [only] => *only,
+        _ => factory.union_preserve_order(members),
+    }
+}
+
 impl<'a> CheckerState<'a> {
     const fn implicit_any_like_diagnostic_code(code: u32) -> bool {
         matches!(
@@ -353,10 +366,7 @@ impl<'a> CheckerState<'a> {
 
                 let string_index = if !string_index_types.is_empty() {
                     let value_type = if self.ctx.in_const_assertion {
-                        self.ctx
-                            .types
-                            .factory()
-                            .union_preserve_members(string_index_types)
+                        order_preserving_union(self.ctx.types.factory(), string_index_types)
                     } else {
                         self.ctx.types.factory().union(string_index_types)
                     };
@@ -372,10 +382,7 @@ impl<'a> CheckerState<'a> {
 
                 let number_index = if !number_index_types.is_empty() {
                     let value_type = if self.ctx.in_const_assertion {
-                        self.ctx
-                            .types
-                            .factory()
-                            .union_preserve_members(number_index_types)
+                        order_preserving_union(self.ctx.types.factory(), number_index_types)
                     } else {
                         self.ctx.types.factory().union(number_index_types)
                     };
