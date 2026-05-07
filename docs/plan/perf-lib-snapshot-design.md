@@ -113,6 +113,67 @@ type interner.
    sees a snapshot, both try to write. Need atomic-rename-on-write or
    file-locking to avoid torn writes.
 
+## Empirical finding (2026-05-08): JSON format is a net regression
+
+A Phase 1.4 prototype was implemented and benched on
+`vite-vanilla-ts-app`. **It does not ship as written**, and the data
+below explains why — so the next implementer doesn't repeat the same
+mistake.
+
+**Implementation summary**: thread-local opt-in cache via `TSZ_LIB_CACHE=1`;
+serde_json wire format with an 8-byte magic header; atomic-rename writes;
+`FxHasher` content key including filename and source. Caches the parsed
+`NodeArena` only (not `BinderState`, which has no serde derives — that's
+the multi-day Phase 1.5 refactor). Re-binds on cache hit.
+
+**Bench result on `vite-vanilla-ts-app` (adjacent runs, same load)**:
+
+| Mode    | tsz (ms) | tsgo (ms) | factor (tsz/tsgo) |
+|---------|---------:|----------:|------------------:|
+| OFF     | 181.64   | 73.93     | 2.46×             |
+| ON      | 231.76   | 79.03     | 2.93×             |
+
+**~27% wall-time *regression* with the cache on**. tsgo numbers
+confirm the system load was comparable across runs (74 vs 79ms is
+within noise for a 75ms process).
+
+**Why it failed**: the on-disk JSON cache is **29 MB** for the standard
+ES2020+DOM lib set (49 files), with the largest single file (the
+`dom.d.ts` cache entry) at **25 MB**. Reading 29 MB off disk and running
+serde_json's tag-driven decoder is *slower* than parsing the ~3 MB of
+embedded source bytes that the original code path operates on. The
+"skip parse" assumption is broken when the snapshot format inflates
+the source ~10×.
+
+**What this means for the next attempt**:
+
+1. **Binary format is mandatory, not an optimisation.** JSON's text
+   overhead alone disqualifies it for this workload. The binary
+   format must be:
+   - **Compact** (cache size ≤ source size, ideally ≤ 50% via varints).
+   - **Zero-copy / mmap-friendly** so disk read time → file size /
+     bandwidth, not file size × parse cost.
+   - **Stable across `skip_serializing_if` annotations** that the
+     existing typed pools rely on (e.g. `LiteralData::has_invalid_escape`
+     is `#[serde(default, skip_serializing_if = "...")]`). Bincode
+     1.x's positional format desyncs on these. Postcard, rmp-serde,
+     or rkyv are candidates that keep field tags and survive optional
+     fields.
+
+2. **Don't ship parse-only cache.** The wins are too small to overcome
+   the read+rebind overhead. The campaign needs `BinderState` in the
+   snapshot too — which means landing `Serialize`/`Deserialize` on
+   `BinderState` first as a pure refactor PR, before any cache wiring.
+
+3. **Phase ordering changes**: do `BinderState` serde derives BEFORE
+   the disk cache. The cache is only worth it once it can skip both
+   parse AND bind.
+
+The Phase 1.3 round-trip foundation (the prior commit on this
+branch) is still load-bearing — it makes `NodeArena` itself
+serialisable and is a prerequisite for any future format. Phase 1.3
+ships standalone; Phase 1.4 as written does not.
+
 ## Phased plan
 
 The phases are designed so each lands as a self-contained, reviewable PR
