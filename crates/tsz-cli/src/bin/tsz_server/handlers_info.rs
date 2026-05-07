@@ -928,7 +928,8 @@ impl Server {
                 }));
             }
 
-            // Compute trigger span length from the range
+            let rename_seed =
+                Self::quoted_specifier_literal_at_offset(&arena, &source_text, query_offset);
             let start_offset = line_map
                 .position_to_offset(info.trigger_span.start, &source_text)
                 .unwrap_or(0) as usize;
@@ -936,8 +937,6 @@ impl Server {
                 .position_to_offset(info.trigger_span.end, &source_text)
                 .unwrap_or(0) as usize;
             let trigger_length = end_offset.saturating_sub(start_offset);
-            let rename_seed =
-                Self::quoted_specifier_literal_at_offset(&arena, &source_text, query_offset);
 
             if let Some(mut project) = self.build_project_for_file(&file)
                 && let Some(locs) = self.quoted_alias_chain_references(

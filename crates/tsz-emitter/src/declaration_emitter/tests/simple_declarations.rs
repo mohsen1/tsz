@@ -1574,6 +1574,25 @@ function C() {
 }
 
 #[test]
+fn test_js_commonjs_bracket_string_exports_emit_named_declarations() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports["foo"] = 1;
+module.exports["bar"] = "x";
+"#,
+    );
+
+    assert!(
+        output.contains("export const foo: 1;"),
+        "Expected bracket string exports to emit named declarations: {output}"
+    );
+    assert!(
+        output.contains("export const bar: \"x\";"),
+        "Expected module.exports bracket string exports to emit named declarations: {output}"
+    );
+}
+
+#[test]
 fn test_js_exports_assignment_skips_chained_void_zero_preinit() {
     let output = emit_js_dts_with_usage_analysis(
         r#"

@@ -53,6 +53,47 @@ fn test_definition_empty_response_is_valid_array() {
 }
 
 #[test]
+fn test_rename_trigger_span_uses_text_span_length() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "const n = 1;\nn;\n".to_string());
+
+    let req = make_request(
+        "rename",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 2,
+            "offset": 1,
+            "findInStrings": false,
+            "findInComments": false
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("rename should return body");
+    let trigger_span = body
+        .get("info")
+        .and_then(|info| info.get("triggerSpan"))
+        .expect("rename info should include triggerSpan");
+
+    assert_eq!(
+        trigger_span.get("start"),
+        Some(&serde_json::json!({ "line": 2, "offset": 1 })),
+        "triggerSpan should start at the requested identifier: {body:?}"
+    );
+    assert!(
+        trigger_span.get("end").is_none(),
+        "triggerSpan must use TextSpan length shape, not protocol end shape: {body:?}"
+    );
+    assert_eq!(
+        trigger_span.get("length"),
+        Some(&serde_json::json!(1)),
+        "triggerSpan length should cover the requested identifier: {body:?}"
+    );
+}
+
+#[test]
 fn test_definition_and_bound_span_has_no_body_without_definition() {
     let mut server = make_server();
     server

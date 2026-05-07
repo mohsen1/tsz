@@ -1614,6 +1614,29 @@ mod tests {
         );
     }
 
+    #[test]
+    fn const_enum_declared_in_namespace_inlines_local_and_qualified_access() {
+        let source =
+            "namespace N {\n    export const enum E { A }\n    var x = E.A;\n}\nvar y = N.E.A;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var x = 0 /* E.A */;"),
+            "Namespace-local const enum access must be inlined by simple name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var y = 0 /* N.E.A */;"),
+            "Qualified namespace const enum access must still be inlined outside the namespace.\nOutput:\n{output}"
+        );
+    }
+
     /// String const enum values are inlined with proper quoting.
     #[test]
     fn const_enum_string_values_inlined() {
