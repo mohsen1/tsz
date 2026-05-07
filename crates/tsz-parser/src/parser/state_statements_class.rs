@@ -253,6 +253,42 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
                     self.error_comma_expected();
+                    // Definite-assignment marker (`!`) is invalid on a
+                    // parameter. tsc anchors TS1005 at the `!` (emitted just
+                    // above) and TS1138 at the following `:`, then consumes
+                    // the malformed `!: <type>` tail. Without this branch the
+                    // broad recovery loop below swallows the `!:` tail and
+                    // the TS1138 diagnostic is lost.
+                    if self.is_token(SyntaxKind::ExclamationToken) {
+                        let snapshot = self.scanner.save_state();
+                        let saved_token = self.current_token;
+                        self.next_token();
+                        if self.is_token(SyntaxKind::ColonToken) {
+                            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.parse_error_at_current_token(
+                                diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
+                                diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+                            );
+                            self.next_token();
+                            if self.can_token_start_type() {
+                                self.parse_type();
+                            } else if !matches!(
+                                self.token(),
+                                SyntaxKind::CommaToken
+                                    | SyntaxKind::CloseParenToken
+                                    | SyntaxKind::OpenBraceToken
+                                    | SyntaxKind::EndOfFileToken
+                            ) {
+                                self.next_token();
+                            }
+                            if self.is_parameter_start() {
+                                continue;
+                            }
+                            break;
+                        }
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = saved_token;
+                    }
                     if self.is_token(SyntaxKind::ColonToken) {
                         self.next_token();
                         if self.can_token_start_type() {

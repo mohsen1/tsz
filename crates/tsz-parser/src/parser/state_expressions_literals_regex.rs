@@ -736,6 +736,7 @@ impl ParserState {
                     *pos += 1;
 
                     if *pos < body_end && body[*pos] == b']' {
+                        *pos += 1;
                         break;
                     }
 

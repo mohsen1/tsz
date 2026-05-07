@@ -868,9 +868,9 @@ interface IDirectivePrePost<TScope> {
     post?: IDirectiveLinkFn<TScope>;
 }
 
-export let blah: IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<number> = (x: string) => {}
+export let blah: ConstructableA | IDirectiveLinkFn<number> | IDirectivePrePost<number> = (x: string) => {}
 
-export let ctor: IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<number> = class {
+export let ctor: ConstructableA | IDirectiveLinkFn<number> | IDirectivePrePost<number> = class {
     someUnaccountedProp: any;
 }
 "#;
