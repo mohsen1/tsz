@@ -1041,3 +1041,77 @@ export { zzz as default };
          default import aliases. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_named_import_typo_prefers_spelling_over_default_hint() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "provider.ts",
+                r#"
+export default function defaultThing() {}
+export const ExistingName = 1;
+                "#,
+            ),
+            (
+                "consumer.ts",
+                r#"import { ExistingNam } from "./provider";"#,
+            ),
+        ],
+        "consumer.ts",
+        CheckerOptions::default(),
+    );
+
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2724).count(),
+        1,
+        "Expected TS2724 when a nearby misspelling exists, even with a default export. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2614).count(),
+        0,
+        "TS2614 should not preempt TS2724 for misspelled named imports with a default export. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2305).count(),
+        0,
+        "TS2305 should not emit when spelling suggestion or default-export hint applies. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_named_re_export_typo_prefers_spelling_over_default_hint() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options_and_import_reporting(
+        &[
+            (
+                "provider.ts",
+                r#"
+export default function defaultThing() {}
+export const ExistingName = 1;
+                "#,
+            ),
+            (
+                "consumer.ts",
+                r#"export { ExistingNam } from "./provider";"#,
+            ),
+        ],
+        "consumer.ts",
+        CheckerOptions::default(),
+        true,
+    );
+
+    assert!(
+        diagnostics.iter().filter(|(code, _)| *code == 2724).count() >= 1,
+        "Expected TS2724 for misspelled re-exported member even when a default export exists. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2614).count(),
+        0,
+        "TS2614 should not preempt TS2724 for misspelled re-exported members with default export. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2305).count(),
+        0,
+        "TS2305 should not emit when spelling suggestion or default-export hint applies. Got: {diagnostics:?}"
+    );
+}

@@ -771,37 +771,12 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
 
-                            // Before emitting TS2614, try a type-level resolution for
-                            // `export =` modules where the member may be a key of a
-                            // mapped type stored as the type of the `export =` target.
                             let found_via_type = exports_table.has("export=")
                                 && self.has_named_export_via_export_equals_type(
                                     &exports_table,
                                     import_name,
                                 );
 
-                            // When esModuleInterop or allowSyntheticDefaultImports is
-                            // enabled and the module uses `export =`, tsc allows named
-                            // imports without emitting TS2614.
-                            let has_export_equals = exports_table.has("export=");
-                            let has_interop = self.ctx.compiler_options.es_module_interop
-                                || self.ctx.compiler_options.allow_synthetic_default_imports;
-                            let suppress_for_interop = has_export_equals && has_interop;
-
-                            if !found_via_type && !suppress_for_interop {
-                                // TS2614: Symbol doesn't exist but a default export does
-                                let message = format_message(
-                                    diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
-                                    &[&quoted_module, import_name],
-                                );
-                                self.error_at_node(
-                                    name_idx,
-                                    &message,
-                                    diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
-                                );
-                            }
-                        } else {
-                            // Check for spelling suggestions (TS2724) before TS2305
                             let export_names: Vec<&str> = exports_table
                                 .iter()
                                 .map(|(name, _)| name.as_str())
@@ -812,7 +787,6 @@ impl<'a> CheckerState<'a> {
                                     &export_names,
                                 )
                             {
-                                // TS2724: did you mean?
                                 let message = format_message(
                                     diagnostic_messages::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
                                     &[&quoted_module, import_name, suggestion],
@@ -823,7 +797,44 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
                                 );
                             } else {
-                                // TS2305: Symbol doesn't exist in the module at all
+                                let has_export_equals = exports_table.has("export=");
+                                let has_interop = self.ctx.compiler_options.es_module_interop
+                                    || self.ctx.compiler_options.allow_synthetic_default_imports;
+                                let suppress_for_interop = has_export_equals && has_interop;
+
+                                if !found_via_type && !suppress_for_interop {
+                                    let message = format_message(
+                                        diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                                        &[&quoted_module, import_name],
+                                    );
+                                    self.error_at_node(
+                                        name_idx,
+                                        &message,
+                                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                                    );
+                                }
+                            }
+                        } else {
+                            let export_names: Vec<&str> = exports_table
+                                .iter()
+                                .map(|(name, _)| name.as_str())
+                                .collect();
+                            if let Some(suggestion) =
+                                tsz_parser::parser::spelling::get_spelling_suggestion(
+                                    import_name,
+                                    &export_names,
+                                )
+                            {
+                                let message = format_message(
+                                    diagnostic_messages::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
+                                    &[&quoted_module, import_name, suggestion],
+                                );
+                                self.error_at_node(
+                                    name_idx,
+                                    &message,
+                                    diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
+                                );
+                            } else {
                                 let message = format_message(
                                     diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
                                     &[&quoted_module, import_name],
