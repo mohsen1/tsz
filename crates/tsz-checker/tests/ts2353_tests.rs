@@ -735,7 +735,7 @@ const value: Cover | Cover[] = { couleur: "non" };
     let diags = get_diagnostics(source);
     let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
     assert!(
-        ts2353.1.contains("'Cover | Cover[]'"),
+        ts2353.1.contains("'Cover[] | Cover'"),
         "Expected TS2353 to keep the full union target, got: {}",
         ts2353.1
     );
