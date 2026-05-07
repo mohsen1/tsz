@@ -75,8 +75,17 @@ impl<'a> Printer<'a> {
             }
             self.write(")]");
         } else {
+            // Suppress namespace/CJS-export qualification only when emitting a
+            // CLASS member name. For object-literal methods, computed property
+            // names are runtime expressions and must still pick up the
+            // `exports.X` rewrite for inline-exported variables. Without this
+            // gate, `export const fieldName = ...; export const o = { [fieldName]() {} }`
+            // emits `[fieldName]` instead of tsc's `[exports.fieldName]`.
+            let in_class_member = self.class_member_emit_depth > 0;
             let prev_ns = self.suppress_ns_qualification;
-            self.suppress_ns_qualification = true;
+            if in_class_member {
+                self.suppress_ns_qualification = true;
+            }
             self.emit(name);
             self.suppress_ns_qualification = prev_ns;
         }

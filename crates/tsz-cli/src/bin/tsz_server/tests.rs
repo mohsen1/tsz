@@ -4355,8 +4355,10 @@ fn test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol() {
         .join("\n"),
     );
 
+    // Symbol metadata (`name`) lives on the `-full` shape, not on plain
+    // `definition` (see #4002). Use `definition-full` to inspect it.
     let req = make_request(
-        "definition",
+        "definition-full",
         serde_json::json!({
             "file": "/foo.ts",
             "line": 3,
@@ -4367,10 +4369,10 @@ fn test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol() {
     assert!(resp.success);
     let defs = resp
         .body
-        .expect("definition should return body")
+        .expect("definition-full should return body")
         .as_array()
         .cloned()
-        .expect("definition response should be an array");
+        .expect("definition-full response should be an array");
     assert!(
         defs.iter()
             .any(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("foo")),
@@ -4392,8 +4394,10 @@ fn test_definition_type_only_quoted_alias_marks_non_declare_target_as_local_non_
         .join("\n"),
     );
 
+    // `isAmbient` / `isLocal` live on the `-full` shape, not on plain
+    // `definition` (see #4002). Use `definition-full` to inspect them.
     let req = make_request(
-        "definition",
+        "definition-full",
         serde_json::json!({
             "file": "/foo.ts",
             "line": 3,
@@ -4404,10 +4408,10 @@ fn test_definition_type_only_quoted_alias_marks_non_declare_target_as_local_non_
     assert!(resp.success);
     let defs = resp
         .body
-        .expect("definition should return body")
+        .expect("definition-full should return body")
         .as_array()
         .cloned()
-        .expect("definition response should be an array");
+        .expect("definition-full response should be an array");
     let foo_def = defs
         .iter()
         .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("foo"))
