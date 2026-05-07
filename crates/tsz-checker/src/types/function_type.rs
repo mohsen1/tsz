@@ -412,6 +412,14 @@ impl<'a> CheckerState<'a> {
         // Extract JSDoc for the function to check for @param/@returns annotations.
         // This suppresses false TS7006/TS7010/TS7011 in JS files with JSDoc type annotations.
         let func_jsdoc = self.get_jsdoc_for_function(idx);
+        if self.is_js_file()
+            && !is_arrow_function
+            && let Some(ref jsdoc) = func_jsdoc
+            && let Some(this_expr) = Self::extract_jsdoc_tag_type_expression(jsdoc, "this")
+            && let Some(resolved_this) = self.resolve_jsdoc_reference(this_expr)
+        {
+            this_type = Some(resolved_this);
+        }
         // TS2730: Arrow functions cannot have a 'this' parameter.
         // In JS files, a @this JSDoc tag on an arrow function is an error because
         // arrow functions capture `this` lexically.
