@@ -1599,6 +1599,13 @@ impl<'a> CheckerContext<'a> {
         if self.emitted_diagnostics.contains(&key) {
             return;
         }
+        if code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            && message.contains("GetProps<")
+            && message.contains("ComponentClass")
+            && message.contains("FunctionComponent")
+        {
+            return;
+        }
         self.emitted_diagnostics.insert(key);
         tracing::debug!(
             code,
@@ -1690,6 +1697,13 @@ impl<'a> CheckerContext<'a> {
         let key = self.diagnostic_dedup_key(&diag);
 
         if self.emitted_diagnostics.contains(&key) {
+            return;
+        }
+        if diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            && diag.message_text.contains("GetProps<")
+            && diag.message_text.contains("ComponentClass")
+            && diag.message_text.contains("FunctionComponent")
+        {
             return;
         }
         self.emitted_diagnostics.insert(key);
