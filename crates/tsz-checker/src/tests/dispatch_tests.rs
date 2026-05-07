@@ -890,6 +890,25 @@ takes({
 }
 
 #[test]
+fn nested_mapped_application_property_preserves_literal_context() {
+    let diags = check_source_diagnostics(
+        r#"
+type Required<T> = { [K in keyof T]-?: T[K] };
+interface Foo<T> {
+    a: Required<T>;
+}
+const aa: Foo<{ a?: 1; x: 1 }> = { a: { a: 1, x: 1 } };
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected nested Required<T> context to preserve literal property types, got: {diags:?}"
+    );
+}
+
+#[test]
 fn iife_contextual_typing_flows_through_request_path() {
     let diags = check_source_diagnostics(
         r#"
