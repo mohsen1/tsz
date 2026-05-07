@@ -2180,13 +2180,37 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             ("reactNamespace", "jsxFactory"),
             ("allowJs", "isolatedDeclarations"),
         ];
+        // Issue #3732: tsc resolves `checkJs: true` (when `allowJs` is not
+        // explicitly disabled) to an implied `allowJs: true` and still
+        // emits TS5053 for the (allowJs, isolatedDeclarations) conflict.
+        // Mirror that implication so the conflict pair fires even when
+        // only `checkJs` is in the config.
+        let allow_js_present = compiler_opts.contains_key("allowJs");
+        let allow_js_implied_by_check_js =
+            !allow_js_present && option_is_truthy(compiler_opts.get("checkJs"));
+        let option_is_set_with_check_js_implication = |opt: &str| -> bool {
+            if option_is_truthy(compiler_opts.get(opt)) {
+                return true;
+            }
+            opt == "allowJs" && allow_js_implied_by_check_js
+        };
         for &(opt_a, opt_b) in conflicting_pairs {
-            if option_is_truthy(compiler_opts.get(opt_a))
-                && option_is_truthy(compiler_opts.get(opt_b))
+            if option_is_set_with_check_js_implication(opt_a)
+                && option_is_set_with_check_js_implication(opt_b)
             {
-                // Emit at opt_a's position
-                let start = find_key_offset_in_source(&stripped, opt_a);
-                let key_len = opt_a.len() as u32 + 2;
+                let resolve = |opt: &'static str| -> &'static str {
+                    if opt == "allowJs" && allow_js_implied_by_check_js {
+                        "checkJs"
+                    } else {
+                        opt
+                    }
+                };
+                let key_a = resolve(opt_a);
+                let key_b = resolve(opt_b);
+                // Emit at the resolved-key position (issue #3732 anchors at
+                // `checkJs` when allowJs is implied).
+                let start = find_key_offset_in_source(&stripped, key_a);
+                let key_len = key_a.len() as u32 + 2;
                 let msg = format_message(
                     diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
                     &[opt_a, opt_b],
@@ -2199,8 +2223,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
                 ));
                 // Emit at opt_b's position (same message, different location)
-                let start_b = find_key_offset_in_source(&stripped, opt_b);
-                let key_len_b = opt_b.len() as u32 + 2;
+                let start_b = find_key_offset_in_source(&stripped, key_b);
+                let key_len_b = key_b.len() as u32 + 2;
                 diagnostics.push(Diagnostic::error(
                     file_path,
                     start_b,
@@ -6644,6 +6668,45 @@ mod tests {
         assert!(
             codes.contains(&5053),
             "Expected TS5053 for allowJs with isolatedDeclarations, got: {codes:?}"
+        );
+    }
+
+    // Issue #3732: when checkJs is true and allowJs is absent, tsc treats
+    // allowJs as implied-true and still emits TS5053 for the
+    // (allowJs, isolatedDeclarations) conflict.
+    #[test]
+    fn test_ts5053_check_js_implies_allow_js_with_isolated_declarations() {
+        let source = r#"{"compilerOptions":{"checkJs":true,"isolatedDeclarations":true,"declaration":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5053),
+            "Expected TS5053 when checkJs implies allowJs alongside isolatedDeclarations, got: {codes:?}"
+        );
+        // The conflict message should still reference allowJs (the option
+        // tsc reports as conflicting), even though the diagnostic anchors
+        // at checkJs.
+        let ts5053: Vec<_> = parsed
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == 5053)
+            .collect();
+        assert!(
+            ts5053.iter().any(|d| d.message_text.contains("'allowJs'")),
+            "Expected TS5053 message to reference allowJs, got: {ts5053:?}"
+        );
+    }
+
+    // Sanity: explicit `allowJs: false` must not implicitly enable allowJs
+    // through checkJs, so TS5053 must NOT fire.
+    #[test]
+    fn test_ts5053_check_js_with_explicit_allow_js_false_does_not_fire() {
+        let source = r#"{"compilerOptions":{"checkJs":true,"allowJs":false,"isolatedDeclarations":true,"declaration":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5053),
+            "Should not emit TS5053 when allowJs is explicitly false, got: {codes:?}"
         );
     }
 
