@@ -565,3 +565,31 @@ fn test_byte_offset_to_utf16_conversion() {
     assert_eq!(TsProgram::byte_length_to_utf16(s, 2, 3), 1); // em dash span (3 bytes = 1 char)
     assert_eq!(TsProgram::byte_length_to_utf16(s, 5, 2), 2); // "cd"
 }
+
+#[test]
+fn test_ts_program_target_drives_semantic_diagnostics() {
+    // Issue #3489: `target` from setCompilerOptions must reach the checker
+    // so target-aware semantic diagnostics like TS2737 (BigInt literals
+    // require ES2020+) actually fire. Previously the checker target was
+    // hardcoded to the default and the option was silently dropped.
+
+    // target=1 → ES5: BigInt literal not allowed → TS2737 expected.
+    let mut es5 = TsProgram::new();
+    es5.set_compiler_options(r#"{"target":1}"#).unwrap();
+    es5.add_source_file("a.ts".to_string(), "const x = 1n;".to_string());
+    let codes_es5 = es5.get_all_diagnostic_codes();
+    assert!(
+        codes_es5.contains(&2737),
+        "ES5 target must surface TS2737 for BigInt literal, got {codes_es5:?}"
+    );
+
+    // target=7 → ES2020: BigInt literal allowed → no TS2737.
+    let mut es2020 = TsProgram::new();
+    es2020.set_compiler_options(r#"{"target":7}"#).unwrap();
+    es2020.add_source_file("a.ts".to_string(), "const x = 1n;".to_string());
+    let codes_es2020 = es2020.get_all_diagnostic_codes();
+    assert!(
+        !codes_es2020.contains(&2737),
+        "ES2020 target must not surface TS2737 for BigInt literal, got {codes_es2020:?}"
+    );
+}

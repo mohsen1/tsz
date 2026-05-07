@@ -647,6 +647,12 @@ pub(crate) struct Server {
     /// native TypeScript don't pay the spawn cost.
     pub(crate) native_ts_worker:
         Option<std::sync::Mutex<self::handlers_info_alias::NativeTsWorker>>,
+    /// Async tsserver events queued by handlers. Drained by the protocol
+    /// runner after the response for the originating request is written.
+    /// Used by `geterr` / `geterrForProject` to fire `syntaxDiag`,
+    /// `semanticDiag`, `suggestionDiag`, and `requestCompleted` events.
+    /// See #3544.
+    pub(crate) pending_events: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -719,7 +725,26 @@ impl Server {
             plugin_configs: FxHashMap::default(),
             native_ts_worker: self::handlers_info_alias::NativeTsWorker::spawn()
                 .map(std::sync::Mutex::new),
+            pending_events: Vec::new(),
         })
+    }
+
+    /// Queue a tsserver async event for the protocol runner to write after
+    /// the originating request's response. Body is the `body` payload of
+    /// the event message. See #3544.
+    pub(crate) fn emit_event(&mut self, event_name: &str, body: serde_json::Value) {
+        let seq = self.next_seq();
+        self.pending_events.push(serde_json::json!({
+            "seq": seq,
+            "type": "event",
+            "event": event_name,
+            "body": body,
+        }));
+    }
+
+    /// Drain the queued async events. Called by the protocol runner.
+    pub(crate) fn drain_pending_events(&mut self) -> Vec<serde_json::Value> {
+        std::mem::take(&mut self.pending_events)
     }
 
     const fn next_seq(&mut self) -> u64 {
@@ -1759,6 +1784,14 @@ fn run_tsserver_protocol_with_io<R: BufRead, W: Write>(
         let response = server.handle_tsserver_request(request);
         let json = serde_json::to_string(&response)?;
         write_content_length_message(stdout, &json)?;
+
+        // Async events queued by the handler (e.g. `geterr` → `syntaxDiag`
+        // / `semanticDiag` / `suggestionDiag` / `requestCompleted`) write
+        // after the originating response. See #3544.
+        for event in server.drain_pending_events() {
+            let json = serde_json::to_string(&event)?;
+            write_content_length_message(stdout, &json)?;
+        }
     }
 
     Ok(())

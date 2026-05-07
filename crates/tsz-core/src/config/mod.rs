@@ -3216,6 +3216,7 @@ const KNOWN_COMPILER_OPTION_CANONICAL_NAMES: &[&str] = &[
     "esModuleInterop",
     "exactOptionalPropertyTypes",
     "experimentalDecorators",
+    "explainFiles",
     "extendedDiagnostics",
     "forceConsistentCasingInFileNames",
     "generateCpuProfile",
@@ -3346,6 +3347,7 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "esmoduleinterop" => Some("esModuleInterop"),
         "exactoptionalpropertytypes" => Some("exactOptionalPropertyTypes"),
         "experimentaldecorators" => Some("experimentalDecorators"),
+        "explainfiles" => Some("explainFiles"),
         "extendeddiagnostics" => Some("extendedDiagnostics"),
         "forceconsecinferfaces" | "forceconsistentcasinginfilenames" => {
             Some("forceConsistentCasingInFileNames")
@@ -5823,6 +5825,33 @@ mod tests {
         assert!(
             !codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN),
             "Unrelated option should not emit a Did-you-mean suggestion, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn explain_files_compiler_option_is_recognized() {
+        // Issue #3860: `explainFiles` was missing from the known-options
+        // list, causing tsconfig-side `explainFiles: true` to surface a
+        // false TS5023 even though tsc accepts it from config.
+        let source = r#"{"compilerOptions":{"explainFiles":true,"noEmit":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION),
+            "explainFiles must not emit TS5023, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn explain_files_lowercase_alias_is_recognized() {
+        // Miscased `explainfiles` should map to `explainFiles` and emit
+        // TS5025 (Did you mean), not the bare TS5023.
+        let source = r#"{"compilerOptions":{"explainfiles":true,"noEmit":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN),
+            "miscased explainfiles must emit TS5025 Did you mean, got {codes:?}"
         );
     }
 

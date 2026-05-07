@@ -2122,6 +2122,37 @@ fn test_ts2322_generic_indexed_write_preserves_type_parameter_display() {
 }
 
 #[test]
+fn test_ts2322_generic_indexed_write_rejects_concrete_constraint_values() {
+    let source = r#"
+        function setAny<T extends Record<string, any>, K extends keyof T>(obj: T, key: K) {
+            obj[key] = 123;
+        }
+
+        function setNumber<T extends Record<string, number>, K extends keyof T>(obj: T, key: K) {
+            obj[key] = 123;
+        }
+    "#;
+
+    let ts2322_messages: Vec<_> = get_all_diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message)
+        .collect();
+
+    assert_eq!(
+        ts2322_messages.len(),
+        2,
+        "Expected one TS2322 for each concrete generic indexed write, got: {ts2322_messages:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type 'number' is not assignable to type 'T[K]'")),
+        "Expected numeric generic indexed-write TS2322, got: {ts2322_messages:#?}"
+    );
+}
+
+#[test]
 fn test_ts2322_accessor_incompatible_getter_setter() {
     // TS 5.1+: when BOTH getter and setter have explicit type annotations,
     // unrelated types are allowed (no error).

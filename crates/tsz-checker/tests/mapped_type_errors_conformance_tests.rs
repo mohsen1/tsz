@@ -83,6 +83,33 @@ let f: Foo2<O, "x"> = {
 }
 
 #[test]
+fn record_key_constraint_displays_primitive_key_union() {
+    let source = r#"
+type AudioData = string | number | symbol;
+type Record<K extends keyof any, T> = { [P in K]: T };
+type T = Record<object, number>;
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2344: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2344)
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+
+    assert!(
+        ts2344
+            .iter()
+            .any(|message| message.contains("constraint 'string | number | symbol'")),
+        "Record's key constraint should display the primitive key union, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2344.iter().all(|message| !message.contains("AudioData")),
+        "Record's key constraint must not be repainted by unrelated lib names: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn pick_rejects_broad_key_type_parameter_by_itself() {
     let source = r#"
 interface Shape {

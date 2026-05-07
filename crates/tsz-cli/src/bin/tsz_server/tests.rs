@@ -39,6 +39,7 @@ fn make_server() -> Server {
         new_line_character: None,
         plugin_configs: FxHashMap::default(),
         native_ts_worker: None,
+        pending_events: Vec::new(),
     }
 }
 
@@ -2978,6 +2979,68 @@ fn test_encoded_syntactic_classifications_full_returns_token_triples() {
 }
 
 #[test]
+fn test_geterr_emits_diagnostic_events_then_request_completed() {
+    // Issue #3544: `geterr` returned success but never emitted any of the
+    // async diagnostic events tsserver clients expect. After the fix, the
+    // response acknowledges and the queued events follow:
+    //   syntaxDiag -> semanticDiag -> suggestionDiag (per file)
+    //   requestCompleted (after all files)
+    let mut server = make_server();
+    let file = "/a.ts";
+    server
+        .open_files
+        .insert(file.to_string(), "const x: string = 1;\n".to_string());
+
+    let response = server.handle_tsserver_request(make_request(
+        "geterr",
+        serde_json::json!({"delay": 0, "files": [file]}),
+    ));
+    assert!(response.success);
+
+    let events = server.drain_pending_events();
+    let event_names: Vec<&str> = events
+        .iter()
+        .filter_map(|e| e.get("event").and_then(|v| v.as_str()))
+        .collect();
+    assert_eq!(
+        event_names,
+        vec![
+            "syntaxDiag",
+            "semanticDiag",
+            "suggestionDiag",
+            "requestCompleted"
+        ],
+        "expected ordered diagnostic events + requestCompleted, got {event_names:?}"
+    );
+
+    // Each diag event must carry the file and a diagnostics array.
+    for (idx, name) in ["syntaxDiag", "semanticDiag", "suggestionDiag"]
+        .iter()
+        .enumerate()
+    {
+        let body = events[idx].get("body").expect("event body");
+        assert_eq!(
+            body.get("file").and_then(|v| v.as_str()),
+            Some(file),
+            "{name} body must name the file"
+        );
+        assert!(
+            body.get("diagnostics").is_some_and(|d| d.is_array()),
+            "{name} body must carry a diagnostics array, got {body:?}"
+        );
+    }
+
+    // requestCompleted carries the originating request_seq.
+    let last = events.last().expect("requestCompleted event");
+    assert!(
+        last.get("body")
+            .and_then(|b| b.get("request_seq"))
+            .is_some(),
+        "requestCompleted must carry request_seq, got {last:?}"
+    );
+}
+
+#[test]
 fn test_encoded_syntactic_classifications_command_is_routed() {
     // Locks the routing: command must not surface as "Unrecognized" any
     // more (issue #3717's primary symptom).
@@ -2996,6 +3059,40 @@ fn test_encoded_syntactic_classifications_command_is_routed() {
             .as_deref()
             .unwrap_or("")
             .contains("Unrecognized")
+    );
+}
+
+#[test]
+fn test_geterr_for_project_emits_events_for_open_files() {
+    // `geterrForProject` mirrors `geterr` but covers all open files when
+    // no project graph is available.
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "const x = 1;\n".to_string());
+    server
+        .open_files
+        .insert("/b.ts".to_string(), "const y = 2;\n".to_string());
+
+    let response = server.handle_tsserver_request(make_request(
+        "geterrForProject",
+        serde_json::json!({"delay": 0, "file": "/a.ts"}),
+    ));
+    assert!(response.success);
+
+    let events = server.drain_pending_events();
+    let last = events.last().expect("requestCompleted event");
+    assert_eq!(
+        last.get("event").and_then(|v| v.as_str()),
+        Some("requestCompleted"),
+        "requestCompleted must be the final event"
+    );
+    // Three events per file (syntax/semantic/suggestion) + 1 completion.
+    assert_eq!(
+        events.len(),
+        server.open_files.len() * 3 + 1,
+        "expected 3 events per open file + 1 completion, got {} events",
+        events.len()
     );
 }
 

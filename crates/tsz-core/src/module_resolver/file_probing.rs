@@ -312,7 +312,7 @@ impl ModuleResolver {
                     }
                 }
                 // Fall back to the original file if no declaration substitute exists
-                if path.is_file() {
+                if cached_is_file(path) {
                     return Some(path.to_path_buf());
                 }
                 return None;

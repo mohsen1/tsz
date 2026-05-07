@@ -18,10 +18,10 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    get_diagnostics_with_options(source, CheckerOptions::default())
+    get_diagnostics_with_options(source, &CheckerOptions::default())
 }
 
-fn get_diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
+fn get_diagnostics_with_options(source: &str, options: &CheckerOptions) -> Vec<(u32, String)> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -34,7 +34,7 @@ fn get_diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<(u
         &binder,
         &types,
         "test.ts".to_string(),
-        options,
+        options.clone(),
     );
 
     checker.check_source_file(root);
@@ -58,11 +58,17 @@ fn has_error(source: &str, code: u32) -> bool {
     get_codes(source).contains(&code)
 }
 
+fn has_error_with_options(source: &str, options: &CheckerOptions, code: u32) -> bool {
+    get_diagnostics_with_options(source, options)
+        .into_iter()
+        .any(|(diag_code, _)| diag_code == code)
+}
+
 fn no_errors(source: &str) -> bool {
     get_codes(source).is_empty()
 }
 
-fn no_errors_with_options(source: &str, options: CheckerOptions) -> bool {
+fn no_errors_with_options(source: &str, options: &CheckerOptions) -> bool {
     get_diagnostics_with_options(source, options).is_empty()
 }
 
@@ -101,6 +107,85 @@ x();
     assert!(
         has_error(source, 18046),
         "Calling unknown should emit TS18046"
+    );
+}
+
+#[test]
+fn call_unknown_emits_ts2349_without_strict() {
+    let source = r#"
+declare let x: unknown;
+x();
+"#;
+    let options = CheckerOptions {
+        strict: false,
+        strict_null_checks: false,
+        ..CheckerOptions::default()
+    };
+    assert!(
+        has_error_with_options(source, &options, 2349),
+        "Calling unknown should emit TS2349 without strictNullChecks"
+    );
+    assert!(
+        !has_error_with_options(
+            source,
+            &CheckerOptions {
+                strict: false,
+                strict_null_checks: false,
+                ..CheckerOptions::default()
+            },
+            18046
+        ),
+        "Calling unknown should not emit TS18046 without strictNullChecks"
+    );
+}
+
+#[test]
+fn construct_unknown_emits_ts2351_without_strict() {
+    let source = r#"
+declare let x: unknown;
+new x();
+"#;
+    let options = CheckerOptions {
+        strict: false,
+        strict_null_checks: false,
+        ..CheckerOptions::default()
+    };
+    assert!(
+        has_error_with_options(source, &options, 2351),
+        "Constructing unknown should emit TS2351 without strictNullChecks"
+    );
+    assert!(
+        !has_error_with_options(
+            source,
+            &CheckerOptions {
+                strict: false,
+                strict_null_checks: false,
+                ..CheckerOptions::default()
+            },
+            18046
+        ),
+        "Constructing unknown should not emit TS18046 without strictNullChecks"
+    );
+}
+
+#[test]
+fn construct_unknown_emits_ts18046_with_strict() {
+    let source = r#"
+declare let x: unknown;
+new x();
+"#;
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    assert!(
+        has_error_with_options(source, &options, 18046),
+        "Constructing unknown should emit TS18046 with strictNullChecks"
+    );
+    assert!(
+        !has_error_with_options(source, &options, 2351),
+        "Constructing unknown should not emit TS2351 when TS18046 is expected"
     );
 }
 
@@ -2397,7 +2482,7 @@ a.doThing().then((result: Bar | Baz) => {});
     assert!(
         no_errors_with_options(
             source,
-            CheckerOptions {
+            &CheckerOptions {
                 strict: true,
                 ..CheckerOptions::default()
             },

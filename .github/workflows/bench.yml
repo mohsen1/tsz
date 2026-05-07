@@ -247,9 +247,15 @@ jobs:
           - label: solver-stress
             timeout: 120
             filter: 'Recursive generic depth|Conditional dist N|Mapped type keys|Template literal N|Deep subtype depth|Intersection N|Infer stress N|CFA branches'
-          - label: algorithmic
+          - label: algorithmic-bct
             timeout: 120
-            filter: 'BCT candidates|Constraint conflicts N|Mapped complex template keys'
+            filter: 'BCT candidates'
+          - label: algorithmic-constraint
+            timeout: 120
+            filter: 'Constraint conflicts N'
+          - label: algorithmic-mapped
+            timeout: 120
+            filter: 'Mapped complex template keys'
           - label: projects
             timeout: 120
             filter: 'utility-types|ts-toolbelt|ts-essentials|utility-types-project|ts-toolbelt-project|ts-essentials-project|rxjs-project|type-fest-project|zod-project|kysely-project|vite-vanilla-ts-app|nextjs-fresh-app|nextjs'
@@ -365,8 +371,8 @@ jobs:
             find bench-artifacts -maxdepth 2 -type f -print || true
             exit 1
           fi
-          if [[ "${#json_files[@]}" -ne 6 ]]; then
-            echo "Expected 6 benchmark shard JSON files, found ${#json_files[@]}."
+          if [[ "${#json_files[@]}" -ne 8 ]]; then
+            echo "Expected 8 benchmark shard JSON files, found ${#json_files[@]}."
             printf 'Found JSON files:\n'
             printf '  %s\n' "${json_files[@]}"
             find bench-artifacts -maxdepth 2 -type f -print || true

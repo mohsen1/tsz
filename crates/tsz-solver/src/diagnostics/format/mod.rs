@@ -157,6 +157,17 @@ pub struct TypeFormatter<'a> {
 }
 
 impl<'a> TypeFormatter<'a> {
+    fn is_primitive_key_union_data(&self, key: &TypeData) -> bool {
+        let TypeData::Union(list_id) = key else {
+            return false;
+        };
+        let members = self.interner.type_list(*list_id);
+        members.len() == 3
+            && members.contains(&TypeId::STRING)
+            && members.contains(&TypeId::NUMBER)
+            && members.contains(&TypeId::SYMBOL)
+    }
+
     fn scalar_mapped_alias_application_display(
         &self,
         type_id: TypeId,
@@ -999,7 +1010,31 @@ impl<'a> TypeFormatter<'a> {
                         .static_shape
                         .as_ref()
                         .is_some_and(|s| shape_is_non_empty(s.as_ref()));
-                let skip_alias = if def.kind == DefKind::TypeAlias {
+                let def_kind_matches_type_shape = def.kind == DefKind::TypeAlias
+                    || matches!(
+                        (&key, def.kind),
+                        (
+                            TypeData::Object(_) | TypeData::ObjectWithIndex(_),
+                            DefKind::Interface
+                                | DefKind::Class
+                                | DefKind::Namespace
+                                | DefKind::Enum
+                                | DefKind::ClassConstructor
+                                | DefKind::Function
+                                | DefKind::Variable
+                        ) | (
+                            TypeData::Callable(_) | TypeData::Function(_),
+                            DefKind::Interface
+                                | DefKind::ClassConstructor
+                                | DefKind::Function
+                                | DefKind::Variable
+                        ) | (TypeData::Enum(_, _), DefKind::Enum)
+                    );
+                let unproven_primitive_key_union_alias =
+                    def.kind == DefKind::TypeAlias && self.is_primitive_key_union_data(&key);
+                let skip_alias = if !def_kind_matches_type_shape {
+                    true
+                } else if def.kind == DefKind::TypeAlias {
                     self.skip_type_alias_def_ids.contains(&def_id)
                         || def.body.is_some_and(|b| def_store.is_computed_body(b))
                         || (!def.type_params.is_empty()
@@ -1019,6 +1054,10 @@ impl<'a> TypeFormatter<'a> {
                         // repaint user-written `{}` annotations; tsc shows `{}`
                         // structurally in that case, so we do too.
                         || is_empty_object
+                        // The canonical property-key union (`keyof any`) is a shared
+                        // structural TypeId. Ambient or local aliases with the same
+                        // body must not repaint constraint diagnostics.
+                        || unproven_primitive_key_union_alias
                 } else {
                     // Interfaces and classes are also subject to the universal
                     // empty-shape interning: a non-empty interface/class def
@@ -1266,9 +1305,19 @@ impl<'a> TypeFormatter<'a> {
             // application display (e.g. `AsyncGenerator<number, void, unknown>`).
             let skip_object_alias = self.skip_object_display_alias
                 && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
+            let skip_primitive_key_union_type_alias = self.is_primitive_key_union_data(&key)
+                && matches!(
+                    self.interner.lookup(alias_origin),
+                    Some(TypeData::Lazy(def_id))
+                        if self
+                            .def_store
+                            .and_then(|ds| ds.get(def_id))
+                            .is_some_and(|def| def.kind == crate::def::DefKind::TypeAlias)
+                );
             let skip_alias_chase = skip_intersection_alias
                 || skip_distributive_alias
                 || skip_object_alias
+                || skip_primitive_key_union_type_alias
                 || (is_empty_object
                     && self.display_alias_application_base_is_type_alias(alias_origin));
             if (!is_simple_type || use_keyof_alias || use_application_alias || use_lazy_type_alias)

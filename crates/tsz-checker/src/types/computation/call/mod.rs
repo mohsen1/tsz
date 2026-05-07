@@ -1373,6 +1373,21 @@ impl<'a> CheckerState<'a> {
         // tsc emits TS18046 instead of TS2349 when the callee is `unknown`.
         // Without strictNullChecks, unknown is treated like any (callable, returns any).
         if callee_type == TypeId::UNKNOWN {
+            if !self.ctx.compiler_options.strict_null_checks {
+                // Without strictNullChecks, unknown is treated as callable for
+                // argument typing, but the checker still reports TS2349.
+                self.error_not_callable_at(callee_type, callee_expr);
+                // Still need to check arguments for definite assignment (TS2454)
+                let check_excess_properties = false;
+                self.collect_call_argument_types_with_context(
+                    args,
+                    |_i, _arg_count| None,
+                    check_excess_properties,
+                    None,
+                    CallableContext::none(),
+                );
+                return Some(TypeId::ANY);
+            }
             if self.error_is_of_type_unknown(callee_expr) {
                 // Still need to check arguments for definite assignment (TS2454)
                 let check_excess_properties = false;

@@ -1,6 +1,6 @@
 # 100% Conformance Strategy
 
-Last updated: 2026-05-07 on `origin/main` at `c5a480fc2f`.
+Last updated: 2026-05-07 on `origin/main` at `adce419f88`.
 
 ## Target
 
@@ -36,9 +36,11 @@ Dashboard from `python3 scripts/conformance/query-conformance.py --dashboard`:
 
 The behavior queue improved materially during 2026-05-07. The checked-in snapshot
 has not yet been refreshed for `#4479`, `#4480`, `#4494`, `#4496`, `#4497`,
-`#4498`, `#4499`, or `#4500`, so use focused conformance runs for current-main
-candidate selection until the next snapshot/README refresh PR lands. Older notes
-that cite `12451/12582`, `12470/12582`, `12488/12581`, or 99.0-99.3% are stale.
+`#4498`, `#4499`, `#4500`, `#4488`, `#4502`, `#4503`, `#4505`, `#4507`,
+`#4508`, `#4509`, `#4511`, `#4513`, `#4514`, `#4515`, or `#4516`, so use
+focused conformance runs for current-main candidate selection until the next
+snapshot/README refresh PR lands. Older notes that cite `12451/12582`,
+`12470/12582`, `12488/12581`, or 99.0-99.3% are stale.
 
 ## Active PR Queue
 
@@ -46,13 +48,16 @@ Monitor these PRs without sitting idle for CI:
 
 | PR | Purpose | Action |
 | --- | --- | --- |
-| #4488 | `fix(checker): preserve non-strict unknown operation errors` | Auto-merge enabled. Branch was cleaned and rebased to `c528cfc112` after a contaminated force-push; CI is running. |
+| #4510 | `fix(checker): preserve temporal TS2552 lib baseline` | Auto-merge enabled. CI aggregate rerun is in progress after a missing conformance shard artifact. |
+| #4512 | `fix(scanner): treat U+2028/U+2029 as line terminators in // comments and line maps` | Auto-merge enabled. Branch was updated after #4505; CI is running. |
 | #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Draft and not auto-merge enabled because the last version had broad unit/conformance regressions. |
 
 Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434`,
 `#4438`, `#4439`, `#4443`, `#4444`, `#4447`, `#4448`, `#4449`, `#4450`,
 `#4451`, `#4475`, `#4479`, `#4480`, `#4490`, `#4491`, `#4492`, `#4494`,
-`#4495`, `#4496`, `#4497`, `#4498`, `#4499`, and `#4500`.
+`#4495`, `#4496`, `#4497`, `#4498`, `#4499`, `#4500`, `#4501`, `#4488`,
+`#4504`, `#4502`, `#4503`, `#4505`, `#4507`, `#4508`, `#4509`, `#4511`,
+`#4513`, `#4514`, `#4515`, `#4516`, `#4518`, and `#4519`.
 
 ## Work Selection
 
@@ -87,12 +92,13 @@ Best remaining targets on current `main`, excluding work already covered by open
 
 Active local worker assignments from this tranche:
 
-- `codex/conformance-type-display-*` for type display parity.
+- `codex/conformance-type-display-*` for type display parity; first slice merged as `#4515`.
 - `codex/conformance-diagnostic-count-*` for diagnostic count accuracy.
 - `codex/conformance-parser-recovery-*` for parser recovery.
 - `codex/big3-relation-*` for a focused Big 3 wrong-code semantic fix.
-- `codex/one-extra-diagnostic-*` for a focused one-extra or false-positive diagnostic fix.
-- `codex/issue-3985-unknown-nonstrict-ops` for #4488, now clean at `c528cfc112`.
+- `codex/one-extra-diagnostic-*` for a focused one-extra or false-positive diagnostic fix; bundled-lib filtering merged as `#4507`.
+- `codex/indexed-write-followup-*` for remaining `keyofAndIndexedAccessErrors` indexed-write mismatches after #4503 landed; first follow-up merged as `#4511`.
+- `codex/ts2552-temporal-*` for the one-missing TS2552 lane in `temporal.ts`; published as `#4510`.
 
 Already published or merged from earlier tranches:
 
@@ -101,6 +107,17 @@ Already published or merged from earlier tranches:
 - `fix/type-param-tag-ts2339` as `#4450`
 - `codex/fix-3985-unknown-non-strict-errors` as `#4475`
 - `codex/delete-operator-ts1102` as `#4500`
+- `codex/issue-3985-unknown-nonstrict-ops` as `#4488`
+- `grind-iter-20260507-220516` as `#4502`
+- `codex/conformance-diagnostic-count-*` as `#4503`
+- `fix/scanner-u2028-line-terminators-*` as `#4505`
+- `codex/one-extra-diagnostic-*` as `#4507`
+- `fix/wasm-program-target-checker-*` as `#4508`
+- `fix/wasm-lsp-server-js-shape-*` as `#4509`
+- `codex/indexed-write-followup-*` as `#4511`
+- `fix/server-geterr-emits-events-*` as `#4514`
+- `codex/conformance-type-display-*` as `#4515`
+- `fix/cli-output-only-tsconfig-*` as `#4516`
 
 ## Campaigns
 

@@ -23,15 +23,12 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         use crate::query_boundaries::common::PropertyAccessResult;
         let skip_flow_narrowing = request.flow.skip_flow_narrowing();
-
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
-
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return TypeId::ERROR; // Missing access expression data - propagate error
         };
-
         // Handle import.meta: emit TS1470 in files that compile to CommonJS output
         if let Some(result) =
             self.try_resolve_import_meta_access(idx, access.expression, access.name_or_argument)
@@ -40,7 +37,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let factory = self.ctx.types.factory();
-
         // Get the property name first (needed for abstract property check regardless of object type)
         let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
             // Preserve diagnostics on the base expression (e.g. TS2304 for `missing.`)
@@ -2605,13 +2601,19 @@ impl<'a> CheckerState<'a> {
                 ),
 
                 PropertyAccessResult::IsUnknown => {
-                    // TS18046: 'x' is of type 'unknown'.
-                    // Without strictNullChecks, unknown is treated like any (no error).
-                    if self.error_is_of_type_unknown(access.expression) {
-                        TypeId::ERROR
-                    } else {
-                        TypeId::ANY
+                    if self.ctx.compiler_options.strict_null_checks {
+                        return if self.error_is_of_type_unknown(access.expression) {
+                            TypeId::ERROR
+                        } else {
+                            TypeId::ANY
+                        };
                     }
+                    self.error_property_not_exist_at(
+                        property_name,
+                        object_type_for_access,
+                        access.name_or_argument,
+                    );
+                    TypeId::ERROR
                 }
             }
         } else {
