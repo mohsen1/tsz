@@ -112,15 +112,12 @@ impl Server {
             Err(_) => return Vec::new(),
         };
 
+        // Client-supplied `open_files` content is never normalized — preserves
+        // tsc-equivalent behavior for paths like `/fourslash.ts`. See #3799.
         let mut files: Vec<(String, String)> = self
             .open_files
             .iter()
-            .map(|(path, raw)| {
-                (
-                    path.clone(),
-                    Self::normalize_fourslash_virtual_content(path, raw),
-                )
-            })
+            .map(|(path, raw)| (path.clone(), raw.clone()))
             .collect();
         if let Some((_, existing)) = files.iter_mut().find(|(path, _)| path == file_path) {
             *existing = content.to_string();

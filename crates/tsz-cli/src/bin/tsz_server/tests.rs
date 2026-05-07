@@ -1311,6 +1311,33 @@ fn test_normalize_fourslash_virtual_content_keeps_plain_harness_content_unchange
 }
 
 #[test]
+fn test_protocol_open_at_fourslash_path_does_not_strip_quad_slash_comments() {
+    // Real client opens `/fourslash.ts` with `//// const x: string = 1;\n`.
+    // tsc treats `////` as a normal comment and returns no diagnostics; tsz
+    // used to apply the fourslash harness's `////`-line extraction here and
+    // emit TS2322. Regression for https://github.com/mohsen1/tsz/issues/3799.
+    let mut server = make_server();
+    let file = "/fourslash.ts";
+    server
+        .open_files
+        .insert(file.to_string(), "//// const x: string = 1;\n".to_string());
+
+    let response = server.handle_tsserver_request(make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({"file": file}),
+    ));
+    assert!(response.success);
+    let diagnostics = response
+        .body
+        .and_then(|b| b.as_array().cloned())
+        .unwrap_or_default();
+    assert!(
+        diagnostics.is_empty(),
+        "client-supplied `////` comments must not be extracted; expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_line_offset_to_byte_mid_line() {
     // Offset 3 (1-based) on line 1 means col 2 (0-based) -> byte 2
     assert_eq!(Server::line_offset_to_byte("hello\nworld\n", 1, 3), 2);
