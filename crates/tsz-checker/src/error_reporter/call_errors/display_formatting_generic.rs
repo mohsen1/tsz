@@ -36,23 +36,68 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             raw_callee_type,
             args.nodes.len(),
-        );
+        )
+        .or_else(|| {
+            // `get_call_signature` only inspects `TypeData::Callable` shapes;
+            // free function declarations produce `TypeData::Function` and are
+            // handled here via the dedicated `function_shape_for_type` query.
+            let shape = query_common::function_shape_for_type(self.ctx.types, raw_callee_type)?;
+            Some((*shape).clone())
+        });
 
         let raw_param = raw_sig
             .as_ref()
             .and_then(|sig| Self::raw_param_for_call_arg(&sig.params, arg_index));
-        if raw_param.is_some_and(|param| !param.rest) {
-            return None;
-        }
 
-        let type_param_name = raw_param
-            .and_then(|param| self.rest_generic_param_name_for_call_arg(param))
-            .or_else(|| {
-                self.ast_rest_generic_param_name_for_call_arg(call.expression, arg_index)
-            })?;
+        // Resolve the underlying type parameter that this argument is being
+        // checked against. Two cases produce a primitive-base widened display:
+        //
+        // 1. Rest parameter whose element is a generic — the legacy
+        //    `f<T>(...args: T[])` path. Gated on a sibling argument having
+        //    already established the parameter base (otherwise the first
+        //    mismatching argument has no comparison anchor).
+        // 2. Non-rest parameter whose declared type is itself a bare type
+        //    parameter AND whose constraint chain bottoms out in a primitive
+        //    type matching `param_base`. This mirrors tsc's behaviour: when
+        //    the type parameter's effective constraint is a primitive
+        //    (e.g. `<U extends number>` or `<U extends T>` with `T` already
+        //    fixed to `number`), the argument-not-assignable diagnostic
+        //    renders both source and target as primitives ('string' /
+        //    'number') instead of preserving the inference candidate's
+        //    literal display. Type parameters with no primitive constraint
+        //    (e.g. `<T>(a: T, b: T)`) keep their literal candidate display
+        //    — tsc preserves `'3' / '""'` in those cases.
+        let (type_param_name, requires_prev_arg_match) = if raw_param
+            .is_some_and(|param| param.rest)
+        {
+            let name = raw_param
+                .and_then(|param| self.rest_generic_param_name_for_call_arg(param))
+                .or_else(|| {
+                    self.ast_rest_generic_param_name_for_call_arg(call.expression, arg_index)
+                })?;
+            (name, true)
+        } else if let Some(param) = raw_param {
+            let info =
+                query_common::type_param_info(self.ctx.types.as_type_database(), param.type_id)?;
+            // Only widen when the type parameter's effective constraint is a
+            // primitive whose base matches `param_base`. Otherwise preserve
+            // the inference candidate's literal display (matching tsc's
+            // `typeInferenceConflictingCandidates.ts` behaviour).
+            let constraint_matches_param_base = self
+                .resolve_type_parameter_primitive_constraint_base(info)
+                .is_some_and(|base| base == param_base);
+            if !constraint_matches_param_base {
+                return None;
+            }
+            (info.name, false)
+        } else {
+            let name = self.ast_rest_generic_param_name_for_call_arg(call.expression, arg_index)?;
+            (name, true)
+        };
 
-        let previous_arg_with_same_param_base =
-            args.nodes
+        if requires_prev_arg_match {
+            let previous_arg_with_same_param_base = args
+                .nodes
                 .iter()
                 .take(arg_index)
                 .enumerate()
@@ -77,8 +122,9 @@ impl<'a> CheckerState<'a> {
                     self.primitive_display_base(prev_type) == Some(param_base)
                 });
 
-        if !previous_arg_with_same_param_base {
-            return None;
+            if !previous_arg_with_same_param_base {
+                return None;
+            }
         }
 
         Some((
@@ -95,6 +141,29 @@ impl<'a> CheckerState<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Follow a type parameter's constraint chain looking for a primitive
+    /// terminator. Returns the primitive `TypeId` (`STRING` / `NUMBER` / ...)
+    /// when the constraint resolves to one within a small budget, or `None`
+    /// when there is no constraint, the chain is non-primitive, or recursion
+    /// guard trips. The bounded depth keeps cyclic / self-referential
+    /// constraints (`T extends T`) from looping.
+    fn resolve_type_parameter_primitive_constraint_base(
+        &self,
+        info: tsz_solver::TypeParamInfo,
+    ) -> Option<TypeId> {
+        const MAX_DEPTH: usize = 8;
+        let db = self.ctx.types.as_type_database();
+        let mut current = info.constraint?;
+        for _ in 0..MAX_DEPTH {
+            if let Some(base) = self.primitive_display_base(current) {
+                return Some(base);
+            }
+            let inner = query_common::type_param_info(db, current)?;
+            current = inner.constraint?;
+        }
+        None
     }
 
     fn raw_param_for_call_arg(

@@ -869,5 +869,9 @@ path = "tests/local_undefined_globalthis_shadow_tests.rs"
 name = "window_indexed_access_callback_contextual_typing_tests"
 path = "tests/window_indexed_access_callback_contextual_typing_tests.rs"
 
+[[test]]
+name = "generic_call_primitive_widening_display_tests"
+path = "tests/generic_call_primitive_widening_display_tests.rs"
+
 [lints]
 workspace = true
