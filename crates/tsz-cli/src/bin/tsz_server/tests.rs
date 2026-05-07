@@ -4926,6 +4926,52 @@ fn test_project_info_lib_files_use_fourslash_virtual_folder() {
 }
 
 #[test]
+fn test_project_info_lib_files_use_real_paths_outside_fourslash() {
+    // Production tsserver clients send real on-disk paths, not the fourslash
+    // VFS mount. projectInfo must return the actual lib paths the server is
+    // using, not the harness's `/home/src/tslibs/TS/Lib/...` rewrites.
+    // Regression for https://github.com/mohsen1/tsz/issues/3779.
+    let mut server = make_server_with_real_libs();
+    server.open_files.insert(
+        "/private/tmp/tsz-projectinfo-repro/a.ts".to_string(),
+        "const value = 1;\n".to_string(),
+    );
+    server.inferred_check_options.lib = Some(vec!["es5".to_string()]);
+
+    let (_, files) = server.compute_project_info("/private/tmp/tsz-projectinfo-repro/a.ts");
+
+    let leaked: Vec<&str> = files
+        .iter()
+        .filter(|p| p.starts_with("/home/src/tslibs/TS/Lib/"))
+        .map(String::as_str)
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "production paths must not contain fourslash VFS lib paths, got {leaked:?}"
+    );
+
+    let lib_files: Vec<&str> = files
+        .iter()
+        .filter(|p| p.contains("lib.") && p.ends_with(".d.ts"))
+        .map(String::as_str)
+        .collect();
+    assert!(
+        lib_files.iter().any(|p| p.ends_with("/lib.es5.d.ts")),
+        "expected real lib.es5.d.ts path among lib files, got {lib_files:?}"
+    );
+    for path in &lib_files {
+        assert!(
+            std::path::Path::new(path).is_absolute(),
+            "lib path must be absolute (real on-disk path), got {path:?}"
+        );
+        assert!(
+            !path.starts_with("/home/src/tslibs/"),
+            "lib path must not be a fourslash VFS path, got {path:?}"
+        );
+    }
+}
+
+#[test]
 fn test_project_info_no_lib_suppresses_lib_files() {
     let mut server = make_server_with_real_libs();
     server.open_files.insert(
