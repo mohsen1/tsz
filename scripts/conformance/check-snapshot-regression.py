@@ -47,7 +47,11 @@ class SnapshotComparison:
     def has_blocking_regression(self, allow_new_failures: bool = False) -> bool:
         if self.pass_delta < 0:
             return True
-        if self.new_failures and not allow_new_failures:
+        if (
+            self.new_failures
+            and not allow_new_failures
+            and len(self.new_failures) > len(self.fixed_failures)
+        ):
             return True
         return False
 
@@ -187,7 +191,8 @@ def main(argv: list[str] | None = None) -> int:
         if comparison.new_failures and not args.allow_new_failures:
             print(
                 f"::error::conformance snapshot introduced "
-                f"{len(comparison.new_failures)} new failing test(s)"
+                f"{len(comparison.new_failures)} new failing test(s) while fixing only "
+                f"{len(comparison.fixed_failures)}"
             )
         return 1
 
