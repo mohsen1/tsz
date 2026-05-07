@@ -1,6 +1,6 @@
 # 100% Conformance Strategy
 
-Last updated: 2026-05-07 on `origin/main` at `f48d0dc1ad`.
+Last updated: 2026-05-07 on `origin/main` at `1e61d77674`.
 
 ## Target
 
@@ -19,23 +19,23 @@ conformance.
 
 ## Current Baseline
 
-Current checked-in snapshot on `origin/main`:
+Current checked-in snapshot on `origin/main` after `#4475`:
 
-- `scripts/conformance/conformance-snapshot.json`: `12488/12581` passed, `93` failed, `99.3%`.
-- `scripts/conformance/conformance-detail.json`: `12488/12581` passed, `93` failed, `4` known failures.
+- `scripts/conformance/conformance-snapshot.json`: `12504/12582` passed, `78` failed, `99.4%`.
+- `scripts/conformance/conformance-detail.json`: `12504/12581` passed, `77` failed, `5` known failures.
 
 Dashboard from `python3 scripts/conformance/query-conformance.py --dashboard`:
 
-- Big 3 wrong-code problems: `20` tests across `TS2322`, `TS2339`, and `TS2345`.
+- Big 3 wrong-code problems: `10` tests across `TS2322`, `TS2339`, and `TS2345`.
 - Other tracked parser/excess-property codes: `1` test.
 - Likely crashes: `0`.
 - Node lane estimate: `5`.
-- Fingerprint-only failures: `59` tests, about `66%` of remaining failures.
-- False positives where tsc expects no diagnostics: `13` tests.
-- Diff <= 2: `24` tests.
+- Fingerprint-only failures: `55` tests, about `74%` of remaining failures.
+- False positives where tsc expects no diagnostics: `7` tests.
+- Diff <= 2: `13` tests.
 
 The main queue improved materially during 2026-05-07. Older notes that cite
-`12451/12582`, `12470/12582`, or 99.0-99.1% are stale.
+`12451/12582`, `12470/12582`, `12488/12581`, or 99.0-99.3% are stale.
 
 ## Active PR Queue
 
@@ -43,14 +43,15 @@ Monitor these PRs without sitting idle for CI:
 
 | PR | Purpose | Action |
 | --- | --- | --- |
-| #4435 | `fix(server): emit fixMissingFunctionDeclaration for plain unresolved calls` | Auto-merge enabled. The previous unit job stopped mid-nextest with no failing assertion; failed jobs were rerun and a worker is checking local reproducibility. |
-| #4442 | `fix(checker): require concrete normalize match in alias-array union check` | Auto-merge enabled. Direct check inspection currently reports no failing checks despite stale rollup entries. |
-| #4446 | `[WIP] fix(cli): merge config declaration into TS5069 prerequisite check` | Draft and not auto-merge enabled; leave out of the merge queue until intentionally readied. |
+| #4488 | `fix(checker): preserve non-strict unknown operation errors` | Auto-merge enabled. Worker pushed head `2b72b3c5f0` to fix `architecture_contract_tests_src::test_checker_file_size_ceiling`; new CI is running. |
+| #4480 | `fix(solver): compare readonly array representations` | Auto-merge enabled. New head `428f797a6f` is running CI after a worker push; do not duplicate while checks are in progress. |
+| #4479 | `fix(checker): prefer spelling suggestions over default-export hint` | Auto-merge enabled. Conformance passed, but lint/unit failed on the checker file-size ceiling; worker has a local size fix and is expected to push. |
+| #4490 | `[WIP] fix(cli): align --showConfig tsconfig discovery with tsc (#3580)` | Draft and not auto-merge enabled; leave out of the merge queue until intentionally readied. |
 | #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Draft and not auto-merge enabled because the last version had broad unit/conformance regressions. |
 
 Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434`,
-`#4438`, `#4439`, `#4443`, `#4444`, `#4447`, `#4448`, `#4449`, `#4450`, and
-`#4451`.
+`#4438`, `#4439`, `#4443`, `#4444`, `#4447`, `#4448`, `#4449`, `#4450`,
+`#4451`, `#4475`, `#4491`, and `#4492`.
 
 ## Work Selection
 
@@ -74,41 +75,47 @@ python3 scripts/conformance/query-conformance.py --fingerprint-only --top 60
 
 ## Current Next Tranche
 
-Best one-extra targets on current `main`, excluding work already covered by open PRs:
+Best remaining targets on current `main`, excluding work already covered by open PRs:
 
-| Test | Extra code | Suggested lane |
+| Target | Current impact | Suggested lane |
 | --- | --- | --- |
-| `controlFlowAssignmentPatternOrder.ts` | `TS2322` | Control-flow assignment pattern narrowing. |
-| `parserOverloadOnConstants1.ts` | `TS2430` | Parser/binder treatment of overload-like constant declarations. |
+| Type display parity | About `27` tests | Shared type-printer/display policy for `TS2322`, `TS2345`, and `TS2339` fingerprint-only failures. |
+| Diagnostic count accuracy | About `11` tests | Remove duplicate diagnostics or add missing instances where tsc emits the same code set. |
+| Big 3 wrong-code problems | `10` tests | Relation/property/call diagnostic selection. |
+| Parser recovery | `3` tests | Specific TS1xxx parser recovery selection. |
 
 Active local worker assignments from this tranche:
 
-- `fix/prop-type-validator-ts2322`
-- `fix/complicated-indexed-access-ts2339`
+- `codex/conformance-type-display-*` for type display parity.
+- `codex/conformance-diagnostic-count-*` for diagnostic count accuracy.
+- `codex/issue-3985-unknown-nonstrict-ops` for the #4488 architecture gate, now pushed at `2b72b3c5f0`.
+- `codex/issue-3280-default-export-spelling` for the #4479 architecture gate.
+- `fix/parser-overload-on-constants1` for #4480 CI validation after the latest worker push.
 
-Already published or merged from this tranche:
+Already published or merged from earlier tranches:
 
 - `fix/generic-functions-context-sensitive` as `#4447`
 - `fix/new-target-narrowing-ts2339` as `#4445`
 - `fix/type-param-tag-ts2339` as `#4450`
+- `codex/fix-3985-unknown-non-strict-errors` as `#4475`
 
 ## Campaigns
 
 ### Tier 1: Fingerprint Parity
 
-Fingerprint parity is most of the remaining work: `59` tests and about two thirds of
+Fingerprint parity is most of the remaining work: `55` tests and about three quarters of
 failures. The main sub-buckets are:
 
-- `TS2322`: `36` tests.
-- `TS2345`: `19` tests.
+- `TS2322`: `34` tests.
+- `TS2345`: `17` tests.
 - `TS2339`: `9` tests.
 - `TS2564`: `3` tests.
 - `TS2454`: `1` test.
 
 Root-cause campaigns from `--campaigns`:
 
-- Type display parity: estimated `44` tests.
-- Diagnostic count accuracy: estimated `43` tests.
+- Type display parity: estimated `27` tests.
+- Diagnostic count accuracy: estimated `11` tests.
 
 Rules:
 
@@ -118,11 +125,11 @@ Rules:
 
 ### Tier 2: Big 3 Relation Errors
 
-The Big 3 queue is still high-value:
+The Big 3 queue is smaller but still high-value:
 
-- `TS2322`: `7` tests.
-- `TS2339`: `7` tests.
-- `TS2345`: `6` tests.
+- `TS2322`: `5` tests.
+- `TS2339`: `2` tests.
+- `TS2345`: `3` tests.
 
 Rules:
 
