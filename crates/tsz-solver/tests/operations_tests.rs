@@ -2499,6 +2499,36 @@ fn test_property_access_primitive_constructor_value() {
 }
 
 #[test]
+fn test_property_access_symbol_primitive_methods_use_apparent_return_types() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let result = evaluator.resolve_property_access(TypeId::SYMBOL, "toString");
+    match result {
+        PropertyAccessResult::Success { type_id, .. } => {
+            let Some(TypeData::Function(shape_id)) = interner.lookup(type_id) else {
+                panic!("Expected symbol.toString to resolve to function type");
+            };
+            let shape = interner.function_shape(shape_id);
+            assert_eq!(shape.return_type, TypeId::STRING);
+        }
+        _ => panic!("Expected success, got {result:?}"),
+    }
+
+    let result = evaluator.resolve_property_access(TypeId::SYMBOL, "valueOf");
+    match result {
+        PropertyAccessResult::Success { type_id, .. } => {
+            let Some(TypeData::Function(shape_id)) = interner.lookup(type_id) else {
+                panic!("Expected symbol.valueOf to resolve to function type");
+            };
+            let shape = interner.function_shape(shape_id);
+            assert_eq!(shape.return_type, TypeId::SYMBOL);
+        }
+        _ => panic!("Expected success, got {result:?}"),
+    }
+}
+
+#[test]
 fn test_property_access_template_literal() {
     let interner = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&interner);
