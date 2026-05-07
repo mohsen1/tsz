@@ -552,10 +552,13 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
-            let start_line = request.arguments.get("startLine")?.as_u64()? as u32;
-            let start_offset = request.arguments.get("startOffset")?.as_u64()? as u32;
-            let end_line = request.arguments.get("endLine")?.as_u64()? as u32;
-            let end_offset = request.arguments.get("endOffset")?.as_u64()? as u32;
+            // Issue #3718: tsserver accepts FileLocationOrRangeRequestArgs.
+            // The position-only form sends `{ line, offset }` and the range
+            // form sends `{ startLine, startOffset, endLine, endOffset }`.
+            // Treat a position as a zero-length range that anchors both
+            // ends at the same coordinate.
+            let (start_line, start_offset, end_line, end_offset) =
+                Self::parse_refactor_request_range(request)?;
 
             let (arena, binder, root, content) = self.parse_and_bind_file(file)?;
             let line_map = LineMap::build(&content);
@@ -652,6 +655,38 @@ impl Server {
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
+    /// Parse the request's range fields, falling back to a position
+    /// (`line`/`offset`) when the explicit range fields are absent. tsserver
+    /// accepts `FileLocationOrRangeRequestArgs` for refactor commands; a
+    /// position is treated as a zero-length range. Issue #3718.
+    fn parse_refactor_request_range(request: &TsServerRequest) -> Option<(u32, u32, u32, u32)> {
+        let line_only = request
+            .arguments
+            .get("line")
+            .and_then(serde_json::Value::as_u64)
+            .map(|line| line as u32);
+        let offset_only = request
+            .arguments
+            .get("offset")
+            .and_then(serde_json::Value::as_u64)
+            .map(|offset| offset as u32);
+
+        let pick = |range_key: &str, position: Option<u32>| -> Option<u32> {
+            request
+                .arguments
+                .get(range_key)
+                .and_then(serde_json::Value::as_u64)
+                .map(|n| n as u32)
+                .or(position)
+        };
+
+        let start_line = pick("startLine", line_only)?;
+        let start_offset = pick("startOffset", offset_only)?;
+        let end_line = pick("endLine", line_only)?;
+        let end_offset = pick("endOffset", offset_only)?;
+        Some((start_line, start_offset, end_line, end_offset))
+    }
+
     /// Walk the AST upward from the request range looking for an
     /// enclosing function-like node (function/method/arrow/constructor/
     /// accessor). Returns `true` when one is found, `false` when the
@@ -691,10 +726,11 @@ impl Server {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
             let refactor = request.arguments.get("refactor")?.as_str()?;
-            let start_line = request.arguments.get("startLine")?.as_u64()? as u32;
-            let start_offset = request.arguments.get("startOffset")?.as_u64()? as u32;
-            let end_line = request.arguments.get("endLine")?.as_u64()? as u32;
-            let end_offset = request.arguments.get("endOffset")?.as_u64()? as u32;
+            // Issue #3718: accept either the range form (startLine etc.) or
+            // a position-only form ({ line, offset }) per
+            // FileLocationOrRangeRequestArgs.
+            let (start_line, start_offset, end_line, end_offset) =
+                Self::parse_refactor_request_range(request)?;
 
             let (arena, binder, root, content) = self.parse_and_bind_file(file)?;
             let line_map = LineMap::build(&content);

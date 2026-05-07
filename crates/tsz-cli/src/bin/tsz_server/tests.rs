@@ -5635,3 +5635,63 @@ fn jsx_closing_tag_returns_close_for_intrinsic_void_elements() {
         );
     }
 }
+
+// Issue #3718: getApplicableRefactors and getEditsForRefactor accept
+// FileLocationOrRangeRequestArgs — a client may send `{ line, offset }`
+// instead of `{ startLine, startOffset, endLine, endOffset }`. Pre-fix,
+// the handlers bailed via `?` because the range fields were absent.
+#[test]
+fn applicable_refactors_accepts_position_only_request() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/src/pos.ts".to_string(),
+        "function f() {\n  const value = 1 + 2;\n  return value;\n}\n".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "getApplicableRefactors",
+        serde_json::json!({
+            "file": "/src/pos.ts",
+            "line": 2,
+            "offset": 17,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response
+        .body
+        .expect("position-only refactor request must return a body");
+    assert!(
+        body.is_array(),
+        "position-only refactor body must be an array, got: {body:?}"
+    );
+}
+
+#[test]
+fn edits_for_refactor_accepts_position_only_request() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/src/pos2.ts".to_string(),
+        "function f() {\n  const value = 1 + 2;\n  return value;\n}\n".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "getEditsForRefactor",
+        serde_json::json!({
+            "file": "/src/pos2.ts",
+            "line": 2,
+            "offset": 17,
+            "refactor": "Extract Symbol",
+            "action": "constant_scope_0",
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response
+        .body
+        .expect("position-only edits request must return a body");
+    assert!(
+        body.get("edits").is_some(),
+        "edits-for-refactor body must contain `edits`: {body:?}"
+    );
+}
