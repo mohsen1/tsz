@@ -2589,6 +2589,42 @@ fn test_optional_property_rejects_string_index_signature() {
 }
 
 #[test]
+fn test_template_literal_index_signature_tracks_excess_properties() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let allowed_suffix =
+        interner.union2(interner.literal_string("A"), interner.literal_string("B"));
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: Some(IndexSignature {
+            key_type: interner.template_literal(vec![
+                TemplateSpan::Text(interner.intern_string("prefix")),
+                TemplateSpan::Type(allowed_suffix),
+            ]),
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let good = interner.object_fresh(vec![PropertyInfo::new(
+        interner.intern_string("prefixA"),
+        TypeId::STRING,
+    )]);
+    let bad = interner.object_fresh(vec![PropertyInfo::new(
+        interner.intern_string("prefixC"),
+        TypeId::STRING,
+    )]);
+
+    assert!(checker.is_assignable(good, target));
+    assert!(!checker.is_assignable(bad, target));
+}
+
+#[test]
 fn test_exact_optional_property_rejects_undefined() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
