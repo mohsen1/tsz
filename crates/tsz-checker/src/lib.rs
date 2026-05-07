@@ -538,6 +538,9 @@ mod string_literal_union_display_order_tests;
 #[path = "../tests/symbol_index_signature_tests.rs"]
 mod symbol_index_signature_tests;
 #[cfg(test)]
+#[path = "tests/synthetic_unique_atom_union_display_tests.rs"]
+mod synthetic_unique_atom_union_display_tests;
+#[cfg(test)]
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
 #[cfg(test)]
