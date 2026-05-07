@@ -2589,6 +2589,19 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
+                    // Bracket-default form: `@template [T=string]` declares
+                    // type parameter `T` with default `string`. tsc accepts
+                    // this form; without unwrapping the `[`, the identifier
+                    // scan below sees `[` as a non-identifier byte and skips
+                    // the segment entirely (issue #4005).
+                    if bytes[cursor] as char == '[' {
+                        cursor += 1;
+                        while cursor < bytes.len() && (bytes[cursor] as char).is_ascii_whitespace()
+                        {
+                            cursor += 1;
+                        }
+                    }
+
                     let start = cursor;
                     while cursor < bytes.len() {
                         let ch = bytes[cursor] as char;

@@ -591,6 +591,33 @@ fn jsdoc_template_ignores_brace_form_for_binding() {
 }
 
 #[test]
+fn jsdoc_template_bracket_default_registers_name() {
+    // Issue #4005: `@template [T=string]` declares T with default `string`.
+    // Without unwrapping the brackets, the identifier scanner saw `[` and
+    // skipped the segment, leaving T unbound and producing a spurious
+    // TS2304 at every reference.
+    let jsdoc = "* @template [T=string]";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(names_only(&params), vec!["T"]);
+}
+
+#[test]
+fn jsdoc_template_bracket_default_after_const_modifier() {
+    let jsdoc = "* @template const [T=string]";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(params.len(), 1);
+    assert_eq!(params[0].0, "T");
+    assert!(params[0].1); // is_const
+}
+
+#[test]
+fn jsdoc_template_bracket_default_with_comma_separated_names() {
+    let jsdoc = "* @template [T=string], U";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(names_only(&params), vec!["T", "U"]);
+}
+
+#[test]
 fn jsdoc_template_constraint_keeps_comma_names() {
     let jsdoc = "* @template {{ a: number, b: string }} T,U A Comment";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
