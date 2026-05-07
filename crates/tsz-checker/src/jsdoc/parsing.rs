@@ -800,6 +800,8 @@ impl<'a> CheckerState<'a> {
             callback: None,
         };
         let mut wrapped_typedef_body: Option<Vec<String>> = None;
+        let mut pending_typedef_rest: Option<String> = None;
+        let mut pending_typedef_base_type: Option<String> = None;
         let template_params: Vec<JsdocTemplateParamInfo> =
             Self::jsdoc_template_constraints_before_typedef_host(jsdoc)
                 .into_iter()
@@ -823,6 +825,63 @@ impl<'a> CheckerState<'a> {
                 .trim_start_matches('*')
                 .trim();
             line = line.trim_end_matches("*/").trim();
+            if let Some(base_type) = pending_typedef_base_type.take() {
+                if line.is_empty() {
+                    pending_typedef_base_type = Some(base_type);
+                    continue;
+                }
+                if !line.starts_with('@') {
+                    let name = Self::normalize_jsdoc_typedef_name(
+                        line.split_whitespace().next().unwrap_or_default(),
+                    );
+                    if !name.is_empty() {
+                        if let Some(previous_name) = current_name.take() {
+                            typedefs.push((previous_name, current_info));
+                        }
+                        current_name = Some(name);
+                        current_info = JsdocTypedefInfo {
+                            base_type: Some(base_type),
+                            properties: Vec::new(),
+                            template_params: template_params.clone(),
+                            callback: None,
+                        };
+                    }
+                    continue;
+                }
+            }
+            if let Some(mut rest) = pending_typedef_rest.take() {
+                if line.is_empty() {
+                    pending_typedef_rest = Some(rest);
+                    continue;
+                }
+                if line.starts_with('@') {
+                    pending_typedef_rest = None;
+                } else {
+                    rest.push(' ');
+                    rest.push_str(line);
+                    if let Some((expr, after_expr)) = Self::parse_jsdoc_curly_type_expr(&rest)
+                        && after_expr.trim().is_empty()
+                    {
+                        pending_typedef_base_type = Some(expr.trim().to_string());
+                        continue;
+                    }
+                    if let Some((name, base_type)) = Self::parse_jsdoc_typedef_definition(&rest) {
+                        if let Some(previous_name) = current_name.take() {
+                            typedefs.push((previous_name, current_info));
+                        }
+                        current_name = Some(name);
+                        current_info = JsdocTypedefInfo {
+                            base_type,
+                            properties: Vec::new(),
+                            template_params: template_params.clone(),
+                            callback: None,
+                        };
+                        continue;
+                    }
+                    pending_typedef_rest = Some(rest);
+                    continue;
+                }
+            }
             if let Some(body_lines) = wrapped_typedef_body.as_mut() {
                 if line.is_empty() {
                     continue;
@@ -920,6 +979,18 @@ impl<'a> CheckerState<'a> {
                             );
                     }
                     continue;
+                }
+
+                if rest.starts_with('{') {
+                    if let Some((expr, after_expr)) = Self::parse_jsdoc_curly_type_expr(rest) {
+                        if after_expr.trim().is_empty() {
+                            pending_typedef_base_type = Some(expr.trim().to_string());
+                            continue;
+                        }
+                    } else {
+                        pending_typedef_rest = Some(rest.to_string());
+                        continue;
+                    }
                 }
 
                 if let Some((name, base_type)) = Self::parse_jsdoc_typedef_definition(rest) {
