@@ -145,10 +145,20 @@ export class Bar {
 "#;
     let output = emit_dts_strip_internal(source);
 
-    assert!(
-        !output.contains("    isInternal1: string;"),
-        "Expected @internal parameter properties to skip class fields: {output}"
-    );
+    for stripped_name in [
+        "isInternal1",
+        "isInternal2",
+        "isInternal3",
+        "isInternal4",
+        "isInternal5",
+        "isInternal6",
+        "isInternal7",
+    ] {
+        assert!(
+            !output.contains(&format!("    {stripped_name}: string;")),
+            "Expected @internal parameter property field {stripped_name} to be stripped: {output}"
+        );
+    }
     assert!(
         output.contains("notInternal1: string;")
             && output.contains("notInternal2: string;")
@@ -1560,6 +1570,25 @@ function C() {
     assert!(
         !output.contains("export const k:"),
         "Did not expect void exports to synthesize declarations: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_bracket_string_exports_emit_named_declarations() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports["foo"] = 1;
+module.exports["bar"] = "x";
+"#,
+    );
+
+    assert!(
+        output.contains("export const foo: 1;"),
+        "Expected bracket string exports to emit named declarations: {output}"
+    );
+    assert!(
+        output.contains("export const bar: \"x\";"),
+        "Expected module.exports bracket string exports to emit named declarations: {output}"
     );
 }
 

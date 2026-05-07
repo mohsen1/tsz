@@ -2138,24 +2138,41 @@ impl Server {
                 .collect();
 
             let ranges = provider.get_selection_ranges(&positions);
+            let full_protocol = request.command.ends_with("-full");
 
             fn selection_range_to_json(
                 sr: &tsz::lsp::editor_ranges::selection_range::SelectionRange,
+                line_map: &LineMap,
+                source_text: &str,
+                full_protocol: bool,
             ) -> serde_json::Value {
-                let text_span = serde_json::json!({
-                    "start": {
-                        "line": sr.range.start.line + 1,
-                        "offset": sr.range.start.character + 1,
-                    },
-                    "end": {
-                        "line": sr.range.end.line + 1,
-                        "offset": sr.range.end.character + 1,
-                    },
-                });
+                let text_span = if full_protocol {
+                    let start = line_map
+                        .position_to_offset(sr.range.start, source_text)
+                        .unwrap_or(0);
+                    let end = line_map
+                        .position_to_offset(sr.range.end, source_text)
+                        .unwrap_or(start);
+                    serde_json::json!({
+                        "start": start,
+                        "length": end.saturating_sub(start),
+                    })
+                } else {
+                    serde_json::json!({
+                        "start": {
+                            "line": sr.range.start.line + 1,
+                            "offset": sr.range.start.character + 1,
+                        },
+                        "end": {
+                            "line": sr.range.end.line + 1,
+                            "offset": sr.range.end.character + 1,
+                        },
+                    })
+                };
                 if let Some(ref parent) = sr.parent {
                     serde_json::json!({
                         "textSpan": text_span,
-                        "parent": selection_range_to_json(parent),
+                        "parent": selection_range_to_json(parent, line_map, source_text, full_protocol),
                     })
                 } else {
                     serde_json::json!({
@@ -2169,7 +2186,9 @@ impl Server {
                 .map(|opt_sr| {
                     opt_sr
                         .as_ref()
-                        .map(selection_range_to_json)
+                        .map(|sr| {
+                            selection_range_to_json(sr, &line_map, &source_text, full_protocol)
+                        })
                         .unwrap_or(serde_json::json!(null))
                 })
                 .collect();
