@@ -61,8 +61,6 @@ pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
 
-type NestedNamespaceCandidatesCache = FxHashMap<String, Vec<(usize, SymbolId)>>;
-
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
@@ -399,10 +397,6 @@ pub struct CheckerContext<'a> {
     /// their owning file index. This avoids rescanning every binder when resolving many
     /// different members from the same nested namespace.
     pub nested_namespace_candidates_cache: RefCell<NestedNamespaceCandidatesCache>,
-
-    /// True once `nested_namespace_candidates_cache` has been populated for every
-    /// nested namespace export name visible across all binders.
-    pub nested_namespace_candidates_cache_complete: Cell<bool>,
 
     /// Per-checker cache for same-name symbol candidates across the current binder
     /// and all cross-file binders.
