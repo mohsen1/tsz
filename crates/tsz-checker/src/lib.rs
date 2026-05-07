@@ -598,3 +598,30 @@ pub use state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 pub use statements::{StatementCheckCallbacks, StatementChecker};
 pub use tsz_solver::Visibility;
 pub use type_node::TypeNodeChecker;
+
+/// Run the JS-only `TS8xxx` grammar pass on a parsed source file and return any
+/// diagnostics it emits. The pass is normally invoked as part of the regular
+/// `check_source_file` walk; this entry point lets callers (notably the CLI's
+/// `--noCheck` parse-only path) surface those grammar diagnostics without
+/// running the full type-checking pipeline. Returns an empty vector for non-JS
+/// files (the underlying pass no-ops via `is_js_file`).
+#[must_use]
+pub fn run_js_grammar_pass(
+    arena: &tsz_parser::NodeArena,
+    binder: &tsz_binder::BinderState,
+    source_file: tsz_parser::NodeIndex,
+    file_name: String,
+    options: context::CheckerOptions,
+) -> Vec<diagnostics::Diagnostic> {
+    let Some(source) = arena.get_source_file_at(source_file) else {
+        return Vec::new();
+    };
+    let statements: Vec<tsz_parser::NodeIndex> = source.statements.nodes.to_vec();
+    if statements.is_empty() {
+        return Vec::new();
+    }
+    let interner = tsz_solver::TypeInterner::new();
+    let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
+    checker.check_js_grammar_statements(&statements);
+    checker.ctx.diagnostics
+}

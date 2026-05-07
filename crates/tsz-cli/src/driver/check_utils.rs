@@ -1371,6 +1371,17 @@ pub(super) fn collect_no_check_parse_diagnostics_for_file(
                 diags.push(parse_diagnostic_to_checker(file_name, parse_diagnostic));
             }
         }
+        // tsc reports the JS-only TS8xxx grammar diagnostics from its parser,
+        // so they must surface even in `--noCheck` mode where tsz otherwise
+        // skips the regular checker pass (#3692). Run a minimal binder + checker
+        // grammar-only walk for each JS source so type annotations, modifiers,
+        // and other TypeScript-only constructs still produce TS8xxx errors.
+        diags.extend(collect_js_grammar_diagnostics(
+            file_name,
+            arena,
+            source_file,
+            options,
+        ));
         diags
     } else {
         filtered_parse_diagnostics
@@ -1393,6 +1404,27 @@ pub(super) fn collect_no_check_parse_diagnostics_for_file(
     }
 
     file_diagnostics
+}
+
+/// Run the checker's JS grammar pass on a parsed JS source file. The pass
+/// surfaces the TS8xxx diagnostics tsc emits for TypeScript-only constructs in
+/// JS files. Used by the `--noCheck` parse-only path to align with tsc, which
+/// reports these from its parser regardless of `--noCheck`.
+fn collect_js_grammar_diagnostics(
+    file_name: &str,
+    arena: &NodeArena,
+    source_file: NodeIndex,
+    options: &ResolvedCompilerOptions,
+) -> Vec<Diagnostic> {
+    let mut binder = tsz_binder::state::BinderState::new();
+    binder.bind_source_file(arena, source_file);
+    tsz_checker::run_js_grammar_pass(
+        arena,
+        &binder,
+        source_file,
+        file_name.to_string(),
+        options.checker.clone(),
+    )
 }
 
 pub(super) fn filtered_parse_diagnostics(
@@ -3624,6 +3656,58 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
         assert!(
             is_non_suppressing_parse_error(1502),
             "TS1502 (Incompatible u/v flags) should be non-suppressing"
+        );
+    }
+
+    /// Helper: parse a single file and collect noCheck path diagnostics.
+    fn collect_no_check_diags(file_name: &str, source: &str) -> Vec<Diagnostic> {
+        let mut parse_results =
+            parallel::parse_files_parallel(vec![(file_name.to_string(), source.to_string())]);
+        let result = parse_results.remove(0);
+        let options = ResolvedCompilerOptions::default();
+        let program_has_real_syntax_errors = result
+            .parse_diagnostics
+            .iter()
+            .any(|d| is_real_syntax_error(d.code));
+        collect_no_check_parse_diagnostics_for_file(
+            &result.file_name,
+            &result.arena,
+            result.source_file,
+            &result.parse_diagnostics,
+            &options,
+            program_has_real_syntax_errors,
+        )
+    }
+
+    #[test]
+    fn no_check_path_emits_ts8010_for_js_parameter_type_annotation() {
+        // Issue #3692: `--noCheck` previously skipped TS8xxx grammar
+        // diagnostics that tsc reports from its parser. Confirm that a
+        // type-annotated JS parameter still produces TS8010 here.
+        let diagnostics = collect_no_check_diags("a.js", "function f(x: number) {}\n");
+        assert!(
+            diagnostics.iter().any(|d| d.code == 8010),
+            "expected TS8010 in JS noCheck output, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_check_path_emits_ts8010_for_js_variable_type_annotation() {
+        // Variable declarations with TS-only type annotations also surface.
+        let diagnostics = collect_no_check_diags("a.js", "let x: number;\n");
+        assert!(
+            diagnostics.iter().any(|d| d.code == 8010),
+            "expected TS8010 in JS noCheck output for `let x: number`, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_check_path_does_not_emit_ts8010_for_typescript_files() {
+        // The grammar walker must not fire on TypeScript files.
+        let diagnostics = collect_no_check_diags("a.ts", "function f(x: number) {}\n");
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 8010),
+            "TS8010 must not fire on TypeScript files, got: {diagnostics:#?}"
         );
     }
 }
