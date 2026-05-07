@@ -5477,3 +5477,55 @@ fn applicable_refactors_top_level_expression_emits_one_scope_with_range() {
         "function_scope_0 should target global scope at module level, got: {desc}"
     );
 }
+
+// Issue #3784: emit-output should honor the owning project's
+// `compilerOptions.module` and `compilerOptions.outDir` so the result
+// matches what tsc reports for the same file.
+#[test]
+fn emit_output_honors_tsconfig_module_and_out_dir() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let root = temp.path();
+    let config = root.join("tsconfig.json");
+    let a = root.join("a.ts");
+    std::fs::write(
+        &config,
+        r#"{"compilerOptions":{"target":"es2015","module":"commonjs","outDir":"dist"},"files":["a.ts"]}"#,
+    )
+    .expect("write config");
+    std::fs::write(&a, "export const value = 1;\n").expect("write a");
+
+    let mut server = make_server();
+    let a_str = a.to_string_lossy().to_string();
+
+    let open =
+        server.handle_tsserver_request(make_request("open", serde_json::json!({ "file": &a_str })));
+    assert!(open.success);
+
+    let response = server.handle_tsserver_request(make_request(
+        "emit-output",
+        serde_json::json!({ "file": &a_str }),
+    ));
+    assert!(response.success);
+    let body = response.body.expect("emit-output body");
+
+    // Output path should land under outDir/dist/a.js, not next to the source.
+    let expected_out = root.join("dist").join("a.js");
+    let expected_out_str = expected_out.to_string_lossy().to_string();
+    assert_eq!(
+        body["outputFiles"][0]["name"], expected_out_str,
+        "expected outDir-relative path, got: {body:#}"
+    );
+
+    // CommonJS module output should have an exports.value assignment.
+    let text = body["outputFiles"][0]["text"]
+        .as_str()
+        .expect("output text");
+    assert!(
+        text.contains("exports.value"),
+        "expected CommonJS exports lowering, got: {text}"
+    );
+    assert!(
+        !text.contains("export const"),
+        "must not preserve ES module syntax when module=commonjs, got: {text}"
+    );
+}

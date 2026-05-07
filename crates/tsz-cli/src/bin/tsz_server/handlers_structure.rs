@@ -337,11 +337,21 @@ impl Server {
             let file = request.arguments.get("file")?.as_str()?;
             let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
 
+            // Issue #3784: tsc honors the owning project's `module` and
+            // `outDir` for emit-output. Reuse the compile-on-save project
+            // lookup (ignoring the `compileOnSave` flag) so the printer
+            // module kind and output path match tsserver's behavior.
+            let project = self.compile_on_save_project(file);
+
+            let module = project
+                .as_ref()
+                .map_or_else(|| self.emit_output_module_kind(), |p| p.module);
+
             let mut printer = Printer::with_source_text_len_and_options(
                 &arena,
                 source_text.len(),
                 PrinterOptions {
-                    module: self.emit_output_module_kind(),
+                    module,
                     ..Default::default()
                 },
             );
@@ -349,11 +359,14 @@ impl Server {
             printer.emit(root);
             let output = printer.take_output();
 
-            let out_name = file
-                .strip_suffix(".ts")
-                .or_else(|| file.strip_suffix(".tsx"))
-                .map(|base| format!("{base}.js"))
-                .unwrap_or_else(|| format!("{file}.js"));
+            let out_name = if let Some(ref project) = project {
+                project.output_path_for(file).to_string_lossy().into_owned()
+            } else {
+                file.strip_suffix(".ts")
+                    .or_else(|| file.strip_suffix(".tsx"))
+                    .map(|base| format!("{base}.js"))
+                    .unwrap_or_else(|| format!("{file}.js"))
+            };
 
             Some(serde_json::json!({
                 "outputFiles": [{
