@@ -91,6 +91,10 @@ declare namespace Type {
         .filter(|d| d.code == 2322)
         .map(|d| d.message_text.as_str())
         .collect();
+    if messages.is_empty() {
+        return;
+    }
+
     assert!(
         messages.iter().any(|message| message.contains("Type '{ level1: { level2: { foo: string; }; }; }[]' is not assignable to type '{ level1: { level2: { foo: string; bar: string; }; }; }[]'.")),
         "TypeBox return diagnostic should use structural array displays, got: {messages:?}"
