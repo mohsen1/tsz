@@ -1606,18 +1606,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// Example: `string | T[K]` where `T[K]` evaluates to `string` will become
     /// `string | string`, which then reduces to `string` via the interner's normalization.
-    fn evaluate_union(&mut self, list_id: TypeListId) -> TypeId {
-        let members = self.interner.type_list(list_id);
+    fn evaluate_union(&mut self, type_id: TypeId, list_id: TypeListId) -> TypeId {
+        let canonical_members = self.interner.type_list(list_id);
+        let origin_members = self.interner.get_union_origin(type_id);
+        let members = origin_members
+            .as_deref()
+            .map_or(canonical_members.as_ref(), Vec::as_slice);
         let mut evaluated_members = Vec::with_capacity(members.len());
 
-        for &member in members.iter() {
+        for &member in members {
             evaluated_members.push(self.evaluate_compound_member(member));
         }
 
         // Deep structural simplification using SubtypeChecker
         self.simplify_union_members(&mut evaluated_members);
 
-        self.interner.union(evaluated_members)
+        let result = self.interner.union(evaluated_members.clone());
+        self.interner.store_union_origin(result, evaluated_members);
+        result
     }
 
     /// Evaluate a member of a compound type (union/intersection) while
@@ -2004,7 +2010,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.visit_string_intrinsic(*kind, *type_arg)
             }
             TypeData::Intersection(list_id) => self.visit_intersection(*list_id),
-            TypeData::Union(list_id) => self.visit_union(*list_id),
+            TypeData::Union(list_id) => self.visit_union(type_id, *list_id),
             TypeData::Array(elem) => self.visit_array(*elem, type_id),
             TypeData::Tuple(tuple_list_id) => self.visit_tuple(*tuple_list_id, type_id),
             TypeData::NoInfer(inner) => {
@@ -2282,8 +2288,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Visit a union type: A | B | C
-    fn visit_union(&mut self, list_id: TypeListId) -> TypeId {
-        self.evaluate_union(list_id)
+    fn visit_union(&mut self, type_id: TypeId, list_id: TypeListId) -> TypeId {
+        self.evaluate_union(type_id, list_id)
     }
 
     /// Visit an array type: T[].
