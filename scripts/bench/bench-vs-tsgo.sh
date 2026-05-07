@@ -73,6 +73,7 @@ NEXTJS_REPO="${NEXTJS_REPO:-https://github.com/vercel/next.js.git}"
 NEXTJS_REF="${NEXTJS_REF:-09851e208cc62c8b6fe7a953b42c88e843129178}"
 NEXTJS_DIR="$EXTERNAL_BENCH_DIR/next.js"
 NEXT_APP_BENCH_DIR="${NEXT_APP_BENCH_DIR:-$EXTERNAL_BENCH_DIR/next-app-live}"
+VITE_APP_BENCH_DIR="${VITE_APP_BENCH_DIR:-$EXTERNAL_BENCH_DIR/vite-vanilla-ts-live}"
 # Real-world reactive library — Observable / Subject deep generics, ~150 source files.
 # REF empty by default: the fixture clones the default branch tip. Set
 # RXJS_REF=<sha> to pin a specific commit for reproducible benches.
@@ -151,6 +152,7 @@ while [[ $# -gt 0 ]]; do
             echo "  TS_TOOLBELT_REF=<sha>  Override pinned ts-toolbelt commit"
             echo "  TS_ESSENTIALS_REF=<sha> Override pinned ts-essentials commit"
             echo "  NEXTJS_REF=<sha>       Override pinned next.js commit"
+            echo "  VITE_APP_BENCH_DIR=<path> Override generated Vite fixture directory"
             exit 0
             ;;
         *) shift ;;
@@ -1092,6 +1094,7 @@ export_results_json() {
     LARGE_TS_DIR_VALUE="$LARGE_TS_DIR" \
     NEXTJS_DIR_VALUE="$NEXTJS_DIR" \
     NEXT_APP_BENCH_DIR_VALUE="$NEXT_APP_BENCH_DIR" \
+    VITE_APP_BENCH_DIR_VALUE="$VITE_APP_BENCH_DIR" \
     RXJS_DIR_VALUE="$RXJS_DIR" \
     TYPE_FEST_DIR_VALUE="$TYPE_FEST_DIR" \
     ZOD_DIR_VALUE="$ZOD_DIR" \
@@ -1109,6 +1112,7 @@ function readProjectReadmes() {
     "large-ts-repo": [[process.env.LARGE_TS_DIR_VALUE, "README.md"]],
     nextjs: [[process.env.NEXTJS_DIR_VALUE, "README.md"]],
     "nextjs-fresh-app": [[process.env.NEXT_APP_BENCH_DIR_VALUE, "README.md"]],
+    "vite-vanilla-ts-app": [[process.env.VITE_APP_BENCH_DIR_VALUE, "README.md"]],
     "rxjs-project": [[process.env.RXJS_DIR_VALUE, "README.md"]],
     "type-fest-project": [
       [process.env.TYPE_FEST_DIR_VALUE, "readme.md"],
@@ -1246,6 +1250,18 @@ ensure_next_app_benchmark_fixture() {
 
     echo -e "${CYAN}Generating fresh Next.js benchmark app...${NC}"
     node "$SCRIPT_DIR/generate-next-app-fixture.mjs" "$NEXT_APP_BENCH_DIR"
+}
+
+ensure_vite_app_benchmark_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+
+    if ! command -v npm &>/dev/null; then
+        echo -e "${RED}✗ npm not found. Install npm to generate the fresh Vite benchmark app.${NC}"
+        return 1
+    fi
+
+    echo -e "${CYAN}Generating fresh Vite vanilla TypeScript benchmark app...${NC}"
+    node "$SCRIPT_DIR/generate-vite-app-fixture.mjs" "$VITE_APP_BENCH_DIR"
 }
 
 ensure_utility_types_fixture() {
@@ -1951,6 +1967,26 @@ run_next_app_project_benchmarks() {
     fi
 
     run_project_benchmark "nextjs-fresh-app" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_vite_app_project_benchmarks() {
+    if ! is_benchmark_selected "vite-vanilla-ts-app"; then
+        return
+    fi
+
+    print_header "Generated Project - fresh Vite vanilla TypeScript app"
+    ensure_vite_app_benchmark_fixture
+
+    local tsconfig="$VITE_APP_BENCH_DIR/tsconfig.json"
+    local src_dir="$VITE_APP_BENCH_DIR"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "vite-vanilla-ts-app" "$tsconfig" "$src_dir"
     echo
 }
 
@@ -3236,6 +3272,7 @@ main() {
     run_isolated "type-fest-project"      run_type_fest_project_benchmarks
     run_isolated "zod-project"            run_zod_project_benchmarks
     run_isolated "kysely-project"         run_kysely_project_benchmarks
+    run_isolated "vite-vanilla-ts-app"    run_vite_app_project_benchmarks
     run_isolated "nextjs-fresh-app"       run_next_app_project_benchmarks
     run_isolated "nextjs"                 run_nextjs_benchmarks
     run_isolated "large-ts-repo"          run_large_ts_repo_benchmarks
