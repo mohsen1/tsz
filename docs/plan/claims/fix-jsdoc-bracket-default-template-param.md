@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-07
 - **Branch**: `fix/jsdoc-bracket-default-template-param`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #4418
+- **Status**: ready
 - **Workstream**: JSDoc parity (issue #4005)
 
 ## Intent
