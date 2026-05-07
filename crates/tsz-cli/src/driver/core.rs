@@ -1933,9 +1933,15 @@ fn declaration_emit_blocking_source_files(diagnostics: &[Diagnostic]) -> FxHashS
 }
 
 const fn is_declaration_emit_blocking_diagnostic_code(code: u32) -> bool {
+    // TS9007–TS9039 are the `--isolatedDeclarations` family. tsc refuses to
+    // emit a `.d.ts` for any source whose isolated-declaration constraints
+    // were violated, regardless of `--noCheck` (#3709 follow-up). TS4020
+    // (existing entry) blocks emit when an exported name leaks an external
+    // module-private symbol that can't be re-exported.
     matches!(
         code,
         diagnostic_codes::EXPORTED_VARIABLE_HAS_OR_IS_USING_NAME_FROM_EXTERNAL_MODULE_BUT_CANNOT_BE_NAMED
+            | 9007..=9039,
     )
 }
 
