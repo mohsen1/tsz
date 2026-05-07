@@ -253,11 +253,12 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
                     self.error_comma_expected();
-                    // Recover from `x!: T` (a definite-assignment marker on a
-                    // parameter, which is not legal). tsc emits TS1138 at the
-                    // `:` and then consumes the type annotation. Without this,
-                    // the broad skip-to-`)` loop below would swallow `!:` and
-                    // the colon-led TS1138 path never runs.
+                    // Definite-assignment marker (`!`) is invalid on a
+                    // parameter. tsc anchors TS1005 at the `!` (emitted just
+                    // above) and TS1138 at the following `:`, then consumes
+                    // the malformed `!: <type>` tail. Without this branch the
+                    // broad recovery loop below swallows the `!:` tail and
+                    // the TS1138 diagnostic is lost.
                     if self.is_token(SyntaxKind::ExclamationToken) {
                         let snapshot = self.scanner.save_state();
                         let saved_token = self.current_token;

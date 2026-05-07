@@ -843,6 +843,65 @@ fn parse_true_keyword_as_parameter_name_emits_ts1359_and_ts1138() {
     );
 }
 
+/// Definite-assignment marker (`!`) is invalid on a parameter. tsc emits
+/// TS1005 (`,` expected) at the `!` and TS1138 (parameter declaration
+/// expected) at the following `:`, then consumes the malformed `!:
+/// <type>` tail. tsz used to emit only TS1005 because the no-comma
+/// recovery branch in `parse_parameter_list` did not recognize the `!:`
+/// pair, so the broad recovery loop swallowed the colon-led TS1138 path.
+#[test]
+fn parse_definite_assignment_marker_in_parameter_emits_ts1005_and_ts1138() {
+    let source = "function f(x!: number) {}";
+    let bang_pos = source.find('!').expect("expected `!` token") as u32;
+    let colon_pos = source.find(':').expect("expected `:` token") as u32;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "Expected TS1005 (`,` expected) at the `!`, got codes: {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::PARAMETER_DECLARATION_EXPECTED),
+        "Expected TS1138 at the colon following the definite-assignment `!`, got codes: {codes:?}"
+    );
+
+    let ts1005_at_bang = diags.iter().any(|d| {
+        d.code == diagnostic_codes::EXPECTED && d.message == "',' expected." && d.start == bang_pos
+    });
+    assert!(
+        ts1005_at_bang,
+        "Expected TS1005 anchored at the `!` (pos {bang_pos}), got diags: {diags:?}"
+    );
+
+    let ts1138_at_colon = diags.iter().any(|d| {
+        d.code == diagnostic_codes::PARAMETER_DECLARATION_EXPECTED && d.start == colon_pos
+    });
+    assert!(
+        ts1138_at_colon,
+        "Expected TS1138 anchored at the `:` (pos {colon_pos}), got diags: {diags:?}"
+    );
+}
+
+/// The same recovery applies to class methods, which share
+/// `parse_parameter_list` with function declarations.
+#[test]
+fn parse_definite_assignment_marker_in_method_parameter_emits_ts1138() {
+    let source = "class C { m(x!: number) {} }";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::PARAMETER_DECLARATION_EXPECTED),
+        "Expected TS1138 for `!:` in class method parameter, got codes: {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "Expected TS1005 for missing comma at the `!`, got codes: {codes:?}"
+    );
+}
+
 #[test]
 fn parse_literal_reserved_parameter_after_suppressed_error_keeps_type_annotation() {
     let source = "function f(a,,true: number) {}";
