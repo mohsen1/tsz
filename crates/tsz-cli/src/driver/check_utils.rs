@@ -2183,33 +2183,22 @@ pub(super) fn apply_ts_directive_suppression(
 
     let mut directive_used = vec![false; directives.len()];
 
-    // Suppress diagnostics on directive-targeted lines
+    // Suppress diagnostics on directive-targeted lines.
+    //
+    // tsc applies `@ts-ignore` and `@ts-expect-error` uniformly across the
+    // checking pipeline, including the JSDoc `@type` lookup that runs during
+    // checked-JS declaration emit. An earlier carve-out kept TS2304/TS2552
+    // alive on lines containing `@type {` to align a different fingerprint,
+    // but issue #3996 confirmed tsc actually suppresses those diagnostics.
+    // The `preserve_declaration_jsdoc_name_diagnostics` flag is now unused
+    // here; callers still pass it so the public signature stays stable while
+    // any deeper revisit of declaration-emit fingerprints lands.
+    let _ = preserve_declaration_jsdoc_name_diagnostics;
     diagnostics.retain(|diag| {
         let diag_line = line_of_offset(&line_starts, diag.start);
         for (idx, directive) in directives.iter().enumerate() {
             if diag_line == directive.suppressed_line {
                 directive_used[idx] = true;
-
-                if preserve_declaration_jsdoc_name_diagnostics && matches!(diag.code, 2304 | 2552) {
-                    let line_start = line_starts
-                        .get(diag_line as usize)
-                        .copied()
-                        .unwrap_or_default() as usize;
-                    let line_end = line_starts
-                        .get(diag_line as usize + 1)
-                        .copied()
-                        .unwrap_or(source_text.len() as u32)
-                        as usize;
-                    let line_end = line_end.min(source_text.len());
-                    let line_start = line_start.min(line_end);
-                    let line_text = &source_text[line_start..line_end];
-                    if line_text.contains("@type {") {
-                        // Preserve declaration-emit JSDoc name diagnostics even when a
-                        // preceding directive suppresses source-file checking diagnostics.
-                        return true;
-                    }
-                }
-
                 return false;
             }
         }
@@ -2718,6 +2707,28 @@ const value = 1;
         assert_eq!(
             build_line_starts("// @ts-ignore\r\nlet x: string = 1;\n"),
             vec![0, 15, 34],
+        );
+    }
+
+    #[test]
+    fn ts_ignore_suppresses_jsdoc_at_type_ts2304_in_declaration_emit() {
+        // Issue #3996: a `// @ts-ignore` followed by a JSDoc `@type` annotation
+        // referencing a missing name was incorrectly preserved during checked-JS
+        // declaration emit because of a `line_text.contains("@type {")`
+        // carve-out. tsc 6.0.3 suppresses the diagnostic regardless of which
+        // checking surface (source-file vs declaration-emit) raised it.
+        let source = "// @ts-ignore\n/** @type {Missing} */\nexport const x = 1;\n";
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.js".to_string(),
+            22,
+            7,
+            "Cannot find name 'Missing'.".to_string(),
+            2304,
+        )];
+        apply_ts_directive_suppression("repro.js", source, &mut diagnostics, true);
+        assert!(
+            diagnostics.is_empty(),
+            "Expected @ts-ignore to suppress JSDoc @type TS2304 even during declaration emit, got: {diagnostics:?}"
         );
     }
 
