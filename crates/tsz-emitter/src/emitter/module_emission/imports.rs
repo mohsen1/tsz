@@ -74,41 +74,19 @@ impl<'a> Printer<'a> {
         let Some(source_text) = self.source_text else {
             return true;
         };
-        // Use the module specifier end as the base offset, since node.end may
-        // include trailing trivia that extends into the next statement.
-        let mut start = if let Some(import_decl) = self.arena.get_import_decl(node)
-            && let Some(module_node) = self.arena.get(import_decl.module_specifier)
-        {
-            module_node.end as usize
-        } else {
-            node.end as usize
+        // Issue #3597: ES import declarations are module-scoped, so a
+        // top-level use BEFORE the import is still a real value use. Scan
+        // the entire source with the import declaration's text whited out
+        // (including trailing comments on the same line as the import).
+        let Some(import_decl) = self.arena.get_import_decl(node) else {
+            return true;
         };
-        start = start.min(source_text.len());
-        let bytes = source_text.as_bytes();
-        // Skip past the entire import line (including trailing comments)
-        // to avoid matching identifiers in trailing comments like
-        // `import { yield } from "m"; // error to use default as binding name`
-        while start < bytes.len() {
-            match bytes[start] {
-                b'\n' => {
-                    start += 1;
-                    break;
-                }
-                b'\r' => {
-                    start += 1;
-                    if start < bytes.len() && bytes[start] == b'\n' {
-                        start += 1;
-                    }
-                    break;
-                }
-                _ => start += 1,
-            }
-        }
-        let haystack = &source_text[start..];
+        let haystack =
+            Self::source_excluding_import_decl(source_text, node, import_decl, self.arena);
         // Strip type-only content from the haystack so that identifiers
         // appearing only in type positions (type annotations, declare lines,
         // other import/export type statements, etc.) don't count as value usages.
-        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
         let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
@@ -127,7 +105,7 @@ impl<'a> Printer<'a> {
         // imported names.
         if self.ctx.options.emit_decorator_metadata
             && names.iter().any(|name| {
-                crate::import_usage::name_appears_in_decorator_metadata_type(haystack, name)
+                crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, name)
             })
         {
             return true;
@@ -287,8 +265,12 @@ impl<'a> Printer<'a> {
         let Some(import_data) = self.arena.get_import_decl(import_node) else {
             return true;
         };
-        let haystack = Self::source_after_import(source_text, import_node, import_data, self.arena);
-        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        // Issue #3597: ES import declarations are module-scoped; a top-level
+        // use BEFORE the import is still a real value use. Scan the entire
+        // source with the import declaration's text whited out.
+        let haystack =
+            Self::source_excluding_import_decl(source_text, import_node, import_data, self.arena);
+        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
         let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
@@ -300,7 +282,7 @@ impl<'a> Printer<'a> {
         // annotations are *value* references; preserve the default whose
         // name appears in such an annotation.
         self.ctx.options.emit_decorator_metadata
-            && crate::import_usage::name_appears_in_decorator_metadata_type(haystack, &local_name)
+            && crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, &local_name)
     }
 
     /// Filter named import specifiers to only those with value-level usage
@@ -316,8 +298,11 @@ impl<'a> Printer<'a> {
         let Some(import_data) = self.arena.get_import_decl(import_node) else {
             return specs.to_vec();
         };
-        let haystack = Self::source_after_import(source_text, import_node, import_data, self.arena);
-        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        // Issue #3597: scan the entire module so a use BEFORE the import
+        // still keeps the binding alive.
+        let haystack =
+            Self::source_excluding_import_decl(source_text, import_node, import_data, self.arena);
+        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
         let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
@@ -346,7 +331,7 @@ impl<'a> Printer<'a> {
                 // name appears in such an annotation.
                 self.ctx.options.emit_decorator_metadata
                     && crate::import_usage::name_appears_in_decorator_metadata_type(
-                        haystack,
+                        &haystack,
                         &local_name,
                     )
             })
@@ -366,8 +351,11 @@ impl<'a> Printer<'a> {
         let Some(source_text) = self.source_text else {
             return true;
         };
-        let haystack = Self::source_after_import(source_text, import_node, import_data, self.arena);
-        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        // Issue #3597: scan the entire module so a use BEFORE the import
+        // still keeps the default binding alive.
+        let haystack =
+            Self::source_excluding_import_decl(source_text, import_node, import_data, self.arena);
+        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
         let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
@@ -375,7 +363,7 @@ impl<'a> Printer<'a> {
 
         crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
             || (self.ctx.options.emit_decorator_metadata
-                && crate::import_usage::name_appears_in_decorator_metadata_type(haystack, &name))
+                && crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, &name))
     }
 
     /// Check if an import-equals declaration's identifier is used after the import.
@@ -643,6 +631,34 @@ impl<'a> Printer<'a> {
             }
         }
         &source_text[start..]
+    }
+
+    /// Get the full source text with the import declaration's text replaced
+    /// by space characters (preserving line breaks). Used by ESM
+    /// import-elision usage scans so that a top-level use BEFORE the import
+    /// declaration still counts as a use (issue #3597). The replacement
+    /// keeps byte offsets stable and stops the import declaration's own
+    /// specifiers from showing up as uses.
+    fn source_excluding_import_decl(
+        source_text: &str,
+        node: &Node,
+        import_data: &tsz_parser::parser::node::ImportDeclData,
+        arena: &tsz_parser::parser::node::NodeArena,
+    ) -> String {
+        let import_start = (node.pos as usize).min(source_text.len());
+        let after_slice = Self::source_after_import(source_text, node, import_data, arena);
+        let import_end = source_text.len().saturating_sub(after_slice.len());
+        let mut out = String::with_capacity(source_text.len());
+        out.push_str(&source_text[..import_start]);
+        let cleared = source_text
+            .get(import_start..import_end)
+            .unwrap_or("")
+            .chars()
+            .map(|c| if c == '\n' || c == '\r' { c } else { ' ' })
+            .collect::<String>();
+        out.push_str(&cleared);
+        out.push_str(after_slice);
+        out
     }
 
     pub(in crate::emitter) fn emit_import_declaration(&mut self, node: &Node) {
