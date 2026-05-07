@@ -318,11 +318,27 @@ impl<'a> CheckerState<'a> {
         if !display.contains(" | ") {
             return display;
         }
-        display
+        let members = display
             .split(" | ")
             .map(Self::strip_simple_alias_union_parens)
-            .collect::<Vec<_>>()
-            .join(" | ")
+            .collect::<Vec<_>>();
+
+        if let [left, right] = members.as_slice() {
+            if let Some(base) = left.strip_suffix("[]")
+                && base == right
+                && Self::is_simple_jsx_children_type_name(base)
+            {
+                return format!("{right} | {left}");
+            }
+            if let Some(base) = right.strip_suffix("[]")
+                && base == left
+                && Self::is_simple_jsx_children_type_name(base)
+            {
+                return format!("{left} | {right}");
+            }
+        }
+
+        members.join(" | ")
     }
 
     fn strip_simple_alias_union_parens(member: &str) -> String {
@@ -910,9 +926,9 @@ impl<'a> CheckerState<'a> {
         &mut self,
         mut element_types: Vec<TypeId>,
     ) -> TypeId {
-        let ordered = self.order_react_node_multiple_children_union_for_display(&mut element_types);
+        self.order_react_node_multiple_children_union_for_display(&mut element_types);
         let union = self.ctx.types.factory().union(element_types.clone());
-        if ordered {
+        if element_types.len() > 1 {
             self.ctx
                 .types
                 .replace_union_origin_for_display(union, element_types);
@@ -1351,6 +1367,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            let raw_target_display = self.format_type(original_children_type);
+            let normalized_target_display =
+                self.normalize_jsx_children_alias_union_display(raw_target_display.clone());
+            let diagnostics_start = self.ctx.diagnostics.len();
+
             // Use the exact-anchor variant so the diagnostic stays on the JSX
             // child instead of being rewritten up to the enclosing variable
             // declaration by the assignment-anchor walker. Pass the inner
@@ -1363,10 +1384,32 @@ impl<'a> CheckerState<'a> {
                 type_node,
                 diag_node,
             );
+            self.normalize_recent_jsx_children_union_diagnostics(
+                diagnostics_start,
+                &raw_target_display,
+                &normalized_target_display,
+            );
             emitted = true;
         }
 
         emitted
+    }
+
+    fn normalize_recent_jsx_children_union_diagnostics(
+        &mut self,
+        diagnostics_start: usize,
+        raw_target_display: &str,
+        normalized_target_display: &str,
+    ) {
+        if raw_target_display == normalized_target_display {
+            return;
+        }
+
+        for diagnostic in self.ctx.diagnostics.iter_mut().skip(diagnostics_start) {
+            diagnostic.message_text = diagnostic
+                .message_text
+                .replace(raw_target_display, normalized_target_display);
+        }
     }
 
     fn jsx_multiple_children_expected_union_for_display(&mut self, type_id: TypeId) -> TypeId {

@@ -14,6 +14,22 @@ fn test_union_type_in_declaration() {
 }
 
 #[test]
+fn test_type_printer_preserves_union_display_origin() {
+    let interner = TypeInterner::new();
+    let object_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let array_member = interner.array(TypeId::NUMBER);
+    let union = interner.union(vec![array_member, object_member]);
+    interner.replace_union_origin_for_display(union, vec![array_member, object_member]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner).print_type(union);
+
+    assert_eq!(printed, "number[] | { x: number }");
+}
+
+#[test]
 fn test_intersection_type_in_declaration() {
     let output = emit_dts("export type Combined = { a: number } & { b: string };");
     assert!(output.contains("&"), "Expected intersection type: {output}");

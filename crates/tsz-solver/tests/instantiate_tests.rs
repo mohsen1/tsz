@@ -1,4 +1,5 @@
 use super::*;
+use crate::TypeEnvironment;
 use crate::TypeInterner;
 use crate::def::DefId;
 use crate::instantiation::instantiate::MAX_INSTANTIATION_DEPTH;
@@ -122,6 +123,62 @@ fn test_instantiate_union() {
     // Result should be string | null
     let expected = interner.union(vec![TypeId::STRING, TypeId::NULL]);
     assert_eq!(result, expected);
+}
+
+#[test]
+fn test_instantiate_union_preserves_display_origin() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let object_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        type_param_t,
+    )]);
+    let union = interner.union(vec![type_param_t, object_member]);
+    interner.store_union_origin(union, vec![type_param_t, object_member]);
+
+    let array_number = interner.array(TypeId::NUMBER);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, array_number);
+    let result = instantiate_type(&interner, union, &subst);
+
+    let instantiated_object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        array_number,
+    )]);
+    let origin = interner
+        .get_union_origin(result)
+        .expect("instantiated union should preserve source display order");
+    assert_eq!(origin.as_ref(), &[array_number, instantiated_object]);
+}
+
+#[test]
+fn test_evaluate_union_preserves_display_origin() {
+    let interner = TypeInterner::new();
+    let array_def = DefId(1);
+    let array_member = interner.array(TypeId::NUMBER);
+    let lazy_member = interner.lazy(array_def);
+    let object_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let union = interner.union(vec![lazy_member, object_member]);
+    interner.replace_union_origin_for_display(union, vec![lazy_member, object_member]);
+
+    let mut env = TypeEnvironment::new();
+    env.insert_def(array_def, array_member);
+    let mut evaluator = crate::TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(union);
+
+    let origin = interner
+        .get_union_origin(result)
+        .expect("evaluated union should preserve source display order");
+    assert_eq!(origin.as_ref(), &[array_member, object_member]);
 }
 
 #[test]

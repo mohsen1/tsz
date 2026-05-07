@@ -892,6 +892,8 @@ impl<'a> CheckerState<'a> {
 
         let declared_flat_array_assignment =
             self.flat_array_declared_assignment_types(left_idx, right_idx);
+        let declared_recursive_tuple_assignment =
+            self.recursive_tuple_declared_assignment_types(left_idx, right_idx);
         let (compat_source_type, compat_target_type, flat_array_any_target_accepted) =
             if let Some((source_declared, target_declared)) = declared_flat_array_assignment {
                 self.store_evaluated_flat_array_assignment_alias(source_declared);
@@ -899,6 +901,10 @@ impl<'a> CheckerState<'a> {
                 let accepts_any_target =
                     self.declared_application_any_target_accepts(source_declared, target_declared);
                 (source_declared, target_declared, accepts_any_target)
+            } else if let Some((source_declared, target_declared)) =
+                declared_recursive_tuple_assignment
+            {
+                (source_declared, target_declared, false)
             } else {
                 (right_type, left_type, false)
             };
@@ -1015,6 +1021,18 @@ impl<'a> CheckerState<'a> {
                     self.check_polymorphic_this_property_assignment(left_idx, right_idx, right_type)
                 && error_emitted
             {
+                check_assignability = false;
+            }
+
+            if check_assignability
+                && let Some((source_declared, target_declared)) =
+                    declared_recursive_tuple_assignment
+            {
+                self.error_type_not_assignable_at_with_anchor(
+                    source_declared,
+                    target_declared,
+                    left_idx,
+                );
                 check_assignability = false;
             }
 
@@ -1860,6 +1878,39 @@ impl<'a> CheckerState<'a> {
         let def = self.ctx.definition_store.get(def_id)?;
         let name = self.ctx.types.resolve_atom_ref(def.name);
         if name.as_ref() != "FlatArray" {
+            return None;
+        }
+
+        Some((source_declared, target_declared))
+    }
+
+    fn recursive_tuple_declared_assignment_types(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> Option<(TypeId, TypeId)> {
+        let target_declared = self.assignment_identifier_declared_type(left_idx)?;
+        let source_declared = self.assignment_identifier_declared_type(right_idx)?;
+
+        let (target_base, target_args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target_declared)?;
+        let (source_base, source_args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, source_declared)?;
+        if target_base != source_base || target_args.len() != source_args.len() {
+            return None;
+        }
+
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target_base)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        let name = self.ctx.types.resolve_atom_ref(def.name);
+        if name.as_ref() != "TupleOf" {
+            return None;
+        }
+
+        let has_type_parameter_arg = target_args.iter().chain(source_args.iter()).any(|arg| {
+            crate::query_boundaries::common::contains_type_parameters(self.ctx.types, *arg)
+        });
+        if !has_type_parameter_arg || target_args == source_args {
             return None;
         }
 
