@@ -1062,7 +1062,6 @@ fn compile_inner(
     )?;
     let positional_no_config_no_emit =
         tsconfig_path.is_none() && !args.files.is_empty() && resolved.no_emit;
-
     // Wire removed-but-honored suppress flags from config
     if loaded.suppress_excess_property_errors {
         resolved.checker.suppress_excess_property_errors = true;
