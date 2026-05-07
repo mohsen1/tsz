@@ -1066,6 +1066,10 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn type_operator_operand_and_parens(&self, type_idx: NodeIndex) -> (NodeIndex, bool) {
+        let source_was_parenthesized = self
+            .arena
+            .get(type_idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
         let mut operand = type_idx;
         if let Some(node) = self.arena.get(operand)
             && node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
@@ -1088,7 +1092,21 @@ impl<'a> DeclarationEmitter<'a> {
                 || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
         });
 
-        (operand, needs_parens)
+        // tsc retains user-written parens around generic type references
+        // (e.g. `keyof (Record<T, any>)`). Indexed-access operands keep
+        // their stripping behavior since tsc renders `keyof A["a"]` (no
+        // parens) regardless of source.
+        let preserve_source_parens = source_was_parenthesized
+            && self.arena.get(operand).is_some_and(|n| {
+                n.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && self.arena.get_type_ref(n).is_some_and(|tr| {
+                        tr.type_arguments
+                            .as_ref()
+                            .is_some_and(|args| !args.nodes.is_empty())
+                    })
+            });
+
+        (operand, needs_parens || preserve_source_parens)
     }
 
     fn emit_mapped_type_value_type(&mut self, type_idx: NodeIndex) {
