@@ -81,7 +81,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/binaryOperators/logicalOrOpe
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping2.ts | expected:[TS2322,TS2345,TS2347,TS2695,TS7006] actual:[TS2322,TS2345,TS2347,TS2695,TS7006]
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/typeArgumentInferenceWithConstraints.ts | expected:[TS2322,TS2344,TS2345,TS2349,TS2403] actual:[TS2322,TS2344,TS2345,TS2349,TS2403]
 FAIL TypeScript/tests/cases/conformance/expressions/objectLiterals/objectLiteralNormalization.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunctionErrors.ts | expected:[TS1005,TS1128,TS1131,TS1144,TS1434] actual:[TS1005,TS1128,TS1131,TS1144,TS1228,TS1434]
 FAIL TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_errorLocations1.ts | expected:[TS1360,TS2322,TS2345,TS2741] actual:[TS1360,TS2322,TS2345,TS2741]
 FAIL TypeScript/tests/cases/conformance/expressions/unaryOperators/deleteOperator/deleteOperatorInvalidOperations.ts | expected:[TS1005,TS1109] actual:[TS1005,TS1102,TS1109]
 FAIL TypeScript/tests/cases/conformance/importAttributes/importAttributes11.ts | expected:[] actual:[TS2732]
@@ -300,7 +299,6 @@ PASS TypeScript/tests/cases/compiler/anyAndUnknownHaveFalsyComponents.ts
 PASS TypeScript/tests/cases/compiler/anyAsReturnTypeForNewOnCall.ts
 PASS TypeScript/tests/cases/compiler/anyDeclare.ts
 PASS TypeScript/tests/cases/compiler/anyIdenticalToItself.ts
-PASS TypeScript/tests/cases/compiler/anyIndexedAccessArrayNoException.ts
 PASS TypeScript/tests/cases/compiler/anyInferenceAnonymousFunctions.ts
 PASS TypeScript/tests/cases/compiler/anyIsAssignableToObject.ts
 PASS TypeScript/tests/cases/compiler/anyIsAssignableToVoid.ts
@@ -9039,6 +9037,7 @@ PASS TypeScript/tests/cases/conformance/expressions/typeGuards/TypeGuardWithEnum
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/nullOrUndefinedTypeGuardIsOrderIndependent.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardEnums.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunction.ts
+PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunctionErrors.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunctionGenerics.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunctionOfFormThis.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunctionOfFormThisErrors.ts
