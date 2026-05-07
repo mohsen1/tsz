@@ -329,9 +329,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_app = self.interner.type_application(s_app_id);
         let t_app = self.interner.type_application(t_app_id);
 
-        if s_app.args == t_app.args && s_app.base == t_app.base {
-            return SubtypeResult::True;
-        }
         // Synthetic Promise fallback: when lib resolution cannot find the real Promise
         // symbol, checker-side async lowering uses PROMISE_BASE as the application base.
         // That base has no DefId, variance metadata, or structural body to expand, so the
