@@ -2180,17 +2180,41 @@ impl Server {
                 })
             }
 
+            // The tsserver `TextSpan` protocol expresses `start` and `length`
+            // in UTF-16 code units, matching how TypeScript's compiler walks
+            // source text. `LineMap::position_to_offset` returns Rust byte
+            // offsets, so we must remap before reporting the span (issue
+            // #3912). `byte_offset_to_utf16_units` counts the UTF-16 units
+            // produced by the prefix `&source_text[..byte_offset]` without
+            // panicking on non-char-boundary offsets.
+            fn byte_offset_to_utf16_units(source: &str, byte_offset: u32) -> u32 {
+                let target = byte_offset as usize;
+                if target == 0 {
+                    return 0;
+                }
+                let mut utf16_count = 0u32;
+                for (i, ch) in source.char_indices() {
+                    if i >= target {
+                        break;
+                    }
+                    utf16_count += ch.len_utf16() as u32;
+                }
+                utf16_count
+            }
+
             fn range_to_text_span(
                 line_map: &LineMap,
                 source_text: &str,
                 range: tsz_common::position::Range,
             ) -> serde_json::Value {
-                let start = line_map
+                let start_byte = line_map
                     .position_to_offset(range.start, source_text)
                     .unwrap_or(0);
-                let end = line_map
+                let end_byte = line_map
                     .position_to_offset(range.end, source_text)
-                    .unwrap_or(start);
+                    .unwrap_or(start_byte);
+                let start = byte_offset_to_utf16_units(source_text, start_byte);
+                let end = byte_offset_to_utf16_units(source_text, end_byte);
                 serde_json::json!({
                     "start": start,
                     "length": end.saturating_sub(start),
@@ -2276,7 +2300,10 @@ impl Server {
                 ("<global>".to_string(), "script")
             };
             let root_span = if full {
-                serde_json::json!({"start": 0, "length": source_text.len()})
+                serde_json::json!({
+                    "start": 0,
+                    "length": source_text.encode_utf16().count(),
+                })
             } else {
                 serde_json::json!({"start": {"line": 1, "offset": 1}, "end": {"line": total_lines, "offset": last_line_len + 1}})
             };

@@ -154,8 +154,8 @@ fn test_navtree_full_returns_numeric_text_spans() {
     );
     assert_eq!(
         root_span.get("length").and_then(serde_json::Value::as_u64),
-        Some(source.len() as u64),
-        "navtree-full root span should cover the source text: {root_span:?}"
+        Some(source.encode_utf16().count() as u64),
+        "navtree-full root span should cover the source text in UTF-16 units: {root_span:?}"
     );
 
     let function_item = body
@@ -1764,4 +1764,70 @@ fn test_definition_and_bound_span_full_uses_numeric_text_span_and_filename() {
                 .is_some(),
         "definitionAndBoundSpan-full outer textSpan should be numeric: {outer:?}"
     );
+}
+
+// Issue #3912: navtree-full TextSpans must be in UTF-16 code units, not
+// Rust byte offsets. The protocol contract is "TextPosition is a UTF-16
+// code-unit offset", and tsserver clients (e.g. VS Code) interpret
+// `start` and `length` as UTF-16 indices.
+#[test]
+fn test_navtree_full_text_spans_use_utf16_units_for_non_ascii_source() {
+    let mut server = make_server();
+    // The string literal `"é"` is 2 bytes in UTF-8 but 1 UTF-16 code unit.
+    // The `é` between `s = "` and `";` is what creates the byte-vs-utf16 gap.
+    let source = "const s = \"é\";\nfunction f() {}\n";
+    server
+        .open_files
+        .insert("/utf16.ts".to_string(), source.to_string());
+
+    let req = make_request("navtree-full", serde_json::json!({"file": "/utf16.ts"}));
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("navtree-full should return a body");
+
+    // Root span: length must be UTF-16 units, not byte length.
+    let root_span = body
+        .get("spans")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|spans| spans.first())
+        .expect("navtree-full root should include a span")
+        .clone();
+    assert_eq!(
+        root_span.get("length").and_then(serde_json::Value::as_u64),
+        Some(source.encode_utf16().count() as u64),
+        "root length must be UTF-16 units (got byte length?): {root_span:?}"
+    );
+    assert_ne!(
+        root_span.get("length").and_then(serde_json::Value::as_u64),
+        Some(source.len() as u64),
+        "root length must NOT match the UTF-8 byte length on non-ASCII source: {root_span:?}"
+    );
+
+    // Function item: nameSpan start should be the UTF-16 offset of `f`.
+    let function_item = body
+        .get("childItems")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("text").and_then(serde_json::Value::as_str) == Some("f"))
+        })
+        .expect("navtree-full should include function f")
+        .clone();
+    let name_span = function_item
+        .get("nameSpan")
+        .expect("function item should include numeric nameSpan");
+    let function_name_byte = source
+        .find("function f")
+        .map(|i| i + "function ".len())
+        .expect("expected `function f` in source") as u32;
+    let function_name_utf16 = source[..function_name_byte as usize].encode_utf16().count() as u64;
+    assert_eq!(
+        name_span.get("start").and_then(serde_json::Value::as_u64),
+        Some(function_name_utf16),
+        "function nameSpan start must be UTF-16 offset of the function-name `f`: {name_span:?}"
+    );
+    // Sanity: the byte offset and the UTF-16 offset must differ for this
+    // source so the test guards against a UTF-8 regression.
+    assert_ne!(function_name_utf16, function_name_byte as u64);
 }
