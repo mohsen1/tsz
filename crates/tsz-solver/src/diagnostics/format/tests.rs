@@ -2442,6 +2442,50 @@ fn display_alias_does_not_repaint_preexisting_structural_type() {
 }
 
 #[test]
+fn skip_application_alias_names_suppresses_nested_application_display_alias() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: db.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let merge_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("merge"),
+        vec![type_param("base"), type_param("props")],
+        TypeId::UNKNOWN,
+    ));
+    let omit_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Omit"),
+        vec![type_param("T"), type_param("K")],
+        TypeId::UNKNOWN,
+    ));
+
+    let p1 = db.object(vec![PropertyInfo::new(
+        db.intern_string("p1"),
+        TypeId::NUMBER,
+    )]);
+    let p2 = db.object(vec![PropertyInfo::new(
+        db.intern_string("p2"),
+        TypeId::NUMBER,
+    )]);
+    let merged = db.intersection(vec![p1, p2]);
+    let merge_app = db.application(db.lazy(merge_def), vec![p1, p2]);
+    db.store_display_alias(merged, merge_app);
+
+    let omit_app = db.application(db.lazy(omit_def), vec![merged, db.literal_string("p2")]);
+    let mut fmt = TypeFormatter::new(&db)
+        .with_def_store(&def_store)
+        .with_skip_application_alias_names();
+
+    assert_eq!(
+        fmt.format(omit_app),
+        "Omit<{ p1: number; } & { p2: number; }, \"p2\">"
+    );
+}
+
+#[test]
 fn concrete_display_alias_can_name_preexisting_structural_type() {
     let db = TypeInterner::new();
     let evaluated = db.object(vec![PropertyInfo::new(

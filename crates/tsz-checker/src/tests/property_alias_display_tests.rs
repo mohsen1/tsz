@@ -124,6 +124,54 @@ o16.shape.p17;
     );
 }
 
+#[test]
+fn ts2339_merge_function_receiver_widens_fresh_object_literals() {
+    let diags = check_source_diagnostics(
+        r#"
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Exclude<T, U> = T extends U ? never : T;
+type merge<base, props> = keyof base & keyof props extends never
+  ? base & props
+  : Omit<base, keyof props & keyof base> & props;
+
+declare const merge: <l, r>(l: l, r: r) => merge<l, r>;
+
+const o1 = merge({ p1: 1 }, { p2: 2 });
+const o2 = merge(o1, { p2: 2, p3: 3 });
+
+o1.p51;
+o2.p4;
+"#,
+    );
+
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(ts2339.len(), 2, "Expected two TS2339, got: {diags:?}");
+
+    let messages = ts2339
+        .iter()
+        .map(|diag| diag.message_text.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("{ p1: number; } & { p2: number; }")),
+        "o1 receiver should display widened object-literal property types, got: {messages:#?}"
+    );
+    assert!(
+        messages.iter().any(|msg| msg.contains(
+            r#"Omit<{ p1: number; } & { p2: number; }, "p2"> & { p2: number; p3: number; }"#
+        )),
+        "o2 receiver should display widened object-literal property types through Omit, got: {messages:#?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|msg| msg.contains("{ p1: 1; }") || msg.contains("{ p2: 2; }")),
+        "TS2339 property receivers should not preserve fresh object literal values, got: {messages:#?}"
+    );
+}
+
 /// Negative lock: when the receiver has NO declared annotation, the formatter
 /// falls back to `format_type` — must not crash or emit an alias name.
 #[test]

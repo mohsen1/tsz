@@ -118,6 +118,10 @@ pub struct TypeFormatter<'a> {
     /// Application (e.g., `type Foo = Id<{...}>`). In assignability error messages,
     /// tsc shows the Application form `Id<{...}>` rather than the outer alias `Foo`.
     skip_application_alias_names: bool,
+    /// Internal guard used while formatting helper application arguments that
+    /// should show structural inputs instead of chasing nested application
+    /// display aliases.
+    skip_application_display_alias_chase: bool,
     /// Specific non-generic type aliases whose name should not be used for
     /// diagnostic display. This is used for `typeof` aliases in assignability
     /// messages where tsc prints the target's structural type rather than the
@@ -352,6 +356,7 @@ impl<'a> TypeFormatter<'a> {
             format_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
+            skip_application_display_alias_chase: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
             skip_intersection_display_alias: false,
@@ -563,6 +568,7 @@ impl<'a> TypeFormatter<'a> {
             format_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
+            skip_application_display_alias_chase: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
             skip_intersection_display_alias: false,
@@ -1318,6 +1324,11 @@ impl<'a> TypeFormatter<'a> {
                 || skip_distributive_alias
                 || skip_object_alias
                 || skip_primitive_key_union_type_alias
+                || (self.skip_application_display_alias_chase
+                    && matches!(
+                        self.interner.lookup(alias_origin),
+                        Some(TypeData::Application(_))
+                    ))
                 || (is_empty_object
                     && self.display_alias_application_base_is_type_alias(alias_origin));
             if (!is_simple_type || use_keyof_alias || use_application_alias || use_lazy_type_alias)
@@ -1738,11 +1749,18 @@ impl<'a> TypeFormatter<'a> {
                     display_args.len()
                 };
 
+                let previous_skip_application_display_alias_chase =
+                    self.skip_application_display_alias_chase;
+                if self.skip_application_alias_names && base_str.as_ref() == "Omit" {
+                    self.skip_application_display_alias_chase = true;
+                }
                 let mut args: Vec<Cow<'static, str>> = display_args
                     .iter()
                     .take(visible_arg_count)
                     .map(|&arg| self.format(self.simplify_application_arg_for_display(arg)))
                     .collect();
+                self.skip_application_display_alias_chase =
+                    previous_skip_application_display_alias_chase;
                 if base_str.as_ref() == "Defaultize"
                     && args.first().is_some_and(|arg| arg.len() > 120)
                 {

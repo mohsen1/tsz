@@ -765,6 +765,8 @@ impl<'a> CheckerState<'a> {
                 .definition_store
                 .find_type_alias_by_body(ty)
                 .is_some()
+            && !(assignability_display.starts_with("Omit<")
+                || assignability_display.starts_with("merge<"))
         {
             return self.format_type_diagnostic_structural(ty);
         }
