@@ -37,7 +37,6 @@ FAIL TypeScript/tests/cases/compiler/modulePreserve4.ts | expected:[TS8002] actu
 FAIL TypeScript/tests/cases/compiler/moduleSharesNameWithImportDeclarationInsideIt5.ts | expected:[TS2300] actual:[TS2300,TS2693]
 FAIL TypeScript/tests/cases/compiler/narrowingAssignmentReadonlyRespectsAssertion.ts | expected:[] actual:[TS2322,TS2339,TS2740,TS7031]
 FAIL TypeScript/tests/cases/compiler/narrowingMutualSubtypes.ts | expected:[TS7053] actual:[TS7053]
-FAIL TypeScript/tests/cases/compiler/newLineInTypeofInstantiation.ts | expected:[] actual:[TS2304]
 FAIL TypeScript/tests/cases/compiler/noInferUnionExcessPropertyCheck1.ts | expected:[TS2353] actual:[TS2353]
 FAIL TypeScript/tests/cases/compiler/objectInstantiationFromUnionSpread.ts | expected:[] actual:[TS2339,TS7006]
 FAIL TypeScript/tests/cases/compiler/objectLiteralExcessProperties.ts | expected:[TS2304,TS2322,TS2353,TS2561] actual:[TS2304,TS2322,TS2353,TS2561]
@@ -4576,6 +4575,7 @@ PASS TypeScript/tests/cases/compiler/newFunctionImplicitAny.ts
 PASS TypeScript/tests/cases/compiler/newLexicalEnvironmentForConvertedLoop.ts
 PASS TypeScript/tests/cases/compiler/newLineFlagWithCRLF.ts
 PASS TypeScript/tests/cases/compiler/newLineFlagWithLF.ts
+PASS TypeScript/tests/cases/compiler/newLineInTypeofInstantiation.ts
 PASS TypeScript/tests/cases/compiler/newMap.ts
 PASS TypeScript/tests/cases/compiler/newMissingIdentifier.ts
 PASS TypeScript/tests/cases/compiler/newNamesInGlobalAugmentations1.ts
