@@ -663,3 +663,39 @@ type FunctionProps<T extends object> = Pick<T, FunctionKeys<T>>;
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn test_infer_inside_type_predicate_target_resolves_in_true_branch() {
+    // `target is infer X` exposes `X` to the conditional's true branch the
+    // same way return-position `infer X` does.
+    let source = r#"
+type X<F> = F extends (x: any) => x is infer N ? N : never;
+type Test = X<(x: any) => x is string>;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected `infer` inside type predicate to bind in conditional true branch, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_infer_inside_asserts_predicate_resolves_in_true_branch() {
+    let source = r#"
+type AssertedType<F> = F extends (target: any) => asserts target is infer N ? N : never;
+type Test = AssertedType<(target: any) => asserts target is number>;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected `infer` inside asserts predicate to bind, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}

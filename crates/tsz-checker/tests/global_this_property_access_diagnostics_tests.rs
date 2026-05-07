@@ -199,6 +199,58 @@ function f(x: A | B) {
     );
 }
 
+#[test]
+fn window_typeof_globalthis_annotation_preserves_later_diagnostics() {
+    let source = r#"
+interface Window {}
+declare let win: Window & typeof globalThis;
+
+win.hi
+this.hi
+globalThis.hi
+
+win['hi']
+this['hi']
+globalThis['hi']
+"#;
+    let diags = check_with_no_implicit_any(source);
+    assert!(
+        count(&diags, 2339) >= 1,
+        "TS2339 must fire for win.hi; got: {diags:#?}"
+    );
+    assert!(
+        count(&diags, 7015) >= 1,
+        "TS7015 must fire for win['hi']; got: {diags:#?}"
+    );
+    assert!(
+        count(&diags, 7017) >= 2,
+        "TS7017 must fire for this.hi/globalThis.hi; got: {diags:#?}"
+    );
+    assert!(
+        count(&diags, 7053) >= 2,
+        "TS7053 must fire for this['hi']/globalThis['hi']; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn global_window_property_access_does_not_report_missing_index_signature() {
+    let source = r#"
+interface Window {}
+declare var window: Window & typeof globalThis;
+(() => this.window);
+"#;
+    let diags = check_with_no_implicit_any(source);
+    assert!(
+        count(&diags, 7041) >= 1,
+        "TS7041 should still fire for captured global this; got: {diags:#?}"
+    );
+    assert_eq!(
+        count(&diags, 7017),
+        0,
+        "this.window is a declared global property, not an implicit-any miss; got: {diags:#?}"
+    );
+}
+
 fn check_with_no_implicit_any(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     use tsz_checker::context::CheckerOptions;
     tsz_checker::test_utils::check_source(
