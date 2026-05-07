@@ -207,10 +207,20 @@ impl<'a> CheckerState<'a> {
                     }
                     let (_type_params, type_param_updates) =
                         self.push_type_parameters(&sig.type_parameters);
+                    // Resolve parameter type annotations FIRST so that
+                    // `typeof param_name` references in the return type
+                    // annotation can be resolved through `typeof_param_scope`.
+                    // Without this, the return type is checked while the scope
+                    // is empty (it's only populated by `get_type_of_interface`
+                    // when computing the interface's structural type), and a
+                    // signature like `(a: number): typeof a` reports TS2304.
+                    let extracted_params = self.extract_params_from_signature_in_type_literal(sig);
+                    self.push_typeof_param_scope(&extracted_params.0);
                     if sig.type_annotation.is_some() {
                         self.check_type_node(sig.type_annotation);
                         self.get_type_from_type_node(sig.type_annotation);
                     }
+                    self.pop_typeof_param_scope(&extracted_params.0);
                     for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
