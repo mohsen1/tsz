@@ -43,12 +43,17 @@ fn make_server() -> Server {
     }
 }
 
+/// Issue #3848: tsserver does NOT inject filename-gated `inferFromUsage`
+/// placeholders for JSDoc `@type {function(...)}` annotations — the same
+/// source under any other file name returns just the
+/// `Annotate with type from JSDoc` fix. Verify tsz-server now matches that
+/// invariant: the response must contain the annotate fix and must NOT carry
+/// any empty-changes `inferFromUsage` actions.
 #[test]
-fn get_code_fixes_jsdoc_infer_placeholders_match_fourslash_order_16() {
+fn get_code_fixes_jsdoc_does_not_emit_filename_gated_placeholders() {
     let mut server = make_server();
     let file = "/annotateWithTypeFromJSDoc16.ts";
     let content = "/** @type {function(*, ...number, ...boolean): void} */\nvar x = (x, ys, ...zs) => { x; ys; zs; };\n";
-    let annotate_index_zero_based = 3usize;
 
     server
         .open_files
@@ -73,18 +78,22 @@ fn get_code_fixes_jsdoc_infer_placeholders_match_fourslash_order_16() {
         .as_ref()
         .and_then(serde_json::Value::as_array)
         .expect("expected getCodeFixes actions array");
-    assert!(
-        actions.len() > annotate_index_zero_based,
-        "expected at least {} actions for {file}, got {actions:?}",
-        annotate_index_zero_based + 1
-    );
-    let annotate = &actions[annotate_index_zero_based];
-    assert_eq!(
-        annotate
+    let any_annotate = actions.iter().any(|action| {
+        action
             .get("description")
-            .and_then(serde_json::Value::as_str),
-        Some("Annotate with type from JSDoc"),
-        "unexpected action order for {file}: {actions:?}"
+            .and_then(serde_json::Value::as_str)
+            == Some("Annotate with type from JSDoc")
+    });
+    assert!(
+        any_annotate,
+        "expected an 'Annotate with type from JSDoc' action for {file}, got {actions:?}"
+    );
+    let any_infer_placeholder = actions.iter().any(|action| {
+        action.get("fixId").and_then(serde_json::Value::as_str) == Some("inferFromUsage")
+    });
+    assert!(
+        !any_infer_placeholder,
+        "tsserver does not emit `inferFromUsage` for JSDoc @type function annotations; got {actions:?}"
     );
 }
 
