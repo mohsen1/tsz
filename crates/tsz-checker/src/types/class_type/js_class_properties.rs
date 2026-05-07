@@ -562,6 +562,9 @@ impl CheckerState<'_> {
             {
                 continue;
             }
+            if enclosing_has_this_tag {
+                continue;
+            }
             let is_readonly = self.jsdoc_has_readonly_tag(stmt_idx);
 
             if rhs_idx.is_some() && self.js_assignment_rhs_is_void_zero(rhs_idx) {
