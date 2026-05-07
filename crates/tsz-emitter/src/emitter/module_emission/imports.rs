@@ -1237,12 +1237,12 @@ impl<'a> Printer<'a> {
         } else if is_external {
             // `import X = require("module")` uses const/var based on target.
             self.write_var_or_const();
-            self.emit(import.import_clause);
+            self.emit_decl_name(import.import_clause);
             self.write(" = ");
         } else {
             // `import X = Y` (entity name) always uses `var` per TSC behavior.
             self.write("var ");
-            self.emit(import.import_clause);
+            self.emit_decl_name(import.import_clause);
             self.write(" = ");
         }
 

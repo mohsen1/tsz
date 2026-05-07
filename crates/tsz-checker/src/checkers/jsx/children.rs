@@ -906,6 +906,48 @@ impl<'a> CheckerState<'a> {
         Some(type_id)
     }
 
+    pub(in crate::checkers_domain::jsx) fn react_node_multiple_children_union_for_display(
+        &mut self,
+        mut element_types: Vec<TypeId>,
+    ) -> TypeId {
+        let ordered = self.order_react_node_multiple_children_union_for_display(&mut element_types);
+        let union = self.ctx.types.factory().union(element_types.clone());
+        if ordered {
+            self.ctx
+                .types
+                .replace_union_origin_for_display(union, element_types);
+        }
+        union
+    }
+
+    pub(in crate::checkers_domain::jsx) fn order_react_node_multiple_children_union_for_display(
+        &mut self,
+        element_types: &mut [TypeId],
+    ) -> bool {
+        if element_types.len() != 3
+            || !element_types.contains(&TypeId::BOOLEAN)
+            || !element_types
+                .iter()
+                .any(|&type_id| self.type_allows_multiple_children(type_id))
+            || !element_types
+                .iter()
+                .any(|&type_id| self.format_type(type_id) == "ReactChild")
+        {
+            return false;
+        }
+
+        element_types.sort_by_key(|&type_id| {
+            if type_id == TypeId::BOOLEAN {
+                0
+            } else if self.type_allows_multiple_children(type_id) {
+                1
+            } else {
+                2
+            }
+        });
+        true
+    }
+
     fn is_jsx_empty_object_fragment_type(&self, type_id: TypeId) -> bool {
         crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id).is_some_and(
             |shape| {
@@ -1256,6 +1298,10 @@ impl<'a> CheckerState<'a> {
         let Some(child_nodes) = self.get_jsx_body_child_nodes(attributes_idx) else {
             return false;
         };
+        let expected_child_type =
+            self.jsx_multiple_children_expected_union_for_display(expected_child_type);
+        let original_children_type =
+            self.jsx_multiple_children_expected_union_for_display(original_children_type);
 
         let child_request = crate::context::TypingRequest::with_contextual_type(
             contextual_child_type.unwrap_or(expected_child_type),
@@ -1321,6 +1367,19 @@ impl<'a> CheckerState<'a> {
         }
 
         emitted
+    }
+
+    fn jsx_multiple_children_expected_union_for_display(&mut self, type_id: TypeId) -> TypeId {
+        let members = if let Some(origin) = self.ctx.types.get_union_origin(type_id) {
+            origin.as_ref().clone()
+        } else if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            members
+        } else {
+            return type_id;
+        };
+        self.react_node_multiple_children_union_for_display(members)
     }
 
     fn report_jsx_single_child_constructor_instance_mismatch(

@@ -274,7 +274,7 @@ fn main() -> Result<()> {
     println!("✓ Found {} test files", test_files.len());
 
     let tsc_version = resolve_tsc_version().unwrap_or_else(|_| "unknown".to_string());
-    println!("📍 TypeScript version: {}", &tsc_version);
+    println!("📍 TypeScript version: {tsc_version}");
     println!("\n🚀 Starting tsserver...");
     let mut client = TsServerClient::new(&args.tsserver, args.verbose)?;
     println!("✓ tsserver started");
