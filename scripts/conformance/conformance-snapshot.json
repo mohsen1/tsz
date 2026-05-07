@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-05-07T08:27:27Z",
-  "git_sha": "dc22d1fd7012f890a20ebf9d2cac3529a6c21c7e",
+  "timestamp": "2026-05-07T12:00:02Z",
+  "git_sha": "fe972706584ddf467172f70e936f60a9ac4e081e",
   "summary": {
     "total_tests": 12582,
     "passed": 12455,
     "failed": 127,
-    "pass_rate": 99.0
+    "pass_rate": 98.99062152281036
   },
   "areas_by_pass_rate": [
     {
@@ -830,12 +830,12 @@
       "count": 2
     },
     {
-      "code": "TS7006",
+      "code": "TS2741",
       "count": 2
     },
     {
-      "code": "TS2741",
-      "count": 2
+      "code": "TS7006",
+      "count": 1
     },
     {
       "code": "TS1192",
@@ -846,11 +846,11 @@
       "count": 1
     },
     {
-      "code": "TS2307",
+      "code": "TS2732",
       "count": 1
     },
     {
-      "code": "TS2732",
+      "code": "TS2307",
       "count": 1
     },
     {
@@ -888,19 +888,19 @@
       "count": 2
     },
     {
-      "code": "TS2307",
-      "count": 1
-    },
-    {
       "code": "TS2732",
       "count": 1
     },
     {
-      "code": "TS2775",
+      "code": "TS2307",
       "count": 1
     },
     {
       "code": "TS2430",
+      "count": 1
+    },
+    {
+      "code": "TS2775",
       "count": 1
     }
   ],
@@ -1009,7 +1009,7 @@
     },
     {
       "code": "TS7006",
-      "count": 4
+      "count": 3
     },
     {
       "code": "TS2638",
@@ -1040,28 +1040,28 @@
       "count": 1
     },
     {
-      "code": "TS2307",
-      "count": 1
-    },
-    {
       "code": "TS2732",
       "count": 1
     },
     {
-      "code": "TS2775",
+      "code": "TS2307",
       "count": 1
     },
     {
       "code": "TS2430",
+      "count": 1
+    },
+    {
+      "code": "TS2775",
       "count": 1
     }
   ],
   "categories": {
     "false_positive": 22,
     "all_missing": 0,
-    "wrong_code": 24,
-    "fingerprint_only": 76,
+    "wrong_code": 23,
+    "fingerprint_only": 77,
     "same_code_count_drift": 0,
-    "close_to_passing": 18
+    "close_to_passing": 17
   }
 }
