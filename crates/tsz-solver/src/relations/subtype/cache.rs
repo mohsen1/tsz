@@ -759,11 +759,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let all_related = member_list
                 .iter()
                 .all(|&member| self.check_subtype(member, target).is_true());
-            Some(if all_related {
-                SubtypeResult::True
-            } else {
-                SubtypeResult::False
-            })
+            all_related.then_some(SubtypeResult::True)
         } else if let (Some(s_elem), Some(t_elem)) = (
             self.readonly_array_application_element(source),
             self.readonly_array_syntax_element(target),
@@ -787,11 +783,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .is_some_and(|t_elem| self.check_subtype(s_elem, t_elem).is_true())
                         || self.check_subtype(source, member).is_true()
                 });
-                Some(if any_related {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
-                })
+                any_related.then_some(SubtypeResult::True)
             } else {
                 None
             }
