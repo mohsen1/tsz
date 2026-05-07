@@ -2935,13 +2935,155 @@ fn removed_compiler_option(key: &str) -> Option<&'static str> {
 }
 
 fn unknown_compiler_option_suggestion(key_lower: &str) -> Option<&'static str> {
-    match key_lower {
+    // Preserve the historical aliases for `disableSolution*`: those names are
+    // closer to the real option semantically than they are by edit distance,
+    // so spell out the mapping rather than relying on Levenshtein scoring.
+    if let Some(name) = match key_lower {
         "disablesolutioncaching" | "disablesolutiontypechecking" => {
             Some("disableSolutionSearching")
         }
         _ => None,
+    } {
+        return Some(name);
     }
+
+    // General nearest-option suggestion using TypeScript's `getSpellingSuggestion`
+    // algorithm against the full set of canonical compiler-option names. This
+    // upgrades typos like `stric` → `strict`, `noEmti` → `noEmit`, and
+    // `moduleResoluton` → `moduleResolution` from a bare TS5023 to a TS5025
+    // `Did you mean ...` diagnostic.
+    tsz_parser::parser::spelling::get_spelling_suggestion(
+        key_lower,
+        KNOWN_COMPILER_OPTION_CANONICAL_NAMES,
+    )
 }
+
+/// Canonical names of every compiler option recognized by `known_compiler_option`.
+/// Used as the candidate set for `getSpellingSuggestion`-style typo recovery.
+/// Keep this list in sync with `known_compiler_option`.
+const KNOWN_COMPILER_OPTION_CANONICAL_NAMES: &[&str] = &[
+    "allowArbitraryExtensions",
+    "allowImportingTsExtensions",
+    "allowJs",
+    "allowSyntheticDefaultImports",
+    "allowUmdGlobalAccess",
+    "allowUnreachableCode",
+    "allowUnusedLabels",
+    "alwaysStrict",
+    "baseUrl",
+    "charset",
+    "checkJs",
+    "composite",
+    "customConditions",
+    "declaration",
+    "declarationDir",
+    "declarationMap",
+    "diagnostics",
+    "disableReferencedProjectLoad",
+    "disableSizeLimit",
+    "disableSolutionSearching",
+    "disableSourceOfProjectReferenceRedirect",
+    "disableSourceOfReferencedProjectLoad",
+    "downlevelIteration",
+    "emitBOM",
+    "emitDeclarationOnly",
+    "emitDecoratorMetadata",
+    "erasableSyntaxOnly",
+    "esModuleInterop",
+    "exactOptionalPropertyTypes",
+    "experimentalDecorators",
+    "extendedDiagnostics",
+    "forceConsistentCasingInFileNames",
+    "generateCpuProfile",
+    "generateTrace",
+    "ignoreDeprecations",
+    "importHelpers",
+    "importsNotUsedAsValues",
+    "incremental",
+    "inlineSourceMap",
+    "inlineSources",
+    "isolatedDeclarations",
+    "isolatedModules",
+    "jsx",
+    "jsxFactory",
+    "jsxFragmentFactory",
+    "jsxImportSource",
+    "keyofStringsOnly",
+    "lib",
+    "libReplacement",
+    "listEmittedFiles",
+    "listFiles",
+    "listFilesOnly",
+    "locale",
+    "mapRoot",
+    "maxNodeModuleJsDepth",
+    "module",
+    "moduleDetection",
+    "moduleResolution",
+    "moduleSuffixes",
+    "newLine",
+    "noCheck",
+    "noEmit",
+    "noEmitHelpers",
+    "noEmitOnError",
+    "noErrorTruncation",
+    "noFallthroughCasesInSwitch",
+    "noImplicitAny",
+    "noImplicitOverride",
+    "noImplicitReturns",
+    "noImplicitThis",
+    "noImplicitUseStrict",
+    "noLib",
+    "noTypesAndSymbols",
+    "noPropertyAccessFromIndexSignature",
+    "noResolve",
+    "noStrictGenericChecks",
+    "noUncheckedIndexedAccess",
+    "noUncheckedSideEffectImports",
+    "noUnusedLocals",
+    "noUnusedParameters",
+    "out",
+    "outDir",
+    "outFile",
+    "paths",
+    "plugins",
+    "preserveConstEnums",
+    "preserveSymlinks",
+    "preserveValueImports",
+    "preserveWatchOutput",
+    "pretty",
+    "reactNamespace",
+    "removeComments",
+    "resolveJsonModule",
+    "resolvePackageJsonExports",
+    "resolvePackageJsonImports",
+    "rewriteRelativeImportExtensions",
+    "rootDir",
+    "rootDirs",
+    "skipDefaultLibCheck",
+    "skipLibCheck",
+    "sourceMap",
+    "sourceRoot",
+    "strict",
+    "strictBindCallApply",
+    "strictBuiltinIteratorReturn",
+    "strictFunctionTypes",
+    "strictNullChecks",
+    "strictPropertyInitialization",
+    "stripInternal",
+    "stableTypeOrdering",
+    "suppressExcessPropertyErrors",
+    "suppressImplicitAnyIndexErrors",
+    "target",
+    "traceResolution",
+    "tsBuildInfoFile",
+    "typesVersionsCompilerVersion",
+    "typeRoots",
+    "types",
+    "useDefineForClassFields",
+    "useUnknownInCatchVariables",
+    "verbatimModuleSyntax",
+];
 
 /// Comprehensive map of all known TypeScript compiler options.
 /// Maps lowercase name → canonical camelCase name.
@@ -5162,6 +5304,62 @@ mod tests {
         assert!(
             codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN),
             "Expected TS5025-style did-you-mean for mis-cased disableSizeLimit, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_typo_suggestions_emit_ts5025_for_close_compiler_option_names() {
+        // Issue #3831: typoed compiler-option names that the canonical option
+        // list contains within Levenshtein range should be reported as TS5025
+        // with a `Did you mean ...` suggestion, matching tsc.
+        let cases = [
+            ("stric", "strict"),
+            ("noEmti", "noEmit"),
+            ("moduleResoluton", "moduleResolution"),
+        ];
+        for (typo, expected) in cases {
+            let source = format!("{{\"compilerOptions\":{{\"{typo}\":true}}}}");
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            let diag = parsed
+                .diagnostics
+                .iter()
+                .find(|d| d.code == diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Expected TS5025 for typo {typo}, got: {:?}",
+                        parsed.diagnostics
+                    )
+                });
+            assert!(
+                diag.message_text.contains(expected),
+                "TS5025 for {typo} should suggest {expected}, got: {}",
+                diag.message_text
+            );
+            assert!(
+                !parsed
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.code == diagnostic_codes::UNKNOWN_COMPILER_OPTION),
+                "Bare TS5023 should not be emitted alongside TS5025 for {typo}, got: {:?}",
+                parsed.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn test_unrelated_unknown_compiler_option_still_falls_back_to_ts5023() {
+        // A name that bears no resemblance to any canonical option must not
+        // get a spurious TS5025 suggestion, just the bare TS5023.
+        let source = r#"{"compilerOptions":{"completelyUnrelatedXYZ":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION),
+            "Expected TS5023 for unrelated unknown option, got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN),
+            "Unrelated option should not emit a Did-you-mean suggestion, got: {codes:?}"
         );
     }
 
