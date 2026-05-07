@@ -487,6 +487,17 @@ impl<'a> Printer<'a> {
             && !has_module_wrapper_stmt
             && !jsx_will_add_esm_imports;
 
+        // Issue #3516: when the `using`/`await using` downlevel transform
+        // fires for a script (target < esnext.disposable), tsc emits a
+        // `"use strict"` prologue because the transform's helpers and the
+        // surrounding lowered code rely on strict-mode semantics. Mirror
+        // that by detecting top-level using declarations and forcing the
+        // prologue.
+        let needs_use_strict_using_transform = !is_es_module_output
+            && !is_file_module
+            && !self.ctx.options.target.supports_es2025()
+            && self.block_has_using_declarations(&source.statements);
+
         let should_emit_use_strict = !source_has_use_strict
             && !self.ctx.options.suppress_use_strict
             && (needs_use_strict_cjs
@@ -494,7 +505,8 @@ impl<'a> Printer<'a> {
                 || needs_use_strict_inside_wrapper
                 || needs_use_strict_always
                 || needs_use_strict_invalid_export_recovery
-                || needs_use_strict_legacy_system);
+                || needs_use_strict_legacy_system
+                || needs_use_strict_using_transform);
 
         // When the source has its own "use strict" prologue AND this is a CJS
         // module file, we must emit "use strict" at the correct position (before

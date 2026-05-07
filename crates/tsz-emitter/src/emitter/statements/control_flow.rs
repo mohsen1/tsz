@@ -1719,7 +1719,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if a statement list contains any `using`/`await using` declarations.
-    pub(super) fn block_has_using_declarations(&self, statements: &NodeList) -> bool {
+    pub(in crate::emitter) fn block_has_using_declarations(&self, statements: &NodeList) -> bool {
         for &stmt_idx in &statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
