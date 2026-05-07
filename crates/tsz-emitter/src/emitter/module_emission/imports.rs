@@ -268,6 +268,41 @@ impl<'a> Printer<'a> {
         false
     }
 
+    /// Whether the default binding of an import clause is referenced as a
+    /// value in the rest of the file. Mirrors `filter_value_specs_by_usage`
+    /// for the default binding so that an unused default beside a used named
+    /// or namespace binding is elided (matching tsc).
+    fn default_binding_has_value_usage(
+        &self,
+        import_node: &Node,
+        default_name_idx: NodeIndex,
+    ) -> bool {
+        let local_name = self.get_identifier_text_idx(default_name_idx);
+        if local_name.is_empty() {
+            return true;
+        }
+        let Some(source_text) = self.source_text else {
+            return true;
+        };
+        let Some(import_data) = self.arena.get_import_decl(import_node) else {
+            return true;
+        };
+        let haystack = Self::source_after_import(source_text, import_node, import_data, self.arena);
+        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+            &value_haystack,
+            &self.ctx.options.external_const_enum_bindings,
+        );
+        if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name) {
+            return true;
+        }
+        // Under `--emitDecoratorMetadata`, decorated-member type
+        // annotations are *value* references; preserve the default whose
+        // name appears in such an annotation.
+        self.ctx.options.emit_decorator_metadata
+            && crate::import_usage::name_appears_in_decorator_metadata_type(haystack, &local_name)
+    }
+
     /// Filter named import specifiers to only those with value-level usage
     /// in the rest of the file. Used in --noCheck mode.
     fn filter_value_specs_by_usage(
@@ -718,6 +753,23 @@ impl<'a> Printer<'a> {
 
         let has_named =
             namespace_name.is_some() || !value_specs.is_empty() || raw_named_bindings.is_some();
+
+        // Elide an unused default binding when another binding survives in the
+        // same clause. Mirrors the named-specifier filter above and matches
+        // tsc's behavior for `import Foo, { bar } from "x"; bar();` -> emits
+        // only `import { bar } from "x";`. JSX-factory defaults are exempt
+        // because their name is referenced implicitly by JSX elements.
+        if has_default
+            && has_named
+            && self.ctx.options.type_only_nodes.is_empty()
+            && !self.source_is_js_file
+            && !self.ctx.options.verbatim_module_syntax
+            && !self.is_jsx_factory_import_clause(clause)
+            && !self.default_binding_has_value_usage(node, clause.name)
+        {
+            has_default = false;
+        }
+
         if !has_default && !has_named {
             return;
         }
