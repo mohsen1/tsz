@@ -3557,12 +3557,21 @@ fn validate_cli_compiler_option_diagnostics(
     let config_bool = |get: fn(&CompilerOptions) -> Option<bool>| -> bool {
         config_options.and_then(get).unwrap_or(false)
     };
+    // Group-1 TS5069 triggers (`emitDeclarationOnly`, `declarationMap`,
+    // `isolatedDeclarations`) require `declaration` or `composite`. When any of
+    // them is set on the CLI, inherit the config-level `declaration`/`composite`
+    // so the validator sees the merged effective options instead of the bare
+    // CLI snapshot.
+    let triggers_decl_or_composite_check =
+        args.emit_declaration_only || args.declaration_map || args.isolated_declarations;
     if args.declaration
-        || (args.emit_declaration_only && config_bool(|options| options.declaration))
+        || (triggers_decl_or_composite_check && config_bool(|options| options.declaration))
     {
         compiler_options.insert("declaration".to_string(), true.into());
     }
-    if args.composite || (args.emit_declaration_only && config_bool(|options| options.composite)) {
+    if args.composite
+        || (triggers_decl_or_composite_check && config_bool(|options| options.composite))
+    {
         compiler_options.insert("composite".to_string(), true.into());
     }
     if args.no_emit
