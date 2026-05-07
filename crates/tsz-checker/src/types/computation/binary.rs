@@ -1974,17 +1974,26 @@ impl<'a> CheckerState<'a> {
             if is_non_equality_op && (left_type == TypeId::UNKNOWN || right_type == TypeId::UNKNOWN)
             {
                 let mut emitted = false;
-                if left_type == TypeId::UNKNOWN {
-                    emitted |= self.error_is_of_type_unknown(left_idx);
-                }
-                if right_type == TypeId::UNKNOWN {
-                    emitted |= self.error_is_of_type_unknown(right_idx);
+                if self.ctx.compiler_options.strict_null_checks {
+                    if left_type == TypeId::UNKNOWN {
+                        emitted |= self.error_is_of_type_unknown(left_idx);
+                    }
+                    if right_type == TypeId::UNKNOWN {
+                        emitted |= self.error_is_of_type_unknown(right_idx);
+                    }
+                } else {
+                    // In non-strict mode, unknown participates in normal operator
+                    // compatibility checks and emits TS2365/related diagnostics.
+                    self.emit_binary_operator_error(
+                        node_idx, left_idx, right_idx, left_type, right_type, op_str, false,
+                    );
+                    type_stack.push(TypeId::UNKNOWN);
+                    continue;
                 }
                 if emitted {
                     type_stack.push(TypeId::ERROR);
                     continue;
                 }
-                // Without strictNullChecks, fall through to normal handling
             }
 
             // Check for boxed primitive types in arithmetic operations BEFORE evaluating types.

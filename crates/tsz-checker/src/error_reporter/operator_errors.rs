@@ -13,7 +13,10 @@ impl<'a> CheckerState<'a> {
     /// Report TS2351: "This expression is not constructable. Type 'X' has no construct signatures."
     /// This is for `new` expressions where the expression type has no construct signatures.
     pub fn error_not_constructable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
-        if type_id == TypeId::ERROR || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
+        if type_id == TypeId::ERROR
+            || type_id == TypeId::ANY
+            || (type_id == TypeId::UNKNOWN && self.ctx.compiler_options.strict_null_checks)
+        {
             return;
         }
 
@@ -414,10 +417,16 @@ impl<'a> CheckerState<'a> {
         }
 
         // Suppress cascade errors from unresolved types
-        if left_type == TypeId::ERROR
-            || right_type == TypeId::ERROR
-            || left_type == TypeId::UNKNOWN
-            || right_type == TypeId::UNKNOWN
+        if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
+            return;
+        }
+
+        // In strictNullChecks mode, unknown-specific unknown diagnostics are handled
+        // by the binary evaluation gate above, so skip TS2365/TS2362/TS2363 here.
+        // In non-strict mode, unknown should still participate in normal operator
+        // diagnostics (e.g., `unknown + 1` -> TS2365).
+        if self.ctx.compiler_options.strict_null_checks
+            && (left_type == TypeId::UNKNOWN || right_type == TypeId::UNKNOWN)
         {
             return;
         }

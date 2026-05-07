@@ -842,8 +842,12 @@ impl<'a> CheckerState<'a> {
     pub fn error_not_callable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
         use tsz_parser::parser::syntax_kind_ext;
 
-        // Suppress cascade errors from unresolved types
-        if type_id == TypeId::ERROR || type_id == TypeId::UNKNOWN {
+        // Suppress cascade errors from unresolved types.
+        // In strictNullChecks mode, TS18046 is preferred for `unknown`;
+        // in non-strict mode, `unknown` should emit a TS2349 callability error.
+        if type_id == TypeId::ERROR
+            || (type_id == TypeId::UNKNOWN && self.ctx.compiler_options.strict_null_checks)
+        {
             return;
         }
 

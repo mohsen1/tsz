@@ -2450,8 +2450,8 @@ impl<'a> CheckerState<'a> {
         literal_index: Option<usize>,
     ) -> bool {
         if object_type == TypeId::ANY
-            || object_type == TypeId::UNKNOWN
             || object_type == TypeId::ERROR
+            || (self.ctx.compiler_options.strict_null_checks && object_type == TypeId::UNKNOWN)
         {
             return false;
         }
@@ -2487,7 +2487,9 @@ impl<'a> CheckerState<'a> {
             object_type
         };
 
-        if check_type == TypeId::ANY || check_type == TypeId::UNKNOWN || check_type == TypeId::ERROR
+        if check_type == TypeId::ANY
+            || check_type == TypeId::ERROR
+            || (self.ctx.compiler_options.strict_null_checks && check_type == TypeId::UNKNOWN)
         {
             return false;
         }

@@ -1203,13 +1203,17 @@ impl<'a> CheckerState<'a> {
                     Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
-                    use_index_signature_check = false;
-                    // TS18046: 'x' is of type 'unknown'.
-                    // Without strictNullChecks, unknown is treated like any.
-                    if self.error_is_of_type_unknown(access.expression) {
-                        Some(TypeId::ERROR)
+                    if self.ctx.compiler_options.strict_null_checks {
+                        use_index_signature_check = false;
+                        // TS18046: 'x' is of type 'unknown'.
+                        // Without strictNullChecks, unknown is treated like any.
+                        if self.error_is_of_type_unknown(access.expression) {
+                            Some(TypeId::ERROR)
+                        } else {
+                            Some(TypeId::ANY)
+                        }
                     } else {
-                        Some(TypeId::ANY)
+                        None
                     }
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => {
@@ -1331,13 +1335,17 @@ impl<'a> CheckerState<'a> {
                     Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
-                    use_index_signature_check = false;
-                    // TS18046: 'x' is of type 'unknown'.
-                    // Without strictNullChecks, unknown is treated like any.
-                    if self.error_is_of_type_unknown(access.expression) {
-                        Some(TypeId::ERROR)
+                    if self.ctx.compiler_options.strict_null_checks {
+                        use_index_signature_check = false;
+                        // TS18046: 'x' is of type 'unknown'.
+                        // Without strictNullChecks, unknown is treated like any.
+                        if self.error_is_of_type_unknown(access.expression) {
+                            Some(TypeId::ERROR)
+                        } else {
+                            Some(TypeId::ANY)
+                        }
                     } else {
-                        Some(TypeId::ANY)
+                        None
                     }
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => None,

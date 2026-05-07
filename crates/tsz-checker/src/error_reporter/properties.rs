@@ -2150,7 +2150,6 @@ impl<'a> CheckerState<'a> {
         }
         if object_type == TypeId::ANY
             || object_type == TypeId::ERROR
-            || object_type == TypeId::UNKNOWN
             || object_type == TypeId::NEVER
         {
             return;
