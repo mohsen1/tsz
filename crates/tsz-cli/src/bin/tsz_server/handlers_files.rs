@@ -159,19 +159,33 @@ impl Server {
     /// TypeScript's internal string representation). Characters outside the BMP
     /// (U+10000 and above) occupy 2 UTF-16 code units but are a single Rust
     /// `char`, so we must account for surrogate pairs when advancing.
+    ///
+    /// Line breaks follow tsserver semantics: `\n`, `\r`, and `\r\n` each count
+    /// as a single line terminator.
     pub(crate) fn line_offset_to_byte(content: &str, line: u32, offset: u32) -> usize {
         let target_line = (line as usize).saturating_sub(1);
         let target_utf16 = (offset as usize).saturating_sub(1);
         let mut current_line = 0usize;
         let mut line_start = 0usize;
         if target_line > 0 {
-            for (i, ch) in content.char_indices() {
-                if ch == '\n' {
-                    current_line += 1;
-                    if current_line == target_line {
-                        line_start = i + 1;
-                        break;
+            let mut chars = content.char_indices().peekable();
+            while let Some((i, ch)) = chars.next() {
+                let line_break_end = if ch == '\r' {
+                    if matches!(chars.peek(), Some((_, '\n'))) {
+                        let (j, _) = chars.next().unwrap();
+                        j + 1
+                    } else {
+                        i + 1
                     }
+                } else if ch == '\n' {
+                    i + 1
+                } else {
+                    continue;
+                };
+                current_line += 1;
+                if current_line == target_line {
+                    line_start = line_break_end;
+                    break;
                 }
             }
             if current_line < target_line {
@@ -182,7 +196,7 @@ impl Server {
         let mut utf16_consumed = 0usize;
         while utf16_consumed < target_utf16 {
             match content[byte_pos..].chars().next() {
-                Some(c) if c != '\n' => {
+                Some(c) if c != '\n' && c != '\r' => {
                     byte_pos += c.len_utf8();
                     utf16_consumed += c.len_utf16();
                 }
