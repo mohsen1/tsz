@@ -1827,6 +1827,64 @@ fn test_update_open_changed_files_edits_open_snapshot() {
 }
 
 #[test]
+fn test_apply_changed_to_open_files_applies_span_edits() {
+    // tsserver's `applyChangedToOpenFiles` uses byte/UTF-16-offset spans
+    // (`{span: {start, length}, newText}`), unlike `updateOpen.changedFiles`
+    // which uses line/offset positions. tsz used to reject the command
+    // entirely. Regression for https://github.com/mohsen1/tsz/issues/3766.
+    let mut server = make_server();
+    let file = "/a.ts";
+    server
+        .open_files
+        .insert(file.to_string(), "const value = 1;\n".to_string());
+
+    let response = server.handle_tsserver_request(make_request(
+        "applyChangedToOpenFiles",
+        serde_json::json!({
+            "changedFiles": [{
+                "fileName": file,
+                "changes": [{"span": {"start": 14, "length": 1}, "newText": "3"}]
+            }]
+        }),
+    ));
+    assert!(
+        response.success,
+        "applyChangedToOpenFiles should be recognized, got {response:?}"
+    );
+    assert_eq!(
+        response.body,
+        Some(serde_json::Value::Bool(true)),
+        "tsserver returns body=true; got {response:?}"
+    );
+    assert_eq!(
+        server.open_files.get(file).map(String::as_str),
+        Some("const value = 3;\n"),
+        "applyChangedToOpenFiles must rewrite the open snapshot"
+    );
+}
+
+#[test]
+fn test_apply_changed_to_open_files_handles_open_and_closed_files() {
+    // Mirrors `updateOpen` semantics for the auxiliary `openFiles` /
+    // `closedFiles` arrays: `applyChangedToOpenFiles` may carry these too.
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/old.ts".to_string(), "x".to_string());
+
+    let response = server.handle_tsserver_request(make_request(
+        "applyChangedToOpenFiles",
+        serde_json::json!({
+            "openFiles": [{"file": "/new.ts", "fileContent": "const y = 1;"}],
+            "closedFiles": ["/old.ts"]
+        }),
+    ));
+    assert!(response.success);
+    assert!(server.open_files.contains_key("/new.ts"));
+    assert!(!server.open_files.contains_key("/old.ts"));
+}
+
+#[test]
 fn test_semantic_diagnostics_skip_inferred_module_none_when_target_supports_imports() {
     let mut server = make_server();
     server.open_files.insert(
