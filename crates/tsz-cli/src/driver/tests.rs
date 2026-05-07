@@ -655,6 +655,51 @@ fn test_cli_source_map_satisfies_config_map_root_validation() {
 }
 
 #[test]
+fn test_cli_emit_declaration_only_inherits_config_declaration() {
+    // Regression for #3500: `--emitDeclarationOnly` on the CLI must not
+    // report TS5069 when `declaration: true` (or `composite: true`) is
+    // supplied via tsconfig.json. The early CLI-only short-circuit was
+    // removed in favor of the driver/config validation merge, which already
+    // honors the prerequisite.
+    for (key, value) in [("declaration", "true"), ("composite", "true")] {
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::write(dir.path().join("a.ts"), "export const x: number = 1;\n").expect("write source");
+        fs::write(
+            dir.path().join("tsconfig.json"),
+            format!(
+                r#"{{
+  "files": ["a.ts"],
+  "compilerOptions": {{
+    "{key}": {value},
+    "outDir": "dist"
+  }}
+}}"#
+            ),
+        )
+        .expect("write tsconfig");
+
+        let args = CliArgs::try_parse_from([
+            "tsz",
+            "-p",
+            "tsconfig.json",
+            "--emitDeclarationOnly",
+            "--pretty",
+            "false",
+        ])
+        .expect("parse args");
+        let result = compile(&args, dir.path()).expect("compile");
+        assert!(
+            result.diagnostics.iter().all(|diag| {
+                diag.code
+                    != diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+            }),
+            "config {key}:{value} should satisfy --emitDeclarationOnly TS5069 prerequisite, got: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn test_cli_declaration_map_inherits_config_declaration() {
     // Regression for #3712: `--declarationMap` on the CLI must not report
     // TS5069 when `declaration: true` is supplied via tsconfig.json. The CLI

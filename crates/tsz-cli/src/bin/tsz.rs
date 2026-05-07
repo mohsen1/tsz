@@ -133,14 +133,12 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         std::process::exit(1);
     }
 
-    // TS5069: Option 'emitDeclarationOnly' cannot be specified without specifying option
-    // 'declaration' or option 'composite'.
-    if args.emit_declaration_only && !args.declaration && !args.composite {
-        println!(
-            "error TS5069: Option 'emitDeclarationOnly' cannot be specified without specifying option 'declaration' or option 'composite'."
-        );
-        std::process::exit(1);
-    }
+    // Issue #3500: TS5069 for `--emitDeclarationOnly` is enforced by the
+    // driver/config validation (see `crates/tsz-cli/src/driver/core.rs`'s
+    // group-1 prerequisite merge and `crates/tsz-core/src/config/mod.rs`'s
+    // TS5069 emission). The previous early CLI-only short-circuit fired
+    // before tsconfig was loaded, so projects with `declaration: true`
+    // in their config were incorrectly rejected.
 
     if let Some(profile_path) = args.generate_cpu_profile.as_ref() {
         println!(
