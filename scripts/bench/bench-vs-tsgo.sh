@@ -809,9 +809,12 @@ run_project_benchmark() {
             run_with_timeout "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
         fi
         if [ "$tsc_check" -ne 0 ]; then
+            local status
             if [ "$tsc_check" -eq 124 ]; then
+                status="tsc timeout after ${project_tsc_timeout}s"
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${project_tsc_timeout}s)"
             else
+                status="tsc fixture error"
                 local tsc_error
                 if [ "${#project_node_prefix[@]}" -gt 0 ]; then
                     tsc_error="$(run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" 2>&1 | head -1)"
@@ -821,6 +824,7 @@ run_project_benchmark() {
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
                 echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
             fi
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             return
         fi
     fi
