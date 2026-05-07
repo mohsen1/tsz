@@ -2669,6 +2669,43 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             "typeAcquisition",
         );
         validate_type_acquisition_known_keys(obj, &mut diagnostics, &stripped, file_path);
+
+        // TS6046 for invalid `watchOptions.watchFile` / `watchDirectory` /
+        // `fallbackPolling` enum values. tsc surfaces these as config
+        // diagnostics before compiling; tsz used to skip them entirely.
+        // See https://github.com/mohsen1/tsz/issues/3591 (repro A).
+        if let Some(serde_json::Value::Object(watch_opts)) = obj.get_mut("watchOptions") {
+            validate_option_value(
+                watch_opts,
+                "watchFile",
+                &stripped,
+                file_path,
+                VALID_WATCH_FILE_VALUES,
+                "--watchFile",
+                VALID_WATCH_FILE_DISPLAY,
+                &mut diagnostics,
+            );
+            validate_option_value(
+                watch_opts,
+                "watchDirectory",
+                &stripped,
+                file_path,
+                VALID_WATCH_DIRECTORY_VALUES,
+                "--watchDirectory",
+                VALID_WATCH_DIRECTORY_DISPLAY,
+                &mut diagnostics,
+            );
+            validate_option_value(
+                watch_opts,
+                "fallbackPolling",
+                &stripped,
+                file_path,
+                VALID_FALLBACK_POLLING_VALUES,
+                "--fallbackPolling",
+                VALID_FALLBACK_POLLING_DISPLAY,
+                &mut diagnostics,
+            );
+        }
     }
 
     let mut config: TsConfig =
@@ -5054,6 +5091,38 @@ const VALID_MODULE_DETECTION_DISPLAY: &str = "'auto', 'legacy', 'force'";
 /// Valid `--newLine` values.
 const VALID_NEW_LINE_VALUES: &[&str] = &["crlf", "lf"];
 const VALID_NEW_LINE_DISPLAY: &str = "'crlf', 'lf'";
+
+/// Valid `watchOptions.watchFile` values. Mirrors tsc's
+/// `WatchFileKind` enum spellings (lowercased for normalize-compare).
+const VALID_WATCH_FILE_VALUES: &[&str] = &[
+    "fixedpollinginterval",
+    "prioritypollinginterval",
+    "dynamicprioritypolling",
+    "fixedchunksizepolling",
+    "usefsevents",
+    "usefseventsonparentdirectory",
+];
+const VALID_WATCH_FILE_DISPLAY: &str = "'fixedpollinginterval', 'prioritypollinginterval', 'dynamicprioritypolling', 'fixedchunksizepolling', 'usefsevents', 'usefseventsonparentdirectory'";
+
+/// Valid `watchOptions.watchDirectory` values.
+const VALID_WATCH_DIRECTORY_VALUES: &[&str] = &[
+    "usefsevents",
+    "fixedpollinginterval",
+    "dynamicprioritypolling",
+    "fixedchunksizepolling",
+];
+const VALID_WATCH_DIRECTORY_DISPLAY: &str =
+    "'usefsevents', 'fixedpollinginterval', 'dynamicprioritypolling', 'fixedchunksizepolling'";
+
+/// Valid `watchOptions.fallbackPolling` values.
+const VALID_FALLBACK_POLLING_VALUES: &[&str] = &[
+    "fixedinterval",
+    "priorityinterval",
+    "dynamicpriority",
+    "fixedchunksize",
+];
+const VALID_FALLBACK_POLLING_DISPLAY: &str =
+    "'fixedinterval', 'priorityinterval', 'dynamicpriority', 'fixedchunksize'";
 
 /// Valid `--lib` values. This list matches tsc 6.0's accepted lib names.
 const VALID_LIB_VALUES: &[&str] = &[
@@ -8190,5 +8259,67 @@ mod tests {
             .expect("merged compiler options");
         assert_eq!(opts.no_unchecked_indexed_access, Some(true));
         assert_eq!(opts.strict, Some(true));
+    }
+    fn ts6046_for_watch_options(source: &str, key: &str) -> Vec<String> {
+        let parsed =
+            parse_tsconfig_with_diagnostics(source, "tsconfig.json").expect("tsconfig must parse");
+        parsed
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == 6046 && d.message_text.contains(key))
+            .map(|d| d.message_text.clone())
+            .collect()
+    }
+
+    #[test]
+    fn ts6046_fires_for_invalid_watch_file_value() {
+        // #3591 repro A: `watchOptions.watchFile: "bad"` must surface TS6046
+        // listing the valid `--watchFile` values.
+        let source = r#"{"compilerOptions":{"noEmit":true},"watchOptions":{"watchFile":"bad"},"files":["a.ts"]}"#;
+        let diags = ts6046_for_watch_options(source, "--watchFile");
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected one TS6046 for invalid watchFile, got {diags:?}"
+        );
+        assert!(
+            diags[0].contains("fixedpollinginterval"),
+            "TS6046 message must list valid watchFile values, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts6046_fires_for_invalid_watch_directory_value() {
+        let source =
+            r#"{"compilerOptions":{"noEmit":true},"watchOptions":{"watchDirectory":"bad"}}"#;
+        let diags = ts6046_for_watch_options(source, "--watchDirectory");
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected one TS6046 for invalid watchDirectory, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts6046_fires_for_invalid_fallback_polling_value() {
+        let source =
+            r#"{"compilerOptions":{"noEmit":true},"watchOptions":{"fallbackPolling":"bad"}}"#;
+        let diags = ts6046_for_watch_options(source, "--fallbackPolling");
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected one TS6046 for invalid fallbackPolling, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts6046_silent_for_valid_watch_file_value() {
+        let source =
+            r#"{"compilerOptions":{"noEmit":true},"watchOptions":{"watchFile":"useFsEvents"}}"#;
+        let diags = ts6046_for_watch_options(source, "--watchFile");
+        assert!(
+            diags.is_empty(),
+            "valid watchFile value must not emit TS6046, got {diags:?}"
+        );
     }
 }
