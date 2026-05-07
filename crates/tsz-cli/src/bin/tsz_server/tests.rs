@@ -187,6 +187,55 @@ fn test_provide_inlay_hints_respects_protocol_start_length_span() {
 }
 
 #[test]
+fn linked_editing_range_returns_jsx_member_expression_tag_names() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.tsx".to_string(),
+        "const x = <Foo.Bar>hi</Foo.Bar>;".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "linkedEditingRange",
+        serde_json::json!({
+            "file": "/a.tsx",
+            "line": 1,
+            "offset": 12,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response
+        .body
+        .expect("linkedEditingRange should return a body for JSX member tags");
+    assert_eq!(
+        body.get("wordPattern").and_then(serde_json::Value::as_str),
+        Some("[a-zA-Z0-9:\\-\\._$]*")
+    );
+
+    let ranges = body
+        .get("ranges")
+        .and_then(serde_json::Value::as_array)
+        .expect("linkedEditingRange body should contain ranges");
+    assert_eq!(ranges.len(), 2);
+    assert_eq!(
+        ranges[0]["start"],
+        serde_json::json!({"line": 1, "offset": 12})
+    );
+    assert_eq!(
+        ranges[0]["end"],
+        serde_json::json!({"line": 1, "offset": 19})
+    );
+    assert_eq!(
+        ranges[1]["start"],
+        serde_json::json!({"line": 1, "offset": 24})
+    );
+    assert_eq!(
+        ranges[1]["end"],
+        serde_json::json!({"line": 1, "offset": 31})
+    );
+}
+
+#[test]
 fn emit_output_preserves_type_only_module_marker() {
     let mut server = make_server();
     let response = server.handle_tsserver_request(make_request(
