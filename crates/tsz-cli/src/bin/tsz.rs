@@ -290,9 +290,11 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         //   (--noEmitOnError with errors means no outputs were generated).
         // Exit code 2 (DiagnosticsPresent_OutputsGenerated): errors exist but outputs were
         //   still generated (or --noEmit where there's nothing to emit regardless).
+        // `result.no_emit` reflects the resolved option (CLI + tsconfig.json),
+        // so a tsconfig-only `noEmit` selects exit 2 just like the CLI flag.
         if args.no_emit_on_error {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
-        } else if args.no_emit || !result.emitted_files.is_empty() {
+        } else if result.no_emit || !result.emitted_files.is_empty() {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
         } else {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);

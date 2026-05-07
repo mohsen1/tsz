@@ -1,5 +1,4 @@
 use super::super::Printer;
-use crate::transforms::ir::IRNode;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -7,157 +6,16 @@ use tsz_scanner::SyntaxKind;
 
 #[path = "namespace_export_destructuring.rs"]
 mod namespace_export_destructuring;
+#[path = "namespace/helpers.rs"]
+mod namespace_helpers;
 #[cfg(test)]
 #[path = "namespace_import_alias_tests.rs"]
 mod namespace_import_alias_tests;
 
-/// Rewrite enum IIFE IR from `E || (E = {})` to `E = NS.E || (NS.E = {})`
-/// for exported enums in namespaces.
-pub(in crate::emitter) fn rewrite_enum_iife_for_namespace_export(
-    ir: &mut IRNode,
-    enum_name: &str,
-    ns_name: &str,
-) {
-    // The IR from EnumES5Transformer is:
-    //   Sequence([VarDecl { name }, ExpressionStatement(CallExpr { callee, arguments: [iife_arg] })])
-    // where iife_arg is: LogicalOr { left: Identifier(E), right: BinaryExpr(E = {}) }
-    //
-    // We need to transform it to:
-    //   iife_arg = BinaryExpr(E = LogicalOr { left: NS.E, right: BinaryExpr(NS.E = {}) })
-    let IRNode::Sequence(stmts) = ir else {
-        return;
-    };
-
-    // Find the ExpressionStatement containing the CallExpr
-    let Some(expr_stmt) = stmts.iter_mut().find_map(|s| match s {
-        IRNode::ExpressionStatement(inner) => Some(inner),
-        _ => None,
-    }) else {
-        return;
-    };
-
-    let IRNode::CallExpr { arguments, .. } = expr_stmt.as_mut() else {
-        return;
-    };
-
-    if arguments.len() != 1 {
-        return;
-    }
-
-    // Build the namespace-qualified property access: NS.E
-    let ns_prop = || IRNode::PropertyAccess {
-        object: Box::new(IRNode::Identifier(ns_name.to_string().into())),
-        property: enum_name.to_string().into(),
-    };
-
-    // Replace the IIFE argument: E || (E = {}) → E = NS.E || (NS.E = {})
-    arguments[0] = IRNode::BinaryExpr {
-        left: Box::new(IRNode::Identifier(enum_name.to_string().into())),
-        operator: "=".to_string().into(),
-        right: Box::new(IRNode::LogicalOr {
-            left: Box::new(ns_prop()),
-            right: Box::new(IRNode::BinaryExpr {
-                left: Box::new(ns_prop()),
-                operator: "=".to_string().into(),
-                right: Box::new(IRNode::empty_object()),
-            }),
-        }),
-    };
-}
-
-fn find_unescaped_template_end(source: &str, template_start: usize) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut pos = template_start.checked_add(1)?;
-    let mut escaped = false;
-    while pos < bytes.len() {
-        let byte = bytes[pos];
-        if escaped {
-            escaped = false;
-        } else if byte == b'\\' {
-            escaped = true;
-        } else if byte == b'`' {
-            return Some(pos);
-        }
-        pos += 1;
-    }
-    None
-}
-
-fn skip_quoted_source_text(source: &str, quote_start: usize) -> usize {
-    let bytes = source.as_bytes();
-    let quote = bytes[quote_start];
-    if quote == b'`' {
-        return find_unescaped_template_end(source, quote_start)
-            .map(|end| end + 1)
-            .unwrap_or(source.len());
-    }
-
-    let mut pos = quote_start + 1;
-    while pos < bytes.len() {
-        if bytes[pos] == b'\\' {
-            pos += 2;
-            continue;
-        }
-        if bytes[pos] == quote {
-            return pos + 1;
-        }
-        pos += 1;
-    }
-    source.len()
-}
-
-fn find_next_code_module_keyword(source: &str, mut cursor: usize) -> Option<usize> {
-    let bytes = source.as_bytes();
-    while cursor < bytes.len() {
-        match bytes[cursor] {
-            b'/' if bytes.get(cursor + 1) == Some(&b'/') => {
-                cursor += 2;
-                while cursor < bytes.len() && !matches!(bytes[cursor], b'\n' | b'\r') {
-                    cursor += 1;
-                }
-            }
-            b'/' if bytes.get(cursor + 1) == Some(&b'*') => {
-                cursor += 2;
-                while cursor + 1 < bytes.len()
-                    && !(bytes[cursor] == b'*' && bytes[cursor + 1] == b'/')
-                {
-                    cursor += 1;
-                }
-                cursor = (cursor + 2).min(bytes.len());
-            }
-            b'\'' | b'"' | b'`' => {
-                cursor = skip_quoted_source_text(source, cursor);
-            }
-            b'm' if source[cursor..].starts_with("module")
-                && cursor
-                    .checked_sub(1)
-                    .and_then(|prev| bytes.get(prev))
-                    .is_none_or(|byte| {
-                        !byte.is_ascii_alphanumeric() && *byte != b'_' && *byte != b'$'
-                    })
-                && bytes.get(cursor + "module".len()).is_none_or(|byte| {
-                    !byte.is_ascii_alphanumeric() && *byte != b'_' && *byte != b'$'
-                }) =>
-            {
-                return Some(cursor);
-            }
-            _ => {
-                cursor += source[cursor..]
-                    .chars()
-                    .next()
-                    .map(char::len_utf8)
-                    .unwrap_or(1);
-            }
-        }
-    }
-    None
-}
+pub(in crate::emitter) use namespace_helpers::rewrite_enum_iife_for_namespace_export;
+use namespace_helpers::{find_next_code_module_keyword, find_unescaped_template_end};
 
 impl<'a> Printer<'a> {
-    // =========================================================================
-    // Namespace / Module Declarations
-    // =========================================================================
-
     pub(in crate::emitter) fn emit_module_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(module) = self.arena.get_module(node) else {
             return;
@@ -1406,28 +1264,146 @@ impl<'a> Printer<'a> {
             let mut search_start = 0;
             while let Some(relative_pos) = text[search_start..].find(keyword) {
                 let name_start = search_start + relative_pos + keyword.len();
-                let Some(rest) = text.get(name_start..) else {
-                    break;
-                };
-                let Some(after_parent) = rest.strip_prefix(parent) else {
+                let Some((parts, _)) = Self::parse_namespace_path_and_body_start(text, name_start)
+                else {
                     search_start = name_start;
                     continue;
                 };
-                let Some(child_rest) = after_parent.strip_prefix('.') else {
-                    search_start = name_start;
-                    continue;
-                };
-                let child: String = child_rest
-                    .chars()
-                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
-                    .collect();
-                if !child.is_empty() {
-                    children.insert(child);
+                for pair in parts.windows(2) {
+                    if pair[0] == parent {
+                        children.insert(pair[1].clone());
+                    }
                 }
                 search_start = name_start;
             }
         }
         children
+    }
+
+    fn collect_namespace_exported_value_members_from_source(
+        &self,
+        parent: &str,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+        let Some(text) = self.source_text else {
+            return names;
+        };
+        for keyword in ["namespace ", "module "] {
+            let mut search_start = 0;
+            while let Some(relative_pos) = text[search_start..].find(keyword) {
+                let name_start = search_start + relative_pos + keyword.len();
+                let Some((parts, open_brace)) =
+                    Self::parse_namespace_path_and_body_start(text, name_start)
+                else {
+                    search_start = name_start;
+                    continue;
+                };
+                if !parts.iter().any(|part| part == parent) {
+                    search_start = name_start;
+                    continue;
+                }
+                let Some(close_brace) = Self::find_matching_brace(text, open_brace) else {
+                    search_start = open_brace + 1;
+                    continue;
+                };
+                let body = &text[open_brace + 1..close_brace];
+                Self::collect_exported_value_member_names_from_text(body, &mut names);
+                search_start = close_brace + 1;
+            }
+        }
+        names
+    }
+
+    fn parse_namespace_path_and_body_start(
+        text: &str,
+        name_start: usize,
+    ) -> Option<(Vec<String>, usize)> {
+        let bytes = text.as_bytes();
+        let mut pos = name_start;
+        let mut parts = Vec::new();
+        loop {
+            while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            let part_start = pos;
+            while pos < bytes.len()
+                && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_' || bytes[pos] == b'$')
+            {
+                pos += 1;
+            }
+            if part_start == pos {
+                return None;
+            }
+            parts.push(text[part_start..pos].to_string());
+            while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if bytes.get(pos) == Some(&b'.') {
+                pos += 1;
+                continue;
+            }
+            break;
+        }
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if bytes.get(pos) == Some(&b'{') {
+            Some((parts, pos))
+        } else {
+            None
+        }
+    }
+
+    fn find_matching_brace(text: &str, open_brace: usize) -> Option<usize> {
+        let bytes = text.as_bytes();
+        let mut depth = 0_u32;
+        for (offset, &byte) in bytes.get(open_brace..)?.iter().enumerate() {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(open_brace + offset);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn collect_exported_value_member_names_from_text(
+        body: &str,
+        names: &mut rustc_hash::FxHashSet<String>,
+    ) {
+        for marker in ["export class ", "export function ", "export enum "] {
+            let mut search_start = 0;
+            while let Some(relative_pos) = body[search_start..].find(marker) {
+                let mut name_start = search_start + relative_pos + marker.len();
+                if marker == "export class " && body[name_start..].starts_with("abstract ") {
+                    name_start += "abstract ".len();
+                }
+                let name: String = body[name_start..]
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                    .collect();
+                if !name.is_empty() {
+                    names.insert(name);
+                }
+                search_start = name_start.saturating_add(1);
+            }
+        }
+    }
+
+    fn namespace_iife_param_base(name: &str) -> &str {
+        let Some((base, suffix)) = name.rsplit_once('_') else {
+            return name;
+        };
+        if suffix.chars().all(|ch| ch.is_ascii_digit()) {
+            base
+        } else {
+            name
+        }
     }
 
     pub(in crate::emitter) fn collect_all_namespace_exports(&mut self, statements: &NodeList) {
@@ -1553,12 +1529,19 @@ impl<'a> Printer<'a> {
             if !leaf_name.is_empty() {
                 local_exports
                     .extend(self.collect_dotted_namespace_children_from_source(&leaf_name));
+                local_exports
+                    .extend(self.collect_namespace_exported_value_members_from_source(&leaf_name));
             }
             let mut ancestor_qualifiers = prev_ancestor_qualifiers.clone();
             let mut parent_exports = self
                 .parent_namespace_name
                 .as_ref()
-                .and_then(|parent| self.namespace_prior_exports.get(parent))
+                .and_then(|parent| {
+                    self.namespace_prior_exports.get(parent).or_else(|| {
+                        self.namespace_prior_exports
+                            .get(Self::namespace_iife_param_base(parent))
+                    })
+                })
                 .map(|exports| {
                     exports
                         .iter()
@@ -1566,8 +1549,22 @@ impl<'a> Printer<'a> {
                         .collect::<rustc_hash::FxHashSet<_>>()
                 })
                 .unwrap_or_default();
+            if let Some(parent) = self.parent_namespace_name.as_ref() {
+                let parent_base = Self::namespace_iife_param_base(parent);
+                if parent_base != parent {
+                    for name in
+                        self.collect_namespace_exported_value_members_from_source(parent_base)
+                    {
+                        parent_exports.insert(name.clone());
+                        ancestor_qualifiers.insert(name, parent.clone());
+                    }
+                }
+            }
             if let Some(parent) = self.parent_namespace_name.as_ref()
-                && let Some(exports) = self.namespace_prior_exports.get(parent)
+                && let Some(exports) = self.namespace_prior_exports.get(parent).or_else(|| {
+                    self.namespace_prior_exports
+                        .get(Self::namespace_iife_param_base(parent))
+                })
             {
                 for name in exports {
                     ancestor_qualifiers.insert(name.clone(), parent.clone());
@@ -1584,7 +1581,13 @@ impl<'a> Printer<'a> {
             // current-block class/fn/enum names (which remain in lexical
             // scope as IIFE locals).
             if let Some(parent) = self.parent_namespace_name.as_ref()
-                && let Some(class_exports) = self.namespace_prior_class_fn_enum_exports.get(parent)
+                && let Some(class_exports) = self
+                    .namespace_prior_class_fn_enum_exports
+                    .get(parent)
+                    .or_else(|| {
+                        self.namespace_prior_class_fn_enum_exports
+                            .get(Self::namespace_iife_param_base(parent))
+                    })
             {
                 for name in class_exports.iter() {
                     parent_exports.insert(name.clone());
@@ -1613,6 +1616,8 @@ impl<'a> Printer<'a> {
                 for name in exports {
                     ancestor_qualifiers.insert(name.clone(), parent_qualifier.clone());
                 }
+                parent_exports.remove(&leaf_name);
+                ancestor_qualifiers.remove(&leaf_name);
             }
             for name in &prev_current_class_fn_enum {
                 parent_exports.remove(name);
@@ -1632,12 +1637,22 @@ impl<'a> Printer<'a> {
                 for name in entry.iter() {
                     local_exports.insert(name.clone());
                 }
-                entry.extend(local_exports.iter().cloned());
+                entry.extend(
+                    local_exports
+                        .iter()
+                        .filter(|name| !class_fn_enum_names.contains(*name))
+                        .cloned(),
+                );
                 if ns_name != leaf_name {
                     self.namespace_prior_exports
                         .entry(ns_name.clone())
                         .or_default()
-                        .extend(local_exports.iter().cloned());
+                        .extend(
+                            local_exports
+                                .iter()
+                                .filter(|name| !class_fn_enum_names.contains(*name))
+                                .cloned(),
+                        );
                 }
 
                 // Prior class/function/enum exports qualify in reopened blocks;
