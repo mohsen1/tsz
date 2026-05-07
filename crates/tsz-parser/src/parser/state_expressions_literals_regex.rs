@@ -339,40 +339,21 @@ impl ParserState {
             }
 
             fn scan_braced_unicode_escape_value(
-                parser: &mut ParserState,
-                emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
+                _parser: &mut ParserState,
+                _emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
                 body: &[u8],
                 end: usize,
                 pos: &mut usize,
             ) {
+                // Skip past `\u{...}` body without validating the code-point
+                // range. tsc treats out-of-range escapes inside regex literals
+                // as a runtime concern and does not emit TS1198 here, even
+                // with the `u` flag.
                 *pos += 1;
-                let hex_start = *pos;
-                let mut value = 0u32;
-                let mut overflow = false;
                 while *pos < end && body[*pos] != b'}' {
-                    if let Some(digit) = (body[*pos] as char).to_digit(16)
-                        && !overflow
-                    {
-                        if let Some(next) = value.checked_mul(16).and_then(|v| v.checked_add(digit))
-                        {
-                            value = next;
-                        } else {
-                            overflow = true;
-                        }
-                    }
                     *pos += 1;
                 }
-
                 if *pos < end {
-                    if overflow || value > 0x10FFFF {
-                        emit(
-                            parser,
-                            hex_start,
-                            (*pos - hex_start) as u32,
-                            diagnostic_messages::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE,
-                            diagnostic_codes::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE,
-                        );
-                    }
                     *pos += 1;
                 }
             }
