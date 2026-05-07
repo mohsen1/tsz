@@ -224,3 +224,10 @@ fn test_emitter_file_size_ceiling() {
 
     // declaration_emitter/helpers/type_inference.rs is currently the largest at 8449 lines.
     const MAX_LOC_CEILING: usize = 8449;
+    assert!(
+        max_lines <= MAX_LOC_CEILING,
+        "Largest emitter source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
+         Split the file into smaller modules. Current oversized files:\n{}",
+        oversized.join("\n")
+    );
+}
