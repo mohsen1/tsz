@@ -614,7 +614,7 @@ impl<'a> TypeInstantiator<'a> {
         // Mark as visiting (with original ID as placeholder for cycles)
         self.visiting.insert(type_id, type_id);
 
-        let result = self.instantiate_key(&key);
+        let result = self.instantiate_key(type_id, &key);
 
         // Update the cache with the actual result
         self.visiting.insert(type_id, result);
@@ -715,7 +715,7 @@ impl<'a> TypeInstantiator<'a> {
     }
 
     /// Instantiate a `TypeData`.
-    fn instantiate_key(&mut self, key: &TypeData) -> TypeId {
+    fn instantiate_key(&mut self, type_id: TypeId, key: &TypeData) -> TypeId {
         match key {
             // Type parameters get substituted
             TypeData::TypeParameter(info) => {
@@ -800,7 +800,11 @@ impl<'a> TypeInstantiator<'a> {
 
             // Union: instantiate all members, skip re-intern if nothing changed
             TypeData::Union(members) => {
-                let members = self.interner.type_list(*members);
+                let canonical_members = self.interner.type_list(*members);
+                let origin_members = self.interner.get_union_origin(type_id);
+                let members = origin_members
+                    .as_deref()
+                    .map_or(canonical_members.as_ref(), Vec::as_slice);
                 let mut changed = false;
                 let instantiated: Vec<TypeId> = members
                     .iter()
@@ -813,7 +817,9 @@ impl<'a> TypeInstantiator<'a> {
                     })
                     .collect();
                 if changed {
-                    self.interner.union(instantiated)
+                    let result = self.interner.union(instantiated.clone());
+                    self.interner.store_union_origin(result, instantiated);
+                    result
                 } else {
                     self.interner.intern(*key)
                 }

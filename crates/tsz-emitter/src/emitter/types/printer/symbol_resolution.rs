@@ -561,7 +561,7 @@ impl<'a> TypePrinter<'a> {
             return self.print_object_type(shape_id);
         }
         if let Some(type_list_id) = visitor::union_list_id(self.interner, type_id) {
-            return self.print_union(type_list_id);
+            return self.print_union(type_id, type_list_id);
         }
         if let Some(type_list_id) = visitor::intersection_list_id(self.interner, type_id) {
             return self.print_intersection(type_list_id);
