@@ -710,3 +710,114 @@ fn test_static_block_only_class_alias_preamble() {
         "alias must be assigned before the static-block IIFE.\nOutput:\n{output}"
     );
 }
+
+// Issue #3539: post-`super()` `for-of` and `for-in` bodies in derived ES5
+// constructors must preserve the `_this` substitution. Pre-fix the body
+// emitted `this.x` and crashed at runtime when the base constructor
+// returned a replacement object.
+#[test]
+fn test_derived_constructor_for_of_body_uses_this_alias() {
+    let source = r#"class Base {
+            constructor() { return { seen: [] }; }
+        }
+        class Derived extends Base {
+            seen: number[];
+            constructor() {
+                super();
+                for (const value of [1, 2]) {
+                    this.seen.push(value);
+                }
+            }
+        }"#;
+
+    // The class-es5 transformer lowers the second class declaration.
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root");
+    let source_file = parser.arena.get_source_file(root_node).expect("sf");
+    // Find the Derived class (second class declaration).
+    let derived_idx = source_file
+        .statements
+        .nodes
+        .iter()
+        .filter(|&&idx| {
+            parser
+                .arena
+                .get(idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_DECLARATION)
+        })
+        .nth(1)
+        .copied()
+        .expect("Derived class");
+
+    let mut transformer = ES5ClassTransformer::new(&parser.arena);
+    transformer.set_source_text(source);
+    let ir = transformer
+        .transform_class_to_ir(derived_idx)
+        .expect("transform");
+    let mut printer = IRPrinter::with_arena(&parser.arena);
+    printer.set_source_text(source);
+    let output = printer.emit(&ir).to_string();
+
+    assert!(
+        output.contains("_this.seen.push(value)"),
+        "for-of body must use `_this`, not `this`.\nOutput:\n{output}"
+    );
+    // Sanity: no bare `this.seen.push(value)` (where the leading char is
+    // either start-of-line or whitespace/non-ident — `_this.seen.push` is
+    // fine, since the leading underscore is part of the identifier).
+    assert!(
+        !output.contains(" this.seen.push(value)"),
+        "for-of body must not retain bare `this.seen.push(value)`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_derived_constructor_for_in_body_uses_this_alias() {
+    let source = r#"class Base {
+            constructor() { return { seen: [] }; }
+        }
+        class Derived extends Base {
+            seen: string[];
+            constructor() {
+                super();
+                for (const key in { a: 1 }) {
+                    this.seen.push(key);
+                }
+            }
+        }"#;
+
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root");
+    let source_file = parser.arena.get_source_file(root_node).expect("sf");
+    let derived_idx = source_file
+        .statements
+        .nodes
+        .iter()
+        .filter(|&&idx| {
+            parser
+                .arena
+                .get(idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_DECLARATION)
+        })
+        .nth(1)
+        .copied()
+        .expect("Derived class");
+
+    let mut transformer = ES5ClassTransformer::new(&parser.arena);
+    transformer.set_source_text(source);
+    let ir = transformer
+        .transform_class_to_ir(derived_idx)
+        .expect("transform");
+    let mut printer = IRPrinter::with_arena(&parser.arena);
+    printer.set_source_text(source);
+    let output = printer.emit(&ir).to_string();
+
+    assert!(
+        output.contains("_this.seen.push(key)"),
+        "for-in body must use `_this`, not `this`.\nOutput:\n{output}"
+    );
+}

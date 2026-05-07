@@ -204,6 +204,17 @@ pub enum IRNode {
         body: Box<Self>,
     },
 
+    /// For-in / for-of statement: `for (init <kind> expr) <body>`. Used by
+    /// the ES5 class transform to recurse the body through the
+    /// derived-constructor `_this` substitution (issue #3539). `kind` is
+    /// `"in"`, `"of"`, or `"await of"`.
+    ForInOfStatement {
+        kind: Cow<'static, str>,
+        initializer: Box<Self>,
+        expression: Box<Self>,
+        body: Box<Self>,
+    },
+
     /// While statement: `while (cond) { body }`
     WhileStatement {
         condition: Box<Self>,

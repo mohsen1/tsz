@@ -1104,6 +1104,21 @@ impl<'a> IRPrinter<'a> {
                 self.write(") ");
                 self.emit_node(body);
             }
+            IRNode::ForInOfStatement {
+                kind,
+                initializer,
+                expression,
+                body,
+            } => {
+                self.write("for (");
+                self.emit_node(initializer);
+                self.write(" ");
+                self.write(kind);
+                self.write(" ");
+                self.emit_node(expression);
+                self.write(") ");
+                self.emit_node(body);
+            }
             IRNode::WhileStatement { condition, body } => {
                 self.write("while (");
                 self.emit_node(condition);
