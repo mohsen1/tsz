@@ -400,10 +400,6 @@ pub struct CheckerContext<'a> {
     /// different members from the same nested namespace.
     pub nested_namespace_candidates_cache: RefCell<NestedNamespaceCandidatesCache>,
 
-    /// True once `nested_namespace_candidates_cache` has been populated for every
-    /// nested namespace export name visible across all binders.
-    pub nested_namespace_candidates_cache_complete: Cell<bool>,
-
     /// Per-checker cache for same-name symbol candidates across the current binder
     /// and all cross-file binders.
     pub symbol_name_candidates_cache: RefCell<FxHashMap<String, Vec<SymbolId>>>,
