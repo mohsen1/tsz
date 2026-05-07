@@ -4035,6 +4035,8 @@ fn union_application_uses_max_arg_position() {
     // `Container<Item>` inherits Item's position via the MAX rule, so the
     // union preserves source order.
     assert_eq!(result, "Item | Container<Item>");
+}
+
 /// Regression: a union mixing a named type (tier 1, has source position) with
 /// a literal type (tier 2, no source position) should display the named type
 /// first, matching tsc. Source order alone — `"foo" | Refrigerator` — is not
