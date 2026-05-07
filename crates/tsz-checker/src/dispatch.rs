@@ -420,9 +420,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 .checker
                 .get_type_of_binary_expression_with_request(idx, request),
             // Call expressions
-            k if k == syntax_kind_ext::CALL_EXPRESSION => self
-                .checker
-                .get_type_of_call_expression_with_request(idx, request),
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let ty = self
+                    .checker
+                    .get_type_of_call_expression_with_request(idx, request);
+                self.checker
+                    .report_untyped_this_references_in_find_callback(idx);
+                ty
+            }
             // Tagged template expressions (e.g., `tag\`hello ${x}\``)
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => self
                 .checker
