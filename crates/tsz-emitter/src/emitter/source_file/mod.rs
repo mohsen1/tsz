@@ -177,6 +177,80 @@ mod tests {
     }
 
     #[test]
+    fn es5_static_class_expression_uses_comma_initializer_alias() {
+        let source = "var v = class C {\n    static a = 1;\n    static c = { x: \"hi\" };\n    static d = C.c.x + \" world\";\n};\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a;"),
+            "Class-expression alias should be hoisted.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var v = (_a = /** @class */ (function () {"),
+            "ES5 class expression should start a comma expression with the alias assignment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_a.a = 1,")
+                && output.contains("_a.c = { x: \"hi\" },")
+                && output.contains("_a.d = _a.c.x + \" world\","),
+            "Static fields should be emitted as comma items on the alias.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("(function () {\n    var C = /** @class */"),
+            "Static class expressions should not use the wrapper-IIFE form.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_static_class_expression_in_loop_uses_block_alias() {
+        let source = "var arr = [];\nfor (let i = 0; i < 3; i++) {\n    arr.push(class C {\n        static x = i;\n        static y = () => C.x * 2;\n    });\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _loop_1 = function (i) {"),
+            "Loop capture should still wrap the block-scoped variable.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var _a = void 0;"),
+            "Class-expression alias should be recreated in the loop capture function.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("arr.push((_a = /** @class */ (function () {"),
+            "Loop body class expression should use an inline comma expression.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_a.y = function () { return _a.x * 2; },"),
+            "Static initializer should rewrite class-name references to the alias.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn emit_class_with_accessor_members_preserves_leading_comments_in_ts_output() {
         let source = "// Regular class should still error when targeting ES5\n\
 class RegularClass {\n    accessor shouldError;\n}\n";
