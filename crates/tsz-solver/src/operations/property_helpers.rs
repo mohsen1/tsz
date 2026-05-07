@@ -12,6 +12,7 @@ use crate::types::{
     MappedType, MappedTypeId, PropertyInfo, PropertyLookup, TupleElement, TypeApplicationId,
     TypeParamInfo,
 };
+use std::borrow::Cow;
 
 impl<'a> PropertyAccessEvaluator<'a> {
     #[inline]
@@ -31,6 +32,42 @@ impl<'a> PropertyAccessEvaluator<'a> {
     #[inline]
     fn substitute_this_type_cached(&self, type_id: TypeId, this_type: TypeId) -> TypeId {
         substitute_this_type_cached(self.interner(), Some(self.db), type_id, this_type)
+    }
+
+    fn normalize_application_property_args<'b>(&self, args: &'b [TypeId]) -> Cow<'b, [TypeId]> {
+        let mut normalized: Option<Vec<TypeId>> = None;
+
+        for (index, &arg) in args.iter().enumerate() {
+            let should_evaluate = matches!(
+                self.interner().lookup(arg),
+                Some(
+                    TypeData::Lazy(_)
+                        | TypeData::TypeQuery(_)
+                        | TypeData::Conditional(_)
+                        | TypeData::IndexAccess(_, _)
+                        | TypeData::Mapped(_)
+                        | TypeData::KeyOf(_)
+                )
+            );
+            let next = if should_evaluate {
+                self.db
+                    .evaluate_type_with_options(arg, self.no_unchecked_indexed_access)
+            } else {
+                arg
+            };
+
+            if next != arg {
+                let values = normalized.get_or_insert_with(|| args[..index].to_vec());
+                values.push(next);
+            } else if let Some(values) = normalized.as_mut() {
+                values.push(arg);
+            }
+        }
+
+        match normalized {
+            Some(values) => Cow::Owned(values),
+            None => Cow::Borrowed(args),
+        }
     }
 
     /// Lazily resolve a single property from a mapped type without fully expanding it.
@@ -569,6 +606,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let app = self.interner().type_application(app_id);
         let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
         let app_type = self.interner().application(app.base, app.args.clone());
+        let property_args = self.normalize_application_property_args(&app.args);
 
         // Get the base type (should be a Ref to class/interface/alias)
         let base_key = match self.interner().lookup(app.base) {
@@ -600,7 +638,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     prop.type_id
                 } else {
                     let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &property_args);
                     self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
                 };
                 let app_type = self.interner().application(app.base, app.args.clone());
@@ -627,7 +665,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     prop.type_id
                 } else {
                     let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &property_args);
                     self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
                 };
                 let app_type = self.interner().application(app.base, app.args.clone());
@@ -661,7 +699,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     prop.type_id
                 } else {
                     let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &property_args);
                     self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
                 };
                 let app_type = self.interner().application(app.base, app.args.clone());
@@ -767,7 +805,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 {
                     // Found! Now instantiate the property type with the type arguments
                     let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &property_args);
 
                     // Instantiate both read and write types
                     let instantiated_read_type =
@@ -814,7 +852,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if let Some(ref idx) = shape.string_index {
                     // Found string index signature - instantiate the value type
                     let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &property_args);
                     let instantiated_value =
                         self.instantiate_type_cached(idx.value_type, &substitution);
                     let instantiated_value =
@@ -836,7 +874,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     && let Some(ref idx) = shape.number_index
                 {
                     let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &property_args);
                     let instantiated_value =
                         self.instantiate_type_cached(idx.value_type, &substitution);
                     let instantiated_value =
@@ -865,7 +903,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner().mapped_type(mapped_id);
                 let substitution =
-                    TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
+                    TypeSubstitution::from_args(self.interner(), &type_params, &property_args);
 
                 // Use preserve_unsubstituted_type_params to prevent the TypeInstantiator
                 // from replacing unsubstituted type parameters (like the mapped key param)

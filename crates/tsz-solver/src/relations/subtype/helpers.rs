@@ -70,8 +70,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .is_some()
             })
         });
+        let has_collectable_application_member = members.iter().any(|&member| {
+            let resolved = self.resolve_lazy_type(member);
+            matches!(
+                self.interner.lookup(resolved),
+                Some(crate::types::TypeData::Application(_))
+            ) && matches!(
+                collect_properties(member, self.interner, self.resolver),
+                PropertyCollectionResult::Properties { .. }
+            )
+        });
 
-        if members.len() < INTERSECTION_OBJECT_FAST_PATH_THRESHOLD && !has_finite_mapped_member {
+        if members.len() < INTERSECTION_OBJECT_FAST_PATH_THRESHOLD
+            && !has_finite_mapped_member
+            && !has_collectable_application_member
+        {
             return false;
         }
 
@@ -90,6 +103,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 crate::type_queries::collect_finite_mapped_property_names(self.interner, mapped_id)
                     .is_some()
             }) {
+                continue;
+            }
+
+            if matches!(
+                self.interner.lookup(resolved),
+                Some(crate::types::TypeData::Application(_))
+            ) && matches!(
+                collect_properties(member, self.interner, self.resolver),
+                PropertyCollectionResult::Properties { .. }
+            ) {
                 continue;
             }
 

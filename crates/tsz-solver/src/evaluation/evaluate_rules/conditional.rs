@@ -6,6 +6,7 @@
 use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_generic, instantiate_type_with_infer,
 };
+use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
@@ -92,15 +93,39 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return result;
             }
 
-            let mut check_type = self.evaluate(cond.check_type);
+            let mut check_type = if matches!(
+                self.interner().lookup(cond.check_type),
+                Some(TypeData::Application(_))
+            ) && let Some(reduced_check) =
+                self.try_reduce_exclude_undefined_application(cond.check_type)
+            {
+                reduced_check
+            } else {
+                self.evaluate(cond.check_type)
+            };
             let extends_type = self.evaluate(cond.extends_type);
+            let extends_is_application_infer_pattern = matches!(
+                self.interner().lookup(cond.extends_type),
+                Some(TypeData::Application(_))
+            ) && self
+                .type_contains_infer(cond.extends_type);
+            if !extends_is_application_infer_pattern
+                && matches!(
+                    self.interner().lookup(check_type),
+                    Some(TypeData::Application(_))
+                )
+                && let Some(expanded_check) =
+                    self.try_expand_application_for_conditional_check(check_type)
+            {
+                check_type = expanded_check;
+            }
             if matches!(
                 self.interner().lookup(check_type),
                 Some(TypeData::Application(_))
-            ) && let Some(expanded_check) =
-                self.try_expand_application_for_conditional_check(check_type)
+            ) && let Some(reduced_check) =
+                self.try_reduce_exclude_undefined_application(check_type)
             {
-                check_type = expanded_check;
+                check_type = reduced_check;
             }
 
             // When check_type is an unresolvable Application (e.g., Promise<string>
@@ -145,6 +170,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 "evaluate_conditional"
             );
 
+            if self.is_nullish_check_against_nonnullable(check_type, extends_type)
+                || self.is_nullish_check_against_nonnullable(check_type, cond.extends_type)
+            {
+                return self.evaluate(cond.false_type);
+            }
+            if self.is_nullish_or_nullish_union(check_type)
+                && self.is_definitely_non_nullish_extends_type(extends_type)
+            {
+                return self.evaluate(cond.false_type);
+            }
+
             // PERF: Cache predicate results for extends_type once per iteration.
             // type_contains_infer is called up to 5 times and contains_type_parameters
             // at least once, each creating fresh FxHashSet/FxHashMap allocations.
@@ -153,6 +189,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let extends_has_type_params =
                 crate::visitor::contains_type_parameters(self.interner(), extends_type)
                     || crate::visitor::contains_type_parameters(self.interner(), cond.extends_type);
+            let union_check =
+                matches!(self.interner().lookup(check_type), Some(TypeData::Union(_)));
+            if (extends_has_type_params || extends_has_infer)
+                && self.is_nullish_or_nullish_union(check_type)
+                && !union_check
+            {
+                return self.interner().conditional(ConditionalType {
+                    check_type,
+                    extends_type,
+                    true_type: cond.true_type,
+                    false_type: cond.false_type,
+                    is_distributive: cond.is_distributive,
+                });
+            }
 
             if cond.is_distributive && check_type == TypeId::NEVER {
                 return TypeId::NEVER;
@@ -246,6 +296,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let true_inst =
                     instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
                 return self.evaluate_preserving_intersection_branch_alias(true_inst);
+            }
+
+            if extends_is_application_infer_pattern
+                && matches!(
+                    self.interner().lookup(check_type),
+                    Some(TypeData::Application(_))
+                )
+            {
+                let mut bindings = FxHashMap::default();
+                let mut visited = FxHashSet::default();
+                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                checker.allow_bivariant_rest = true;
+                if self.match_infer_pattern(
+                    check_type,
+                    cond.extends_type,
+                    &mut bindings,
+                    &mut visited,
+                    &mut checker,
+                ) {
+                    let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+                    return self.evaluate(substituted_true);
+                }
             }
 
             let extends_unwrapped = match self.interner().lookup(extends_type) {
@@ -492,16 +564,48 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             loop_visited.clear();
 
             if extends_has_infer {
+                let infer_pattern_type = if matches!(
+                    self.interner().lookup(cond.extends_type),
+                    Some(TypeData::Application(_))
+                ) {
+                    cond.extends_type
+                } else if let Some(alias) = self.interner().get_display_alias(extends_type) {
+                    if matches!(
+                        self.interner().lookup(alias),
+                        Some(TypeData::Application(_))
+                    ) && self.type_contains_infer(alias)
+                    {
+                        alias
+                    } else {
+                        extends_type
+                    }
+                } else {
+                    extends_type
+                };
                 // PERF: Only allocate SubtypeChecker when infer matching is needed.
                 let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
                 checker.allow_bivariant_rest = true;
-                if self.match_infer_pattern(
+                let infer_matched = self.match_infer_pattern(
                     check_type,
-                    extends_type,
+                    infer_pattern_type,
                     &mut loop_bindings,
                     &mut loop_visited,
                     &mut checker,
-                ) {
+                );
+                if infer_matched {
+                    if loop_bindings.is_empty()
+                        && self.type_contains_infer(infer_pattern_type)
+                        && self.type_contains_infer(cond.true_type)
+                    {
+                        let false_type = self.evaluate(cond.false_type);
+                        return self.interner().conditional(ConditionalType {
+                            check_type,
+                            extends_type: infer_pattern_type,
+                            true_type: cond.true_type,
+                            false_type,
+                            is_distributive: cond.is_distributive,
+                        });
+                    }
                     let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
                     // Check for tail-recursive true branch (e.g., Trim<T> recurses on match):
                     // type Trim<S> = S extends ` ${infer T}` ? Trim<T> : S;
@@ -568,7 +672,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         checker2.allow_bivariant_rest = true;
                         if self.match_infer_pattern(
                             constraint,
-                            extends_type,
+                            infer_pattern_type,
                             &mut bindings2,
                             &mut visited2,
                             &mut checker2,
@@ -587,7 +691,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if !checked_concrete_constraint {
                         return self.interner().conditional(ConditionalType {
                             check_type,
-                            extends_type,
+                            extends_type: infer_pattern_type,
                             true_type: cond.true_type,
                             false_type: cond.false_type,
                             is_distributive: cond.is_distributive,
@@ -601,12 +705,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if matches!(
                     self.interner().lookup(check_type),
                     Some(TypeData::TypeQuery(_))
-                ) {
+                ) || self.conditional_check_needs_resolver(check_type)
+                {
                     let true_type = self.evaluate(cond.true_type);
                     let false_type = self.evaluate(cond.false_type);
                     return self.interner().conditional(ConditionalType {
                         check_type,
-                        extends_type,
+                        extends_type: infer_pattern_type,
                         true_type,
                         false_type,
                         is_distributive: cond.is_distributive,
@@ -749,7 +854,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // has no type parameters — take the false branch.
                 cond.false_type
             };
-
             // Check if the result branch is directly a conditional for tail-recursion
             // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
             if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
@@ -796,6 +900,85 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.interner().store_display_alias(evaluated, branch);
         }
         evaluated
+    }
+
+    fn is_nullish_check_against_nonnullable(
+        &self,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> bool {
+        if !self.is_nullish_or_nullish_union(check_type) {
+            return false;
+        }
+        self.is_nonnullable_application(extends_type)
+    }
+
+    fn is_nullish_or_nullish_union(&self, type_id: TypeId) -> bool {
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Intrinsic(
+                crate::types::IntrinsicKind::Undefined | crate::types::IntrinsicKind::Null,
+            )) => true,
+            Some(TypeData::Union(list_id)) => {
+                let members = self.interner().type_list(list_id);
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|&member| self.is_nullish_or_nullish_union(member))
+            }
+            _ => false,
+        }
+    }
+
+    fn is_definitely_non_nullish_extends_type(&self, type_id: TypeId) -> bool {
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Intrinsic(
+                crate::types::IntrinsicKind::String
+                | crate::types::IntrinsicKind::Number
+                | crate::types::IntrinsicKind::Boolean
+                | crate::types::IntrinsicKind::Bigint
+                | crate::types::IntrinsicKind::Symbol
+                | crate::types::IntrinsicKind::Object,
+            ))
+            | Some(
+                TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Function(_)
+                | TypeData::Callable(_)
+                | TypeData::Array(_)
+                | TypeData::Tuple(_)
+                | TypeData::Literal(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_),
+            ) => true,
+            Some(TypeData::Union(list_id)) => {
+                let members = self.interner().type_list(list_id);
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|&member| self.is_definitely_non_nullish_extends_type(member))
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members = self.interner().type_list(list_id);
+                members
+                    .iter()
+                    .any(|&member| self.is_definitely_non_nullish_extends_type(member))
+            }
+            _ => false,
+        }
+    }
+
+    fn is_nonnullable_application(&self, type_id: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner().lookup(type_id) else {
+            return false;
+        };
+        let app = self.interner().type_application(app_id);
+        let Some(TypeData::Lazy(def_id)) = self.interner().lookup(app.base) else {
+            return false;
+        };
+        self.resolver().resolve_unresolved_type_name("NonNullable") == Some(def_id)
+            || self.resolver().get_def_name(def_id).is_some_and(|name| {
+                self.interner().resolve_atom_ref(name).as_ref() == "NonNullable"
+            })
     }
 
     fn is_concrete_application_led_intersection(&self, type_id: TypeId) -> bool {
@@ -906,6 +1089,141 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
         let evaluated = self.evaluate(instantiated);
         (evaluated != type_id).then_some(evaluated)
+    }
+
+    fn try_reduce_exclude_undefined_application(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let Some(TypeData::Application(app_id)) = self.interner().lookup(type_id) else {
+            return None;
+        };
+        let app = self.interner().type_application(app_id);
+        if app.args.len() != 2 || app.args[1] != TypeId::UNDEFINED {
+            return None;
+        }
+        let is_index_source = matches!(
+            self.interner().lookup(app.args[0]),
+            Some(TypeData::IndexAccess(..))
+        );
+
+        // Ambient imported lib aliases can lose the `Exclude` name/body in a
+        // no-resolver instantiation pass. Keep the unresolved fallback to the
+        // indexed source shape used by `Exclude<V[K], undefined>` filters.
+        let TypeData::Lazy(def_id) = self.interner().lookup(app.base)? else {
+            return None;
+        };
+        let resolved_base = self.resolver().resolve_lazy(def_id, self.interner());
+        let is_exclude = self.resolver().resolve_unresolved_type_name("Exclude") == Some(def_id)
+            || self
+                .resolver()
+                .get_def_name(def_id)
+                .is_some_and(|name| self.interner().resolve_atom_ref(name).as_ref() == "Exclude")
+            || (is_index_source
+                && (resolved_base.is_none()
+                    || resolved_base == Some(TypeId::UNKNOWN)
+                    || resolved_base.is_some_and(|body| self.is_exclude_alias_body(body))));
+        if !is_exclude {
+            return None;
+        }
+
+        let source = if let Some(TypeData::IndexAccess(obj, idx)) =
+            self.interner().lookup(app.args[0])
+        {
+            if let Some(name) = crate::type_queries::get_literal_property_name(self.interner(), idx)
+            {
+                let obj = self.evaluate(obj);
+                let collected = collect_properties(obj, self.interner(), self.resolver());
+                if let PropertyCollectionResult::Properties { properties, .. } = collected
+                    && let Some(prop) = properties.iter().find(|prop| prop.name == name)
+                {
+                    self.optional_property_type(prop)
+                } else {
+                    let idx = self.evaluate(idx);
+                    self.evaluate_index_access(obj, idx)
+                }
+            } else {
+                let obj = self.evaluate(obj);
+                let idx = self.evaluate(idx);
+                self.evaluate_index_access(obj, idx)
+            }
+        } else {
+            self.evaluate(app.args[0])
+        };
+        Some(crate::remove_undefined(self.interner(), source))
+    }
+
+    fn is_exclude_undefined_application(&self, type_id: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner().lookup(type_id) else {
+            return false;
+        };
+        let app = self.interner().type_application(app_id);
+        if app.args.len() != 2 || app.args[1] != TypeId::UNDEFINED {
+            return false;
+        }
+        let is_index_source = matches!(
+            self.interner().lookup(app.args[0]),
+            Some(TypeData::IndexAccess(..))
+        );
+        let Some(TypeData::Lazy(def_id)) = self.interner().lookup(app.base) else {
+            return false;
+        };
+        self.resolver().resolve_unresolved_type_name("Exclude") == Some(def_id)
+            || self
+                .resolver()
+                .get_def_name(def_id)
+                .is_some_and(|name| self.interner().resolve_atom_ref(name).as_ref() == "Exclude")
+            || (is_index_source
+                && self
+                    .resolver()
+                    .resolve_lazy(def_id, self.interner())
+                    .is_some_and(|body| self.is_exclude_alias_body(body)))
+    }
+
+    fn is_exclude_alias_body(&self, type_id: TypeId) -> bool {
+        let Some(TypeData::Conditional(cond_id)) = self.interner().lookup(type_id) else {
+            return false;
+        };
+        let cond = self.interner().get_conditional(cond_id);
+        cond.true_type == TypeId::NEVER
+            && cond.false_type == cond.check_type
+            && matches!(
+                (
+                    self.interner().lookup(cond.check_type),
+                    self.interner().lookup(cond.extends_type),
+                ),
+                (
+                    Some(TypeData::TypeParameter(_)),
+                    Some(TypeData::TypeParameter(_))
+                )
+            )
+    }
+
+    fn conditional_check_needs_resolver(&self, type_id: TypeId) -> bool {
+        crate::visitors::visitor_predicates::contains_type_matching(
+            self.interner(),
+            type_id,
+            |key| match key {
+                TypeData::TypeQuery(_) => true,
+                TypeData::Lazy(def_id) => self
+                    .resolver()
+                    .resolve_lazy(*def_id, self.interner())
+                    .is_none(),
+                TypeData::Application(app_id) => {
+                    let app = self.interner().type_application(*app_id);
+                    matches!(
+                        self.interner().lookup(app.base),
+                        Some(TypeData::TypeQuery(_))
+                    ) || matches!(
+                        self.interner().lookup(app.base),
+                        Some(TypeData::Lazy(def_id))
+                            if self.resolver().resolve_lazy(def_id, self.interner()).is_none()
+                    )
+                }
+                TypeData::IndexAccess(obj, idx) => matches!(
+                    (self.interner().lookup(*obj), self.interner().lookup(*idx)),
+                    (Some(TypeData::TypeParameter(_)), _) | (_, Some(TypeData::TypeParameter(_)))
+                ),
+                _ => false,
+            },
+        )
     }
 
     /// Check if this is a primitive type vs Function/callable target.
@@ -1115,6 +1433,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.evaluate(cond.false_type);
         };
 
+        if self.is_exclude_undefined_application(cond.check_type) {
+            inferred = crate::remove_undefined(self.interner(), inferred);
+        }
+
         let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
@@ -1227,6 +1549,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let Some(mut inferred) = inferred else {
             return self.evaluate(cond.false_type);
         };
+
+        if self.is_exclude_undefined_application(cond.check_type) {
+            inferred = crate::remove_undefined(self.interner(), inferred);
+        }
 
         let mut subst = TypeSubstitution::single(info.name, inferred);
 
@@ -1352,6 +1678,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             else {
                 return self.evaluate(cond.false_type);
             };
+            if self.is_exclude_undefined_application(cond.check_type) {
+                inferred = crate::remove_undefined(self.interner(), inferred);
+            }
 
             subst.insert(info.name, inferred);
 
@@ -1409,6 +1738,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.evaluate(cond.false_type);
         };
 
+        if self.is_exclude_undefined_application(cond.check_type) {
+            inferred = crate::remove_undefined(self.interner(), inferred);
+        }
+
         let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
@@ -1457,7 +1790,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(query_db) = self.query_db() {
             let prop_name_str = self.interner().resolve_atom_ref(prop_name);
             return match query_db.resolve_property_access(source, &prop_name_str) {
-                PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                PropertyAccessResult::Success { type_id, .. } => Some(if optional {
+                    crate::remove_undefined(self.interner(), type_id)
+                } else {
+                    type_id
+                }),
                 PropertyAccessResult::PropertyNotFound { .. } => {
                     optional.then_some(TypeId::UNDEFINED)
                 }
@@ -1472,11 +1809,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .properties
                     .iter()
                     .find(|prop| prop.name == prop_name)
-                    .map(|prop| {
+                    .and_then(|prop| {
+                        if !optional && prop.optional {
+                            return None;
+                        }
                         if optional {
-                            self.optional_property_type(prop)
+                            Some(crate::remove_undefined(
+                                self.interner(),
+                                self.optional_property_type(prop),
+                            ))
                         } else {
-                            prop.type_id
+                            Some(prop.type_id)
                         }
                     })
                     .or_else(|| optional.then_some(TypeId::UNDEFINED))
@@ -1491,11 +1834,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .properties
                     .iter()
                     .find(|prop| prop.name == prop_name)
-                    .map(|prop| {
+                    .and_then(|prop| {
+                        if !optional && prop.optional {
+                            return None;
+                        }
                         if optional {
-                            self.optional_property_type(prop)
+                            Some(crate::remove_undefined(
+                                self.interner(),
+                                self.optional_property_type(prop),
+                            ))
                         } else {
-                            prop.type_id
+                            Some(prop.type_id)
                         }
                     })
                     .or_else(|| optional.then_some(TypeId::UNDEFINED))

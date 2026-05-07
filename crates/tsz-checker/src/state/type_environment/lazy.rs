@@ -141,6 +141,51 @@ pub(crate) fn exit_refs_resolution_scope() {
 }
 
 impl<'a> CheckerState<'a> {
+    fn application_body_contains_infer_types(&self, type_id: TypeId) -> bool {
+        self.application_body_infer_status(type_id)
+            .is_some_and(|(_, has_infer)| has_infer)
+    }
+
+    fn application_body_has_unstable_infer_resolution(&self, type_id: TypeId) -> bool {
+        self.application_body_infer_status(type_id)
+            .is_some_and(|(has_name, has_infer)| !has_name && has_infer)
+    }
+
+    fn lazy_body_contains_infer_application(&self, type_id: TypeId) -> bool {
+        let Some(def_id) = tsz_solver::visitor::lazy_def_id(self.ctx.types, type_id) else {
+            return false;
+        };
+        let body = {
+            let Ok(env) = self.ctx.type_env.try_borrow() else {
+                return false;
+            };
+            tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+        };
+        body.is_some_and(|body| self.application_body_contains_infer_types(body))
+    }
+
+    fn application_body_infer_status(&self, type_id: TypeId) -> Option<(bool, bool)> {
+        use crate::query_boundaries::state::type_environment::contains_infer_types_db;
+
+        let app_id = tsz_solver::visitor::application_id(self.ctx.types, type_id)?;
+        let app = self.ctx.types.type_application(app_id);
+        let def_id = tsz_solver::visitor::lazy_def_id(self.ctx.types, app.base).or_else(|| {
+            tsz_solver::visitor::type_query_symbol(self.ctx.types, app.base).and_then(|symbol| {
+                self.ctx
+                    .type_env
+                    .try_borrow()
+                    .ok()
+                    .and_then(|env| tsz_solver::TypeResolver::symbol_to_def_id(&*env, symbol))
+            })
+        });
+        let def_id = def_id?;
+        let env = self.ctx.type_env.try_borrow().ok()?;
+        let has_name = tsz_solver::TypeResolver::get_def_name(&*env, def_id).is_some();
+        let has_infer = tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+            .is_some_and(|body| contains_infer_types_db(self.ctx.types, body));
+        Some((has_name, has_infer))
+    }
+
     fn evaluate_type_with_env_impl(&mut self, type_id: TypeId, use_cache: bool) -> TypeId {
         use crate::query_boundaries::state::type_environment::{
             contains_infer_types_db, contains_type_query_db, evaluate_type_with_cache,
@@ -150,7 +195,13 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        if use_cache && let Some(&cached) = self.ctx.env_eval_cache.borrow().get(&type_id) {
+        let type_cacheable = !self.application_body_contains_infer_types(type_id)
+            && !self.lazy_body_contains_infer_application(type_id);
+
+        if use_cache
+            && type_cacheable
+            && let Some(&cached) = self.ctx.env_eval_cache.borrow().get(&type_id)
+        {
             if cached.depth_exceeded {
                 self.ctx.depth_exceeded.set(true);
             }
@@ -248,7 +299,8 @@ impl<'a> CheckerState<'a> {
         // contains unresolved IndexAccess or Mapped types, retry with the full
         // CheckerContext resolver which can resolve Lazy(DefId) on the fly via
         // get_type_of_symbol.
-        let needs_resolver_pass = query::index_access_types(self.ctx.types, result).is_some()
+        let needs_resolver_pass = self.lazy_body_contains_infer_application(type_id)
+            || query::index_access_types(self.ctx.types, result).is_some()
             || query::mapped_type_id(self.ctx.types, result).is_some()
             || (contains_lazy_or_recursive(self.ctx.types, result)
                 && (crate::query_boundaries::common::string_intrinsic_components(
@@ -303,12 +355,18 @@ impl<'a> CheckerState<'a> {
         } else {
             result
         };
+        if self.application_body_has_unstable_infer_resolution(type_id) {
+            EVAL_ENV_DEPTH.set(eval_depth);
+            return type_id;
+        }
 
         // Same Infer guard for the top-level result: don't cache results
         // containing unbound infer types from partially-evaluated conditional types.
         if use_cache
+            && type_cacheable
             && !crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id)
             && !crate::query_boundaries::common::contains_this_type(self.ctx.types, final_result)
+            && !contains_infer_types_db(self.ctx.types, type_id)
             && !contains_infer_types_db(self.ctx.types, final_result)
             && !contains_type_query_db(self.ctx.types, final_result)
         {
@@ -355,8 +413,11 @@ impl<'a> CheckerState<'a> {
         for (k, v) in entries {
             if k != v
                 && !k.is_intrinsic()
+                && !self.application_body_contains_infer_types(k)
+                && !self.lazy_body_contains_infer_application(k)
                 && !crate::query_boundaries::common::contains_this_type(self.ctx.types, k)
                 && !crate::query_boundaries::common::contains_this_type(self.ctx.types, v)
+                && !contains_infer_types_db(self.ctx.types, k)
                 && !contains_infer_types_db(self.ctx.types, v)
                 && !contains_type_query_db(self.ctx.types, v)
             {

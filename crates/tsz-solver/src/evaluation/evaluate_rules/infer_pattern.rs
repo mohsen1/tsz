@@ -12,6 +12,7 @@
 //! - `bind_infer`: Bind a type to an infer parameter
 
 use crate::instantiation::application::ApplicationEvaluator;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     IntrinsicKind, LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId,
@@ -438,6 +439,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         bindings.insert(info.name, inferred);
         true
+    }
+
+    fn instantiate_application_pattern_preserving_infer(&self, pattern: TypeId) -> Option<TypeId> {
+        if !self.type_contains_infer(pattern) {
+            return None;
+        }
+        let Some(TypeData::Application(app_id)) = self.interner().lookup(pattern) else {
+            return None;
+        };
+        let app = self.interner().type_application(app_id);
+        let (body, type_params) = match self.interner().lookup(app.base)? {
+            TypeData::Lazy(def_id) => {
+                let body = self.resolver().resolve_lazy(def_id, self.interner())?;
+                let type_params = self
+                    .resolver()
+                    .get_lazy_type_params(def_id)
+                    .filter(|params| params.len() == app.args.len())
+                    .unwrap_or_else(|| self.extract_type_params_from_type(body));
+                (body, type_params)
+            }
+            TypeData::TypeQuery(sym_ref) => {
+                let body = self
+                    .resolver()
+                    .resolve_type_query(sym_ref, self.interner())?;
+                let type_params = self
+                    .resolver()
+                    .get_type_params(sym_ref)
+                    .filter(|params| params.len() == app.args.len())
+                    .unwrap_or_else(|| self.extract_type_params_from_type(body));
+                (body, type_params)
+            }
+            _ => return None,
+        };
+        if type_params.len() != app.args.len() {
+            return None;
+        }
+        let substitution = TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
+        let mut instantiated = instantiate_type(self.interner(), body, &substitution);
+        if !self.type_contains_infer(instantiated) {
+            let extracted_type_params = self.extract_type_params_from_type(body);
+            if extracted_type_params.len() == app.args.len() {
+                let substitution =
+                    TypeSubstitution::from_args(self.interner(), &extracted_type_params, &app.args);
+                instantiated = instantiate_type(self.interner(), body, &substitution);
+            }
+        }
+        if crate::contains_this_type(self.interner(), instantiated) {
+            instantiated = crate::substitute_this_type(self.interner(), instantiated, pattern);
+        }
+        Some(instantiated)
     }
 
     /// Bind default values for all infer parameters in a pattern.
@@ -1213,16 +1264,46 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 ),
             TypeData::Application(pattern_app_id) => {
                 // First try declaration matching: Application vs Application
-                let declaration_matched = match self.interner().lookup(source) {
-                    Some(TypeData::Application(source_app_id)) => {
+                let pattern_app = self.interner().type_application(pattern_app_id);
+                let mut bases_equivalent = |source_base: TypeId, pattern_base: TypeId| {
+                    source_base == pattern_base
+                        || matches!(
+                            (
+                                crate::visitor::lazy_def_id(self.interner(), source_base),
+                                crate::visitor::lazy_def_id(self.interner(), pattern_base),
+                            ),
+                            (Some(source_def), Some(pattern_def))
+                                if self.resolver().defs_are_equivalent(source_def, pattern_def)
+                        )
+                        || (checker.is_subtype_of(source_base, pattern_base)
+                            && checker.is_subtype_of(pattern_base, source_base))
+                };
+                let mut source_application_id = None;
+                let mut candidate = Some(source);
+                for _ in 0..4 {
+                    let Some(type_id) = candidate else {
+                        break;
+                    };
+                    if let Some(TypeData::Application(source_app_id)) =
+                        self.interner().lookup(type_id)
+                    {
                         let source_app = self.interner().type_application(source_app_id);
-                        let pattern_app = self.interner().type_application(pattern_app_id);
+                        if source_app.args.len() == pattern_app.args.len()
+                            && bases_equivalent(source_app.base, pattern_app.base)
+                        {
+                            source_application_id = Some(source_app_id);
+                            break;
+                        }
+                    }
+                    candidate = self.interner().get_display_alias(type_id);
+                }
+                let declaration_matched = match source_application_id {
+                    Some(source_app_id) => {
+                        let source_app = self.interner().type_application(source_app_id);
                         if source_app.args.len() != pattern_app.args.len() {
                             return false;
                         }
-                        if !checker.is_subtype_of(source_app.base, pattern_app.base)
-                            || !checker.is_subtype_of(pattern_app.base, source_app.base)
-                        {
+                        if !bases_equivalent(source_app.base, pattern_app.base) {
                             return false;
                         }
                         for (source_arg, pattern_arg) in
@@ -1252,8 +1333,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Expand the pattern Application to its structural form and recurse
                 // This handles cases like: Reducer<infer S> matching a structural function type
                 let evaluator = ApplicationEvaluator::new(self.interner(), self.resolver());
-                let expanded_pattern = evaluator.evaluate_or_original(pattern);
-
+                let expanded_pattern = self
+                    .instantiate_application_pattern_preserving_infer(pattern)
+                    .unwrap_or_else(|| evaluator.evaluate_or_original(pattern));
                 // Only recurse if expansion actually changed the type
                 if expanded_pattern != pattern {
                     return self.match_infer_pattern(

@@ -641,6 +641,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let type_params = self.resolver.get_lazy_type_params(def_id);
             let resolved = self.resolver.resolve_lazy(def_id, self.interner);
             let def_kind = self.resolver.get_def_kind(def_id);
+            if self.resolver.get_def_name(def_id).is_none()
+                && resolved.is_some_and(|body| {
+                    crate::type_queries::contains_infer_types_db(self.interner, body)
+                })
+            {
+                if let Some(d) = self.def_depth.get_mut(&def_id) {
+                    *d = d.saturating_sub(1);
+                }
+                return original_type_id;
+            }
+            let resolved_contains_infer = resolved.is_some_and(|body| {
+                crate::type_queries::contains_infer_types_db(self.interner, body)
+            });
             let is_type_alias_def = matches!(def_kind, Some(crate::def::DefKind::TypeAlias));
             let prefer_application_display_alias = is_type_alias_def
                 && resolved.is_some_and(|body| {
@@ -691,7 +704,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         };
                     let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
-                    if let Some(db) = self.query_db
+                    if !resolved_contains_infer
+                        && let Some(db) = self.query_db
                         && let Some(cached) = db.lookup_application_eval_cache(
                             def_id,
                             &expanded_args,
@@ -745,7 +759,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 Self::is_primitive_or_primitive_union(self.interner, resolved_arg)
                             };
                             if should_passthrough {
-                                if let Some(db) = self.query_db {
+                                if !resolved_contains_infer && let Some(db) = self.query_db {
                                     db.insert_application_eval_cache(
                                         def_id,
                                         &expanded_args,
@@ -790,7 +804,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     }),
                                     symbol: None,
                                 });
-                                if let Some(db) = self.query_db {
+                                if !resolved_contains_infer && let Some(db) = self.query_db {
                                     db.insert_application_eval_cache(
                                         def_id,
                                         &expanded_args,
@@ -869,7 +883,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner,
                         evaluated,
                     );
-                    if let Some(db) = self.query_db {
+                    if !resolved_contains_infer && let Some(db) = self.query_db {
                         db.insert_application_eval_cache(
                             def_id,
                             &expanded_args,
@@ -888,8 +902,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // Pre-expand type arguments
                     let expanded_args = self.expand_type_args(&app.args);
                     let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
+                    let resolved_contains_infer =
+                        crate::type_queries::contains_infer_types_db(self.interner, resolved);
 
-                    if let Some(db) = self.query_db
+                    if !resolved_contains_infer
+                        && let Some(db) = self.query_db
                         && let Some(cached) = db.lookup_application_eval_cache(
                             def_id,
                             &expanded_args,
@@ -924,7 +941,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         self.evaluate(instantiated)
                     };
-                    if let Some(db) = self.query_db {
+                    if !resolved_contains_infer && let Some(db) = self.query_db {
                         db.insert_application_eval_cache(
                             def_id,
                             &expanded_args,
@@ -939,7 +956,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 original_type_id
             };
-
             // Read the apparent conditional branch set by evaluate_conditional for THIS
             // application, then restore whatever was saved above for the outer caller.
             let my_apparent_branch = self.apparent_conditional_branch.take();
@@ -989,15 +1005,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let has_param_args = app.args.iter().any(|&arg| {
                     crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
                 });
-                if !has_param_args
-                    || matches!(
-                        self.interner.lookup(result),
-                        Some(
-                            crate::types::TypeData::Conditional(_)
-                                | crate::types::TypeData::IndexAccess(_, _)
-                                | crate::types::TypeData::Mapped(_)
-                        )
-                    )
+                let has_infer_args = app
+                    .args
+                    .iter()
+                    .any(|&arg| crate::type_queries::contains_infer_types_db(self.interner, arg));
+                if !has_infer_args
+                    && (!has_param_args
+                        || matches!(
+                            self.interner.lookup(result),
+                            Some(
+                                crate::types::TypeData::Conditional(_)
+                                    | crate::types::TypeData::IndexAccess(_, _)
+                                    | crate::types::TypeData::Mapped(_)
+                            )
+                        ))
                 {
                     let result_is_non_empty_structural = match self.interner.lookup(result) {
                         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {

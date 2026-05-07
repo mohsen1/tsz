@@ -2324,7 +2324,10 @@ fn template_has_lazy_application_in_composite(
                 if let Some(TypeData::Application(app_id)) = interner.lookup(m) {
                     let app = interner.type_application(app_id);
                     !app.base.is_intrinsic()
-                        && matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
+                        && matches!(
+                            interner.lookup(app.base),
+                            Some(TypeData::Lazy(..) | TypeData::TypeQuery(_))
+                        )
                 } else {
                     false
                 }
@@ -2332,11 +2335,29 @@ fn template_has_lazy_application_in_composite(
         }
         TypeData::Conditional(cond_id) => {
             let cond = interner.get_conditional(cond_id);
-            template_has_lazy_application_in_composite(interner, cond.true_type)
+            type_is_lazy_application(interner, cond.check_type)
+                || type_is_lazy_application(interner, cond.extends_type)
+                || index_access_operand_needs_resolver(interner, cond.check_type)
+                || index_access_operand_needs_resolver(interner, cond.extends_type)
+                || template_has_lazy_application_in_composite(interner, cond.check_type)
+                || template_has_lazy_application_in_composite(interner, cond.extends_type)
+                || template_has_lazy_application_in_composite(interner, cond.true_type)
                 || template_has_lazy_application_in_composite(interner, cond.false_type)
         }
         _ => false,
     }
+}
+
+fn type_is_lazy_application(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(TypeData::Application(app_id)) = interner.lookup(type_id) else {
+        return false;
+    };
+    let app = interner.type_application(app_id);
+    !app.base.is_intrinsic()
+        && matches!(
+            interner.lookup(app.base),
+            Some(TypeData::Lazy(..) | TypeData::TypeQuery(_))
+        )
 }
 
 /// Check whether a mapped constraint needs a real resolver before it can be

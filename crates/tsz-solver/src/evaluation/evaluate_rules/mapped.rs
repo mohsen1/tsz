@@ -862,7 +862,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Evaluate a keyof or constraint type for mapped type iteration.
-    fn evaluate_keyof_or_constraint(&mut self, constraint: TypeId) -> TypeId {
+    pub(crate) fn evaluate_keyof_or_constraint(&mut self, constraint: TypeId) -> TypeId {
         // PERF: Single lookup handles all cases instead of 4 separate DashMap lookups.
         let members = match self.interner().lookup(constraint) {
             Some(TypeData::Conditional(cond_id)) => {
@@ -929,7 +929,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Extract mapped keys from a type (for mapped type iteration).
-    fn extract_mapped_keys(&mut self, type_id: TypeId) -> Option<MappedKeys> {
+    pub(crate) fn extract_mapped_keys(&mut self, type_id: TypeId) -> Option<MappedKeys> {
         let key = self.interner().lookup(type_id)?;
 
         let mut keys = MappedKeys {
@@ -947,6 +947,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     operand_lookup = ?self.interner().lookup(operand),
                     "extract_mapped_keys: handling KeyOf type"
                 );
+                if let Some(application_keys) = self.extract_keyof_application_keys(operand) {
+                    return Some(application_keys);
+                }
                 // NORTH STAR: Use collect_properties to extract keys from KeyOf operand.
                 // This handles interfaces, classes, intersections, and type parameters.
                 let prop_result = collect_properties(operand, self.interner(), self.resolver());
@@ -1228,6 +1231,82 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Can't extract literals from other types
             _ => None,
         }
+    }
+
+    fn extract_keyof_application_keys(&mut self, operand: TypeId) -> Option<MappedKeys> {
+        let TypeData::Application(app_id) = self.interner().lookup(operand)? else {
+            return None;
+        };
+        let app = self.interner().type_application(app_id);
+        let TypeData::Lazy(def_id) = self.interner().lookup(app.base)? else {
+            return None;
+        };
+
+        if self.is_pick_keyspace_application(def_id) && app.args.len() == 2 {
+            let keys = self.evaluate_keyof_or_constraint(app.args[1]);
+            return self.extract_mapped_keys(keys);
+        }
+
+        let body = self.resolver().resolve_lazy(def_id, self.interner())?;
+        let type_params = self.resolver().get_lazy_type_params(def_id)?;
+        let TypeData::Mapped(mapped_id) = self.interner().lookup(body)? else {
+            return None;
+        };
+        let mapped = self.interner().mapped_type(mapped_id);
+        let source_param = match self.interner().lookup(mapped.constraint)? {
+            TypeData::TypeParameter(param) => param,
+            TypeData::KeyOf(inner) => crate::visitor::type_param_info(self.interner(), inner)?,
+            _ => return None,
+        };
+        let idx = type_params
+            .iter()
+            .position(|param| param.name == source_param.name)?;
+        let arg = *app.args.get(idx)?;
+        let keys = if matches!(
+            self.interner().lookup(mapped.constraint),
+            Some(TypeData::KeyOf(_))
+        ) {
+            self.evaluate_keyof_or_constraint(self.interner().keyof(arg))
+        } else {
+            self.evaluate_keyof_or_constraint(arg)
+        };
+        self.extract_mapped_keys(keys)
+    }
+
+    fn is_pick_keyspace_application(&self, def_id: crate::def::DefId) -> bool {
+        if self.resolver().resolve_unresolved_type_name("Pick") == Some(def_id)
+            || self
+                .resolver()
+                .get_def_name(def_id)
+                .is_some_and(|atom| self.interner().resolve_atom_ref(atom).as_ref() == "Pick")
+        {
+            return true;
+        }
+
+        let Some(params) = self.resolver().get_lazy_type_params(def_id) else {
+            return false;
+        };
+        if params.len() != 2 || params[0].constraint.is_some() {
+            return false;
+        }
+        let Some(key_constraint) = params[1].constraint else {
+            return false;
+        };
+        let Some(source_type) = crate::visitor::keyof_inner_type(self.interner(), key_constraint)
+        else {
+            return false;
+        };
+        let Some(source_param) = crate::visitor::type_param_info(self.interner(), source_type)
+        else {
+            return false;
+        };
+        if source_param.name != params[0].name {
+            return false;
+        }
+
+        self.resolver()
+            .resolve_lazy(def_id, self.interner())
+            .is_some_and(|body| body == TypeId::UNKNOWN)
     }
 
     /// A mapped type is homomorphic if:

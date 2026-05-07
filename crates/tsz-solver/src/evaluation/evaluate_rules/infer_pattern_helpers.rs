@@ -1136,6 +1136,52 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             && pattern_shape.properties.is_empty();
 
         if !is_call_pattern && !is_construct_pattern {
+            if pattern_shape
+                .properties
+                .iter()
+                .any(|prop| self.type_contains_infer(prop.type_id))
+                && let Some(TypeData::Callable(source_shape_id)) = self.interner().lookup(source)
+            {
+                let source_shape = self.interner().callable_shape(source_shape_id);
+                for pattern_prop in &pattern_shape.properties {
+                    let source_prop = source_shape
+                        .properties
+                        .iter()
+                        .find(|prop| prop.name == pattern_prop.name);
+                    let Some(source_prop) = source_prop else {
+                        if pattern_prop.optional {
+                            if self.type_contains_infer(pattern_prop.type_id)
+                                && !self.match_infer_pattern(
+                                    TypeId::UNDEFINED,
+                                    pattern_prop.type_id,
+                                    bindings,
+                                    &mut FxHashSet::default(),
+                                    checker,
+                                )
+                            {
+                                return false;
+                            }
+                            continue;
+                        }
+                        return false;
+                    };
+                    let source_type = if pattern_prop.optional {
+                        crate::remove_undefined(self.interner(), source_prop.type_id)
+                    } else {
+                        self.optional_property_type(source_prop)
+                    };
+                    if !self.match_infer_pattern(
+                        source_type,
+                        pattern_prop.type_id,
+                        bindings,
+                        &mut FxHashSet::default(),
+                        checker,
+                    ) {
+                        return false;
+                    }
+                }
+                return true;
+            }
             return checker.is_subtype_of(source, pattern);
         }
         let pattern_sig = if is_construct_pattern {
@@ -1560,7 +1606,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                         return false;
                     };
-                    let source_type = self.optional_property_type(source_prop);
+                    let source_type = if pattern_prop.optional {
+                        crate::remove_undefined(self.interner(), source_prop.type_id)
+                    } else {
+                        self.optional_property_type(source_prop)
+                    };
                     if !self.match_infer_pattern(
                         source_type,
                         pattern_prop.type_id,
@@ -1602,7 +1652,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                         return false;
                     };
-                    let source_type = self.optional_property_type(source_prop);
+                    let source_type = if pattern_prop.optional {
+                        crate::remove_undefined(self.interner(), source_prop.type_id)
+                    } else {
+                        self.optional_property_type(source_prop)
+                    };
                     if !self.match_infer_pattern(
                         source_type,
                         pattern_prop.type_id,
@@ -1770,7 +1824,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                         return false;
                     };
-                    let source_type = self.optional_property_type(source_prop);
+                    let source_type = if pattern_prop.optional {
+                        crate::remove_undefined(self.interner(), source_prop.type_id)
+                    } else {
+                        self.optional_property_type(source_prop)
+                    };
                     if !self.match_infer_pattern(
                         source_type,
                         pattern_prop.type_id,

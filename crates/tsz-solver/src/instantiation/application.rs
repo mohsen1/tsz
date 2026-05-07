@@ -172,7 +172,6 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
         if type_params.is_empty() {
             return ApplicationResult::Resolved(body_type);
         }
-
         // Use type arguments as-is (without eager evaluation).
         //
         // Eagerly evaluating Application args before substitution causes a loss of

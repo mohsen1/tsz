@@ -908,6 +908,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
 
+            let evaluated_source = self.evaluate_type(source);
+            if evaluated_source != source && self.check_subtype(evaluated_source, target).is_true()
+            {
+                return SubtypeResult::True;
+            }
+
+            if let Some(source_app_id) = application_id(self.interner, source)
+                && let Some(expanded_source) = self.try_expand_application(source_app_id)
+            {
+                let expanded_source = self.evaluate_type(expanded_source);
+                if expanded_source != source
+                    && self.check_subtype(expanded_source, target).is_true()
+                {
+                    return SubtypeResult::True;
+                }
+            }
+
             for &member in member_list.iter() {
                 if self.check_subtype(source, member).is_true() {
                     return SubtypeResult::True;
@@ -1212,8 +1229,47 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.in_intersection_member_check = saved_intersection_check;
                     return SubtypeResult::True;
                 }
+                let evaluated_member = self.evaluate_type(member);
+                if evaluated_member != member
+                    && self.check_subtype(evaluated_member, target).is_true()
+                {
+                    self.in_intersection_member_check = saved_intersection_check;
+                    return SubtypeResult::True;
+                }
             }
             self.in_intersection_member_check = saved_intersection_check;
+
+            if target_is_object_like {
+                match collect_properties(source, self.interner, self.resolver) {
+                    PropertyCollectionResult::Any => {
+                        return self.check_subtype(TypeId::ANY, target);
+                    }
+                    PropertyCollectionResult::Properties {
+                        properties,
+                        string_index,
+                        number_index,
+                    } if !properties.is_empty()
+                        || string_index.is_some()
+                        || number_index.is_some() =>
+                    {
+                        let merged_type = if string_index.is_some() || number_index.is_some() {
+                            self.interner.object_with_index(ObjectShape {
+                                flags: ObjectFlags::empty(),
+                                properties,
+                                string_index,
+                                number_index,
+                                symbol: None,
+                            })
+                        } else {
+                            self.interner.object(properties)
+                        };
+                        if self.check_subtype(merged_type, target).is_true() {
+                            return SubtypeResult::True;
+                        }
+                    }
+                    _ => {}
+                }
+            }
             // No individual member matches; fall through to type-specific handlers
         }
 

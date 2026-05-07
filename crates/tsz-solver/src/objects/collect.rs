@@ -15,6 +15,7 @@ use tsz_common::interner::Atom;
 
 // Import TypeDatabase trait
 use crate::caches::db::TypeDatabase;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 
 /// Merge two visibility levels for an intersection property.
 const fn merge_visibility(a: Visibility, b: Visibility) -> Visibility {
@@ -163,6 +164,16 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             Some(TypeData::Mapped(mapped_id)) => {
                 self.collect_finite_mapped_properties(mapped_id);
             }
+            Some(TypeData::Application(_)) => {
+                let mut evaluator = crate::evaluation::evaluate::TypeEvaluator::with_resolver(
+                    self.interner,
+                    self.resolver,
+                );
+                let evaluated = evaluator.evaluate(resolved);
+                if evaluated != resolved {
+                    self.collect(evaluated);
+                }
+            }
             // Any type in intersection makes everything Any (commutative)
             Some(TypeData::Intrinsic(IntrinsicKind::Any)) => {
                 self.found_any = true;
@@ -204,26 +215,88 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
     }
 
     fn collect_finite_mapped_properties(&mut self, mapped_id: crate::types::MappedTypeId) {
-        let Some(names) =
-            crate::type_queries::collect_finite_mapped_property_names(self.interner, mapped_id)
-        else {
-            return;
-        };
-
         let mapped = self.interner.mapped_type(mapped_id);
         let optional = mapped.optional_modifier == Some(MappedModifier::Add);
         let readonly = mapped.readonly_modifier == Some(MappedModifier::Add);
-        let mut properties = Vec::with_capacity(names.len());
+        let needs_resolver =
+            crate::type_queries::contains_infer_types_db(self.interner, mapped.template);
+        let properties = if !needs_resolver
+            && let Some(names) =
+                crate::type_queries::collect_finite_mapped_property_names(self.interner, mapped_id)
+        {
+            let mut properties = Vec::with_capacity(names.len());
 
-        for name in names {
-            let name_text = self.interner.resolve_atom(name);
-            let Some(type_id) = crate::type_queries::get_finite_mapped_property_type(
-                self.interner,
-                mapped_id,
-                &name_text,
-            ) else {
-                continue;
-            };
+            for name in names {
+                let name_text = self.interner.resolve_atom(name);
+                let Some(type_id) = crate::type_queries::get_finite_mapped_property_type(
+                    self.interner,
+                    mapped_id,
+                    &name_text,
+                ) else {
+                    continue;
+                };
+                properties.push(PropertyInfo {
+                    name,
+                    type_id,
+                    write_type: type_id,
+                    optional,
+                    readonly,
+                    visibility: Visibility::Public,
+                    is_method: false,
+                    is_class_prototype: false,
+                    parent_id: None,
+                    declaration_order: 0,
+                    is_string_named: false,
+                    is_symbol_named: false,
+                    single_quoted_name: false,
+                });
+            }
+            properties
+        } else {
+            self.collect_finite_mapped_properties_with_resolver(&mapped, optional, readonly)
+        };
+
+        if properties.is_empty() {
+            return;
+        }
+
+        let shape = ObjectShape {
+            flags: crate::types::ObjectFlags::empty(),
+            properties,
+            string_index: None,
+            number_index: None,
+            symbol: None,
+        };
+        self.merge_shape(&shape);
+    }
+
+    fn collect_finite_mapped_properties_with_resolver(
+        &self,
+        mapped: &crate::types::MappedType,
+        optional: bool,
+        readonly: bool,
+    ) -> Vec<PropertyInfo> {
+        let mut evaluator =
+            crate::evaluation::evaluate::TypeEvaluator::with_resolver(self.interner, self.resolver);
+        let keys = evaluator.evaluate_keyof_or_constraint(mapped.constraint);
+        let Some(mut key_set) = evaluator
+            .extract_mapped_keys(keys)
+            .or_else(|| self.extract_keyof_mapped_application_keys(keys, &mut evaluator))
+        else {
+            return Vec::new();
+        };
+        if key_set.has_string || key_set.has_number {
+            return Vec::new();
+        }
+        key_set.string_literals.sort_unstable();
+        key_set.string_literals.dedup();
+
+        let mut properties = Vec::with_capacity(key_set.string_literals.len());
+        for name in key_set.string_literals {
+            let key_literal = self.interner.literal_string_atom(name);
+            let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
+            let type_id =
+                evaluator.evaluate(instantiate_type(self.interner, mapped.template, &subst));
             properties.push(PropertyInfo {
                 name,
                 type_id,
@@ -241,14 +314,83 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             });
         }
 
-        let shape = ObjectShape {
-            flags: crate::types::ObjectFlags::empty(),
-            properties,
-            string_index: None,
-            number_index: None,
-            symbol: None,
+        properties
+    }
+
+    fn extract_keyof_mapped_application_keys(
+        &self,
+        keys: TypeId,
+        evaluator: &mut crate::evaluation::evaluate::TypeEvaluator<'_, R>,
+    ) -> Option<crate::evaluation::evaluate_rules::mapped::MappedKeys> {
+        let TypeData::KeyOf(operand) = self.interner.lookup(keys)? else {
+            return None;
         };
-        self.merge_shape(&shape);
+        let TypeData::Application(app_id) = self.interner.lookup(operand)? else {
+            return None;
+        };
+        let app = self.interner.type_application(app_id);
+        let TypeData::Lazy(def_id) = self.interner.lookup(app.base)? else {
+            return None;
+        };
+        if self.is_pick_keyspace_application(def_id) && app.args.len() == 2 {
+            let evaluated_arg = evaluator.evaluate_keyof_or_constraint(app.args[1]);
+            return evaluator.extract_mapped_keys(evaluated_arg);
+        }
+        let body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        let type_params = self.resolver.get_lazy_type_params(def_id)?;
+        let TypeData::Mapped(mapped_id) = self.interner.lookup(body)? else {
+            return None;
+        };
+        let app_mapped = self.interner.mapped_type(mapped_id);
+        let TypeData::TypeParameter(constraint_param) =
+            self.interner.lookup(app_mapped.constraint)?
+        else {
+            return None;
+        };
+        let idx = type_params
+            .iter()
+            .position(|param| param.name == constraint_param.name)?;
+        let arg = *app.args.get(idx)?;
+        let evaluated_arg = evaluator.evaluate_keyof_or_constraint(arg);
+        evaluator.extract_mapped_keys(evaluated_arg)
+    }
+
+    fn is_named_lib_utility_def(&self, def_id: crate::def::DefId, name: &str) -> bool {
+        self.resolver.resolve_unresolved_type_name(name) == Some(def_id)
+            || self
+                .resolver
+                .get_def_name(def_id)
+                .is_some_and(|atom| self.interner.resolve_atom_ref(atom).as_ref() == name)
+    }
+
+    fn is_pick_keyspace_application(&self, def_id: crate::def::DefId) -> bool {
+        if self.is_named_lib_utility_def(def_id, "Pick") {
+            return true;
+        }
+
+        let Some(params) = self.resolver.get_lazy_type_params(def_id) else {
+            return false;
+        };
+        if params.len() != 2 || params[0].constraint.is_some() {
+            return false;
+        }
+        let Some(key_constraint) = params[1].constraint else {
+            return false;
+        };
+        let Some(source_type) = crate::visitor::keyof_inner_type(self.interner, key_constraint)
+        else {
+            return false;
+        };
+        let Some(source_param) = crate::visitor::type_param_info(self.interner, source_type) else {
+            return false;
+        };
+        if source_param.name != params[0].name {
+            return false;
+        }
+
+        self.resolver
+            .resolve_lazy(def_id, self.interner)
+            .is_some_and(|body| body == TypeId::UNKNOWN)
     }
 
     /// Collect common properties from all union members.
@@ -356,10 +498,18 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         for prop in &shape.properties {
             if let Some(&idx) = self.prop_index.get(&prop.name) {
                 let existing = &mut self.properties[idx];
+                let existing_type = if existing.optional && !prop.optional {
+                    crate::narrowing::utils::remove_undefined(self.interner, existing.type_id)
+                } else {
+                    existing.type_id
+                };
+                let prop_type = if !existing.optional && prop.optional {
+                    crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
+                } else {
+                    prop.type_id
+                };
                 // TS Rule: Intersect types (using raw to avoid recursion)
-                existing.type_id = self
-                    .interner
-                    .intersect_types_raw2(existing.type_id, prop.type_id);
+                existing.type_id = self.interner.intersect_types_raw2(existing_type, prop_type);
                 // TS Rule: Optional if ALL are optional (required wins)
                 existing.optional = existing.optional && prop.optional;
                 // TS Rule: Readonly only if ALL are readonly (writable wins)

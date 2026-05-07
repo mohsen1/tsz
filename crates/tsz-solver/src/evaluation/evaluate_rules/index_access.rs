@@ -3,7 +3,7 @@
 //! Handles TypeScript's index access types: `T[K]`
 //! Including property access, array indexing, and tuple indexing.
 
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_generic, instantiate_type};
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
@@ -78,8 +78,13 @@ struct IndexAccessVisitor<'a, 'b, R: TypeResolver> {
 }
 
 impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
-    fn index_is_symbolic_key_space(&self, constraint: TypeId) -> bool {
-        if self.index_type != constraint {
+    fn index_is_symbolic_key_space(&mut self, constraint: TypeId) -> bool {
+        if self.index_type != constraint
+            && !self
+                .evaluator
+                .constraints_semantically_match(self.index_type, constraint)
+            && !self.keyof_type_params_have_same_name(self.index_type, constraint)
+        {
             return false;
         }
 
@@ -91,6 +96,20 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
                         IntrinsicKind::String | IntrinsicKind::Number | IntrinsicKind::Symbol
                     )
             )
+        )
+    }
+
+    fn keyof_type_params_have_same_name(&self, left: TypeId, right: TypeId) -> bool {
+        let interner = self.evaluator.interner();
+        let (Some(TypeData::KeyOf(left_operand)), Some(TypeData::KeyOf(right_operand))) =
+            (interner.lookup(left), interner.lookup(right))
+        else {
+            return false;
+        };
+        matches!(
+            (interner.lookup(left_operand), interner.lookup(right_operand)),
+            (Some(TypeData::TypeParameter(left_tp)), Some(TypeData::TypeParameter(right_tp)))
+                if left_tp.name == right_tp.name
         )
     }
 
@@ -141,6 +160,117 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         }
 
         value_type
+    }
+
+    fn instantiate_mapped_template_over_concrete_keys(
+        &mut self,
+        mapped: &crate::types::MappedType,
+    ) -> Option<TypeId> {
+        let keys = self
+            .evaluator
+            .evaluate_keyof_or_constraint(mapped.constraint);
+        let mut key_set = self.evaluator.extract_mapped_keys(keys)?;
+        if key_set.has_string || key_set.has_number {
+            return None;
+        }
+
+        let mut seen = Vec::with_capacity(key_set.string_literals.len());
+        key_set.string_literals.retain(|name| {
+            if seen.contains(name) {
+                false
+            } else {
+                seen.push(*name);
+                true
+            }
+        });
+
+        if key_set.string_literals.is_empty() {
+            return Some(TypeId::NEVER);
+        }
+
+        let mut results = Vec::with_capacity(key_set.string_literals.len());
+        for key_name in key_set.string_literals {
+            let key_literal = self.evaluator.interner().literal_string_atom(key_name);
+            let value_type = self
+                .evaluator
+                .evaluate_mapped_template_for_key(mapped, key_literal);
+            results.push(self.evaluator.apply_mapped_optional_read_semantics(
+                self.object_type,
+                mapped,
+                key_literal,
+                value_type,
+            ));
+        }
+
+        Some(self.evaluator.interner().union(results))
+    }
+
+    fn concrete_key_sets_match(&mut self, constraint: TypeId, index_type: TypeId) -> bool {
+        let constraint_keys = self.evaluator.evaluate_keyof_or_constraint(constraint);
+        let Some(mut constraint_keys) = self.evaluator.extract_mapped_keys(constraint_keys) else {
+            return false;
+        };
+        let Some(mut index_keys) = self.evaluator.extract_mapped_keys(index_type) else {
+            return false;
+        };
+        if constraint_keys.has_string
+            || constraint_keys.has_number
+            || index_keys.has_string
+            || index_keys.has_number
+        {
+            return false;
+        }
+        constraint_keys.string_literals.sort_unstable();
+        constraint_keys.string_literals.dedup();
+        index_keys.string_literals.sort_unstable();
+        index_keys.string_literals.dedup();
+        !constraint_keys.string_literals.is_empty()
+            && constraint_keys.string_literals == index_keys.string_literals
+    }
+
+    fn finite_member_lacks_concrete_key(&mut self, member: TypeId) -> bool {
+        let Some(name) = crate::type_queries::get_literal_property_name(
+            self.evaluator.interner(),
+            self.index_type,
+        ) else {
+            return false;
+        };
+        match collect_properties(member, self.evaluator.interner(), self.evaluator.resolver()) {
+            PropertyCollectionResult::Properties {
+                properties,
+                string_index,
+                number_index,
+            } => {
+                string_index.is_none()
+                    && number_index.is_none()
+                    && PropertyInfo::find_in_slice(&properties, name).is_none()
+            }
+            PropertyCollectionResult::Any | PropertyCollectionResult::NonObject => false,
+        }
+    }
+
+    fn evaluate_object_index_by_extracted_keys(
+        &mut self,
+        props: &[PropertyInfo],
+    ) -> Option<TypeId> {
+        let mut key_set = self.evaluator.extract_mapped_keys(self.index_type)?;
+        if key_set.has_number {
+            return None;
+        }
+        if key_set.has_string {
+            return Some(self.evaluator.union_property_types(props));
+        }
+        key_set.string_literals.sort_unstable();
+        key_set.string_literals.dedup();
+        let mut results = Vec::with_capacity(key_set.string_literals.len());
+        for key_name in key_set.string_literals {
+            let key = self.evaluator.interner().literal_string_atom(key_name);
+            let result = self.evaluator.evaluate_object_index(props, key);
+            if result != TypeId::UNDEFINED || self.evaluator.no_unchecked_indexed_access() {
+                results.push(result);
+            }
+        }
+        (!results.is_empty()).then(|| self.evaluator.interner().union(results))
     }
 
     fn evaluate_apparent_primitive(&mut self, kind: IntrinsicKind) -> Option<TypeId> {
@@ -448,8 +578,11 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .object_shape(ObjectShapeId(shape_id));
 
         let result = self
-            .evaluator
-            .evaluate_object_index_from_constraint(&shape.properties, self.index_type)
+            .evaluate_object_index_by_extracted_keys(&shape.properties)
+            .or_else(|| {
+                self.evaluator
+                    .evaluate_object_index_from_constraint(&shape.properties, self.index_type)
+            })
             .unwrap_or_else(|| {
                 self.evaluator
                     .evaluate_object_index(&shape.properties, self.index_type)
@@ -519,7 +652,16 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             if self.evaluator.is_depth_exceeded() {
                 return Some(TypeId::ERROR);
             }
-            let result = self.evaluator.recurse_index_access(member, self.index_type);
+            if self.finite_member_lacks_concrete_key(member) {
+                continue;
+            }
+            let mut result = self.evaluator.recurse_index_access(member, self.index_type);
+            if crate::type_queries::is_index_access_type(self.evaluator.interner(), result) {
+                let evaluated = self.evaluator.evaluate(result);
+                if evaluated != result {
+                    result = evaluated;
+                }
+            }
             if result == TypeId::ERROR && self.evaluator.is_depth_exceeded() {
                 return Some(TypeId::ERROR);
             }
@@ -702,6 +844,14 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .resolver()
             .resolve_lazy(def_id, self.evaluator.interner())
         {
+            if let Some(alias) = self.evaluator.interner().get_display_alias(resolved)
+                && matches!(
+                    self.evaluator.interner().lookup(alias),
+                    Some(TypeData::Application(_))
+                )
+            {
+                return Some(self.evaluator.recurse_index_access(alias, self.index_type));
+            }
             // Route through recurse_index_access (not evaluate_index_access directly)
             // so the call goes through evaluate() and its RecursionGuard. This prevents
             // stack overflow when Lazy types form cycles (e.g. DefId(1) → Lazy(DefId(1))).
@@ -711,6 +861,34 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             );
         }
         None
+    }
+
+    fn visit_application(&mut self, app_id: u32) -> Self::Output {
+        let app = self
+            .evaluator
+            .interner()
+            .type_application(crate::types::TypeApplicationId(app_id));
+        let def_id = crate::visitor::lazy_def_id(self.evaluator.interner(), app.base)?;
+        let type_params = self.evaluator.resolver().get_lazy_type_params(def_id)?;
+        if type_params.len() != app.args.len() {
+            return None;
+        }
+        let body = self
+            .evaluator
+            .resolver()
+            .resolve_lazy(def_id, self.evaluator.interner())?;
+        let instantiated =
+            instantiate_generic(self.evaluator.interner(), body, &type_params, &app.args);
+        if !matches!(
+            self.evaluator.interner().lookup(instantiated),
+            Some(TypeData::Mapped(_))
+        ) {
+            return None;
+        }
+        Some(
+            self.evaluator
+                .recurse_index_access(instantiated, self.index_type),
+        )
     }
 
     fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
@@ -863,13 +1041,36 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 false
             }
         };
+        let index_is_mapped_type_param = matches!(
+            self.evaluator.interner().lookup(self.index_type),
+            Some(TypeData::TypeParameter(index_tp)) if index_tp.name == mapped.type_param.name
+        );
+        let index_is_type_param_for_keyof_mapped = matches!(
+            (
+                self.evaluator.interner().lookup(self.index_type),
+                self.evaluator.interner().lookup(mapped.constraint),
+            ),
+            (Some(TypeData::TypeParameter(_)), Some(TypeData::KeyOf(_)))
+        );
 
         // Direct match: index type exactly equals the constraint
         let can_substitute = mapped.constraint == self.index_type
             // Same-named TypeParameters with different TypeIds (see above)
             || same_type_param_name
+            // The mapped template may index by its own iteration parameter `K`
+            // while the constraint is `keyof V`.
+            || index_is_mapped_type_param
+            // Nested homomorphic mapped types like
+            // `{ [P in keyof Pick<T, K>]: Pick<T, K>[P] }` can lose `P`'s
+            // concrete constraint after instantiation. A `keyof` mapped
+            // constraint still means a type-parameter index ranges over its keys.
+            || index_is_type_param_for_keyof_mapped
             // Union/intersection constraints that directly include the index type
             || self.mapped_constraint_contains_index_type(mapped.constraint)
+            || self
+                .evaluator
+                .constraints_semantically_match(self.index_type, mapped.constraint)
+            || self.keyof_type_params_have_same_name(self.index_type, mapped.constraint)
             // TypeParameter whose constraint matches the mapped constraint
             || type_param_constraint_matches
             // Implicit index signature: when the constraint is `keyof T`,
@@ -885,6 +1086,35 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             // key type is refined to `string & keyof T`.
             || self.intersection_contains_mapped_constraint(mapped.constraint);
 
+        if self.concrete_key_sets_match(mapped.constraint, self.index_type)
+            && let Some(value_type) = self.instantiate_mapped_template_over_concrete_keys(&mapped)
+        {
+            return Some(value_type);
+        }
+        if let Some(name) = crate::type_queries::get_literal_property_name(
+            self.evaluator.interner(),
+            self.index_type,
+        ) {
+            let keys = self
+                .evaluator
+                .evaluate_keyof_or_constraint(mapped.constraint);
+            if self
+                .evaluator
+                .extract_mapped_keys(keys)
+                .is_some_and(|key_set| key_set.string_literals.contains(&name))
+            {
+                let value_type = self
+                    .evaluator
+                    .evaluate_mapped_template_for_key(&mapped, self.index_type);
+                return Some(self.evaluator.apply_mapped_optional_read_semantics(
+                    self.object_type,
+                    &mapped,
+                    self.index_type,
+                    value_type,
+                ));
+            }
+        }
+
         if can_substitute {
             // `{ [K in Keys]: F<K> }[Keys]` is a union over each key, not `F<Keys>`.
             // When the index is the whole symbolic key space (typically `keyof T`),
@@ -894,16 +1124,30 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             // Preserve the per-key relationship by evaluating the template against a
             // constrained iteration variable instead of the whole key-space type.
             if self.index_is_symbolic_key_space(mapped.constraint) {
-                return Some(self.instantiate_mapped_template_with_constraint_param(&mapped));
+                if let Some(value_type) =
+                    self.instantiate_mapped_template_over_concrete_keys(&mapped)
+                {
+                    return Some(value_type);
+                }
+                let value_type = self.instantiate_mapped_template_with_constraint_param(&mapped);
+                if value_type == TypeId::NEVER
+                    && crate::type_queries::contains_infer_types_db(
+                        self.evaluator.interner(),
+                        mapped.template,
+                    )
+                {
+                    return Some(
+                        self.evaluator
+                            .interner()
+                            .index_access(self.object_type, self.index_type),
+                    );
+                }
+                return Some(value_type);
             }
 
-            let subst = TypeSubstitution::single(mapped.type_param.name, self.index_type);
-
-            let value_type = self.evaluator.evaluate(instantiate_type(
-                self.evaluator.interner(),
-                mapped.template,
-                &subst,
-            ));
+            let value_type = self
+                .evaluator
+                .evaluate_mapped_template_for_key(&mapped, self.index_type);
 
             return Some(self.evaluator.apply_mapped_optional_read_semantics(
                 self.object_type,
@@ -1397,6 +1641,124 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         value_type
     }
 
+    fn evaluate_mapped_template_for_key(
+        &mut self,
+        mapped: &MappedType,
+        key_type: TypeId,
+    ) -> TypeId {
+        let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
+        let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
+        let prepared = self.strip_removed_optional_index_undefined(mapped, key_type, instantiated);
+        self.evaluate(prepared)
+    }
+
+    fn strip_removed_optional_index_undefined(
+        &mut self,
+        mapped: &MappedType,
+        key_type: TypeId,
+        type_id: TypeId,
+    ) -> TypeId {
+        if !matches!(mapped.optional_modifier, Some(MappedModifier::Remove)) {
+            return type_id;
+        }
+        let Some(source_object) = keyof_inner_type(self.interner(), mapped.constraint) else {
+            return type_id;
+        };
+        self.strip_optional_index_undefined_for_source(type_id, source_object, key_type)
+    }
+
+    fn strip_optional_index_undefined_for_source(
+        &mut self,
+        type_id: TypeId,
+        source_object: TypeId,
+        key_type: TypeId,
+    ) -> TypeId {
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+        match self.interner().lookup(type_id) {
+            Some(TypeData::IndexAccess(object_type, index_type))
+                if object_type == source_object
+                    && (index_type == key_type
+                        || self.constraints_semantically_match(index_type, key_type)) =>
+            {
+                let indexed = self.recurse_index_access(object_type, index_type);
+                crate::remove_undefined(self.interner(), indexed)
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner().type_application(app_id);
+                let args: Vec<_> = app
+                    .args
+                    .iter()
+                    .map(|&arg| {
+                        self.strip_optional_index_undefined_for_source(arg, source_object, key_type)
+                    })
+                    .collect();
+                if args == app.args {
+                    type_id
+                } else {
+                    self.interner().application(app.base, args)
+                }
+            }
+            Some(TypeData::Union(list_id)) => {
+                let members: Vec<_> = self.interner().type_list(list_id).to_vec();
+                let rewritten: Vec<_> = members
+                    .iter()
+                    .map(|&member| {
+                        self.strip_optional_index_undefined_for_source(
+                            member,
+                            source_object,
+                            key_type,
+                        )
+                    })
+                    .collect();
+                if rewritten == members {
+                    type_id
+                } else {
+                    self.interner().union(rewritten)
+                }
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members: Vec<_> = self.interner().type_list(list_id).to_vec();
+                let rewritten: Vec<_> = members
+                    .iter()
+                    .map(|&member| {
+                        self.strip_optional_index_undefined_for_source(
+                            member,
+                            source_object,
+                            key_type,
+                        )
+                    })
+                    .collect();
+                if rewritten == members {
+                    type_id
+                } else {
+                    self.interner().intersection(rewritten)
+                }
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                let cond = self.interner().conditional_type(cond_id);
+                let check_type = self.strip_optional_index_undefined_for_source(
+                    cond.check_type,
+                    source_object,
+                    key_type,
+                );
+                if check_type == cond.check_type {
+                    type_id
+                } else {
+                    self.interner().conditional(crate::types::ConditionalType {
+                        check_type,
+                        extends_type: cond.extends_type,
+                        true_type: cond.true_type,
+                        false_type: cond.false_type,
+                        is_distributive: cond.is_distributive,
+                    })
+                }
+            }
+            _ => type_id,
+        }
+    }
+
     fn constrained_index_type(&mut self, index_type: TypeId) -> Option<TypeId> {
         if index_type.is_intrinsic() {
             return None;
@@ -1498,10 +1860,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
-        // Substitute K into the mapped template
-        let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
-
-        let value_type = self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+        let value_type = self.evaluate_mapped_template_for_key(&mapped, index_type);
+        if value_type == TypeId::NEVER
+            && crate::type_queries::contains_infer_types_db(self.interner(), mapped.template)
+        {
+            return Some(self.interner().index_access(object_type, index_type));
+        }
 
         Some(self.apply_mapped_optional_read_semantics(
             object_type,
@@ -1509,6 +1873,94 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             index_type,
             value_type,
         ))
+    }
+
+    fn concrete_mapped_key_sets_match(&mut self, constraint: TypeId, index_type: TypeId) -> bool {
+        let constraint_keys = self.evaluate_keyof_or_constraint(constraint);
+        let Some(mut constraint_keys) = self.extract_mapped_keys(constraint_keys) else {
+            return false;
+        };
+        let Some(mut index_keys) = self.extract_mapped_keys(index_type) else {
+            return false;
+        };
+        if constraint_keys.has_string
+            || constraint_keys.has_number
+            || index_keys.has_string
+            || index_keys.has_number
+        {
+            return false;
+        }
+        constraint_keys.string_literals.sort_unstable();
+        constraint_keys.string_literals.dedup();
+        index_keys.string_literals.sort_unstable();
+        index_keys.string_literals.dedup();
+        !constraint_keys.string_literals.is_empty()
+            && constraint_keys.string_literals == index_keys.string_literals
+    }
+
+    fn instantiate_mapped_template_over_concrete_keys(
+        &mut self,
+        object_type: TypeId,
+        mapped: &MappedType,
+    ) -> Option<TypeId> {
+        let keys = self.evaluate_keyof_or_constraint(mapped.constraint);
+        let mut key_set = self.extract_mapped_keys(keys)?;
+        if key_set.has_string || key_set.has_number {
+            return None;
+        }
+
+        let mut seen = Vec::with_capacity(key_set.string_literals.len());
+        key_set.string_literals.retain(|name| {
+            if seen.contains(name) {
+                false
+            } else {
+                seen.push(*name);
+                true
+            }
+        });
+
+        if key_set.string_literals.is_empty() {
+            return Some(TypeId::NEVER);
+        }
+
+        let mut results = Vec::with_capacity(key_set.string_literals.len());
+        for key_name in key_set.string_literals {
+            let key_literal = self.interner().literal_string_atom(key_name);
+            let value_type = self.evaluate_mapped_template_for_key(mapped, key_literal);
+            let value_type = self.apply_mapped_optional_read_semantics(
+                object_type,
+                mapped,
+                key_literal,
+                value_type,
+            );
+            results.push(value_type);
+        }
+
+        Some(self.interner().union(results))
+    }
+
+    fn try_mapped_concrete_key_index_access(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> Option<TypeId> {
+        if object_type.is_intrinsic() || index_type.is_intrinsic() {
+            return None;
+        }
+
+        let mapped_id = match self.interner().lookup(object_type) {
+            Some(TypeData::Mapped(id)) => id,
+            _ => return None,
+        };
+        let mapped = self.interner().get_mapped(MappedTypeId(mapped_id.0));
+
+        if mapped.name_type.is_some()
+            || !self.concrete_mapped_key_sets_match(mapped.constraint, index_type)
+        {
+            return None;
+        }
+
+        self.instantiate_mapped_template_over_concrete_keys(object_type, &mapped)
     }
 
     /// Helper to recursively evaluate an index access while respecting depth limits.
@@ -1539,6 +1991,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.try_mapped_type_param_substitution(object_type, index_type)
         {
             return mapped_result;
+        }
+        if let Some(mapped_result) =
+            self.try_mapped_concrete_key_index_access(object_type, index_type)
+        {
+            return mapped_result;
+        }
+        if let Some(TypeData::Application(app_id)) = self.interner().lookup(object_type) {
+            let app = self.interner().type_application(app_id);
+            if let Some(def_id) = crate::visitor::lazy_def_id(self.interner(), app.base)
+                && let Some(type_params) = self.resolver().get_lazy_type_params(def_id)
+                && type_params.len() == app.args.len()
+                && let Some(body) = self.resolver().resolve_lazy(def_id, self.interner())
+            {
+                let instantiated =
+                    instantiate_generic(self.interner(), body, &type_params, &app.args);
+                if matches!(
+                    self.interner().lookup(instantiated),
+                    Some(TypeData::Mapped(_))
+                ) {
+                    return self.recurse_index_access(instantiated, index_type);
+                }
+            }
         }
 
         let evaluated_object = self.evaluate(object_type);

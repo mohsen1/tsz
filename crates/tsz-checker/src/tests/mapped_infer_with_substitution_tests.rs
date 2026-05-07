@@ -19,7 +19,7 @@
 //! and finally `X`. tsz currently falls through to `{}`, indicating the
 //! mapped per-key infer pattern fails to match the substituted application.
 
-use crate::test_utils::check_source_diagnostics;
+use crate::test_utils::{check_source_diagnostics, check_source_strict};
 
 fn first_2322(source: &str) -> String {
     let diags = check_source_diagnostics(source);
@@ -122,5 +122,298 @@ item = null;
     assert!(
         !msg.contains("type 'never'"),
         "Renamed variant: must NOT fall through to 'never' branch. Got: {msg}"
+    );
+}
+
+#[test]
+fn mapped_conditional_infer_evaluates_inline_exclude_index_access() {
+    let diags = check_source_strict(
+        r#"
+interface Validator<T> {
+    p?: T;
+}
+type Exclude<T, U> = T extends U ? never : T;
+type Keys<V> = {
+    [K in keyof V]-?: Exclude<V[K], undefined> extends Validator<infer T>
+        ? K
+        : never
+}[keyof V];
+
+type Obj = {
+    array?: Validator<string[]>;
+    bool?: Validator<boolean>;
+};
+type RK = Keys<Obj>;
+
+const rk1: RK = "array";
+const rk2: RK = "bool";
+const rkBad: RK = "nope";
+"#,
+    );
+    let ts2322 = diags
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Only the invalid key should emit TS2322; got: {diags:?}"
+    );
+    assert!(
+        ts2322[0].contains("\"nope\""),
+        "The remaining TS2322 should be for the invalid key, got: {ts2322:?}"
+    );
+}
+
+#[test]
+fn concrete_mapped_conditional_infer_evaluates_inline_exclude_index_access() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Validator<T> {
+    p?: T;
+}
+type Exclude<T, U> = T extends U ? never : T;
+type Obj = {
+    array?: Validator<string[]>;
+    bool?: Validator<boolean>;
+};
+type RK = {
+    [K in keyof Obj]-?: Exclude<Obj[K], undefined> extends Validator<infer T>
+        ? K
+        : never
+}[keyof Obj];
+
+const rk1: RK = "array";
+const rk2: RK = "bool";
+const rkBad: RK = "nope";
+"#,
+    );
+    let ts2322 = diags
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Only the invalid key should emit TS2322; got: {diags:?}"
+    );
+    assert!(
+        ts2322[0].contains("\"nope\""),
+        "The remaining TS2322 should be for the invalid key, got: {ts2322:?}"
+    );
+}
+
+#[test]
+fn direct_conditional_infer_evaluates_inline_exclude_index_access() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Validator<T> {
+    p?: T;
+}
+type Exclude<T, U> = T extends U ? never : T;
+type Obj = {
+    array?: Validator<string[]>;
+};
+type R = Exclude<Obj["array"], undefined> extends Validator<infer T>
+    ? "array"
+    : never;
+
+const rk1: R = "array";
+const rkBad: R = "nope";
+"#,
+    );
+    let ts2322 = diags
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Only the invalid key should emit TS2322; got: {diags:?}"
+    );
+    assert!(
+        ts2322[0].contains("\"nope\""),
+        "The remaining TS2322 should be for the invalid key, got: {ts2322:?}"
+    );
+}
+
+#[test]
+fn direct_conditional_infer_does_not_cache_early_unresolved_false_branch() {
+    let diags = check_source_diagnostics(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+type NonNullable<T> = T & {};
+declare const nominalTypeHack: unique symbol;
+interface Validator<T> {
+    (props: object, propName: string, componentName: string, location: string, propFullName: string): object | null;
+    [nominalTypeHack]?: T;
+}
+interface Requireable<T> extends Validator<T> {
+    isRequired: Validator<NonNullable<T>>;
+}
+declare const array: Requireable<any[]>;
+
+const source = array.isRequired;
+type TArray = Exclude<typeof source, undefined> extends Validator<infer T>
+    ? T
+    : never;
+
+const ok: TArray = [] as any[];
+const bad: TArray = "nope";
+"#,
+    );
+    let ts2322 = diags
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Only the invalid string assignment should emit TS2322; got: {diags:?}"
+    );
+    assert!(
+        ts2322[0].contains("Type 'string'"),
+        "The remaining TS2322 should reject the invalid string, got: {ts2322:?}"
+    );
+}
+
+#[test]
+fn mapped_required_keys_evaluates_nested_optional_filter() {
+    let diags = check_source_strict(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+type IsOptional<T> = undefined | null extends T
+    ? true
+    : undefined extends T
+        ? true
+        : null extends T
+            ? true
+            : false;
+declare const nominalTypeHack: unique symbol;
+interface Validator<T> {
+    (props: object, propName: string, componentName: string, location: string, propFullName: string): object | null;
+    [nominalTypeHack]?: T;
+}
+type RequiredKeys<V> = {
+    [K in keyof V]-?: Exclude<V[K], undefined> extends Validator<infer T>
+        ? IsOptional<T> extends true
+            ? never
+            : K
+        : never
+}[keyof V];
+
+type Obj = {
+    optional?: Validator<string | undefined>;
+    required?: Validator<boolean>;
+};
+type RK = RequiredKeys<Obj>;
+
+const rk1: RK = "required";
+const rkBad1: RK = "optional";
+const rkBad2: RK = "nope";
+"#,
+    );
+    let ts2322 = diags
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Only the optional and invalid keys should emit TS2322; got: {diags:?}"
+    );
+    assert!(
+        ts2322.iter().any(|msg| msg.contains("\"optional\""))
+            && ts2322.iter().any(|msg| msg.contains("\"nope\"")),
+        "The remaining TS2322s should reject optional/nope, got: {ts2322:?}"
+    );
+}
+
+#[test]
+fn prop_types_inferprops_annotation_assignable_to_unannotated_inferprops() {
+    let diags = check_source_strict(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+type NonNullable<T> = T & {};
+declare const nominalTypeHack: unique symbol;
+type IsOptional<T> = undefined | null extends T
+    ? true
+    : undefined extends T
+        ? true
+        : null extends T
+            ? true
+            : false;
+type RequiredKeys<V> = {
+    [K in keyof V]-?: Exclude<V[K], undefined> extends Validator<infer T>
+        ? IsOptional<T> extends true
+            ? never
+            : K
+        : never
+}[keyof V];
+type OptionalKeys<V> = Exclude<keyof V, RequiredKeys<V>>;
+type InferPropsInner<V> = {
+    [K in keyof V]-?: InferType<V[K]>;
+};
+interface Validator<T> {
+    [nominalTypeHack]?: T;
+}
+interface Requireable<T> extends Validator<T> {
+    isRequired: Validator<NonNullable<T>>;
+}
+type ValidationMap<T> = {
+    [K in keyof T]?: Validator<T[K]>;
+};
+type InferType<V> = V extends Validator<infer T> ? T : any;
+type InferProps<V> =
+    InferPropsInner<Pick<V, RequiredKeys<V>>>
+        & Partial<InferPropsInner<Pick<V, OptionalKeys<V>>>>;
+
+declare const any: Requireable<any>;
+declare const array: Requireable<any[]>;
+declare const bool: Requireable<boolean>;
+declare const string: Requireable<string>;
+declare const number: Requireable<number>;
+declare function shape<P extends ValidationMap<any>>(type: P): Requireable<InferProps<P>>;
+declare function oneOfType<T extends Validator<any>>(types: T[]): Requireable<NonNullable<InferType<T>>>;
+
+interface Props {
+    any?: any;
+    array: string[];
+    bool: boolean;
+    shape: { foo: string; bar?: boolean; baz?: any };
+    oneOfType: string | boolean | { foo?: string; bar: number };
+}
+type PropTypesMap = ValidationMap<Props>;
+const innerProps = { foo: string.isRequired, bar: bool, baz: any };
+const arrayOfTypes = [string, bool, shape({ foo: string, bar: number.isRequired })];
+const propTypes = {
+    any,
+    array: array.isRequired,
+    bool: bool.isRequired,
+    shape: shape(innerProps).isRequired,
+    oneOfType: oneOfType(arrayOfTypes).isRequired,
+} as PropTypesMap;
+const propTypesWithoutAnnotation = {
+    any,
+    array: array.isRequired,
+    bool: bool.isRequired,
+    shape: shape(innerProps).isRequired,
+    oneOfType: oneOfType(arrayOfTypes).isRequired,
+};
+type ExtractedProps = InferProps<typeof propTypes>;
+type ExtractedPropsWithoutAnnotation = InferProps<typeof propTypesWithoutAnnotation>;
+
+declare const annotated: ExtractedProps;
+const unannotated: ExtractedPropsWithoutAnnotation = annotated;
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "Annotated InferProps should assign to unannotated InferProps; got: {diags:?}"
     );
 }

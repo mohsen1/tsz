@@ -420,6 +420,48 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
+        if same_application_family
+            && variance_def_id.is_some_and(|def_id| {
+                self.resolver
+                    .resolve_lazy(def_id, self.interner)
+                    .is_some_and(|body| {
+                        crate::type_queries::contains_infer_types_db(self.interner, body)
+                    })
+            })
+        {
+            let source_eval = self
+                .try_expand_application(s_app_id)
+                .map(|expanded| self.evaluate_type(expanded))
+                .unwrap_or_else(|| self.evaluate_type(source_type));
+            let target_eval = self
+                .try_expand_application(t_app_id)
+                .map(|expanded| self.evaluate_type(expanded))
+                .unwrap_or_else(|| self.evaluate_type(target_type));
+            if source_eval != source_type || target_eval != target_type {
+                return self.check_subtype(source_eval, target_eval);
+            }
+        }
+
+        if same_application_family {
+            let source_args_eval: Vec<_> = s_app
+                .args
+                .iter()
+                .map(|&arg| self.evaluate_type(arg))
+                .collect();
+            let target_args_eval: Vec<_> = t_app
+                .args
+                .iter()
+                .map(|&arg| self.evaluate_type(arg))
+                .collect();
+            if source_args_eval != s_app.args || target_args_eval != t_app.args {
+                let source_eval = self.interner.application(s_app.base, source_args_eval);
+                let target_eval = self.interner.application(t_app.base, target_args_eval);
+                if source_eval != source_type || target_eval != target_type {
+                    return self.check_subtype(source_eval, target_eval);
+                }
+            }
+        }
+
         // =======================================================================
         // VARIANCE-AWARE FAST PATH: Same base type with variance checking
         // =======================================================================
@@ -698,7 +740,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // fill in type parameter defaults to normalize both to the same arity.
         // Without this, the variance fast path bails out and types get structurally
         // expanded, which can fail for complex recursive interfaces like Generator.
-        let (s_args, t_args) = if s_app.args.len() != t_app.args.len() {
+        let (mut s_args, mut t_args) = if s_app.args.len() != t_app.args.len() {
             let type_params = self.resolver.get_lazy_type_params(def_id)?;
             let s_norm = fill_application_defaults(self.interner, &s_app.args, &type_params)?;
             let t_norm = fill_application_defaults(self.interner, &t_app.args, &type_params)?;
@@ -709,6 +751,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             (s_app.args.clone(), t_app.args.clone())
         };
+        for arg in &mut s_args {
+            *arg = self.evaluate_type(*arg);
+        }
+        for arg in &mut t_args {
+            *arg = self.evaluate_type(*arg);
+        }
 
         use crate::caches::db::QueryDatabase;
         let variances = self
@@ -964,7 +1012,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         app_id: TypeApplicationId,
     ) -> SubtypeResult {
         match self.try_expand_application(app_id) {
-            Some(expanded) => self.check_subtype(expanded, target),
+            Some(expanded) => {
+                let expanded = if matches!(
+                    self.interner.lookup(expanded),
+                    Some(TypeData::Conditional(_))
+                ) {
+                    self.evaluate_type(expanded)
+                } else {
+                    expanded
+                };
+                self.check_subtype(expanded, target)
+            }
             None => {
                 let s_eval = self.evaluate_type(source);
                 if s_eval != source {
@@ -989,7 +1047,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         app_id: TypeApplicationId,
     ) -> SubtypeResult {
         match self.try_expand_application(app_id) {
-            Some(expanded) => self.check_subtype(source, expanded),
+            Some(expanded) => {
+                let expanded = if matches!(
+                    self.interner.lookup(expanded),
+                    Some(TypeData::Conditional(_))
+                ) {
+                    self.evaluate_type(expanded)
+                } else {
+                    expanded
+                };
+                self.check_subtype(source, expanded)
+            }
             None => {
                 // Evaluation fallback: when try_expand_application fails
                 // (common for lib type aliases like Readonly<T>, Partial<T>
@@ -1130,9 +1198,129 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::True;
                 }
 
+                if self.check_mapped_to_object_target_by_keys(mapped_id, target) {
+                    return SubtypeResult::True;
+                }
+
                 SubtypeResult::False
             }
         }
+    }
+
+    fn check_mapped_to_object_target_by_keys(
+        &mut self,
+        mapped_id: MappedTypeId,
+        target: TypeId,
+    ) -> bool {
+        use crate::{TypeSubstitution, instantiate_type};
+
+        let Some(target_shape_id) = object_shape_id(self.interner, target)
+            .or_else(|| object_with_index_shape_id(self.interner, target))
+        else {
+            return false;
+        };
+        let mapped = self.interner.get_mapped(mapped_id);
+        if mapped.name_type.is_some() {
+            return false;
+        }
+        let key_constraint = self.effective_mapped_key_constraint(mapped.constraint);
+        let target_shape = self.interner.object_shape(target_shape_id);
+
+        for target_prop in &target_shape.properties {
+            let key = self.interner.literal_string_atom(target_prop.name);
+            let has_key = self.check_subtype(key, key_constraint).is_true();
+            if !has_key {
+                if target_prop.optional {
+                    continue;
+                }
+                return false;
+            }
+            if !target_prop.optional && mapped.optional_modifier == Some(MappedModifier::Add) {
+                return false;
+            }
+
+            let subst = TypeSubstitution::single(mapped.type_param.name, key);
+            let source_prop =
+                self.evaluate_type(instantiate_type(self.interner, mapped.template, &subst));
+            if !self
+                .check_subtype(source_prop, target_prop.type_id)
+                .is_true()
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn effective_mapped_key_constraint(&mut self, constraint: TypeId) -> TypeId {
+        let Some(operand) = keyof_inner_type(self.interner, constraint) else {
+            return constraint;
+        };
+        let Some(app_id) = crate::visitor::application_id(self.interner, operand) else {
+            return constraint;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(def_id) = self.application_base_def_id(app.base) else {
+            return constraint;
+        };
+        if self.is_pick_keyspace_application(def_id) && app.args.len() == 2 {
+            return app.args[1];
+        }
+        let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
+            return constraint;
+        };
+        let Some(type_params) = self.resolver.get_lazy_type_params(def_id) else {
+            return constraint;
+        };
+        let Some(mapped_id) = mapped_type_id(self.interner, body) else {
+            return constraint;
+        };
+        let mapped = self.interner.get_mapped(mapped_id);
+        let Some(TypeData::TypeParameter(param)) = self.interner.lookup(mapped.constraint) else {
+            return constraint;
+        };
+        let Some(idx) = type_params.iter().position(|tp| tp.name == param.name) else {
+            return constraint;
+        };
+        app.args.get(idx).copied().unwrap_or(constraint)
+    }
+
+    fn is_named_lib_utility_def(&self, def_id: DefId, name: &str) -> bool {
+        self.resolver.resolve_unresolved_type_name(name) == Some(def_id)
+            || self
+                .resolver
+                .get_def_name(def_id)
+                .is_some_and(|atom| self.interner.resolve_atom_ref(atom).as_ref() == name)
+    }
+
+    fn is_pick_keyspace_application(&self, def_id: DefId) -> bool {
+        if self.is_named_lib_utility_def(def_id, "Pick") {
+            return true;
+        }
+
+        let Some(params) = self.resolver.get_lazy_type_params(def_id) else {
+            return false;
+        };
+        if params.len() != 2 || params[0].constraint.is_some() {
+            return false;
+        }
+        let Some(key_constraint) = params[1].constraint else {
+            return false;
+        };
+        let Some(source_type) = keyof_inner_type(self.interner, key_constraint) else {
+            return false;
+        };
+        let Some(source_param) = type_param_info(self.interner, source_type) else {
+            return false;
+        };
+        if source_param.name != params[0].name {
+            return false;
+        }
+
+        self.resolver
+            .resolve_lazy(def_id, self.interner)
+            .is_some_and(|body| body == TypeId::UNKNOWN)
     }
 
     /// Check if a homomorphic mapped type is assignable to a type parameter target.
@@ -1308,6 +1496,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
 
+                if let Some(result) =
+                    self.check_source_to_optional_concrete_mapped(source, mapped_id)
+                {
+                    return result;
+                }
+
                 // Homomorphic mapped type shortcut:
                 // source <: { [K in keyof S]+?: S[K] } when source <: S
                 // and the mapped type doesn't remove optional.
@@ -1318,6 +1512,55 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 SubtypeResult::False
             }
         }
+    }
+
+    fn check_source_to_optional_concrete_mapped(
+        &mut self,
+        source: TypeId,
+        mapped_id: MappedTypeId,
+    ) -> Option<SubtypeResult> {
+        use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+        use crate::objects::{PropertyCollectionResult, collect_properties};
+
+        let mapped = self.interner.get_mapped(mapped_id);
+        if mapped.optional_modifier != Some(MappedModifier::Add) || mapped.name_type.is_some() {
+            return None;
+        }
+
+        let constraint_source = keyof_inner_type(self.interner, mapped.constraint)?;
+        if type_param_info(self.interner, constraint_source).is_some() {
+            return None;
+        }
+
+        let PropertyCollectionResult::Properties { properties, .. } =
+            collect_properties(source, self.interner, self.resolver)
+        else {
+            return None;
+        };
+
+        for prop in properties {
+            let key_name = self.interner.resolve_atom(prop.name);
+            let key_literal = if let Some(sym_str) = key_name.strip_prefix("__unique_")
+                && let Ok(id) = sym_str.parse::<u32>()
+            {
+                self.interner.unique_symbol(SymbolRef(id))
+            } else {
+                self.interner.literal_string_atom(prop.name)
+            };
+
+            if !self.check_subtype(key_literal, mapped.constraint).is_true() {
+                continue;
+            }
+
+            let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
+            let target_prop =
+                self.evaluate_type(instantiate_type(self.interner, mapped.template, &subst));
+            if !self.check_subtype(prop.type_id, target_prop).is_true() {
+                return Some(SubtypeResult::False);
+            }
+        }
+
+        Some(SubtypeResult::True)
     }
 
     /// Check if any source type is assignable to a homomorphic mapped type.
@@ -1456,6 +1699,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn try_expand_mapped_with_constraint(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
         use crate::{TypeSubstitution, instantiate_type};
         let mapped = self.interner.get_mapped(mapped_id);
+        if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint)
+            && let Some(app_id) = application_id(self.interner, source)
+            && let Some(expanded_source) = self.try_expand_application(app_id)
+            && expanded_source != source
+            && expanded_source != TypeId::ERROR
+        {
+            let new_mapped_id = self.interner.mapped(MappedType {
+                type_param: mapped.type_param,
+                constraint: self.interner.keyof(expanded_source),
+                name_type: mapped.name_type,
+                template: mapped.template,
+                optional_modifier: mapped.optional_modifier,
+                readonly_modifier: mapped.readonly_modifier,
+            });
+            if let Some(TypeData::Mapped(m_id)) = self.interner.lookup(new_mapped_id) {
+                let new_mapped = self.interner.get_mapped(m_id);
+                let res = crate::evaluation::evaluate::evaluate_mapped(self.interner, &new_mapped);
+                if res != TypeId::ERROR && res != new_mapped_id {
+                    return Some(res);
+                }
+            }
+        }
         if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint)
             && let Some(TypeData::TypeParameter(param)) = self.interner.lookup(source)
             && let Some(constraint) = param.constraint
@@ -1847,6 +2112,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && concrete_this != operand
         {
             return self.try_get_keyof_keys_depth(concrete_this, depth + 1);
+        }
+
+        if let Some(app_id) = crate::visitor::application_id(self.interner, operand) {
+            let app = self.interner.type_application(app_id);
+            let def_id = self.application_base_def_id(app.base)?;
+            let body = self.resolver.resolve_lazy(def_id, self.interner)?;
+            let type_params = self.resolver.get_lazy_type_params(def_id)?;
+            if let Some(mapped_id) = mapped_type_id(self.interner, body) {
+                let mapped = self.interner.get_mapped(mapped_id);
+                if let Some(TypeData::TypeParameter(constraint_param)) =
+                    self.interner.lookup(mapped.constraint)
+                    && let Some(idx) = type_params
+                        .iter()
+                        .position(|param| param.name == constraint_param.name)
+                    && let Some(&arg) = app.args.get(idx)
+                {
+                    return self.try_evaluate_mapped_constraint(arg);
+                }
+            }
         }
 
         None

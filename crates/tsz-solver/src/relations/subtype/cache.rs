@@ -66,6 +66,29 @@ pub fn reset_subtype_thread_local_state() {
 const MAX_GLOBAL_SUBTYPE_FUEL: u32 = 10_000;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn type_depends_on_infer_application_body(&self, type_id: TypeId) -> bool {
+        let app_id = match self.interner.lookup(type_id) {
+            Some(TypeData::Application(app_id)) => Some(app_id),
+            Some(TypeData::Lazy(def_id)) => {
+                let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
+                    return false;
+                };
+                application_id(self.interner, body)
+            }
+            _ => None,
+        };
+        let Some(app_id) = app_id else {
+            return false;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(def_id) = lazy_def_id(self.interner, app.base) else {
+            return false;
+        };
+        self.resolver
+            .resolve_lazy(def_id, self.interner)
+            .is_some_and(|body| crate::type_queries::contains_infer_types_db(self.interner, body))
+    }
+
     /// Check if a Lazy type resolved to an Enum with the same DefId.
     ///
     /// When `Lazy(DefId(X))` resolves to `Enum(DefId(X), ...)`, the recursive call
@@ -304,12 +327,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // type whose method signatures carry `ThisType` return types.
         let has_this_type =
             contains_this_type(self.interner, source) || contains_this_type(self.interner, target);
+        let skip_subtype_cache = has_this_type
+            || self.type_depends_on_infer_application_body(source)
+            || self.type_depends_on_infer_application_body(target);
         // The `in_callback_param_check` state is encoded in
         // `RelationFlags::IN_CALLBACK_PARAM_CHECK` via `make_cache_key`, so
         // callback-mode results live in a separate cache slot from
         // non-callback-mode results and cannot poison each other.
         if !self.identity_cycle_check
-            && !has_this_type
+            && !skip_subtype_cache
             && let Some(db) = self.query_db
         {
             let key = self.make_cache_key(source, target);
@@ -733,7 +759,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.def_guard.leave(dp);
                 }
                 self.guard.leave(pair);
-                if !has_this_type && let Some(db) = self.query_db {
+                if !skip_subtype_cache && let Some(db) = self.query_db {
                     let key = self.make_cache_key(source, target);
                     match result {
                         SubtypeResult::True => db.insert_subtype_cache(key, true),
@@ -759,7 +785,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.def_guard.leave(dp);
             }
             self.guard.leave(pair);
-            if !has_this_type && let Some(db) = self.query_db {
+            if !skip_subtype_cache && let Some(db) = self.query_db {
                 let key = self.make_cache_key(source, target);
                 match result {
                     SubtypeResult::True => db.insert_subtype_cache(key, true),
@@ -843,7 +869,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Cache definitive results for cross-checker memoization.
         // Skip ThisType: results are context-dependent (see lookup guard above).
-        if !has_this_type && let Some(db) = self.query_db {
+        if !skip_subtype_cache && let Some(db) = self.query_db {
             let key = self.make_cache_key(source, target);
             match result {
                 SubtypeResult::True => db.insert_subtype_cache(key, true),

@@ -182,7 +182,6 @@ impl<'a> CheckerState<'a> {
 
                 // Pop enclosing type parameters that were pushed for local type aliases.
                 self.pop_type_parameters(enclosing_tp_updates);
-
                 // Eagerly evaluate non-generic type aliases whose body is a concrete
                 // conditional type.  tsc resolves `type U = [any] extends [number] ? 1 : 0`
                 // to `1` during alias resolution so that diagnostics print the resolved
