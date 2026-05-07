@@ -12,8 +12,8 @@ mod namespace_export_destructuring;
 #[path = "namespace_import_alias_tests.rs"]
 mod namespace_import_alias_tests;
 
-use namespace_helpers::{find_next_code_module_keyword, find_unescaped_template_end};
 pub(in crate::emitter) use namespace_helpers::rewrite_enum_iife_for_namespace_export;
+use namespace_helpers::{find_next_code_module_keyword, find_unescaped_template_end};
 
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_module_declaration(&mut self, node: &Node, idx: NodeIndex) {
