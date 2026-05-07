@@ -117,6 +117,28 @@ interface Foo extends Array<string> {}
     );
 }
 
+#[test]
+fn test_array_literal_of_function_expressions_paren_wraps_each_arm() {
+    // Regression for narrowingUnionToUnion: when an array literal contains
+    // multiple function expressions that don't all share an identical type,
+    // each function-typed union arm must be parenthesized so the trailing
+    // `=>` does not bind across the `|`. Without parens around each arm,
+    // `(a: A) => void | (a: B) => void` parses as
+    // `(a: A) => (void | (a: B) => void)`.
+    let output = emit_dts(
+        r#"
+const TEST_CASES = [
+    (value: string) => {},
+    (value: number) => {},
+];
+"#,
+    );
+    assert!(
+        output.contains("(((value: string) => void) | ((value: number) => void))[]"),
+        "Expected each function-typed union arm to be parenthesized: {output}"
+    );
+}
+
 // =============================================================================
 // 17. Call / Construct Signatures in Interfaces
 // =============================================================================
