@@ -3557,12 +3557,20 @@ fn validate_cli_compiler_option_diagnostics(
     let config_bool = |get: fn(&CompilerOptions) -> Option<bool>| -> bool {
         config_options.and_then(get).unwrap_or(false)
     };
+    // CLI flags whose TS5069 prerequisite is `declaration` or `composite` need
+    // to import those settings from the merged config when the user only
+    // supplied them in tsconfig.json — otherwise the synthesized validation
+    // payload below sees `declarationMap` (or `emitDeclarationOnly`) without
+    // its prerequisites and reports a false TS5069 (#3712).
+    let cli_requires_declaration_or_composite = args.emit_declaration_only || args.declaration_map;
     if args.declaration
-        || (args.emit_declaration_only && config_bool(|options| options.declaration))
+        || (cli_requires_declaration_or_composite && config_bool(|options| options.declaration))
     {
         compiler_options.insert("declaration".to_string(), true.into());
     }
-    if args.composite || (args.emit_declaration_only && config_bool(|options| options.composite)) {
+    if args.composite
+        || (cli_requires_declaration_or_composite && config_bool(|options| options.composite))
+    {
         compiler_options.insert("composite".to_string(), true.into());
     }
     if args.no_emit

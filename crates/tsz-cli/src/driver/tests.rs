@@ -589,6 +589,121 @@ fn test_cli_source_map_satisfies_config_map_root_validation() {
 }
 
 #[test]
+fn test_cli_declaration_map_satisfied_by_config_declaration() {
+    // Regression test for #3712: when --declarationMap is passed on the CLI
+    // and `declaration: true` lives in tsconfig.json, the synthesized config
+    // validation must see the merged effective state and not falsely report
+    // TS5069 ("declarationMap requires declaration or composite").
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(dir.path().join("a.ts"), "export const x: number = 1;\n").expect("write source");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "declaration": true,
+    "outDir": "dist"
+  },
+  "files": ["a.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let cli_args = CliArgs::try_parse_from([
+        "tsz",
+        "-p",
+        "tsconfig.json",
+        "--declarationMap",
+        "--pretty",
+        "false",
+    ])
+    .expect("parse cli args");
+    let cli_result = compile(&cli_args, dir.path()).expect("compile cli override");
+    assert!(
+        cli_result.diagnostics.iter().all(|diag| {
+            diag.code
+                != diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+        }),
+        "CLI --declarationMap should be satisfied by config declaration, got: {:?}",
+        cli_result.diagnostics
+    );
+}
+
+#[test]
+fn test_cli_declaration_map_satisfied_by_config_composite() {
+    // Same regression as #3712, exercising the alternate prerequisite.
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(dir.path().join("a.ts"), "export const x: number = 1;\n").expect("write source");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "dist"
+  },
+  "files": ["a.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let cli_args = CliArgs::try_parse_from([
+        "tsz",
+        "-p",
+        "tsconfig.json",
+        "--declarationMap",
+        "--pretty",
+        "false",
+    ])
+    .expect("parse cli args");
+    let cli_result = compile(&cli_args, dir.path()).expect("compile cli override");
+    assert!(
+        cli_result.diagnostics.iter().all(|diag| {
+            diag.code
+                != diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+        }),
+        "CLI --declarationMap should be satisfied by config composite, got: {:?}",
+        cli_result.diagnostics
+    );
+}
+
+#[test]
+fn test_cli_declaration_map_without_prerequisites_still_reports_ts5069() {
+    // The fix must not silence TS5069 when neither declaration nor composite
+    // is set anywhere — the prerequisite check still has work to do.
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(dir.path().join("a.ts"), "export const x: number = 1;\n").expect("write source");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "outDir": "dist"
+  },
+  "files": ["a.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let cli_args = CliArgs::try_parse_from([
+        "tsz",
+        "-p",
+        "tsconfig.json",
+        "--declarationMap",
+        "--pretty",
+        "false",
+    ])
+    .expect("parse cli args");
+    let cli_result = compile(&cli_args, dir.path()).expect("compile cli args");
+    assert!(
+        cli_result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+                && diag.message_text.contains("declarationMap")
+        }),
+        "Expected TS5069 for --declarationMap without declaration/composite, got: {:?}",
+        cli_result.diagnostics
+    );
+}
+
+#[test]
 fn test_cli_overrides_apply_type_and_declaration_options() {
     let args = CliArgs::try_parse_from([
         "tsz",
