@@ -1186,6 +1186,9 @@ impl<'a> Printer<'a> {
                 let Some(import_data) = self.arena.get_import_decl(node) else {
                     return false;
                 };
+                if self.recovered_module_syntax_block_depth > 0 {
+                    return false;
+                }
                 let Some(clause_node) = self.arena.get(import_data.import_clause) else {
                     return false;
                 };
@@ -1280,6 +1283,9 @@ impl<'a> Printer<'a> {
                             module_node.kind == SyntaxKind::StringLiteral as u16
                                 || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
                         });
+                if self.recovered_module_syntax_block_depth > 0 {
+                    return !is_external;
+                }
                 // TS1147: import = require() inside a namespace is always invalid;
                 // tsc erases these regardless of usage.
                 if is_external && self.in_namespace_iife {
@@ -1340,6 +1346,7 @@ impl<'a> Printer<'a> {
                 is_es_module_output
                     && self.function_scope_depth == 0
                     && !self.in_namespace_iife
+                    && self.recovered_module_syntax_block_depth == 0
                     && self
                         .arena
                         .get_export_assignment(node)

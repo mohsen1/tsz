@@ -80,6 +80,7 @@ fn test_ir_namespace_iife() {
         parent_name: None,
         param_name: None,
         skip_sequence_indent: false,
+        trailing_comment: None,
     };
 
     let output = IRPrinter::emit_to_string(&namespace_ir);
@@ -102,6 +103,7 @@ fn test_ir_namespace_qualified() {
         parent_name: None,
         param_name: None,
         skip_sequence_indent: false,
+        trailing_comment: None,
     };
 
     let output = IRPrinter::emit_to_string(&namespace_ir);

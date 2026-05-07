@@ -246,6 +246,7 @@ fn test_nested_sequence_respects_namespace_skip_indent() {
             parent_name: None,
             param_name: None,
             skip_sequence_indent: true,
+            trailing_comment: None,
         },
     ]);
     let mut printer = IRPrinter::new();
@@ -286,6 +287,7 @@ fn test_namespace_iife_generated_object_literal_is_multiline() {
         parent_name: None,
         param_name: None,
         skip_sequence_indent: false,
+        trailing_comment: None,
     };
 
     let output = IRPrinter::emit_to_string(&ns);

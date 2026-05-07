@@ -420,6 +420,44 @@ for (const item of value) {
 }
 
 #[test]
+fn cli_check_js_implies_allow_js_for_root_js_file() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("index.js"),
+        r#"/** @type {number} */
+const x = "s";
+"#,
+    );
+
+    let args = parse_args(&[
+        "tsz",
+        "--ignoreConfig",
+        "--checkJs",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "index.js",
+    ]);
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::FILE_IS_A_JAVASCRIPT_FILE_DID_YOU_MEAN_TO_ENABLE_THE_ALLOWJS_OPTION
+        ),
+        "CLI checkJs should imply allowJs instead of TS6504, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected checked-JS assignment diagnostic after accepting index.js, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn plain_js_suppresses_ts2774_without_check_js() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -3641,6 +3679,66 @@ fn compile_no_check_no_emit_is_parse_only() {
     );
     assert!(result.emitted_files.is_empty());
     assert_eq!(result.files_read.len(), 1);
+}
+
+#[test]
+fn compile_higher_order_compose_reports_callback_property_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "target": "es2015",
+            "noEmit": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"
+declare class SetOf<A> {
+  transform<B>(transformer: (a: SetOf<A>) => SetOf<B>): SetOf<B>;
+}
+
+declare function compose<A, B, C, D, E>(
+  fnA: (a: SetOf<A>) => SetOf<B>,
+  fnB: (b: SetOf<B>) => SetOf<C>,
+  fnC: (c: SetOf<C>) => SetOf<D>,
+  fnD: (c: SetOf<D>) => SetOf<E>,
+): (x: SetOf<A>) => SetOf<E>;
+
+declare function map<A, B>(fn: (a: A) => B): (s: SetOf<A>) => SetOf<B>;
+declare function filter<A>(predicate: (a: A) => boolean): (s: SetOf<A>) => SetOf<A>;
+
+declare const testSet: SetOf<number>;
+
+testSet.transform(
+  compose(
+    filter(x => x % 1 === 0),
+    map(x => x + x),
+    map(x => 123),
+    map(x => x.toUpperCase())
+  )
+);
+"#,
+    );
+
+    let args = default_args();
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "expected TS2339 for toUpperCase on number from the previous map, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(result.emitted_files.is_empty());
 }
 
 #[test]
