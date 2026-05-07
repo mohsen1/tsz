@@ -252,7 +252,7 @@ jobs:
             filter: 'BCT candidates|Constraint conflicts N|Mapped complex template keys'
           - label: projects
             timeout: 120
-            filter: 'utility-types|ts-toolbelt|ts-essentials|utility-types-project|ts-toolbelt-project|ts-essentials-project|rxjs-project|type-fest-project|zod-project|kysely-project|vite-vanilla-ts-app|nextjs-fresh-app'
+            filter: 'utility-types|ts-toolbelt|ts-essentials|utility-types-project|ts-toolbelt-project|ts-essentials-project|rxjs-project|type-fest-project|zod-project|kysely-project|vite-vanilla-ts-app|nextjs-fresh-app|nextjs'
           - label: large-ts-repo
             timeout: 120
             filter: '^large-ts-repo$'
