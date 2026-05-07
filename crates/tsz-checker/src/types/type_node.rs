@@ -237,6 +237,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         };
 
+        if super::window_global_this_annotation::is_window_and_typeof_global_this_type_node(
+            self.ctx.arena,
+            idx,
+        ) {
+            return TypeId::ANY;
+        }
+
         // IntersectionType uses CompositeTypeData which has a types list
         if let Some(composite) = self.ctx.arena.get_composite_type(node) {
             let mut member_types = Vec::new();
@@ -253,7 +260,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         TypeId::ERROR
     }
-
     /// Get type from an array type node (string[]).
     ///
     /// Parses an array type expression and creates an Array type.

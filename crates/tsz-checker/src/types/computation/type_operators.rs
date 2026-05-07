@@ -69,6 +69,10 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
+        if self.is_window_and_typeof_global_this_type_node(idx) {
+            return TypeId::ANY;
+        }
+
         if let Some(composite) = self.ctx.arena.get_composite_type(node) {
             let mut member_types = Vec::new();
             for &type_idx in &composite.types.nodes {

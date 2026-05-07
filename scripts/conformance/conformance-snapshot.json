@@ -25,9 +25,9 @@
     {
       "area": "es2019",
       "total": 11,
-      "passed": 10,
-      "failed": 1,
-      "pass_rate": 90.91
+      "passed": 11,
+      "failed": 0,
+      "pass_rate": 100.0
     },
     {
       "area": "importAttributes",

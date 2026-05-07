@@ -67,7 +67,6 @@ FAIL TypeScript/tests/cases/compiler/weakType.ts | expected:[TS2322,TS2352,TS255
 FAIL TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers8.ts | expected:[TS2339,TS2683] actual:[TS2339,TS2683]
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowAssignmentPatternOrder.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/controlFlow/dependentDestructuredVariables.ts | expected:[TS2322,TS7022,TS7031] actual:[TS2322,TS2339,TS7022,TS7031]
-FAIL TypeScript/tests/cases/conformance/es2019/globalThisUnknownNoImplicitAny.ts | expected:[TS2339,TS7015,TS7017,TS7053] actual:[]
 FAIL TypeScript/tests/cases/conformance/es2021/logicalAssignment/logicalAssignment4.ts | expected:[TS18048] actual:[TS2339,TS18048]
 FAIL TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment2.ts | expected:[TS2322,TS2488,TS2493] actual:[TS2322,TS2488,TS2493]
 FAIL TypeScript/tests/cases/conformance/es6/newTarget/newTargetNarrowing.ts | expected:[] actual:[TS2339]

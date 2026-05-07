@@ -1068,7 +1068,17 @@ impl<'a> CheckerState<'a> {
         // This handles cases like JSDoc @enum types where the callback parameter
         // should be contextually typed but the assignability check happens before
         // contextual typing is fully resolved.
-        if !checker_only_mismatch && self.arg_is_callback_with_unannotated_params(arg_idx) {
+        //
+        // Only suppress when the target callable can actually contextually type
+        // every parameter of the source callback. If the target signature has
+        // fewer fixed parameters than the source callback (and no rest
+        // parameter), contextual typing cannot supply types for the extra
+        // source parameters, and the parameter-count mismatch ("Target
+        // signature provides too few arguments") must surface as TS2345.
+        if !checker_only_mismatch
+            && self.arg_is_callback_with_unannotated_params(arg_idx)
+            && self.target_can_contextually_type_callback_params(arg_idx, target)
+        {
             return true;
         }
         // Before emitting TS2345 on the whole argument, try to elaborate

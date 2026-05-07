@@ -117,6 +117,37 @@ fn test_declaration_bundle_output_path_uses_out_file_name() {
 }
 
 #[test]
+fn test_js_output_path_ignores_out_dir_when_input_is_outside_root_dir() {
+    let path = js_output_path(
+        Path::new("/tmp/project/app"),
+        Some(Path::new("/tmp/project/base/src")),
+        Some(Path::new("/tmp/project/base/dist")),
+        None,
+        Path::new("/tmp/project/app/src/index.ts"),
+    );
+
+    assert_eq!(
+        path,
+        Some(Path::new("/tmp/project/app/src/index.js").into())
+    );
+}
+
+#[test]
+fn test_declaration_output_path_ignores_out_dir_when_input_is_outside_root_dir() {
+    let path = declaration_output_path(
+        Path::new("/tmp/project/app"),
+        Some(Path::new("/tmp/project/base/src")),
+        Some(Path::new("/tmp/project/base/types")),
+        Path::new("/tmp/project/app/src/index.ts"),
+    );
+
+    assert_eq!(
+        path,
+        Some(Path::new("/tmp/project/app/src/index.d.ts").into())
+    );
+}
+
+#[test]
 fn test_bundle_declaration_output_wraps_named_amd_modules() {
     let input = r#"/// <amd-module name="mynamespace::SomeModuleA" />
 export declare class Foo {

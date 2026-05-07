@@ -399,8 +399,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let is_this_global = self.is_this_resolving_to_global(access.expression);
+        let is_declared_window_global_this =
+            self.is_window_and_global_this_declared_expression(access.expression);
         if let Some(name) = literal_string.as_deref()
-            && (self.is_global_this_like_expression(access.expression) || is_this_global)
+            && (self.is_global_this_like_expression(access.expression)
+                || is_this_global
+                || is_declared_window_global_this)
         {
             let base_display =
                 if self.is_global_this_expression(access.expression) || is_this_global {
@@ -409,7 +413,36 @@ impl<'a> CheckerState<'a> {
                     "Window & typeof globalThis"
                 };
             let allow_unknown_property_fallback =
-                self.is_global_this_expression(access.expression) || is_this_global;
+                (self.is_global_this_expression(access.expression) || is_this_global)
+                    && !is_declared_window_global_this;
+            if is_declared_window_global_this
+                && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                if let Some(window_type) = self.resolve_lib_type_by_name("Window") {
+                    let prop_result =
+                        crate::query_boundaries::property_access::resolve_property_access(
+                            self.ctx.types,
+                            window_type,
+                            name,
+                        );
+                    if let Some(type_id) = prop_result.success_type() {
+                        return if skip_flow_narrowing {
+                            type_id
+                        } else {
+                            self.apply_flow_narrowing(idx, type_id)
+                        };
+                    }
+                }
+                if self.ctx.no_implicit_any() && !self.is_js_file() {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        access.name_or_argument,
+                        "Element implicitly has an 'any' type because index expression is not of type 'number'.",
+                        diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE,
+                    );
+                }
+                return TypeId::ANY;
+            }
             // For element access (globalThis['y']), tsc reports TS2339 at the full
             // expression span. For property access (globalThis.y), at the property name.
             let error_node = if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
