@@ -217,6 +217,82 @@ fn collect_import_candidates_normalizes_commonjs_js_specifiers() {
 }
 
 #[test]
+fn get_code_fixes_unresolved_function_call_offers_missing_function_declaration() {
+    // Plain unresolved call expression `foo(1);` must produce a
+    // `fixMissingFunctionDeclaration` action, not an empty
+    // `Add all missing imports` action. Regression for
+    // https://github.com/mohsen1/tsz/issues/3806.
+    let mut server = make_server();
+    let content = "foo(1);\n";
+    server
+        .open_files
+        .insert("/a.ts".to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/a.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 4,
+            "errorCodes": [2304]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success);
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+
+    let fix_names: Vec<&str> = actions
+        .iter()
+        .filter_map(|a| a.get("fixName").and_then(serde_json::Value::as_str))
+        .collect();
+    assert!(
+        fix_names.contains(&"fixMissingFunctionDeclaration"),
+        "expected fixMissingFunctionDeclaration in {fix_names:?}"
+    );
+    assert!(
+        !fix_names.contains(&"quickfix"),
+        "empty fixMissingImport quickfix must not appear, got {actions:?}"
+    );
+
+    let fix = actions
+        .iter()
+        .find(|a| {
+            a.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixMissingFunctionDeclaration")
+        })
+        .expect("missing the function-declaration fix");
+    let description = fix
+        .get("description")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    assert_eq!(
+        description, "Add missing function declaration 'foo'",
+        "unexpected description: {description}"
+    );
+    let new_text = fix
+        .get("changes")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("textChanges"))
+        .and_then(|t| t.get(0))
+        .and_then(|t| t.get("newText"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    assert!(
+        new_text.contains("function foo("),
+        "expected function declaration in newText, got {new_text:?}"
+    );
+}
+
+#[test]
 fn get_code_fixes_does_not_offer_spelling_for_plain_missing_property_2339() {
     let mut server = make_server();
     server.open_files.insert(

@@ -131,6 +131,16 @@ impl Server {
                 );
             let add_missing_function_declaration_anywhere =
                 Self::apply_add_missing_function_declaration_fallback_anywhere(&content);
+            // Plain unresolved calls (`foo(1);`) are computed lazily — only
+            // used as a final fallback below when no real import fix is
+            // available, so that `useEffect()` etc. still get their import
+            // candidates.
+            let plain_call_function_declaration_candidate =
+                Self::apply_add_missing_function_declaration_for_plain_call_at_request(
+                    &content,
+                    &line_map,
+                    request_span,
+                );
             let add_missing_function_declaration_candidate =
                 add_missing_function_declaration_preview
                     .or_else(|| add_missing_function_declaration_anywhere.clone());
@@ -764,6 +774,39 @@ impl Server {
             {
                 let start_pos = line_map.offset_to_position(start_off, &content);
                 let end_pos = line_map.offset_to_position(end_off, &content);
+                response_actions.push(serde_json::json!({
+                    "fixName": "fixMissingFunctionDeclaration",
+                    "description": format!("Add missing function declaration '{name}'"),
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": replacement
+                        }]
+                    }],
+                }));
+            }
+
+            // Final fallback for plain unresolved call sites (`foo(1);`).
+            // The import-candidate code path emits an empty
+            // `fixMissingImport` action when no candidate is available; if no
+            // action carries real text changes, fall back to the
+            // missing-function-declaration fix. Keeps real import fixes
+            // (e.g. `useEffect`) untouched. See #3806.
+            if includes_cannot_find_name
+                && response_actions
+                    .iter()
+                    .all(Self::action_has_no_text_changes)
+                && let Some((name, updated_content)) = plain_call_function_declaration_candidate
+                && let Some((start_off, end_off, replacement)) =
+                    Self::compute_minimal_edit(&content, &updated_content)
+            {
+                let start_pos = line_map.offset_to_position(start_off, &content);
+                let end_pos = line_map.offset_to_position(end_off, &content);
+                response_actions.retain(|a| {
+                    a.get("fixId").and_then(serde_json::Value::as_str) != Some("fixMissingImport")
+                });
                 response_actions.push(serde_json::json!({
                     "fixName": "fixMissingFunctionDeclaration",
                     "description": format!("Add missing function declaration '{name}'"),
@@ -1547,6 +1590,93 @@ impl Server {
         if after >= lhs_bytes.len() || lhs_bytes[after] as char != '(' {
             return None;
         }
+        if content.contains(&format!("function {name}(")) {
+            return None;
+        }
+
+        let mut updated = content.trim_end_matches('\n').to_string();
+        updated.push_str("\n\n");
+        updated.push_str(&format!(
+            "function {name}() {{\n    throw new Error(\"Function not implemented.\");\n}}\n"
+        ));
+        Some((name, updated))
+    }
+
+    /// True iff every `changes[].textChanges` array in the action is empty
+    /// (or absent). Used to detect placeholder import actions like
+    /// `Add all missing imports` with no real candidates.
+    fn action_has_no_text_changes(action: &serde_json::Value) -> bool {
+        let Some(changes) = action.get("changes").and_then(serde_json::Value::as_array) else {
+            return true;
+        };
+        changes.iter().all(|change| {
+            change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+                .is_none_or(|tc| tc.is_empty())
+        })
+    }
+
+    /// Match a plain function call `name(...)` at the request span and produce
+    /// a `fixMissingFunctionDeclaration` candidate, mirroring tsserver's
+    /// behavior for unresolved call expressions outside destructuring contexts.
+    /// Returns `(name, updated_content)` or `None` when the call site doesn't
+    /// look like an unresolved function call.
+    ///
+    /// Regression for https://github.com/mohsen1/tsz/issues/3806 — without this
+    /// path, the empty `fixMissingImport` action stays in `response_actions`
+    /// and the missing-function fallback never fires.
+    fn apply_add_missing_function_declaration_for_plain_call_at_request(
+        content: &str,
+        line_map: &LineMap,
+        request_span: Option<(tsz::lsp::position::Position, tsz::lsp::position::Position)>,
+    ) -> Option<(String, String)> {
+        let (start, _) = request_span?;
+        let start_off = line_map.position_to_offset(start, content)? as usize;
+        if start_off >= content.len() {
+            return None;
+        }
+        let bytes = content.as_bytes();
+
+        // Identify the identifier surrounding/at start_off.
+        let mut ident_start = start_off;
+        while ident_start > 0 {
+            let c = bytes[ident_start - 1] as char;
+            if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                ident_start -= 1;
+            } else {
+                break;
+            }
+        }
+        let mut ident_end = start_off;
+        while ident_end < bytes.len() {
+            let c = bytes[ident_end] as char;
+            if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                ident_end += 1;
+            } else {
+                break;
+            }
+        }
+        if ident_start >= ident_end {
+            return None;
+        }
+        let first = bytes[ident_start] as char;
+        if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
+            return None;
+        }
+
+        let name = content.get(ident_start..ident_end)?.to_string();
+
+        // Must be immediately followed (after whitespace) by `(`.
+        let mut after = ident_end;
+        while after < bytes.len() && (bytes[after] as char).is_ascii_whitespace() {
+            after += 1;
+        }
+        if after >= bytes.len() || bytes[after] as char != '(' {
+            return None;
+        }
+
+        // Don't offer the fix if a `function <name>(` already exists somewhere in the file.
         if content.contains(&format!("function {name}(")) {
             return None;
         }
