@@ -4032,9 +4032,6 @@ impl<'a> DeclarationEmitter<'a> {
                     return None;
                 }
             }
-<<<<<<< HEAD
-            Some(self.format_reused_call_structural_return_type_text(&type_text))
-=======
             if let (Some(source_path), Some(module_specifier)) =
                 (source_path.as_deref(), imported_module.as_deref())
                 && self.package_json_name_matches_import_specifier(source_path, module_specifier)
@@ -4042,8 +4039,7 @@ impl<'a> DeclarationEmitter<'a> {
                 type_text =
                     Self::rewrite_relative_import_type_specifiers(&type_text, module_specifier);
             }
-            Some(type_text)
->>>>>>> origin/main
+            Some(self.format_reused_call_structural_return_type_text(&type_text))
         })
     }
 
