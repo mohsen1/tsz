@@ -1,6 +1,6 @@
 # 100% Conformance Strategy
 
-Last updated: 2026-05-07 on `origin/main` at `c5a480fc2f`.
+Last updated: 2026-05-07 on `origin/main` at `75b00a3361`.
 
 ## Target
 
@@ -36,9 +36,10 @@ Dashboard from `python3 scripts/conformance/query-conformance.py --dashboard`:
 
 The behavior queue improved materially during 2026-05-07. The checked-in snapshot
 has not yet been refreshed for `#4479`, `#4480`, `#4494`, `#4496`, `#4497`,
-`#4498`, `#4499`, or `#4500`, so use focused conformance runs for current-main
-candidate selection until the next snapshot/README refresh PR lands. Older notes
-that cite `12451/12582`, `12470/12582`, `12488/12581`, or 99.0-99.3% are stale.
+`#4498`, `#4499`, `#4500`, or `#4488`, so use focused conformance runs for
+current-main candidate selection until the next snapshot/README refresh PR lands.
+Older notes that cite `12451/12582`, `12470/12582`, `12488/12581`, or 99.0-99.3%
+are stale.
 
 ## Active PR Queue
 
@@ -46,13 +47,14 @@ Monitor these PRs without sitting idle for CI:
 
 | PR | Purpose | Action |
 | --- | --- | --- |
-| #4488 | `fix(checker): preserve non-strict unknown operation errors` | Auto-merge enabled. Branch was cleaned and rebased to `c528cfc112` after a contaminated force-push; CI is running. |
+| #4503 | `fix(checker): reject concrete generic indexed writes` | Auto-merge enabled. Focused follow-up worker is investigating remaining `keyofAndIndexedAccessErrors` mismatches without blocking CI. |
+| #4502 | `fix(solver): collapse duplicate display names after union disambiguation` | Auto-merge enabled. One-file solver display change; full CI is running. |
 | #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Draft and not auto-merge enabled because the last version had broad unit/conformance regressions. |
 
 Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434`,
 `#4438`, `#4439`, `#4443`, `#4444`, `#4447`, `#4448`, `#4449`, `#4450`,
 `#4451`, `#4475`, `#4479`, `#4480`, `#4490`, `#4491`, `#4492`, `#4494`,
-`#4495`, `#4496`, `#4497`, `#4498`, `#4499`, and `#4500`.
+`#4495`, `#4496`, `#4497`, `#4498`, `#4499`, `#4500`, `#4501`, and `#4488`.
 
 ## Work Selection
 
@@ -92,7 +94,9 @@ Active local worker assignments from this tranche:
 - `codex/conformance-parser-recovery-*` for parser recovery.
 - `codex/big3-relation-*` for a focused Big 3 wrong-code semantic fix.
 - `codex/one-extra-diagnostic-*` for a focused one-extra or false-positive diagnostic fix.
-- `codex/issue-3985-unknown-nonstrict-ops` for #4488, now clean at `c528cfc112`.
+- `codex/conformance-diagnostic-count-*` published #4503 and is now closed.
+- `codex/indexed-write-followup-*` for remaining `keyofAndIndexedAccessErrors` indexed-write mismatches after #4503.
+- `codex/ts2552-temporal-*` for the one-missing TS2552 lane in `temporal.ts`.
 
 Already published or merged from earlier tranches:
 
@@ -101,6 +105,7 @@ Already published or merged from earlier tranches:
 - `fix/type-param-tag-ts2339` as `#4450`
 - `codex/fix-3985-unknown-non-strict-errors` as `#4475`
 - `codex/delete-operator-ts1102` as `#4500`
+- `codex/issue-3985-unknown-nonstrict-ops` as `#4488`
 
 ## Campaigns
 
