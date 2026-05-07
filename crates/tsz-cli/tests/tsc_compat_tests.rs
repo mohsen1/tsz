@@ -3143,3 +3143,132 @@ fn tsc_parity_ts2427_any_alone_still_reported() {
         "TS2427 still reported for predefined names when no hard keyword present",
     );
 }
+
+// --- Regression tests for issue #3919 ---
+//
+// `tsz --showConfig` must print the resolved config without validating root
+// files. tsc preserves explicit `files` entries that have unsupported
+// extensions or that point at missing paths; tsz used to convert both into
+// TS18003 because `discover_ts_files` filtered/rejected them and the empty
+// result triggered the "no inputs found" error.
+
+#[test]
+fn show_config_preserves_unsupported_extension_in_files() {
+    let temp = TempDir::new("show_config_unsupported_extension").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"files":["style.css"],"compilerOptions":{"noEmit":true}}"#,
+    );
+    write_file(&temp.path.join("style.css"), "body{}\n");
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--showConfig"]).expect("tsz should run");
+    assert_eq!(
+        code, 0,
+        "--showConfig must exit 0 with an unsupported-extension files entry, got: {output}"
+    );
+    assert!(
+        !output.contains("error TS18003"),
+        "--showConfig must not emit TS18003: {output}"
+    );
+    assert!(
+        !output.contains("error TS6054"),
+        "--showConfig must not emit TS6054 (unsupported extension): {output}"
+    );
+    assert!(
+        output.contains("\"./style.css\""),
+        "--showConfig must preserve the unsupported file entry verbatim: {output}"
+    );
+}
+
+#[test]
+fn show_config_preserves_missing_file_in_files() {
+    let temp = TempDir::new("show_config_missing_file").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"files":["missing.ts"],"compilerOptions":{"noEmit":true}}"#,
+    );
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--showConfig"]).expect("tsz should run");
+    assert_eq!(
+        code, 0,
+        "--showConfig must exit 0 even when an explicit file is missing, got: {output}"
+    );
+    assert!(
+        !output.contains("error TS18003"),
+        "--showConfig must not emit TS18003: {output}"
+    );
+    assert!(
+        !output.contains("error TS6053"),
+        "--showConfig must not emit TS6053 (file not found): {output}"
+    );
+    assert!(
+        output.contains("\"./missing.ts\""),
+        "--showConfig must preserve the missing file entry verbatim: {output}"
+    );
+}
+
+#[test]
+fn show_config_preserves_files_when_only_unsupported_entries() {
+    let temp = TempDir::new("show_config_only_unsupported").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"files":["a.css","b.scss"],"compilerOptions":{"noEmit":true}}"#,
+    );
+    write_file(&temp.path.join("a.css"), "/*a*/\n");
+    write_file(&temp.path.join("b.scss"), "/*b*/\n");
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--showConfig"]).expect("tsz should run");
+    assert_eq!(
+        code, 0,
+        "--showConfig must exit 0 when every explicit file has an unsupported extension, got: {output}"
+    );
+    assert!(
+        output.contains("\"./a.css\"") && output.contains("\"./b.scss\""),
+        "--showConfig must preserve every explicit entry verbatim: {output}"
+    );
+}
+
+#[test]
+fn show_config_normalizes_already_relative_files_entry() {
+    // A `./`-prefixed path in tsconfig must round-trip unchanged (no `./././`).
+    let temp = TempDir::new("show_config_already_relative").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"files":["./main.ts"],"compilerOptions":{"noEmit":true}}"#,
+    );
+    write_file(&temp.path.join("main.ts"), "export {};\n");
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--showConfig"]).expect("tsz should run");
+    assert_eq!(code, 0, "--showConfig must exit 0, got: {output}");
+    assert!(
+        output.contains("\"./main.ts\""),
+        "expected \"./main.ts\" entry: {output}"
+    );
+    assert!(
+        !output.contains("\"././main.ts\""),
+        "must not double-prefix already-relative paths: {output}"
+    );
+}
+
+#[test]
+fn tsc_parity_show_config_unsupported_extension_files_entry() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("show_config_parity_unsupported").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"files":["style.css"],"compilerOptions":{"noEmit":true}}"#,
+    );
+    write_file(&temp.path.join("style.css"), "body{}\n");
+
+    assert_tsc_tsz_match_with_exit_code(
+        &temp.path,
+        &["--showConfig"],
+        "tsz --showConfig must match tsc when files lists an unsupported extension",
+    );
+}
