@@ -11,9 +11,10 @@
 
 use super::handlers_code_fixes_utils::{
     class_body_has_member, extract_jsdoc_imported_names, extract_jsdoc_type_identifier_spans,
-    extract_type_identifiers, find_first_implements_class, is_identifier,
-    parse_bare_identifier_expression, parse_identifier_call_expression, parse_interface_properties,
-    parse_named_import_map, positions_overlap, resolve_module_path, should_import_identifier,
+    extract_quoted_text, extract_type_identifiers, find_first_implements_class,
+    find_matching_brace, is_identifier, parse_bare_identifier_expression,
+    parse_identifier_call_expression, parse_interface_properties, parse_named_import_map,
+    positions_overlap, resolve_module_path, should_import_identifier,
 };
 use super::{Server, TsServerRequest, TsServerResponse};
 use tsz::checker::diagnostics::DiagnosticCategory;
@@ -497,30 +498,10 @@ impl Server {
                 && let Some(prop_name) =
                     Self::find_property_access_name_for_missing_member_fallback(&content)
             {
-                    response_actions.extend([
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare method '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Add index signature for property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                    ]);
-                }
+                response_actions.extend(
+                    self.missing_member_codefix_actions(file_path, &content, &prop_name),
+                );
+            }
 
             if response_actions.is_empty()
                 && error_codes.len() == 1
@@ -911,29 +892,9 @@ impl Server {
                     Self::find_property_access_name_for_missing_member_fallback(&content);
 
                 if let Some(prop_name) = prop_name {
-                    response_actions.extend([
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare method '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Add index signature for property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                    ]);
+                    response_actions.extend(
+                        self.missing_member_codefix_actions(file_path, &content, &prop_name),
+                    );
                 }
             }
             normalize_response_actions(&mut response_actions);
@@ -976,29 +937,9 @@ impl Server {
                     Self::find_property_access_name_for_missing_member_fallback(&content);
 
                 if let Some(prop_name) = prop_name {
-                    response_actions.extend([
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare method '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Add index signature for property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                    ]);
+                    response_actions.extend(
+                        self.missing_member_codefix_actions(file_path, &content, &prop_name),
+                    );
                 }
             }
 
@@ -1010,29 +951,9 @@ impl Server {
                     && let Some(prop_name) =
                         Self::find_property_access_name_for_missing_member_fallback(&content)
                 {
-                    response_actions.extend([
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare method '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Add index signature for property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                    ]);
+                    response_actions.extend(
+                        self.missing_member_codefix_actions(file_path, &content, &prop_name),
+                    );
                 }
                 return TsServerResponse {
                     seq,
@@ -1058,6 +979,10 @@ impl Server {
             && let Some(prop_name) =
                 Self::find_property_access_name_for_missing_member_fallback(&content)
         {
+            let actions = self.missing_member_codefix_actions(file_path, &content, &prop_name);
+            if actions.is_empty() {
+                return self.stub_response(seq, request, Some(serde_json::json!([])));
+            }
             return TsServerResponse {
                 seq,
                 msg_type: "response".to_string(),
@@ -1065,29 +990,7 @@ impl Server {
                 request_seq: request.seq,
                 success: true,
                 message: None,
-                body: Some(serde_json::json!([
-                    serde_json::json!({
-                        "fixName": "addMissingMember",
-                        "description": format!("Declare method '{prop_name}'"),
-                        "changes": [],
-                        "fixId": "fixMissingMember",
-                        "fixAllDescription": "Add all missing members",
-                    }),
-                    serde_json::json!({
-                        "fixName": "addMissingMember",
-                        "description": format!("Declare property '{prop_name}'"),
-                        "changes": [],
-                        "fixId": "fixMissingMember",
-                        "fixAllDescription": "Add all missing members",
-                    }),
-                    serde_json::json!({
-                        "fixName": "addMissingMember",
-                        "description": format!("Add index signature for property '{prop_name}'"),
-                        "changes": [],
-                        "fixId": "fixMissingMember",
-                        "fixAllDescription": "Add all missing members",
-                    }),
-                ])),
+                body: Some(serde_json::json!(actions)),
             };
         }
 
@@ -1128,6 +1031,200 @@ impl Server {
         }
 
         None
+    }
+
+    fn missing_member_codefix_actions(
+        &self,
+        file_path: &str,
+        content: &str,
+        prop_name: &str,
+    ) -> Vec<serde_json::Value> {
+        let Some((receiver_name, _)) =
+            Self::find_property_access_for_missing_member_fallback(content, prop_name)
+        else {
+            return Vec::new();
+        };
+        let Some(interface_name) = Self::find_declared_type_for_identifier(content, &receiver_name)
+        else {
+            return Vec::new();
+        };
+        let Some((target_file, target_content, insert_offset)) =
+            self.find_interface_member_insert_target(file_path, content, &interface_name)
+        else {
+            return Vec::new();
+        };
+
+        let line_map = LineMap::build(&target_content);
+        let insert_pos = line_map.offset_to_position(insert_offset as u32, &target_content);
+        let change_for = |new_text: String| {
+            serde_json::json!([{
+                "fileName": target_file,
+                "textChanges": [{
+                    "start": { "line": insert_pos.line + 1, "offset": insert_pos.character + 1 },
+                    "end": { "line": insert_pos.line + 1, "offset": insert_pos.character + 1 },
+                    "newText": new_text
+                }]
+            }])
+        };
+
+        vec![
+            serde_json::json!({
+                "fixName": "addMissingMember",
+                "description": format!("Declare method '{prop_name}'"),
+                "changes": change_for(format!("\n    {prop_name}(): unknown;\n")),
+                "fixId": "fixMissingMember",
+                "fixAllDescription": "Add all missing members",
+            }),
+            serde_json::json!({
+                "fixName": "addMissingMember",
+                "description": format!("Declare property '{prop_name}'"),
+                "changes": change_for(format!("\n    {prop_name}: unknown;\n")),
+                "fixId": "fixMissingMember",
+                "fixAllDescription": "Add all missing members",
+            }),
+            serde_json::json!({
+                "fixName": "addMissingMember",
+                "description": format!("Add index signature for property '{prop_name}'"),
+                "changes": change_for("\n    [x: string]: unknown;\n".to_string()),
+                "fixId": "fixMissingMember",
+                "fixAllDescription": "Add all missing members",
+            }),
+        ]
+    }
+
+    fn find_property_access_for_missing_member_fallback(
+        content: &str,
+        prop_name: &str,
+    ) -> Option<(String, String)> {
+        for line in content.lines() {
+            if line.trim_start().starts_with("import ") {
+                continue;
+            }
+
+            let needle = format!(".{prop_name}");
+            let Some(dot_idx) = line.find(&needle) else {
+                continue;
+            };
+            let suffix = &line[dot_idx + needle.len()..];
+            if suffix
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+            {
+                continue;
+            }
+
+            let prefix = &line[..dot_idx];
+            let receiver_end = prefix.len();
+            let receiver_start = prefix
+                .char_indices()
+                .rev()
+                .find_map(|(idx, ch)| {
+                    (!matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_' | '$'))
+                        .then_some(idx + ch.len_utf8())
+                })
+                .unwrap_or(0);
+            let receiver_name = prefix[receiver_start..receiver_end].trim();
+            if is_identifier(receiver_name) {
+                return Some((receiver_name.to_string(), prop_name.to_string()));
+            }
+        }
+
+        None
+    }
+
+    fn find_declared_type_for_identifier(content: &str, ident: &str) -> Option<String> {
+        for line in content.lines() {
+            let trimmed = line.trim_start();
+            let Some(declaration_start) = [
+                "declare const ",
+                "declare let ",
+                "declare var ",
+                "const ",
+                "let ",
+                "var ",
+            ]
+            .iter()
+            .find_map(|prefix| trimmed.strip_prefix(prefix)) else {
+                continue;
+            };
+            let Some(rest) = declaration_start.strip_prefix(ident) else {
+                continue;
+            };
+            if rest
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+            {
+                continue;
+            }
+            let Some(after_colon) = rest.trim_start().strip_prefix(':') else {
+                continue;
+            };
+            let after_colon = after_colon.trim_start();
+            let type_name: String = after_colon
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                .collect();
+            if is_identifier(&type_name) {
+                return Some(type_name);
+            }
+        }
+
+        None
+    }
+
+    fn find_interface_member_insert_target(
+        &self,
+        file_path: &str,
+        content: &str,
+        interface_name: &str,
+    ) -> Option<(String, String, usize)> {
+        let mut candidates = Vec::new();
+        candidates.push(file_path.to_string());
+
+        for line in content.lines() {
+            let trimmed = line.trim_start();
+            if !trimmed.starts_with("import ") {
+                continue;
+            }
+            let Some(specifier) = extract_quoted_text(trimmed) else {
+                continue;
+            };
+            if let Some(resolved) = resolve_module_path(file_path, specifier, &self.open_files) {
+                candidates.push(resolved);
+            }
+        }
+
+        candidates.extend(self.open_files.keys().cloned());
+        candidates.sort();
+        candidates.dedup();
+
+        for candidate in candidates {
+            let Some(candidate_content) = self
+                .open_files
+                .get(&candidate)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(&candidate).ok())
+            else {
+                continue;
+            };
+            if let Some(insert_offset) =
+                Self::find_interface_member_insert_offset(&candidate_content, interface_name)
+            {
+                return Some((candidate, candidate_content, insert_offset));
+            }
+        }
+
+        None
+    }
+
+    fn find_interface_member_insert_offset(content: &str, interface_name: &str) -> Option<usize> {
+        let interface_token = format!("interface {interface_name}");
+        let interface_pos = content.find(&interface_token)?;
+        let open_brace_rel = content[interface_pos..].find('{')?;
+        let open_brace = interface_pos + open_brace_rel;
+        find_matching_brace(content, open_brace)
     }
 
     fn find_first_binding_identifier(text: &str) -> Option<(usize, usize, String)> {

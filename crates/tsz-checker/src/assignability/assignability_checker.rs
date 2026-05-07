@@ -881,6 +881,26 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
+        let is_type_alias_application = |type_id: TypeId| {
+            crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+                .and_then(|app| {
+                    crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+                })
+                .and_then(|def_id| self.ctx.definition_store.get(def_id))
+                .is_some_and(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
+        };
+        if is_type_alias_application(source)
+            && is_type_alias_application(target)
+            && crate::query_boundaries::assignability::are_types_structurally_identical(
+                self.ctx.types,
+                &self.ctx,
+                source,
+                target,
+            )
+        {
+            return true;
+        }
+
         let evaluated_target_for_invalid_mapped = self.ctx.types.evaluate_type(target);
         if self.type_contains_invalid_mapped_key_type(target)
             || self.type_contains_invalid_mapped_key_type(evaluated_target_for_invalid_mapped)
