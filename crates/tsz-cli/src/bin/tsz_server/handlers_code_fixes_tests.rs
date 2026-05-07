@@ -2435,3 +2435,43 @@ fn handle_get_code_fixes_prefers_add_missing_async_for_underscore_arrow_paramete
         "expected async underscored-parameter arrow update, got: {new_text}"
     );
 }
+
+// Issue #3832: getCodeFixes should return an empty body when the requested
+// span does not overlap any matching diagnostic (no fallback to all matching
+// diagnostics in the file).
+#[test]
+fn get_code_fixes_returns_empty_when_span_misses_diagnostic() {
+    let mut server = make_server();
+    let file = "/missing_name_outside_span.ts";
+    let content = "missingName = 1;\nconst ok = 1;\n";
+
+    server
+        .open_files
+        .insert(file.to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": file,
+            "startLine": 2,
+            "startOffset": 1,
+            "endLine": 2,
+            "endOffset": 1,
+            "errorCodes": [2304]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    assert!(
+        actions.is_empty(),
+        "expected no code fixes when request span misses the diagnostic, got: {actions:?}"
+    );
+}

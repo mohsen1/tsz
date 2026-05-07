@@ -137,9 +137,17 @@ impl Server {
                 None
             };
             let add_missing_const_anywhere = Self::apply_add_missing_const_fallback(&content);
-            let mut add_missing_const_candidate = add_missing_const_preview
-                .clone()
-                .or_else(|| add_missing_const_anywhere.clone());
+            // When the client supplies a request span, only honor a fix that
+            // covers the cursor position. Falling back to the file-wide
+            // anywhere search would surface fixes for diagnostics outside
+            // the requested range (issue #3832).
+            let mut add_missing_const_candidate = if request_span.is_some() {
+                add_missing_const_preview.clone()
+            } else {
+                add_missing_const_preview
+                    .clone()
+                    .or_else(|| add_missing_const_anywhere.clone())
+            };
             if has_mixed_declared_binding_assignment {
                 add_missing_const_candidate = None;
             }
@@ -228,7 +236,10 @@ impl Server {
                     reports_deprecated: tsz::lsp::diagnostics::is_deprecated_code(d.code)
                         .then_some(true),
                 };
-            let mut filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
+            // tsc returns no fixes when the request span does not overlap any
+            // diagnostic. Don't fall back to all matching diagnostics in the
+            // file once the span filter is empty (issue #3832).
+            let filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
                 .iter()
                 .filter(|d| error_codes.is_empty() || error_codes.contains(&d.code))
                 .filter(|d| {
@@ -241,13 +252,6 @@ impl Server {
                 })
                 .map(to_lsp_diag)
                 .collect();
-            if filtered_diagnostics.is_empty() && request_span.is_some() {
-                filtered_diagnostics = diagnostics
-                    .iter()
-                    .filter(|d| error_codes.is_empty() || error_codes.contains(&d.code))
-                    .map(to_lsp_diag)
-                    .collect();
-            }
             let auto_import_file_exclude_patterns =
                 Self::extract_auto_import_file_exclude_patterns(request)
                     .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone());
