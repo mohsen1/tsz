@@ -263,8 +263,8 @@ impl<'a> CheckerContext<'a> {
         // Build module specifiers map from arena file names.
         // Each file (other than the current file) gets its name stem as the module specifier.
         // This enables import-qualified type display like `import("a").F`.
-        self.module_specifiers = Self::build_module_specifiers(&arenas);
-        self.module_path_specifiers = Self::build_module_path_specifiers(&arenas);
+        self.module_specifiers = Arc::new(Self::build_module_specifiers(&arenas));
+        self.module_path_specifiers = Arc::new(Self::build_module_path_specifiers(&arenas));
         self.all_arenas = Some(arenas);
     }
 
