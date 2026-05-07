@@ -339,7 +339,7 @@ function test<Shape extends Record<string, string>>(shape: Shape, key: keyof Sha
                 && (message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
                     || message.contains("Record<\"knownLiteralKey\" | keyof Shape, number>"))
         }),
-        "Expected TS2551 to preserve `Record<keyof Shape | \"knownLiteralKey\", number>` in the property-receiver display.\nActual diagnostics: {diagnostics:#?}"
+        "Expected TS2551 to preserve `Record<\"knownLiteralKey\" | keyof Shape, number>` in the property-receiver display.\nActual diagnostics: {diagnostics:#?}"
     );
 
     assert!(
