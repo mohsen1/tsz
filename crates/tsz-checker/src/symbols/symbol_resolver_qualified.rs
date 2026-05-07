@@ -641,12 +641,12 @@ impl<'a> CheckerState<'a> {
         namespace_name: &str,
         member_name: &str,
     ) -> Option<SymbolId> {
-        let cache_key = (namespace_name.to_string(), member_name.to_string());
         if let Some(cached) = self
             .ctx
             .namespace_member_resolution_cache
             .borrow()
-            .get(&cache_key)
+            .get(namespace_name)
+            .and_then(|members| members.get(member_name))
             .copied()
         {
             return cached;
@@ -710,12 +710,15 @@ impl<'a> CheckerState<'a> {
             .cloned()
         {
             cached
+        } else if self.ctx.nested_namespace_candidates_cache_complete.get() {
+            Vec::new()
         } else {
             // For nested namespaces (e.g., `Utils` inside `A`): search parent
-            // namespace exports in each binder for the target namespace name.
-            // Cache candidates by namespace name so resolving many members of
-            // the same nested namespace does not rescan every binder.
-            let mut candidates = Vec::new();
+            // namespace exports in each binder once and index every nested
+            // namespace name. This avoids rescanning every binder for each
+            // different missing namespace root.
+            let mut candidates_by_name: rustc_hash::FxHashMap<String, Vec<(usize, SymbolId)>> =
+                rustc_hash::FxHashMap::default();
             for (file_idx, binder) in all_binders.iter().enumerate() {
                 for (_, &parent_sym_id) in binder.file_locals.iter() {
                     let Some(parent_sym) = self.ctx.binder.get_symbol(parent_sym_id) else {
@@ -726,21 +729,33 @@ impl<'a> CheckerState<'a> {
                     {
                         continue;
                     }
-                    if let Some(parent_exports) = parent_sym.exports.as_ref()
-                        && let Some(nested_ns_id) = parent_exports.get(namespace_name)
-                        && let Some(nested_ns) = self.ctx.binder.get_symbol(nested_ns_id)
-                        && nested_ns.flags
-                            & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                            != 0
-                    {
-                        candidates.push((file_idx, nested_ns_id));
+                    if let Some(parent_exports) = parent_sym.exports.as_ref() {
+                        for (nested_name, &nested_ns_id) in parent_exports.iter() {
+                            if let Some(nested_ns) = self.ctx.binder.get_symbol(nested_ns_id)
+                                && nested_ns.flags
+                                    & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                                    != 0
+                            {
+                                candidates_by_name
+                                    .entry(nested_name.clone())
+                                    .or_default()
+                                    .push((file_idx, nested_ns_id));
+                            }
+                        }
                     }
                 }
             }
+            let candidates = candidates_by_name
+                .get(namespace_name)
+                .cloned()
+                .unwrap_or_default();
             self.ctx
                 .nested_namespace_candidates_cache
                 .borrow_mut()
-                .insert(namespace_name.to_string(), candidates.clone());
+                .extend(candidates_by_name);
+            self.ctx
+                .nested_namespace_candidates_cache_complete
+                .set(true);
             candidates
         };
 
@@ -757,14 +772,18 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .namespace_member_resolution_cache
                 .borrow_mut()
-                .insert(cache_key, None);
+                .entry(namespace_name.to_string())
+                .or_default()
+                .insert(member_name.to_string(), None);
             return None;
         };
         self.record_cross_file_member(member_id, member_name, file_idx);
         self.ctx
             .namespace_member_resolution_cache
             .borrow_mut()
-            .insert(cache_key, Some(member_id));
+            .entry(namespace_name.to_string())
+            .or_default()
+            .insert(member_name.to_string(), Some(member_id));
         Some(member_id)
     }
 
