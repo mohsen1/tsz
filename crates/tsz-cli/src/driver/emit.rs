@@ -1343,10 +1343,14 @@ fn js_output_path(
     }
 
     let extension = js_extension_for(input_path, jsx)?;
-    let relative = output_relative_path(base_dir, root_dir, input_path);
-    let mut output = match out_dir {
-        Some(out_dir) => out_dir.join(relative),
-        None => input_path.to_path_buf(),
+    let mut output = if should_emit_next_to_source(root_dir, out_dir, input_path) {
+        input_path.to_path_buf()
+    } else {
+        let relative = output_relative_path(base_dir, root_dir, input_path);
+        match out_dir {
+            Some(out_dir) => out_dir.join(relative),
+            None => input_path.to_path_buf(),
+        }
     };
     output.set_extension(extension);
     Some(output)
@@ -1366,9 +1370,13 @@ fn declaration_output_path(
     let file_name = relative.file_name()?.to_str()?;
     let new_name = declaration_file_name(file_name)?;
 
-    let mut output = match out_dir {
-        Some(out_dir) => out_dir.join(relative),
-        None => input_path.to_path_buf(),
+    let mut output = if should_emit_next_to_source(root_dir, out_dir, input_path) {
+        input_path.to_path_buf()
+    } else {
+        match out_dir {
+            Some(out_dir) => out_dir.join(relative),
+            None => input_path.to_path_buf(),
+        }
     };
     output.set_file_name(new_name);
     Some(output)
@@ -1521,6 +1529,14 @@ fn output_relative_path(base_dir: &Path, root_dir: Option<&Path>, input_path: &P
         .strip_prefix(base_dir)
         .unwrap_or(input_path)
         .to_path_buf()
+}
+
+fn should_emit_next_to_source(
+    root_dir: Option<&Path>,
+    out_dir: Option<&Path>,
+    input_path: &Path,
+) -> bool {
+    root_dir.is_some_and(|root_dir| input_path.strip_prefix(root_dir).is_err()) && out_dir.is_some()
 }
 
 fn bundled_module_name(
