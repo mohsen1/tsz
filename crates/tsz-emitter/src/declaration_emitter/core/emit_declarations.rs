@@ -106,6 +106,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.retain_synthetic_function_return_dependencies_in_statements(
                 &source_file.statements,
             );
+            self.retain_asserted_class_property_type_dependencies_in_statements(
+                &source_file.statements,
+            );
             self.retain_imported_static_call_dependencies_in_statements(&source_file.statements);
         }
 
@@ -1503,6 +1506,11 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write(" | undefined");
                 }
+            } else if prop.initializer.is_some()
+                && let Some(type_text) = self.explicit_asserted_type_text(prop.initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
             } else if prop.initializer.is_some()
                 && let Some(type_text) =
                     self.class_property_function_initializer_type_text(prop_idx, prop.initializer)
