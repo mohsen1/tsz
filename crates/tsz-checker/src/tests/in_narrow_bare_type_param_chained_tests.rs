@@ -6,6 +6,13 @@
 //! emits that diagnostic once at the *first* `in` operand; the truthy branch
 //! narrows `t` to `T & Record<"x", unknown>`, satisfying the `in`-RHS validity
 //! check for every chained operand to its right.
+//!
+//! For type-parameter operands, tsc reports the diagnostic with code TS2322
+//! ("Type 'T' is not assignable to type 'object'") rather than TS2638
+//! ("may represent a primitive value"). TS2638 is reserved for concrete
+//! primitive shapes; generic positions go through the standard
+//! assignability gateway. These tests track the no-cascade narrowing
+//! invariant by counting the assignability diagnostic instead.
 
 use tsz_common::options::checker::CheckerOptions;
 
@@ -18,15 +25,15 @@ fn diags(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     crate::test_utils::check_source(source, "test.ts", opts)
 }
 
-fn count_ts2638_invalid_rhs(diags: &[crate::diagnostics::Diagnostic]) -> usize {
+fn count_in_rhs_object_assignability(diags: &[crate::diagnostics::Diagnostic]) -> usize {
     diags
         .iter()
-        .filter(|d| d.code == 2638 && d.message_text.contains("right operand"))
+        .filter(|d| d.code == 2322 && d.message_text.contains("assignable to type 'object'"))
         .count()
 }
 
 #[test]
-fn chained_in_against_bare_type_param_emits_ts2638_once() {
+fn chained_in_against_bare_type_param_emits_ts2322_once() {
     let d = diags(
         r#"
 function test<T>(x: T) {
@@ -35,14 +42,14 @@ function test<T>(x: T) {
 "#,
     );
     assert_eq!(
-        count_ts2638_invalid_rhs(&d),
+        count_in_rhs_object_assignability(&d),
         1,
-        "Expected exactly one TS2638 invalid-RHS diagnostic for `\"a\" in x && \"b\" in x`; got: {d:?}"
+        "Expected exactly one TS2322 invalid-RHS diagnostic for `\"a\" in x && \"b\" in x`; got: {d:?}"
     );
 }
 
 #[test]
-fn three_chain_in_against_bare_type_param_emits_ts2638_once() {
+fn three_chain_in_against_bare_type_param_emits_ts2322_once() {
     let d = diags(
         r#"
 function test<T>(x: T) {
@@ -51,14 +58,14 @@ function test<T>(x: T) {
 "#,
     );
     assert_eq!(
-        count_ts2638_invalid_rhs(&d),
+        count_in_rhs_object_assignability(&d),
         1,
-        "Expected exactly one TS2638 invalid-RHS diagnostic for chain of three `in`s; got: {d:?}"
+        "Expected exactly one TS2322 invalid-RHS diagnostic for chain of three `in`s; got: {d:?}"
     );
 }
 
 #[test]
-fn solo_in_against_bare_type_param_still_emits_ts2638() {
+fn solo_in_against_bare_type_param_still_emits_ts2322() {
     let d = diags(
         r#"
 function test<T>(x: T) {
@@ -67,9 +74,9 @@ function test<T>(x: T) {
 "#,
     );
     assert_eq!(
-        count_ts2638_invalid_rhs(&d),
+        count_in_rhs_object_assignability(&d),
         1,
-        "Solo `\"a\" in x` should still emit one TS2638 against bare T; got: {d:?}"
+        "Solo `\"a\" in x` should still emit one TS2322 against bare T; got: {d:?}"
     );
 }
 
@@ -84,9 +91,9 @@ function test<T extends object>(x: T) {
 "#,
     );
     assert_eq!(
-        count_ts2638_invalid_rhs(&d),
+        count_in_rhs_object_assignability(&d),
         0,
-        "T extends object -> no TS2638; got: {d:?}"
+        "T extends object -> no TS2322; got: {d:?}"
     );
 }
 
@@ -105,10 +112,10 @@ function test<T>(x: T) {
 }
 "#,
     );
-    // Single TS2638 from the `in` operator itself; no cascade in the false branch.
+    // Single TS2322 from the `in` operator itself; no cascade in the false branch.
     assert_eq!(
-        count_ts2638_invalid_rhs(&d),
+        count_in_rhs_object_assignability(&d),
         1,
-        "Expected one TS2638 from the `in` operator only; got: {d:?}"
+        "Expected one TS2322 from the `in` operator only; got: {d:?}"
     );
 }

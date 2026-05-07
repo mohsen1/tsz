@@ -449,6 +449,60 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// True when `ty` is an `in`-operator RHS shape that tsc reports via
+    /// TS2322 (assignability to `object`) rather than TS2638 (primitive
+    /// runtime warning).
+    ///
+    /// tsc routes these to the assignability gateway:
+    /// - bare type parameters (`T`)
+    /// - unions whose every member is a type parameter or a primitive
+    ///   (`T | U`, `string | number | T`)
+    /// - intersections whose every member is a type parameter or
+    ///   primitive constraint (`T & U`, `T & (0 | 1 | 2)`)
+    ///
+    /// It keeps TS2638 for shapes whose apparent type is reported with a
+    /// `NonNullable<T>`-style message — typically intersections with
+    /// `{}`-shaped object constraints. For those, the empty-object
+    /// member excludes some nullish cases without committing to the
+    /// `object` constraint, and tsc emits TS2638 with the
+    /// `NonNullable<T>` apparent-type display.
+    fn in_rhs_is_type_parameter_assignability_shape(&self, ty: TypeId) -> bool {
+        use crate::query_boundaries::common;
+
+        if common::is_type_parameter_like(self.ctx.types, ty) {
+            return true;
+        }
+        if let Some(members) = common::union_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .all(|&m| self.in_rhs_is_type_parameter_assignability_shape(m));
+        }
+        if let Some(members) = common::intersection_members(self.ctx.types, ty) {
+            // Intersections with an empty-object-constraint member
+            // (e.g. `T & {}`, `T & EmptyAlias`) collapse to
+            // `NonNullable<T>` in tsc's apparent-type rendering and stay
+            // on the TS2638 path. Recognize that by requiring every
+            // member to be either a type parameter or a primitive — if
+            // any member is an empty-object shape, defer to TS2638.
+            if members.iter().any(|&m| {
+                common::object_shape_for_type(self.ctx.types, m)
+                    .is_some_and(|shape| shape.properties.is_empty())
+            }) {
+                return false;
+            }
+            return members
+                .iter()
+                .all(|&m| self.in_rhs_is_type_parameter_assignability_shape(m));
+        }
+        // Concrete primitives (string, number, ...) are also routed to
+        // the assignability gateway when they're combined with type
+        // parameters in a union / intersection that we already verified
+        // above. A bare primitive (no generics involved) keeps the
+        // TS2638 path because the user can fix it without touching a
+        // generic position.
+        common::is_primitive_type(self.ctx.types, ty)
+    }
+
     fn in_operator_intersection_member_excludes_primitive(&self, ty: TypeId) -> bool {
         use crate::query_boundaries::{common, dispatch as query};
 
@@ -2473,12 +2527,32 @@ impl<'a> CheckerState<'a> {
         } else if self.type_may_represent_primitive(right_type)
             || self.truthiness_narrowed_from_unknown(right_idx, right_type)
         {
-            let type_str = self.format_apparent_type_for_in_operator(right_type);
-            self.error_at_node_msg(
-                right_idx,
-                tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND,
-                &[&type_str],
-            );
+            // tsc reports TS2322 ("Type 'T' is not assignable to type
+            // 'object'") rather than TS2638 ("may represent a primitive
+            // value") for type-parameter-shaped RHS values: bare `T`,
+            // unions of type parameters (`T | U`), unions mixing type
+            // parameters with primitives (`string | number | T`), and
+            // intersections of type parameters (`T & U`,
+            // `T & (0 | 1 | 2)`). Intersections with empty-object
+            // constraint shapes (`T & {}`, `NonNullable<T>` aliases)
+            // keep the existing TS2638 path because tsc emits that code
+            // with a `NonNullable<T>`-style message rather than a bare
+            // assignability failure.
+            if self.in_rhs_is_type_parameter_assignability_shape(right_type) {
+                let _ = self.check_assignable_or_report_at_exact_anchor(
+                    right_type,
+                    TypeId::OBJECT,
+                    right_idx,
+                    right_idx,
+                );
+            } else {
+                let type_str = self.format_apparent_type_for_in_operator(right_type);
+                self.error_at_node_msg(
+                    right_idx,
+                    tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND,
+                    &[&type_str],
+                );
+            }
         } else if !self.is_valid_in_operator_rhs(right_type) {
             // Route through the check_assignable_or_report(...) gateway family
             // so computation-layer mismatches stay on the centralized path.
