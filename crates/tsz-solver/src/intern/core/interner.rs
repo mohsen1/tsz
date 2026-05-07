@@ -1616,6 +1616,12 @@ impl TypeInterner {
 
     /// Preserve source-written order for generic display unions whose canonical
     /// member sort is not the order tsc prints in diagnostics.
+    ///
+    /// Pure-literal unions are excluded: when every member is a literal,
+    /// our canonical alloc-order sort already matches tsc's
+    /// registration-order display (e.g. for instantiation-time unions like
+    /// `T | U` with `T="World", U="Hello"` where `"Hello"` was registered
+    /// first, tsc displays `"Hello" | "World"`).
     fn union_origin_overrides_canonical_generic_display_sort(
         &self,
         current: &[TypeId],
@@ -1633,17 +1639,28 @@ impl TypeInterner {
             return false;
         }
 
-        origin.iter().any(|&id| {
+        let has_complex_generic = origin.iter().any(|&id| {
             matches!(
                 self.lookup(id),
-                Some(
-                    TypeData::Application(_)
-                        | TypeData::KeyOf(_)
-                        | TypeData::IndexAccess(_, _)
-                        | TypeData::Literal(_)
-                )
+                Some(TypeData::Application(_) | TypeData::KeyOf(_) | TypeData::IndexAccess(_, _))
             )
-        })
+        });
+        if has_complex_generic {
+            return true;
+        }
+
+        // Mixed unions where literals coexist with non-literal complex types
+        // still need origin preservation, but pure-literal unions don't.
+        let all_literals = origin
+            .iter()
+            .all(|&id| matches!(self.lookup(id), Some(TypeData::Literal(_))));
+        if all_literals {
+            return false;
+        }
+
+        origin
+            .iter()
+            .any(|&id| matches!(self.lookup(id), Some(TypeData::Literal(_))))
     }
 
     /// Look up the as-written origin members for a flattened Union TypeId.
