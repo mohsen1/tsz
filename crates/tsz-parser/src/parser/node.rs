@@ -194,8 +194,16 @@ pub enum NodeCategory {
 /// Data for identifier nodes (`Identifier`, `PrivateIdentifier`)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IdentifierData {
-    /// Interned atom for O(1) comparison (`OPTIMIZATION`: use this instead of `escaped_text`)
-    #[serde(skip, default = "Atom::none")]
+    /// Interned atom for O(1) comparison (`OPTIMIZATION`: use this instead of `escaped_text`).
+    /// Atom indices are stable within a single arena because they are
+    /// allocated by the arena's per-arena `Interner`. Round-tripping the
+    /// arena (parser snapshot pipeline, see
+    /// `docs/plan/perf-lib-snapshot-design.md`) requires the atom to
+    /// survive — otherwise identifier resolution silently breaks. The
+    /// `Atom::none` `default` is retained for backward-compatible
+    /// JSON inputs that omit the field (e.g. snapshots produced before
+    /// the field became serialised).
+    #[serde(default = "Atom::none")]
     pub atom: Atom,
     /// The identifier text (DEPRECATED: kept for backward compatibility during migration)
     pub escaped_text: String,
@@ -980,8 +988,12 @@ pub struct NodeArena {
     pub nodes: Vec<Node>,
 
     /// String interner for resolving identifier atoms
-    /// This is populated from the scanner after parsing completes
-    #[serde(skip)]
+    /// This is populated from the scanner after parsing completes.
+    /// Round-tripped via `Interner`'s custom `Serialize`/`Deserialize`
+    /// (which writes only the `strings` Vec; the lookup map is rebuilt
+    /// on load). This is required for snapshot round-trip to preserve
+    /// identifier text — node `IdentifierData` references atoms by
+    /// index, and stripping the interner would leave them unresolvable.
     pub interner: Interner,
 
     // ==========================================================================
