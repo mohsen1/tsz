@@ -58,6 +58,10 @@ name = "array_generic_shorthand_canonical_tests"
 path = "tests/array_generic_shorthand_canonical_tests.rs"
 
 [[test]]
+name = "tuple_rest_array_canonicalization_tests"
+path = "tests/tuple_rest_array_canonicalization_tests.rs"
+
+[[test]]
 name = "nan_equality_lib_symbol_ids_tests"
 path = "tests/nan_equality_lib_symbol_ids_tests.rs"
 

@@ -343,7 +343,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         } else {
                             (wrapped.type_node, false)
                         };
-                        let elem_type = self.check(inner_idx);
+                        let elem_type =
+                            self.check_tuple_rest_type_node(inner_idx, is_rest_optional);
                         if is_rest_optional
                             && !self.is_array_or_tuple_type(elem_type)
                             && Self::ast_kind_is_obviously_non_array(self.ctx.arena, inner_idx)
@@ -360,7 +361,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 } else if elem_node.kind == syntax_kind_ext::REST_TYPE {
                     // Rest element (e.g., `...string[]` or `...T`)
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
-                        let elem_type = self.check(wrapped.type_node);
+                        let elem_type = self.check_tuple_rest_type_node(wrapped.type_node, true);
                         // Only track seen_rest for concrete array/tuple rest elements.
                         // Variadic type parameter spreads (...T) don't count as "rest"
                         // for TS1265/TS1266 purposes — they represent variadic tuples.
@@ -396,7 +397,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 } else if elem_node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
                     // Named tuple element (e.g., `[x: number, y?: string, ...rest: boolean[]]`)
                     if let Some(data) = self.ctx.arena.get_named_tuple_member(elem_node) {
-                        let elem_type = self.check(data.type_node);
+                        let elem_type =
+                            self.check_tuple_rest_type_node(data.type_node, data.dot_dot_dot_token);
                         let misplaced_optional_marker =
                             !data.question_token
                                 && self.ctx.arena.get(data.type_node).is_some_and(|node| {
