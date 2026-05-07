@@ -119,7 +119,12 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
-        self.emit_namespace_iife(&module, parent_name.as_deref());
+        let parent_source_path = self.current_namespace_source_path.clone();
+        self.emit_namespace_iife(
+            &module,
+            parent_name.as_deref(),
+            parent_source_path.as_deref(),
+        );
     }
 
     pub(in crate::emitter) fn emit_recovered_template_module_declaration(
@@ -253,8 +258,12 @@ impl<'a> Printer<'a> {
         &mut self,
         module: &tsz_parser::parser::node::ModuleData,
         parent_name: Option<&str>,
+        parent_source_path: Option<&str>,
     ) {
         let name = self.get_identifier_text_idx(module.name);
+        let source_path = parent_source_path
+            .filter(|parent| !parent.is_empty())
+            .map_or_else(|| name.clone(), |parent| format!("{parent}.{name}"));
         if let Some(parent) = parent_name
             && !name.is_empty()
         {
@@ -342,7 +351,7 @@ impl<'a> Printer<'a> {
                 if let Some(inner_module) = self.arena.get_module(body_node) {
                     let inner_module = inner_module.clone();
                     let prev_declared = std::mem::take(&mut self.declared_namespace_names);
-                    self.emit_namespace_iife(&inner_module, Some(&iife_param));
+                    self.emit_namespace_iife(&inner_module, Some(&iife_param), Some(&source_path));
                     self.declared_namespace_names = prev_declared;
                 }
             } else {
@@ -354,6 +363,7 @@ impl<'a> Printer<'a> {
                 // IIFE creates a new function scope), and inner names don't leak out.
                 let prev_declared = std::mem::take(&mut self.declared_namespace_names);
                 let prev_scope_end = self.namespace_scope_end;
+                let prev_source_path = self.current_namespace_source_path.clone();
                 self.in_namespace_iife = true;
                 // Set the scope end so import alias reference searching is
                 // limited to this namespace body (not sibling namespaces).
@@ -365,11 +375,13 @@ impl<'a> Printer<'a> {
                     .map(std::borrow::ToOwned::to_owned)
                     .or_else(|| prev_ns_name.clone());
                 self.current_namespace_name = Some(iife_param.clone());
+                self.current_namespace_source_path = Some(source_path.clone());
                 self.emit_namespace_body_statements(module, &iife_param);
                 self.in_namespace_iife = prev;
                 self.namespace_scope_end = prev_scope_end;
                 self.current_namespace_name = prev_ns_name;
                 self.parent_namespace_name = prev_parent_ns;
+                self.current_namespace_source_path = prev_source_path;
                 self.declared_namespace_names = prev_declared;
             }
         }
@@ -1429,6 +1441,11 @@ impl<'a> Printer<'a> {
             let prev_current_class_fn_enum =
                 std::mem::take(&mut self.namespace_current_class_fn_enum_names);
             let mut local_exports = self.collect_namespace_exported_names(module);
+            if let Some(source_path) = self.current_namespace_source_path.as_ref()
+                && let Some(exports) = self.namespace_all_exported_names.get(source_path)
+            {
+                local_exports.extend(exports.iter().cloned());
+            }
             let leaf_name = self.get_identifier_text_idx(module.name);
             if !leaf_name.is_empty() {
                 local_exports
