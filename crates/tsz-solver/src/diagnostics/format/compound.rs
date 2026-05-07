@@ -538,25 +538,38 @@ impl<'a> TypeFormatter<'a> {
         // match source declaration order. Display-time sorting fixes this for diagnostics.
         //
         // Sorting rules:
-        // - Tier 0/1 (builtins/user types with source): sort by source position.
-        // - Tier 2 (anonymous objects without source): preserve declaration order.
-        //   The previous "sort tier-2 objects by property count" heuristic matched
-        //   tsc's output for some `{} | { a: number }`-style unions but reordered
-        //   legitimate discriminated-union displays (e.g. TS2353/TS2322 messages)
-        //   where tsc preserves declaration order of the anonymous members.
+        // - Tier 0/1 (builtins/user types with source): sort by source position
+        //   and place at the front of the union display.
+        // - Tier 2 (anonymous objects, literal types without a source pos): keep
+        //   their relative declaration order and place AFTER tier 0/1.
+        //
+        // The split-then-sort approach matches tsc's display preference of
+        // showing named/built-in types before anonymous/literal members
+        // (e.g. `Refrigerator | "foo"` rather than `"foo" | Refrigerator`),
+        // while still preserving discriminated-union order for anonymous
+        // object members where tsc keeps declaration order.
         if let Some(def_store) = self.def_store {
             let positions: Vec<_> = ordered
                 .iter()
                 .map(|&m| self.get_source_position_for_type(m, def_store))
                 .collect();
 
-            let all_tier_0_or_1 = positions.iter().all(|&(tier, _, _)| tier < 2);
-
-            if all_tier_0_or_1 {
-                let mut pairs: Vec<_> = ordered.iter().copied().zip(positions).collect();
-                pairs.sort_by_key(|&(_, pos)| pos);
-                ordered = pairs.into_iter().map(|(id, _)| id).collect();
+            let mut named: Vec<(TypeId, (u32, u32, u32))> = Vec::new();
+            let mut anonymous: Vec<TypeId> = Vec::new();
+            for (&id, &pos) in ordered.iter().zip(&positions) {
+                if pos.0 < 2 {
+                    named.push((id, pos));
+                } else {
+                    anonymous.push(id);
+                }
             }
+            named.sort_by_key(|&(_, pos)| pos);
+
+            ordered = named
+                .into_iter()
+                .map(|(id, _)| id)
+                .chain(anonymous)
+                .collect();
         }
 
         if has_null {

@@ -682,32 +682,49 @@ impl ModuleResolver {
                     };
                 }
 
-                // TS7016: If the resolved file is a JS file from node_modules
-                // (external package), noImplicitAny is enabled, and this is a
-                // CJS require() call, emit TS7016 alongside the successful resolution.
-                // ESM imports go through the checker's import-declaration path which
-                // handles ambient declarations and other suppression rules.
-                if resolved_module.extension.is_javascript()
-                    && request.no_implicit_any
-                    && !self.allow_js
-                    && !matches!(import_kind, ImportKind::CjsRequire)
-                {
-                    ModuleLookupResult::resolved_with_error(
-                        FILE_IS_A_JAVASCRIPT_FILE_ENABLE_ALLOWJS,
-                        format!(
-                            "File '{}' is a JavaScript file. Did you mean to enable the 'allowJs' option?",
-                            resolved_module.resolved_path.display()
-                        ),
-                    )
-                } else if resolved_module.is_external
-                    && resolved_module.extension.is_javascript()
-                    && request.no_implicit_any
-                    && matches!(import_kind, ImportKind::CjsRequire)
-                {
+                // TS7016 emission for imported JS modules.
+                //
+                // Two independent rules apply, in priority order:
+                //
+                // 1. **External CJS `require()` of an untyped JS module** -
+                //    surface TS7016 with the resolved path preserved so the
+                //    import binds to the JS file as `any`. tsc fires this
+                //    regardless of `allowJs` because the message means "no
+                //    type declarations were found", which is an *additive*
+                //    diagnostic to allowJs's "JS files are accepted". The
+                //    test corpus exercises this with `allowJs: true` plus
+                //    `noImplicitAny: true` (e.g.
+                //    `compiler/importNonExportedMember12.ts`,
+                //    `conformance/salsa/namespaceAssignmentToRequireAlias.ts`).
+                //
+                // 2. **Imported JS without `allowJs`** (any other shape -
+                //    relative, extensionless relative, dynamic import,
+                //    re-export, ESM package import) - surface TS7016 at the
+                //    import site (issue #3050). We mark the specifier as
+                //    "resolved" but do not add the JS file to the program
+                //    file list, since the CLI's program-level TS6504 path
+                //    would otherwise re-flag it as a forbidden JS root.
+                //    `allowJs` is the gate here because, with `allowJs:
+                //    true`, the JS file is meant to be type-checked as JS,
+                //    not flagged as "missing declaration file".
+                let is_imported_js =
+                    resolved_module.extension.is_javascript() && request.no_implicit_any;
+                let is_external_cjs_require =
+                    resolved_module.is_external && matches!(import_kind, ImportKind::CjsRequire);
+                if is_imported_js && is_external_cjs_require {
                     ModuleLookupResult::resolved_untyped_js(
                         resolved_module.resolved_path,
                         request.no_implicit_any,
                         specifier,
+                    )
+                } else if is_imported_js && !self.allow_js {
+                    ModuleLookupResult::resolved_with_error(
+                        COULD_NOT_FIND_DECLARATION_FILE,
+                        format!(
+                            "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
+                            specifier,
+                            resolved_module.resolved_path.display()
+                        ),
                     )
                 } else {
                     ModuleLookupResult::resolved(resolved_module.resolved_path)
@@ -809,24 +826,22 @@ impl ModuleResolver {
 
                 // Classic resolution override: TS2307 → TS2792.
                 //
-                // tsc only promotes "cannot find module" to the `moduleResolution`
-                // hint when a node-style resolution *would* have succeeded —
-                // i.e., when there's an ancestor `node_modules/<package>`
-                // directory that the current classic resolver can't reach. For
-                // bare specifiers with no matching node_modules entry, switching
-                // to `nodenext` wouldn't help, so tsc keeps plain TS2307.
+                // tsc emits the "Did you mean to set 'moduleResolution' to
+                // 'nodenext'..." hint for any bare specifier that fails to
+                // resolve under classic-style resolution — including
+                // `module: amd|system|umd|none` and explicit
+                // `moduleResolution: classic` (issue #3077). The hint is
+                // structural: it prompts the user toward the modern
+                // resolver, regardless of whether a `node_modules/<pkg>`
+                // directory happens to exist locally.
                 //
-                // We approximate tsc's check with a filesystem probe: walk up
-                // from the containing file and look for a `node_modules/<pkg>`
-                // directory whose name matches the specifier's package name.
-                // This is the same signal tsc uses to decide the hint is useful.
+                // Relative and absolute specifiers stay on plain TS2307
+                // because the resolution-mode hint can't help them.
                 if diag.code == CANNOT_FIND_MODULE && request.implied_classic_resolution {
                     let is_bare = !specifier.starts_with('.')
                         && !specifier.starts_with('/')
                         && !specifier.contains(':');
-                    let node_style_would_find =
-                        is_bare && self.has_node_modules_package_match(specifier, containing_file);
-                    if node_style_would_find {
+                    if is_bare {
                         diag.code = MODULE_RESOLUTION_MODE_MISMATCH;
                         diag.message = format!(
                             "Cannot find module '{specifier}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?"
@@ -843,47 +858,6 @@ impl ModuleResolver {
                 ModuleLookupResult::failed(diag.code, diag.message)
             }
         }
-    }
-
-    /// Walk ancestor directories of `containing_file` looking for a
-    /// `node_modules/<package>` directory whose name matches the bare
-    /// `specifier`'s package segment. Used to gate the TS2307 → TS2792
-    /// override: switching `moduleResolution` to `nodenext` only helps if
-    /// node-style resolution would have a candidate to find.
-    ///
-    /// Handles both plain (`foo` → `node_modules/foo`) and scoped
-    /// (`@scope/bar` → `node_modules/@scope/bar`) package names.
-    fn has_node_modules_package_match(&self, specifier: &str, containing_file: &Path) -> bool {
-        // Extract the package segment of the specifier (stop at the first `/`
-        // after the optional `@scope/` prefix).
-        let pkg_end = if let Some(stripped) = specifier.strip_prefix('@') {
-            // Scoped: need two path segments (`@scope/name`).
-            let rest_start = 1;
-            match stripped.find('/') {
-                Some(first_slash) => {
-                    let after_scope = &stripped[first_slash + 1..];
-                    let name_end = after_scope.find('/').unwrap_or(after_scope.len());
-                    rest_start + first_slash + 1 + name_end
-                }
-                None => return false,
-            }
-        } else {
-            specifier.find('/').unwrap_or(specifier.len())
-        };
-        let package_name = &specifier[..pkg_end];
-        if package_name.is_empty() {
-            return false;
-        }
-
-        let mut cursor = containing_file.parent();
-        while let Some(dir) = cursor {
-            let candidate = dir.join("node_modules").join(package_name);
-            if candidate.is_dir() {
-                return true;
-            }
-            cursor = dir.parent();
-        }
-        false
     }
 
     /// Check whether a fallback-resolved file needs an ESM extension error.

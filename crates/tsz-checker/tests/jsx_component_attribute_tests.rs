@@ -6113,6 +6113,49 @@ let x = <MyComp<Prop, Prop> a={{10}} />;
 }
 
 #[test]
+fn test_jsx_intrinsic_type_args_validate_nested_errors() {
+    let source = r#"
+type Record<K extends keyof any, T> = { [P in K]: T };
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: {};
+    }
+}
+
+const a = <div<>></div>;
+const b = <div<number,>></div>;
+const c = <div<Missing>></div>;
+const d = <div<Missing<AlsoMissing>>></div>;
+const e = <div<Record<object, object>>></div>;
+const f = <div<number>></div>;
+const g = <div<>/>;
+const h = <div<number,>/>;
+const i = <div<Missing>/>;
+const j = <div<Missing<AlsoMissing>>/>;
+const k = <div<Record<object, object>>/>;
+const l = <div<number>/>;
+"#;
+    let codes = jsx_codes(source);
+    assert!(
+        codes.contains(&1009),
+        "intrinsic JSX trailing type-argument commas should emit TS1009, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2304),
+        "intrinsic JSX type arguments should be visited for missing names, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2344),
+        "intrinsic JSX type arguments should be checked for constraints, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2558),
+        "intrinsic JSX elements should reject explicit type arguments, got: {codes:?}"
+    );
+}
+
+#[test]
 fn test_jsx_explicit_type_args_constraint_violation_emits_ts2344() {
     // <MyComp2<Prop> /> where MyComp2<P extends {a: string}> and Prop = {a: number}
     let source = format!(

@@ -2193,6 +2193,31 @@ f.a;
 }
 
 #[test]
+fn test_jsdoc_this_direct_write_checks_explicit_receiver_shape() {
+    let source = r#"
+/**
+ * @this {{ ready: boolean }}
+ */
+function mark() {
+  this.ready = true;
+  this.missing = 1;
+}
+
+mark.call({ ready: false });
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339
+                && message == "Property 'missing' does not exist on type '{ ready: boolean; }'."
+        }),
+        "Expected TS2339 for `this.missing` against the explicit @this receiver shape, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_chained_this_element_assignment_reports_ts7053() {
     let source = r#"
 this["y"] = {};

@@ -7,4 +7,5 @@ pub(crate) mod declaration;
 mod declaration_helpers;
 pub(crate) mod equals;
 mod exports;
+mod import_alias_duplicates;
 mod verbatim;
