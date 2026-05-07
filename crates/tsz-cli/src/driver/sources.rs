@@ -329,7 +329,7 @@ pub(crate) enum ResolveTsconfigError {
 impl std::fmt::Display for ResolveTsconfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::PathDoesNotExist(p) => {
+            Self::PathDoesNotExist(p) | Self::NotAFile(p) => {
                 write!(f, "The specified path does not exist: '{}'.", p.display())
             }
             Self::NoConfigInDirectory(p) => write!(
@@ -337,9 +337,6 @@ impl std::fmt::Display for ResolveTsconfigError {
                 "Cannot find a tsconfig.json file at the specified directory: '{}'.",
                 p.display()
             ),
-            Self::NotAFile(p) => {
-                write!(f, "The specified path does not exist: '{}'.", p.display())
-            }
         }
     }
 }

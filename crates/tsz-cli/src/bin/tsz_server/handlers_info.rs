@@ -878,6 +878,31 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            // Issue #3710: tsserver passes a `filesToSearch` array so the
+            // language service can group highlights across files. When the
+            // client asks for >1 file (or any non-primary file), use the
+            // project-level reference search and group the resulting
+            // locations by file. The single-file `DocumentHighlightProvider`
+            // path is kept as a fallback when no file list is supplied.
+            let files_to_search: Vec<String> = request
+                .arguments
+                .get("filesToSearch")
+                .and_then(serde_json::Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if !files_to_search.is_empty()
+                && let Some(grouped) =
+                    self.document_highlights_via_project(&file, line, offset, &files_to_search)
+            {
+                return Some(grouped);
+            }
+            // Otherwise fall through to the single-file path.
+
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
@@ -885,9 +910,13 @@ impl Server {
             let highlights = provider.get_document_highlights(root, position)?;
 
             // Group highlights by file (tsserver groups by file, each with highlightSpans)
+            // Issue #3710: dedupe by (start, end, kind) — the provider can
+            // emit the same span twice when a node is reachable through
+            // multiple resolution paths.
+            let mut seen = std::collections::HashSet::new();
             let highlight_spans: Vec<serde_json::Value> = highlights
                 .iter()
-                .map(|hl| {
+                .filter_map(|hl| {
                     let kind_str = match hl.kind {
                         Some(tsz::lsp::highlighting::DocumentHighlightKind::Read) => "reference",
                         Some(tsz::lsp::highlighting::DocumentHighlightKind::Write) => {
@@ -895,6 +924,16 @@ impl Server {
                         }
                         Some(tsz::lsp::highlighting::DocumentHighlightKind::Text) | None => "none",
                     };
+                    let key = (
+                        hl.range.start.line,
+                        hl.range.start.character,
+                        hl.range.end.line,
+                        hl.range.end.character,
+                        kind_str,
+                    );
+                    if !seen.insert(key) {
+                        return None;
+                    }
                     let mut span = serde_json::json!({
                         "start": Self::lsp_to_tsserver_position(hl.range.start),
                         "end": Self::lsp_to_tsserver_position(hl.range.end),
@@ -906,16 +945,91 @@ impl Server {
                         span["contextStart"] = Self::lsp_to_tsserver_position(context_start);
                         span["contextEnd"] = Self::lsp_to_tsserver_position(context_end);
                     }
-                    span
+                    Some(span)
                 })
                 .collect();
-            // All highlights are in the same file for now
             Some(serde_json::json!([{
                 "file": file,
                 "highlightSpans": highlight_spans,
             }]))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    /// Find highlight groups across `files_to_search` using the project-level
+    /// reference index. Issue #3710: tsserver consumers (e.g. VS Code) supply
+    /// the editor's open-file set in `filesToSearch`; the language service
+    /// returns highlight groups per file.
+    fn document_highlights_via_project(
+        &self,
+        file: &str,
+        line: u32,
+        offset: u32,
+        files_to_search: &[String],
+    ) -> Option<serde_json::Value> {
+        let mut project = self.build_project_for_file(file)?;
+        let position = Self::tsserver_to_lsp_position(line, offset);
+        let locs = project.find_references(file, position)?;
+        type RangeKey = (u32, u32, u32, u32);
+        let allowed: rustc_hash::FxHashSet<&str> =
+            files_to_search.iter().map(String::as_str).collect();
+        let mut grouped: rustc_hash::FxHashMap<String, std::collections::BTreeSet<RangeKey>> =
+            rustc_hash::FxHashMap::default();
+        for loc in locs {
+            if !allowed.contains(loc.file_path.as_str()) {
+                continue;
+            }
+            grouped.entry(loc.file_path.clone()).or_default().insert((
+                loc.range.start.line,
+                loc.range.start.character,
+                loc.range.end.line,
+                loc.range.end.character,
+            ));
+        }
+        if grouped.is_empty() {
+            return None;
+        }
+        let groups: Vec<serde_json::Value> = grouped
+            .into_iter()
+            .map(|(file_name, ranges)| {
+                // Resolve the file's source so we can attach
+                // contextStart/contextEnd for highlights that land on an
+                // import statement, matching the single-file path.
+                let file_source = self
+                    .open_files
+                    .get(&file_name)
+                    .cloned()
+                    .or_else(|| std::fs::read_to_string(&file_name).ok())
+                    .unwrap_or_default();
+                let highlight_spans: Vec<serde_json::Value> = ranges
+                    .into_iter()
+                    .map(|(sl, sc, el, ec)| {
+                        let start = tsz_common::position::Position::new(sl, sc);
+                        let end = tsz_common::position::Position::new(el, ec);
+                        let is_decl = file_name == file
+                            && start == Self::tsserver_to_lsp_position(line, offset);
+                        let mut span = serde_json::json!({
+                            "start": Self::lsp_to_tsserver_position(start),
+                            "end": Self::lsp_to_tsserver_position(end),
+                            "kind": if is_decl { "writtenReference" } else { "reference" },
+                        });
+                        if let Some((context_start, context_end)) = import_context_for_range(
+                            &file_source,
+                            tsz_common::position::Range::new(start, end),
+                        ) {
+                            span["contextStart"] = Self::lsp_to_tsserver_position(context_start);
+                            span["contextEnd"] = Self::lsp_to_tsserver_position(context_end);
+                        }
+                        span
+                    })
+                    .collect();
+                serde_json::json!({
+                    "file": file_name,
+                    "highlightSpans": highlight_spans,
+                })
+            })
+            .collect();
+        Some(serde_json::json!(groups))
     }
 
     pub(crate) fn handle_rename(
