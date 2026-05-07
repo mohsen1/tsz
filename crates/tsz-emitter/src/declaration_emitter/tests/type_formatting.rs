@@ -30,6 +30,28 @@ fn test_type_printer_preserves_union_display_origin() {
 }
 
 #[test]
+fn test_type_printer_prints_named_unique_symbol_as_typeof() {
+    let source = "export const x = Symbol();\nexport const y = Symbol();\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let x_sym = binder.file_locals.get("x").expect("missing x symbol");
+    let y_sym = binder.file_locals.get("y").expect("missing y symbol");
+    let interner = TypeInterner::new();
+    let x_type = interner.unique_symbol(SymbolRef(x_sym.0));
+    let y_type = interner.unique_symbol(SymbolRef(y_sym.0));
+    let union = interner.union_preserve_members(vec![x_type, y_type]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner)
+        .with_symbols(&binder.symbols)
+        .print_type(union);
+
+    assert_eq!(printed, "typeof x | typeof y");
+}
+
+#[test]
 fn test_intersection_type_in_declaration() {
     let output = emit_dts("export type Combined = { a: number } & { b: string };");
     assert!(output.contains("&"), "Expected intersection type: {output}");
