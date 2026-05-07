@@ -236,6 +236,72 @@ fn linked_editing_range_returns_jsx_member_expression_tag_names() {
 }
 
 #[test]
+fn jsx_closing_tag_skips_quoted_attribute_with_greater_than() {
+    // Regression for #3965: an attribute whose quoted value contains `>`
+    // must not corrupt the backward angle-bracket scan. The handler should
+    // still locate the matching `<div` and return `</div>`.
+    let cases = [
+        ("/double.tsx", r#"<div title="a>b">"#, 18),
+        ("/single.tsx", "<div title='a>b'>", 18),
+        ("/expr.tsx", r#"<div title={"a>b"}>"#, 20),
+        ("/component.tsx", r#"<MyComp x="y>z">"#, 17),
+    ];
+
+    for (file, content, offset) in cases {
+        let mut server = make_server();
+        server
+            .open_files
+            .insert(file.to_string(), content.to_string());
+
+        let response = server.handle_tsserver_request(make_request(
+            "jsxClosingTag",
+            serde_json::json!({"file": file, "line": 1, "offset": offset}),
+        ));
+        assert!(response.success, "{file}: jsxClosingTag should succeed");
+        let body = response
+            .body
+            .unwrap_or_else(|| panic!("{file}: expected a body, got none for {content:?}"));
+        let new_text = body
+            .get("newText")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_else(|| panic!("{file}: expected newText, got {body:?}"));
+        // Tag name is whatever follows `<` in the input; normalize the check.
+        let tag_end = content[1..]
+            .find(|c: char| !(c.is_alphanumeric() || c == '.' || c == '_' || c == '-' || c == '$'))
+            .map(|i| i + 1)
+            .unwrap_or(content.len());
+        let tag_name = &content[1..tag_end];
+        let expected = format!("$0</{tag_name}>");
+        assert_eq!(
+            new_text, expected,
+            "{file}: jsxClosingTag for {content:?} should be {expected}, got {new_text}"
+        );
+    }
+}
+
+#[test]
+fn jsx_closing_tag_skips_attribute_string_across_lines() {
+    // Multi-line opening tag with a `>` inside a quoted attribute must still
+    // resolve to the correct closing tag.
+    let mut server = make_server();
+    server.open_files.insert(
+        "/multi.tsx".to_string(),
+        "<div\n  title=\"a>b\"\n>".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "jsxClosingTag",
+        serde_json::json!({"file": "/multi.tsx", "line": 3, "offset": 2}),
+    ));
+    assert!(response.success);
+    let body = response.body.expect("jsxClosingTag should return a body");
+    assert_eq!(
+        body.get("newText").and_then(serde_json::Value::as_str),
+        Some("$0</div>")
+    );
+}
+
+#[test]
 fn emit_output_preserves_type_only_module_marker() {
     let mut server = make_server();
     let response = server.handle_tsserver_request(make_request(
