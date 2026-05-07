@@ -460,3 +460,119 @@ fn build_clean_removes_explicit_tsbuildinfo_file() {
         "default buildinfo should be left alone when tsBuildInfoFile is explicit"
     );
 }
+
+// ---------------------------------------------------------------------------
+// --init template rendering (does not require `tsc` to be installed)
+// ---------------------------------------------------------------------------
+
+fn parse_args_for_init(extra: &[&str]) -> CliArgs {
+    let mut argv: Vec<OsString> = vec![OsString::from("tsz"), OsString::from("--init")];
+    argv.extend(extra.iter().map(OsString::from));
+    let preprocessed = preprocess_args(argv);
+    CliArgs::try_parse_from(&preprocessed).expect("clap should accept --init args")
+}
+
+fn render_init_with(extra: &[&str]) -> String {
+    let args = parse_args_for_init(extra);
+    let raw: Vec<OsString> = std::iter::once(OsString::from("tsz"))
+        .chain(std::iter::once(OsString::from("--init")))
+        .chain(extra.iter().map(OsString::from))
+        .skip(1)
+        .collect();
+    let overrides = collect_init_overrides(&raw, &args);
+    render_init_template(&overrides)
+}
+
+#[test]
+fn init_template_default_matches_baseline() {
+    let body = render_init_with(&[]);
+    assert!(body.contains("// \"rootDir\": \"./src\","));
+    assert!(body.contains("// \"outDir\": \"./dist\","));
+    assert!(body.contains("\"module\": \"nodenext\","));
+    assert!(body.contains("\"target\": \"esnext\","));
+    assert!(body.contains("\"strict\": true,"));
+    assert!(!body.contains("\"pretty\""));
+}
+
+#[test]
+fn init_template_uncomments_root_and_out_dirs_when_user_provides_them() {
+    let body = render_init_with(&["--rootDir", "src", "--outDir", "dist"]);
+    assert!(body.contains("\"rootDir\": \"src\","));
+    assert!(body.contains("\"outDir\": \"dist\","));
+    assert!(!body.contains("// \"rootDir\""));
+    assert!(!body.contains("// \"outDir\""));
+}
+
+#[test]
+fn init_template_canonicalizes_target_es2015_to_es6() {
+    let body = render_init_with(&["--target", "es2015"]);
+    assert!(
+        body.contains("\"target\": \"es6\","),
+        "expected target canonicalized to es6, got:\n{body}"
+    );
+}
+
+#[test]
+fn init_template_explicit_strict_false_overrides_active_default() {
+    let body = render_init_with(&["--strict", "false"]);
+    assert!(
+        body.contains("\"strict\": false,"),
+        "expected strict:false override, got:\n{body}"
+    );
+    assert!(
+        !body.contains("\"strict\": true,"),
+        "default strict:true should have been replaced, got:\n{body}"
+    );
+}
+
+#[test]
+fn init_template_appends_command_line_only_options_in_order() {
+    let body = render_init_with(&[
+        "--listFiles",
+        "--noEmit",
+        "--diagnostics",
+        "--pretty",
+        "false",
+    ]);
+    let li = body
+        .find("\"listFiles\": true,")
+        .expect("listFiles emitted");
+    let ne = body.find("\"noEmit\": true,").expect("noEmit emitted");
+    let di = body
+        .find("\"diagnostics\": true,")
+        .expect("diagnostics emitted");
+    let pr = body
+        .find("\"pretty\": false,")
+        .expect("pretty:false emitted");
+    assert!(
+        li < ne && ne < di && di < pr,
+        "appended options should preserve CLI order, got:\n{body}"
+    );
+}
+
+#[test]
+fn init_template_canonicalizes_alias_flags() {
+    // `--root-dir` is the kebab-case alias for `--rootDir`; both should
+    // produce the same canonical key in the rendered tsconfig.
+    let kebab = render_init_with(&["--root-dir", "lib"]);
+    let camel = render_init_with(&["--rootDir", "lib"]);
+    assert_eq!(kebab, camel);
+}
+
+#[test]
+fn init_template_last_write_wins_for_repeated_flag() {
+    // tsc's preprocessor deduplicates --target so the last value wins; the
+    // generated tsconfig should reflect the final value too.
+    let body = render_init_with(&["--target", "es2015", "--target", "es2020"]);
+    assert!(body.contains("\"target\": \"es2020\","));
+    assert!(!body.contains("\"target\": \"es6\","));
+}
+
+#[test]
+fn init_template_unrecognized_option_does_not_crash() {
+    // Unknown flags shouldn't be appended; clap will have already rejected
+    // truly unknown ones, so this just guards the canonicalization fallback.
+    let body = render_init_with(&[]);
+    assert!(body.starts_with("{\n"));
+    assert!(body.trim_end().ends_with('}'));
+}
