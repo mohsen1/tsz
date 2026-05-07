@@ -65,22 +65,29 @@ impl<'a> Printer<'a> {
         } else if self.in_namespace_iife
             && !self.suppress_ns_qualification
             && self
-                .namespace_exported_names
+                .namespace_current_class_fn_enum_names
                 .contains(original_text.as_str())
-            && let Some(ref ns_name) = self.current_namespace_name
         {
-            // Inside namespace IIFE, qualify exported variable references:
-            // `foo` → `ns.foo`
-            let ns_name = ns_name.clone();
-            self.write(&ns_name);
-            self.write(".");
+            // Class/function/enum declared in the CURRENT namespace block is
+            // lexically in scope inside the IIFE — emit the bare identifier.
+            // This must run before the `namespace_exported_names` qualifier
+            // branch because the merged-prior-blocks set may include names
+            // that are also in the current block, and tsc keeps same-block
+            // class references unqualified (`extends PullSymbol`, not
+            // `extends TypeScript.PullSymbol`).
             self.write_identifier(emit_text);
         } else if self.in_namespace_iife
             && !self.suppress_ns_qualification
             && self
-                .namespace_current_class_fn_enum_names
+                .namespace_exported_names
                 .contains(original_text.as_str())
+            && let Some(ref ns_name) = self.current_namespace_name
         {
+            // Inside namespace IIFE, qualify namespace-object references:
+            // `foo` → `ns.foo`
+            let ns_name = ns_name.clone();
+            self.write(&ns_name);
+            self.write(".");
             self.write_identifier(emit_text);
         } else if self.in_namespace_iife
             && !self.suppress_ns_qualification
@@ -427,7 +434,16 @@ impl<'a> Printer<'a> {
                 let b = bytes[j];
                 if escaped {
                     escaped = false;
-                    j += 1;
+                    // ECMAScript LineContinuation: `\<LineTerminatorSequence>`,
+                    // where the sequence may be `\n`, `\r`, or `\r\n`. Treat
+                    // `\\` followed by `\r\n` as a single escaped unit so the
+                    // raw-string read does not trip the line-terminator
+                    // fallback branch on the trailing `\n`.
+                    if b == b'\r' && bytes.get(j + 1) == Some(&b'\n') {
+                        j += 2;
+                    } else {
+                        j += 1;
+                    }
                     continue;
                 }
 

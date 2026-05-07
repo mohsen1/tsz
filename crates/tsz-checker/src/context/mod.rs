@@ -61,8 +61,6 @@ pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
 
-type NestedNamespaceCandidatesCache = FxHashMap<String, Vec<(usize, SymbolId)>>;
-
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
@@ -400,10 +398,6 @@ pub struct CheckerContext<'a> {
     /// different members from the same nested namespace.
     pub nested_namespace_candidates_cache: RefCell<NestedNamespaceCandidatesCache>,
 
-    /// True once `nested_namespace_candidates_cache` has been populated for every
-    /// nested namespace export name visible across all binders.
-    pub nested_namespace_candidates_cache_complete: Cell<bool>,
-
     /// Per-checker cache for same-name symbol candidates across the current binder
     /// and all cross-file binders.
     pub symbol_name_candidates_cache: RefCell<FxHashMap<String, Vec<SymbolId>>>,
@@ -413,6 +407,11 @@ pub struct CheckerContext<'a> {
     /// hits and misses to avoid repeatedly walking the same symbol graph during
     /// declaration-file interface/type lowering.
     pub lowering_entity_name_resolution_cache: RefCell<FxHashMap<String, Option<DefId>>>,
+
+    /// Per-checker cache for cross-file namespace export resolution.
+    /// Keyed by the requesting file and module specifier because relative
+    /// specifiers are resolved from the current file.
+    pub namespace_exports_cache: RefCell<NamespaceExportsCache>,
 
     /// Shared lib type resolution cache across parallel file checks.
     /// Uses `DashMap` for thread-safe concurrent access.

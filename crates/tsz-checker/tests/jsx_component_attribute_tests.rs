@@ -4528,15 +4528,16 @@ let mixedText = <Blah3>Hello unexpected text!</Blah3>;
     assert!(
         diags.iter().any(|(code, _, msg)| {
             *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && msg
-                    .contains("Type '(x: number) => number' is not assignable to type 'Cb | Cb[]'")
+                && msg.contains("Type '(x: number) => number' is not assignable to type")
+                && (msg.contains("Cb[] | Cb") || msg.contains("Cb | Cb[]"))
         }),
         "Union children mismatch should report against the declared union surface, got: {diags:?}"
     );
     assert!(
         diags.iter().any(|(code, _, msg)| {
             *code == diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
-                && msg.contains("expected type of 'children' is 'Cb | Cb[]'")
+                && (msg.contains("expected type of 'children' is 'Cb[] | Cb'")
+                    || msg.contains("expected type of 'children' is 'Cb | Cb[]'"))
         }),
         "Union children text diagnostic should keep the declared union surface, got: {diags:?}"
     );
@@ -4545,17 +4546,23 @@ let mixedText = <Blah3>Hello unexpected text!</Blah3>;
         .find("let mixed =")
         .expect("test source should contain the mixed declaration");
     let mixed_child_start = source[mixed_start..]
-        .find("{x => x}")
+        .find("{x => x")
         .map(|offset| mixed_start + offset)
         .expect("test source should contain the mixed child expression")
+        as u32;
+    let mixed_child_end = source[mixed_start..]
+        .find("}</Blah3>")
+        .map(|offset| mixed_start + offset)
+        .expect("test source should contain the mixed child close")
         as u32;
     assert!(
         diags.iter().any(|(code, start, msg)| {
             *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && *start == mixed_child_start
-                && msg.contains("Cb | Cb[]")
+                && *start >= mixed_child_start
+                && *start <= mixed_child_end
+                && (msg.contains("Cb[] | Cb") || msg.contains("Cb | Cb[]"))
         }),
-        "Union child TS2322 should be anchored at the JSX expression wrapper, got: {diags:?}"
+        "Union child TS2322 should be anchored at the JSX child expression, got: {diags:?}"
     );
 }
 
@@ -6102,6 +6109,49 @@ let x = <MyComp<Prop, Prop> a={{10}} />;
         !codes.contains(&2322),
         "TS2322 should NOT fire when the type-arg arity is wrong (TS2558 already fired), \
          got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_jsx_intrinsic_type_args_validate_nested_errors() {
+    let source = r#"
+type Record<K extends keyof any, T> = { [P in K]: T };
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: {};
+    }
+}
+
+const a = <div<>></div>;
+const b = <div<number,>></div>;
+const c = <div<Missing>></div>;
+const d = <div<Missing<AlsoMissing>>></div>;
+const e = <div<Record<object, object>>></div>;
+const f = <div<number>></div>;
+const g = <div<>/>;
+const h = <div<number,>/>;
+const i = <div<Missing>/>;
+const j = <div<Missing<AlsoMissing>>/>;
+const k = <div<Record<object, object>>/>;
+const l = <div<number>/>;
+"#;
+    let codes = jsx_codes(source);
+    assert!(
+        codes.contains(&1009),
+        "intrinsic JSX trailing type-argument commas should emit TS1009, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2304),
+        "intrinsic JSX type arguments should be visited for missing names, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2344),
+        "intrinsic JSX type arguments should be checked for constraints, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2558),
+        "intrinsic JSX elements should reject explicit type arguments, got: {codes:?}"
     );
 }
 

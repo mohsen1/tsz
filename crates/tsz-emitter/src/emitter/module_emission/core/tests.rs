@@ -561,6 +561,7 @@ class C {
     let comment_pos = output
         .find("// https://github.com/microsoft/TypeScript/issues/44113")
         .expect("expected preserved leading comment");
+    let class_pos = output.find("class C").expect("expected class declaration");
     let private_init_pos = output
         .find("_C_qux = { value: 42 };")
         .expect("expected static private initialization");
@@ -568,9 +569,15 @@ class C {
         .find("Object.defineProperty(C, \"bar\"")
         .expect("expected lowered static field");
 
+    // tsc places the file-leading comment before any helpers/hoists, then
+    // emits the temp `var _a, _C_qux;` between the comment and the class.
     assert!(
-        var_pos < comment_pos,
-        "Private temp vars should precede attached leading comments.\nOutput:\n{output}"
+        comment_pos < var_pos,
+        "Leading file comment should precede the temp-var hoist.\nOutput:\n{output}"
+    );
+    assert!(
+        var_pos < class_pos,
+        "Private temp vars should precede the class declaration.\nOutput:\n{output}"
     );
     assert!(
         private_init_pos < static_field_pos,
@@ -1221,6 +1228,37 @@ fn named_export_specifier_for_undefined_only_uses_preamble() {
     assert!(
         !output.contains("exports.undefined = undefined;"),
         "undefined self-export should not emit a post-declaration assignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn repeated_named_export_specifiers_defer_all_aliases_until_const_declaration() {
+    let source = "export { x };\nexport { x as xx };\nexport default x;\nconst x = 'x';\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let default_pos = output
+        .find("exports.default = x;")
+        .expect("default export should emit");
+    let decl_pos = output.find("const x = 'x';").expect("const should emit");
+    let x_export_pos = output.find("exports.x = x;").expect("x export should emit");
+    let xx_export_pos = output
+        .find("exports.xx = x;")
+        .expect("xx export should emit");
+
+    assert!(
+        default_pos < decl_pos && decl_pos < x_export_pos && x_export_pos < xx_export_pos,
+        "Named export aliases for a const should emit after the declaration, preserving alias order.\nOutput:\n{output}"
     );
 }
 

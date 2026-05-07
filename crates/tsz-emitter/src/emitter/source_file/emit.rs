@@ -513,9 +513,6 @@ impl<'a> Printer<'a> {
             self.write("\"use strict\";");
             self.write_line();
         }
-        let script_pre_header_hoist_byte_offset = self.writer.len();
-        let script_pre_header_hoist_line = self.writer.current_line();
-
         // Emit header comments AFTER "use strict" but BEFORE helpers.
         // Use skip_trivia_forward to find the actual token start since
         // node.pos may include leading trivia (where comments live).
@@ -934,14 +931,27 @@ impl<'a> Printer<'a> {
         }
 
         // Emit all needed helpers (unless no_emit_helpers is set)
+        let mut emitted_inline_helpers = false;
+        let mut post_helpers_hoist_byte_offset = self.writer.len();
+        let mut post_helpers_hoist_line = self.writer.current_line();
         if !(self.ctx.options.no_emit_helpers || self.ctx.options.import_helpers && is_file_module)
         {
             let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);
             if !helpers_code.is_empty() {
                 self.write(&helpers_code);
+                emitted_inline_helpers = true;
+                post_helpers_hoist_byte_offset = self.writer.len();
+                post_helpers_hoist_line = self.writer.current_line();
                 // emit_helpers() already adds newlines, no need to add more
             }
         }
+        // Capture the post-helpers position for script files. tsc places the
+        // `var _a, _Class_*_accessor_storage, ...` class-temp hoist AFTER the
+        // helpers (`__classPrivateFieldGet`/`__decorate`/etc.), not before.
+        // Without this, scripts with class private-field temps emit the
+        // hoisted `var` BEFORE the helpers and diff against the baseline.
+        let script_post_helpers_hoist_byte_offset = self.writer.len();
+        let script_post_helpers_hoist_line = self.writer.current_line();
 
         // For ESM with importHelpers, emit `import { __helper, ... } from "tslib";`.
         // tsc places the `var _a, ...` hoist for class private fields BEFORE
@@ -1352,13 +1362,17 @@ impl<'a> Printer<'a> {
 
         let mut hoisted_var_byte_offset = if is_file_module {
             self.writer.len()
+        } else if emitted_inline_helpers {
+            post_helpers_hoist_byte_offset
         } else {
-            script_pre_header_hoist_byte_offset
+            script_post_helpers_hoist_byte_offset
         };
         let mut hoisted_var_line = if is_file_module {
             self.writer.current_line()
+        } else if emitted_inline_helpers {
+            post_helpers_hoist_line
         } else {
-            script_pre_header_hoist_line
+            script_post_helpers_hoist_line
         };
 
         // Emit statements with their leading comments.

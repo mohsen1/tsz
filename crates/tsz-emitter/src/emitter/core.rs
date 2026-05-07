@@ -357,6 +357,11 @@ pub struct Printer<'a> {
     /// Whether we're inside a namespace IIFE (strip export/default modifiers from classes).
     pub(crate) in_namespace_iife: bool,
 
+    /// Block nesting where parser recovery can leave invalid module syntax.
+    /// tsc preserves most of that syntax verbatim instead of applying normal
+    /// import/export elision or transforms.
+    pub(crate) recovered_module_syntax_block_depth: u32,
+
     /// End position of the current namespace body in source text.
     /// Used to scope reference searches for namespace-scoped import aliases.
     pub(crate) namespace_scope_end: u32,
@@ -386,7 +391,8 @@ pub struct Printer<'a> {
     /// Parent namespace name for scope-qualified `namespace_prior_exports` keys.
     /// Used to distinguish same-named nested namespaces (e.g., `m1.m2` vs `m4.m2`).
     pub(crate) parent_namespace_name: Option<String>,
-    /// Source-level namespace path for the current namespace IIFE.
+    /// Dotted source namespace path for the current IIFE. This preserves the
+    /// original namespace path when the emitted IIFE parameter is renamed.
     pub(crate) current_namespace_source_path: Option<String>,
 
     /// Override name for anonymous default exports (e.g., "`default_1`").
@@ -456,7 +462,9 @@ pub struct Printer<'a> {
     /// that has already exited.
     pub(crate) namespace_prior_class_fn_enum_exports:
         FxHashMap<String, std::collections::HashSet<String>>,
-    /// Source-level merged namespace exports keyed by full dotted namespace path.
+
+    /// All exported names collected by dotted namespace source path before
+    /// emission. Used to recover parent exports across renamed namespace IIFEs.
     pub(crate) namespace_all_exported_names: FxHashMap<String, FxHashSet<String>>,
 
     /// Exported variable/function/class names in the current namespace IIFE.
@@ -914,6 +922,7 @@ impl<'a> Printer<'a> {
             arrow_function_scope_depth: 0,
             first_for_of_emitted: false,
             in_namespace_iife: false,
+            recovered_module_syntax_block_depth: 0,
             namespace_scope_end: u32::MAX,
             enum_namespace_export: None,
             namespace_export_inner: false,

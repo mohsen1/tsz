@@ -378,7 +378,8 @@ impl<'a> CheckerState<'a> {
         // For arrow functions, capture the outer `this` type to preserve lexical `this`
         // Arrow functions should inherit `this` from their enclosing scope
         let outer_this_type = if is_arrow_function {
-            self.current_this_type()
+            self.class_property_arrow_lexical_this_type(idx)
+                .or_else(|| self.current_this_type())
         } else {
             None
         };
@@ -411,6 +412,14 @@ impl<'a> CheckerState<'a> {
         // Extract JSDoc for the function to check for @param/@returns annotations.
         // This suppresses false TS7006/TS7010/TS7011 in JS files with JSDoc type annotations.
         let func_jsdoc = self.get_jsdoc_for_function(idx);
+        if self.is_js_file()
+            && !is_arrow_function
+            && let Some(ref jsdoc) = func_jsdoc
+            && let Some(this_expr) = Self::extract_jsdoc_tag_type_expression(jsdoc, "this")
+            && let Some(resolved_this) = self.resolve_jsdoc_reference(this_expr)
+        {
+            this_type = Some(resolved_this);
+        }
         // TS2730: Arrow functions cannot have a 'this' parameter.
         // In JS files, a @this JSDoc tag on an arrow function is an error because
         // arrow functions capture `this` lexically.
@@ -1466,10 +1475,10 @@ impl<'a> CheckerState<'a> {
         // Push this_type BEFORE parameter initializer checks so that default
         // values like `a = this.getNumber()` see the correct `this` type and
         // don't trigger false TS2683.
-        let implicit_this = this_type.or_else(|| {
-            if is_arrow_function {
-                outer_this_type
-            } else {
+        let implicit_this = if is_arrow_function {
+            outer_this_type
+        } else {
+            this_type.or_else(|| {
                 ctx_helper.as_ref().and_then(|h| h.get_this_type())
                     .or(js_constructor_instance_type)
                     .or(js_prototype_owner_instance_type)
@@ -1518,8 +1527,8 @@ impl<'a> CheckerState<'a> {
                         }
                         None
                     })
-            }
-        });
+            })
+        };
 
         let implicit_this = implicit_this.map(|tt| self.resolve_lazy_type(tt));
 
@@ -2765,6 +2774,51 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(enclosing_type_param_updates);
 
         return_with_cleanup!(function_type)
+    }
+
+    fn class_property_arrow_owner(&self, arrow_idx: NodeIndex) -> Option<(NodeIndex, NodeIndex)> {
+        let mut current = arrow_idx;
+        for _ in 0..16 {
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+
+            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                let class_idx = self.ctx.arena.get_extended(parent)?.parent;
+                let class_node = self.ctx.arena.get(class_idx)?;
+                if class_node.kind != syntax_kind_ext::CLASS_DECLARATION
+                    && class_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return None;
+                }
+                return Some((parent, class_idx));
+            }
+
+            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CONSTRUCTOR
+            {
+                return None;
+            }
+
+            current = parent;
+        }
+
+        None
+    }
+
+    fn class_property_arrow_lexical_this_type(&mut self, arrow_idx: NodeIndex) -> Option<TypeId> {
+        let (property_idx, class_idx) = self.class_property_arrow_owner(arrow_idx)?;
+        let property_node = self.ctx.arena.get(property_idx)?;
+        let prop = self.ctx.arena.get_property_decl(property_node)?;
+        let class_node = self.ctx.arena.get(class_idx)?;
+        let class_data = self.ctx.arena.get_class(class_node)?;
+
+        Some(if self.has_static_modifier(&prop.modifiers) {
+            self.get_class_constructor_type(class_idx, class_data)
+        } else {
+            self.get_class_instance_type(class_idx, class_data)
+        })
     }
 }
 

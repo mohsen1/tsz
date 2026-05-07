@@ -75,7 +75,19 @@ impl<'a> Printer<'a> {
             }
             self.write(")]");
         } else {
+            // Suppress namespace/CJS-export qualification only when emitting a
+            // CLASS member name. For object-literal methods, computed property
+            // names are runtime expressions and must still pick up the
+            // `exports.X` rewrite for inline-exported variables. Without this
+            // gate, `export const fieldName = ...; export const o = { [fieldName]() {} }`
+            // emits `[fieldName]` instead of tsc's `[exports.fieldName]`.
+            let in_class_member = self.class_member_emit_depth > 0;
+            let prev_ns = self.suppress_ns_qualification;
+            if in_class_member {
+                self.suppress_ns_qualification = true;
+            }
             self.emit(name);
+            self.suppress_ns_qualification = prev_ns;
         }
         self.scoped_class_expression_self_alias = prev_alias;
     }
@@ -1702,6 +1714,20 @@ mod tests {
         assert!(
             output.contains("static foo()"),
             "Static modifier and method name should be emitted.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn namespace_export_does_not_qualify_static_method_name() {
+        let source = "namespace A {\n    export class Point {\n        static Origin() { return { x: 0, y: 0 }; }\n    }\n\n    export namespace Point {\n        export function Origin() { return \"\"; }\n    }\n}";
+        let output = emit_ts(source);
+        assert!(
+            output.contains("static Origin()"),
+            "Class method declarations should keep bare member names inside namespace IIFEs.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("static A.Origin()"),
+            "Namespace export qualification must not apply to class method names.\nOutput: {output}"
         );
     }
 
