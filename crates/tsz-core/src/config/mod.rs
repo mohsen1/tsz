@@ -2364,6 +2364,15 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             "resolvePackageJsonImports",
             "customConditions",
         ];
+        // Match the defaulting chain `resolve_compiler_options` uses so the
+        // pre-resolve TS5098 gate doesn't disagree with the post-resolve
+        // option state. tsz's defaults are:
+        //   target unset → default ScriptTarget::ESNext
+        //   module unset → default ESNext (when target unset) else
+        //                  `default_module_kind_for_target(target, true)`
+        //   moduleResolution unset → `default_module_resolution_for_module(module)`
+        // and `Bundler` / `Node16` / `NodeNext` all count as "modern".
+        // See https://github.com/mohsen1/tsz/issues/3509.
         let mr_is_modern = if let Some(serde_json::Value::String(mr_value)) =
             compiler_opts.get("moduleResolution")
         {
@@ -2371,19 +2380,30 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value));
             matches!(mr_normalized.as_str(), "node16" | "nodenext" | "bundler")
         } else {
-            // When moduleResolution is not set, the default depends on module.
-            // For modern module settings (es2015+, preserve), default is bundler → OK.
-            // For classic module settings (none, amd, umd, system, commonjs), default is classic/node → NOT OK.
-            if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
+            // Resolve module from explicit value, or fall back through target
+            // to the same default `resolve_compiler_options` would compute.
+            let module_kind = if let Some(serde_json::Value::String(mod_value)) =
+                compiler_opts.get("module")
+            {
                 let mod_normalized =
                     normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
-                !matches!(
-                    mod_normalized.as_str(),
-                    "none" | "amd" | "umd" | "system" | "commonjs"
-                )
+                ModuleKind::from_ts_str(&mod_normalized)
+            } else if let Some(serde_json::Value::String(tgt_value)) = compiler_opts.get("target") {
+                let tgt_normalized =
+                    normalize_enum_option_value(tgt_value.split(',').next().unwrap_or(tgt_value));
+                ScriptTarget::from_ts_str(&tgt_normalized)
+                    .map(|target| default_module_kind_for_target(target, true))
             } else {
-                false // no module set → default is classic-ish
-            }
+                Some(default_module_kind_for_target(ScriptTarget::ESNext, false))
+            };
+            module_kind.is_some_and(|module| {
+                matches!(
+                    default_module_resolution_for_module(module),
+                    ModuleResolutionKind::Node16
+                        | ModuleResolutionKind::NodeNext
+                        | ModuleResolutionKind::Bundler
+                )
+            })
         };
         if !mr_is_modern {
             for &opt in requires_modern_mr {
@@ -7197,6 +7217,47 @@ mod tests {
         assert!(
             !codes.contains(&5098),
             "Should NOT emit TS5098 with bundler moduleResolution, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5098_not_emitted_when_module_and_resolution_omitted() {
+        // #3509: tsz used to emit TS5098 for `customConditions` /
+        // `resolvePackageJsonExports` / `resolvePackageJsonImports` when
+        // both `module` and `moduleResolution` were unset, even though
+        // tsz's own defaulting chain (target=ESNext → module=ESNext →
+        // moduleResolution=Bundler) would land on a "modern" mode. tsc
+        // accepts the same configs.
+        for opt in [
+            "customConditions",
+            "resolvePackageJsonExports",
+            "resolvePackageJsonImports",
+        ] {
+            let source = if opt == "customConditions" {
+                format!(r#"{{"compilerOptions":{{"{opt}":["x"]}},"files":["index.ts"]}}"#)
+            } else {
+                format!(r#"{{"compilerOptions":{{"{opt}":true}},"files":["index.ts"]}}"#)
+            };
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+            assert!(
+                !codes.contains(&5098),
+                "must not emit TS5098 for {opt} when module/moduleResolution omitted, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ts5098_emitted_with_explicit_classic() {
+        // Explicit `moduleResolution: "classic"` must still trigger TS5098 —
+        // user opted out of the modern defaulting chain.
+        let source =
+            r#"{"compilerOptions":{"customConditions":["x"],"moduleResolution":"classic"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5098),
+            "explicit classic moduleResolution must still emit TS5098, got {codes:?}"
         );
     }
 
