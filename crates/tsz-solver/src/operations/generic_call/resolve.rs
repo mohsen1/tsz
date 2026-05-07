@@ -12,9 +12,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
 
 use super::{
-    constraint_contains_primitive_constrained_type_param, constraint_is_primitive_type,
-    instantiate_call_type, type_implies_literals_deep, type_references_placeholder,
-    unique_placeholder_name,
+    constraint_contains_primitive_constrained_type_param,
+    constraint_is_primitive_type_with_resolver, instantiate_call_type, type_implies_literals_deep,
+    type_references_placeholder, unique_placeholder_name,
 };
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -401,6 +401,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     &var_map,
                     &mut placeholder_visited,
                 ) {
+                    let resolver = self
+                        .checker
+                        .type_resolver()
+                        .unwrap_or_else(|| self.interner.as_type_resolver());
+                    if constraint_is_primitive_type_with_resolver(
+                        self.interner,
+                        resolver,
+                        inst_constraint,
+                    ) {
+                        infer_ctx.mark_declared_constraint_preserves_literals(var);
+                    }
                     infer_ctx.add_upper_bound(var, inst_constraint);
                     infer_ctx.set_declared_constraint(var, inst_constraint);
                 }
@@ -428,6 +439,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     &substitution,
                     actual_this_type,
                 );
+                let resolver = self
+                    .checker
+                    .type_resolver()
+                    .unwrap_or_else(|| self.interner.as_type_resolver());
+                if constraint_is_primitive_type_with_resolver(
+                    self.interner,
+                    resolver,
+                    inst_constraint,
+                ) {
+                    infer_ctx.mark_declared_constraint_preserves_literals(var);
+                }
                 infer_ctx.set_declared_constraint(var, inst_constraint);
             }
         }
@@ -1982,20 +2004,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     };
                     self.normalize_inferred_placeholder_type(ty, infer_subst)
                 } else {
-                    let constraint_preserves_literals = tp.constraint.is_some_and(|constraint| {
+                    let constraint_preserves_literals = if let Some(constraint) = tp.constraint {
                         let instantiated_constraint = instantiate_call_type(
                             self.interner,
                             constraint,
                             &substitution,
                             actual_this_type,
                         );
-                        constraint_is_primitive_type(self.interner, instantiated_constraint)
+                        let resolver = self
+                            .checker
+                            .type_resolver()
+                            .unwrap_or_else(|| self.interner.as_type_resolver());
+                        type_implies_literals_deep(self.interner, instantiated_constraint)
+                            || constraint_is_primitive_type_with_resolver(
+                                self.interner,
+                                resolver,
+                                instantiated_constraint,
+                            )
                             || constraint_contains_primitive_constrained_type_param(
                                 self.interner,
+                                resolver,
                                 instantiated_constraint,
                                 0,
                             )
-                    });
+                    } else {
+                        false
+                    };
                     if !tp.is_const && !contra_only && !constraint_preserves_literals {
                         // Widen fresh inference results from expressions when the type
                         // parameter does NOT have a primitive literal-preserving constraint.

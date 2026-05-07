@@ -248,6 +248,9 @@ pub(crate) struct InferenceContext<'a> {
     /// Used to decide literal type preservation: `T extends string` preserves `"z"`,
     /// but contextual `Box<boolean>` should NOT preserve `false`.
     pub(crate) declared_constraints: FxHashMap<InferenceVar, TypeId>,
+    /// Constraints whose semantic form preserves fresh literal candidates, even if
+    /// the raw constraint is an alias/conditional that this context cannot expand.
+    pub(crate) literal_preserving_declared_constraints: FxHashSet<InferenceVar>,
     /// Depth counter for `TypeApplication` expansion during inference.
     /// Prevents infinite recursion when inferring through recursive type aliases
     /// like `type Spec<T> = { [P in keyof T]: Spec<T[P]> }`.
@@ -317,6 +320,7 @@ impl<'a> InferenceContext<'a> {
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
             declared_constraints: FxHashMap::default(),
+            literal_preserving_declared_constraints: FxHashSet::default(),
             app_expansion_depth: 0,
             in_contra_mode: false,
             reverse_mapped_properties: FxHashMap::default(),
@@ -339,6 +343,7 @@ impl<'a> InferenceContext<'a> {
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
             declared_constraints: FxHashMap::default(),
+            literal_preserving_declared_constraints: FxHashSet::default(),
             app_expansion_depth: 0,
             in_contra_mode: false,
             reverse_mapped_properties: FxHashMap::default(),
@@ -389,6 +394,12 @@ impl<'a> InferenceContext<'a> {
     /// Record the declared `extends` constraint for an inference variable.
     pub fn set_declared_constraint(&mut self, var: InferenceVar, constraint: TypeId) {
         self.declared_constraints.insert(var, constraint);
+    }
+
+    /// Record that the declared `extends` constraint semantically preserves literals.
+    pub fn mark_declared_constraint_preserves_literals(&mut self, var: InferenceVar) {
+        let root = self.table.find(var);
+        self.literal_preserving_declared_constraints.insert(root);
     }
 
     /// Get the declared `extends` constraint for an inference variable.

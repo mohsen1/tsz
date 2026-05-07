@@ -6,7 +6,7 @@ use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypeParamInfo};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{constraint_is_primitive_type, unique_placeholder_name};
+use super::{constraint_is_primitive_type_with_resolver, unique_placeholder_name};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Fast path for identity-style generic calls:
@@ -91,8 +91,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // isLiteralType(constraint) and skips getWidenedLiteralType.
             // Example: `<T extends string>(x: T): T` called with `"hello"`
             // should infer T = "hello", not T = string.
-            let constraint_is_primitive =
-                constraint.is_some_and(|c| constraint_is_primitive_type(self.interner, c));
+            let constraint_is_primitive = constraint.is_some_and(|c| {
+                let resolver = self
+                    .checker
+                    .type_resolver()
+                    .unwrap_or_else(|| self.interner.as_type_resolver());
+                constraint_is_primitive_type_with_resolver(self.interner, resolver, c)
+            });
             if constraint_is_primitive {
                 arg_ty
             } else {

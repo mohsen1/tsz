@@ -437,6 +437,8 @@ impl<'a> InferenceContext<'a> {
             && !upper_bounds.is_empty();
 
         let declared_constraint = self.declared_constraints.get(&root).copied();
+        let declared_constraint_preserves_literals =
+            self.literal_preserving_declared_constraints.contains(&root);
         let skip_literal_widening = self.top_level_in_return_type_unfixed.contains(&root);
 
         let result = if !candidates.is_empty() {
@@ -446,6 +448,7 @@ impl<'a> InferenceContext<'a> {
                 is_const,
                 &upper_bounds,
                 declared_constraint,
+                declared_constraint_preserves_literals,
                 skip_literal_widening,
             );
             if !concrete_contra_candidates.is_empty() {
@@ -542,6 +545,7 @@ impl<'a> InferenceContext<'a> {
         is_const: bool,
         upper_bounds: &[TypeId],
         declared_constraint: Option<TypeId>,
+        declared_constraint_preserves_literals: bool,
         skip_literal_widening: bool,
     ) -> TypeId {
         let filtered = self.filter_candidates_by_priority(candidates);
@@ -568,6 +572,8 @@ impl<'a> InferenceContext<'a> {
         // e.g., `<T>(value: T): Box<T>` is contextually typed as `Box<boolean>`.
         let preserve_literals = is_const
             || self.constraint_implies_literals(upper_bounds)
+            || declared_constraint_preserves_literals
+            || declared_constraint.is_some_and(|c| self.type_implies_literals(c))
             || declared_constraint.is_some_and(|c| self.declared_constraint_is_primitive(c))
             || declared_constraint.is_some_and(|c| {
                 self.constraint_contains_type_param_with_primitive_constraint(c, 0)
@@ -1733,6 +1739,8 @@ impl<'a> InferenceContext<'a> {
             // can drive inference instead.
             let is_const = self.is_var_const(root);
             let dc = self.declared_constraints.get(&root).copied();
+            let dc_preserves_literals =
+                self.literal_preserving_declared_constraints.contains(&root);
             let mut candidates = info.candidates.clone();
             if !info.upper_bounds.is_empty() {
                 let has_informative_upper_bound = info
@@ -1779,6 +1787,7 @@ impl<'a> InferenceContext<'a> {
                     is_const,
                     &info.upper_bounds,
                     dc,
+                    dc_preserves_literals,
                     skip_literal_widening,
                 );
                 // (TypeParameter filtering already done above)
@@ -1898,6 +1907,8 @@ impl<'a> InferenceContext<'a> {
                     if !info.candidates.is_empty() {
                         let is_const = self.is_var_const(root);
                         let dc = self.declared_constraints.get(&root).copied();
+                        let dc_preserves_literals =
+                            self.literal_preserving_declared_constraints.contains(&root);
                         let skip_literal_widening =
                             self.top_level_in_return_type_unfixed.contains(&root);
                         let covariant_result = self.resolve_from_candidates(
@@ -1905,6 +1916,7 @@ impl<'a> InferenceContext<'a> {
                             is_const,
                             &info.upper_bounds,
                             dc,
+                            dc_preserves_literals,
                             skip_literal_widening,
                         );
                         if !info.contra_candidates.is_empty() {
