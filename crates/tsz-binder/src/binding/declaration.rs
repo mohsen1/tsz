@@ -2684,6 +2684,24 @@ impl BinderState {
         // has complete heritage information (e.g., `interface A extends B {}` +
         // `interface A extends C {}` yields extends_names = ["B", "C"]).
         if let Some(existing) = std::sync::Arc::make_mut(&mut self.semantic_defs).get_mut(&sym_id) {
+            // Type-side declaration merging into a value-side namespace must
+            // promote the kind. A symbol like `namespace B {} interface B {}`
+            // appears in TYPE positions as the interface; if the recorded kind
+            // stayed `Namespace`, the type printer would emit `typeof B` instead
+            // of `B`. tsc's resolver picks the type-side meaning in type
+            // positions, so the binder mirrors that by upgrading the kind when
+            // a Type-class declaration merges into a Namespace entry.
+            if matches!(existing.kind, crate::state::SemanticDefKind::Namespace)
+                && matches!(
+                    kind,
+                    crate::state::SemanticDefKind::Interface
+                        | crate::state::SemanticDefKind::TypeAlias
+                        | crate::state::SemanticDefKind::Class
+                        | crate::state::SemanticDefKind::Enum
+                )
+            {
+                existing.kind = kind;
+            }
             // Accumulate new extends_names that aren't already present.
             for h in &extends_names {
                 if !existing.extends_names.contains(h) {
