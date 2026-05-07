@@ -399,7 +399,10 @@ function parseSourceTest(content: string, defaultSourceFileName?: string): Parse
     const singleFileContent: string[] = [];
     for (const line of lines) {
       const trimmed = line.trim();
-      if (/^\/\/\s*@[\w-]+(?:\s*:\s*[^\r\n]*)?$/i.test(trimmed)) {
+      if (
+        /^\/\/\s*@[\w-]+(?:\s*:\s*[^\r\n]*)?$/i.test(trimmed)
+        && !/^\/\/\s*@internal\s*$/i.test(trimmed)
+      ) {
         continue;
       }
       singleFileContent.push(line);
