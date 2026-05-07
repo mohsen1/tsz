@@ -3074,7 +3074,7 @@ impl Server {
             .unwrap_or_default();
         let has_missing_member = interface_properties
             .iter()
-            .any(|(name, _)| !class_body_has_member(class_body, name));
+            .any(|m| !class_body_has_member(class_body, m.name()));
         if !has_missing_member {
             return Vec::new();
         }
@@ -3323,21 +3323,21 @@ impl Server {
         }
 
         let class_body = content.get(class_open_brace + 1..class_close_brace)?;
-        let mut missing_properties = Vec::new();
-        for (name, ty) in interface_properties {
-            if !class_body_has_member(class_body, &name) {
-                missing_properties.push((name, ty));
+        let mut missing_members = Vec::new();
+        for member in interface_properties {
+            if !class_body_has_member(class_body, member.name()) {
+                missing_members.push(member);
             }
         }
-        if missing_properties.is_empty() {
+        if missing_members.is_empty() {
             return None;
         }
 
         let interface_imports = parse_named_import_map(&interface_content);
         let mut needed_imports: std::collections::BTreeSet<String> =
             std::collections::BTreeSet::new();
-        for (_, ty) in &missing_properties {
-            for ident in extract_type_identifiers(ty) {
+        for member in &missing_members {
+            for ident in extract_type_identifiers(member.referenced_types()) {
                 if should_import_identifier(&ident) && !class_imports.contains_key(&ident) {
                     needed_imports.insert(ident);
                 }
@@ -3369,9 +3369,9 @@ impl Server {
             }
         }
 
-        let members_text = missing_properties
+        let members_text = missing_members
             .iter()
-            .map(|(name, ty)| format!("    {name}: {ty};"))
+            .map(|m| format!("    {}", m.render()))
             .collect::<Vec<_>>()
             .join("\n");
         let updated_body = if class_body.trim().is_empty() {

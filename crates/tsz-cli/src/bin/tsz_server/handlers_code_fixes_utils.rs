@@ -75,10 +75,53 @@ pub(super) fn parse_named_import_map(content: &str) -> std::collections::HashMap
     map
 }
 
+/// Stub for an interface member, used by the implement-interface code fix
+/// to render a class-side declaration for missing members.
+#[derive(Debug, Clone)]
+pub(super) enum InterfaceMember {
+    /// e.g. `interface I { x: number; }` → `Property { name: "x", ty: "number" }`
+    Property { name: String, ty: String },
+    /// e.g. `interface I { m(): void; }` →
+    /// `Method { name: "m", signature: "(): void" }`. The signature includes
+    /// the parameter list and return type and is rendered into a method body
+    /// that throws "Method not implemented." to match tsc's
+    /// fixClassIncorrectlyImplementsInterface output.
+    Method { name: String, signature: String },
+}
+
+impl InterfaceMember {
+    pub(super) fn name(&self) -> &str {
+        match self {
+            Self::Property { name, .. } | Self::Method { name, .. } => name,
+        }
+    }
+
+    /// Tokens that may need to be auto-imported when the stub is rendered into
+    /// the class. For methods this includes the entire signature (parameter
+    /// types and return type); for properties it's just the type expression.
+    pub(super) fn referenced_types(&self) -> &str {
+        match self {
+            Self::Property { ty, .. } => ty,
+            Self::Method { signature, .. } => signature,
+        }
+    }
+
+    /// Render the stub as the body of a class member declaration. Properties
+    /// become `name: ty;`; methods become `name<sig> { throw … }`.
+    pub(super) fn render(&self) -> String {
+        match self {
+            Self::Property { name, ty } => format!("{name}: {ty};"),
+            Self::Method { name, signature } => format!(
+                "{name}{signature} {{\n        throw new Error(\"Method not implemented.\");\n    }}"
+            ),
+        }
+    }
+}
+
 pub(super) fn parse_interface_properties(
     content: &str,
     interface_name: &str,
-) -> Option<Vec<(String, String)>> {
+) -> Option<Vec<InterfaceMember>> {
     let interface_token = format!("interface {interface_name}");
     let interface_pos = content.find(&interface_token)?;
     let open_brace_rel = content[interface_pos..].find('{')?;
@@ -86,10 +129,14 @@ pub(super) fn parse_interface_properties(
     let close_brace = find_matching_brace(content, open_brace)?;
     let body = content.get(open_brace + 1..close_brace)?;
 
-    let mut properties = Vec::new();
+    let mut members = Vec::new();
     for line in body.lines() {
         let member = line.trim().trim_end_matches(';');
         if member.is_empty() || member.starts_with("//") {
+            continue;
+        }
+        if let Some(parsed) = parse_method_signature(member) {
+            members.push(parsed);
             continue;
         }
         let Some((lhs, rhs)) = member.split_once(':') else {
@@ -105,9 +152,48 @@ pub(super) fn parse_interface_properties(
         if !is_identifier(name) {
             continue;
         }
-        properties.push((name.to_string(), rhs.trim().to_string()));
+        members.push(InterfaceMember::Property {
+            name: name.to_string(),
+            ty: rhs.trim().to_string(),
+        });
     }
-    Some(properties)
+    Some(members)
+}
+
+/// Recognize a method signature like `m(): void` or `foo<T>(x: T): T`. Returns
+/// `None` for property-style members, which the colon-based path handles.
+fn parse_method_signature(member: &str) -> Option<InterfaceMember> {
+    let trimmed = member.trim();
+    // Method names cannot have a `:` before the parameter list, but the
+    // parameter list itself can contain `:` (e.g. `m(x: number): void`). To
+    // distinguish from properties whose RHS contains a function type
+    // (`m: (x: number) => void`), require that the first non-identifier
+    // character after the (possibly generic) name is `(` or `<`.
+    let mut idx = 0;
+    let bytes = trimmed.as_bytes();
+    while idx < bytes.len() {
+        let ch = bytes[idx] as char;
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+            idx += 1;
+        } else {
+            break;
+        }
+    }
+    if idx == 0 {
+        return None;
+    }
+    let name = &trimmed[..idx];
+    if !is_identifier(name) {
+        return None;
+    }
+    let rest = trimmed[idx..].trim_start();
+    if !(rest.starts_with('(') || rest.starts_with('<')) {
+        return None;
+    }
+    Some(InterfaceMember::Method {
+        name: name.to_string(),
+        signature: rest.to_string(),
+    })
 }
 
 pub(super) fn class_body_has_member(class_body: &str, member_name: &str) -> bool {
