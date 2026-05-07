@@ -620,24 +620,79 @@ impl<'a> AsyncES5Transformer<'a> {
         let Some(template_node) = self.arena.get(tagged.template) else {
             return IRNode::ASTRef(idx);
         };
-        if template_node.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
-            return IRNode::ASTRef(idx);
+
+        // No-substitution template: `tag\`hello\`` -> tag(__makeTemplateObject(["hello"], ["hello"]))
+        if template_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
+            let text = self
+                .arena
+                .get_literal(template_node)
+                .map_or_else(String::new, |lit| lit.text.clone());
+            return IRNode::CallExpr {
+                callee: Box::new(self.expression_to_ir(tagged.tag)),
+                arguments: vec![IRNode::CallExpr {
+                    callee: Box::new(IRNode::Identifier("__makeTemplateObject".into())),
+                    arguments: vec![
+                        IRNode::ArrayLiteral(vec![IRNode::StringLiteral(text.clone().into())]),
+                        IRNode::ArrayLiteral(vec![IRNode::StringLiteral(text.into())]),
+                    ],
+                }],
+            };
         }
 
-        let text = self
-            .arena
-            .get_literal(template_node)
-            .map_or_else(String::new, |lit| lit.text.clone());
-        IRNode::CallExpr {
-            callee: Box::new(self.expression_to_ir(tagged.tag)),
-            arguments: vec![IRNode::CallExpr {
+        // Issue #3540: a substitution template (TEMPLATE_EXPRESSION) under an
+        // async ES5 transform must also lower to
+        // `tag(__makeTemplateObject([head, lit1, …], [head, lit1, …]),
+        //      expr1, expr2, …)`.
+        // The previous fallback returned `ASTRef(idx)` which the IR printer
+        // emitted as raw source text (including the trailing `;`),
+        // producing invalid JS inside the generator return tuple.
+        if template_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+            && let Some(template) = self.arena.get_template_expr(template_node)
+        {
+            let mut strings: Vec<IRNode> = Vec::new();
+            let mut expressions: Vec<IRNode> = Vec::new();
+
+            // Head literal text
+            let head_text = self
+                .arena
+                .get(template.head)
+                .and_then(|head_node| self.arena.get_literal(head_node))
+                .map_or_else(String::new, |lit| lit.text.clone());
+            strings.push(IRNode::StringLiteral(head_text.into()));
+
+            // Each span contributes one expression and one trailing literal.
+            for &span_idx in &template.template_spans.nodes {
+                let Some(span_node) = self.arena.get(span_idx) else {
+                    continue;
+                };
+                let Some(span) = self.arena.get_template_span(span_node) else {
+                    continue;
+                };
+                expressions.push(self.expression_to_ir(span.expression));
+                let lit_text = self
+                    .arena
+                    .get(span.literal)
+                    .and_then(|lit_node| self.arena.get_literal(lit_node))
+                    .map_or_else(String::new, |lit| lit.text.clone());
+                strings.push(IRNode::StringLiteral(lit_text.into()));
+            }
+
+            let cooked = IRNode::ArrayLiteral(strings.clone());
+            let raw = IRNode::ArrayLiteral(strings);
+            let mut call_args = vec![IRNode::CallExpr {
                 callee: Box::new(IRNode::Identifier("__makeTemplateObject".into())),
-                arguments: vec![
-                    IRNode::ArrayLiteral(vec![IRNode::StringLiteral(text.clone().into())]),
-                    IRNode::ArrayLiteral(vec![IRNode::StringLiteral(text.into())]),
-                ],
-            }],
+                arguments: vec![cooked, raw],
+            }];
+            call_args.extend(expressions);
+
+            return IRNode::CallExpr {
+                callee: Box::new(self.expression_to_ir(tagged.tag)),
+                arguments: call_args,
+            };
         }
+
+        // Unknown template shape — keep the source-text fallback.
+        IRNode::ASTRef(idx)
     }
 
     /// Convert a function expression to IR
