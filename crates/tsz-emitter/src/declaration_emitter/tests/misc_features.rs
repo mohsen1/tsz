@@ -954,6 +954,30 @@ export type ComponentDefinition = Partial<Component>;
 }
 
 #[test]
+fn test_const_shadowing_non_exported_type_alias_emits_value_declaration() {
+    // Regression for genericContextualTypes1: in a script-mode file (no
+    // imports/exports) a `const fn: fn = …` whose name shadows a
+    // non-exported `type fn = …` must still be emitted as `declare const`.
+    // The earlier behavior treated the value-side const as "type-only
+    // exported" because the shared symbol carried a type-alias declaration,
+    // even though that type alias itself was not exported.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type fn = <A>(a: A) => A;
+const fn: fn = a => a;
+"#,
+    );
+    assert!(
+        output.contains("type fn = <A>(a: A) => A;"),
+        "Expected type alias to remain: {output}"
+    );
+    assert!(
+        output.contains("declare const fn: fn;"),
+        "Expected value-side const shadowing the non-exported type alias to be emitted: {output}"
+    );
+}
+
+#[test]
 fn test_destructuring_variable_declaration_groups_typed_bindings() {
     let source = r#"var [x, y] = [1, "hello"];"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
