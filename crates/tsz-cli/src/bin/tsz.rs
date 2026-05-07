@@ -290,9 +290,11 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         //   (--noEmitOnError with errors means no outputs were generated).
         // Exit code 2 (DiagnosticsPresent_OutputsGenerated): errors exist but outputs were
         //   still generated (or --noEmit where there's nothing to emit regardless).
+        // `result.no_emit` reflects the resolved option (CLI + tsconfig.json),
+        // so a tsconfig-only `noEmit` selects exit 2 just like the CLI flag.
         if args.no_emit_on_error {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
-        } else if args.no_emit || !result.emitted_files.is_empty() {
+        } else if result.no_emit || !result.emitted_files.is_empty() {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
         } else {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
@@ -1979,69 +1981,45 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     let files_explicitly_set =
         !args.files.is_empty() || config.as_ref().and_then(|c| c.files.as_ref()).is_some();
-    let discovery = FileDiscoveryOptions {
-        base_dir: base_dir.to_path_buf(),
-        files: explicit_files,
-        files_explicitly_set,
-        include: config.as_ref().and_then(|c| c.include.clone()),
-        exclude: config.as_ref().and_then(|c| c.exclude.clone()),
-        out_dir: out_dir.clone(),
-        follow_links: false,
-        allow_js,
-        resolve_json_module: resolved.as_ref().is_some_and(|r| r.resolve_json_module),
+
+    // `--showConfig` should print the resolved config without validating root
+    // files (matching `tsc --showConfig`). When `files` is explicitly set,
+    // preserve every entry verbatim — even unsupported extensions or missing
+    // paths — and normalize with a `./` prefix. The TS6053/TS6054/TS18003
+    // diagnostics belong to normal compilation, not to the config display.
+    let file_paths: Vec<String> = if files_explicitly_set {
+        explicit_files
+            .iter()
+            .map(|p| show_config_normalize_relative(base_dir, p))
+            .collect()
+    } else {
+        // No explicit `files` — fall back to glob-based discovery so the
+        // displayed list reflects what include/exclude would resolve. Treat
+        // discovery errors and empty results as "nothing to print" instead of
+        // TS18003; tsc's --showConfig also exits 0 in that case.
+        let discovery = FileDiscoveryOptions {
+            base_dir: base_dir.to_path_buf(),
+            files: explicit_files,
+            files_explicitly_set,
+            include: config.as_ref().and_then(|c| c.include.clone()),
+            exclude: config.as_ref().and_then(|c| c.exclude.clone()),
+            out_dir: out_dir.clone(),
+            follow_links: false,
+            allow_js,
+            resolve_json_module: resolved.as_ref().is_some_and(|r| r.resolve_json_module),
+        };
+        discover_ts_files(&discovery)
+            .unwrap_or_default()
+            .iter()
+            .map(|f| {
+                if let Ok(rel) = f.strip_prefix(base_dir) {
+                    format!("./{}", rel.display())
+                } else {
+                    f.display().to_string()
+                }
+            })
+            .collect()
     };
-
-    let discovered_files = discover_ts_files(&discovery).unwrap_or_default();
-
-    // If no input files found, emit TS18003 error and exit 1
-    if discovered_files.is_empty() && config.is_some() {
-        // tsc formats include/exclude as JSON arrays. When `include` is omitted,
-        // it reports the implicit discovery set rather than `[]`.
-        let include_json = config
-            .as_ref()
-            .and_then(|c| c.include.as_ref())
-            .map(|items| {
-                let inner: Vec<String> = items.iter().map(|s| format!("\"{s}\"")).collect();
-                format!("[{}]", inner.join(","))
-            })
-            .unwrap_or_else(|| {
-                let inner: Vec<String> = tsz_cli::fs::default_include_display()
-                    .into_iter()
-                    .map(|s| format!("\"{s}\""))
-                    .collect();
-                format!("[{}]", inner.join(","))
-            });
-        let exclude_json = config
-            .as_ref()
-            .and_then(|c| c.exclude.as_ref())
-            .map(|items| {
-                let inner: Vec<String> = items.iter().map(|s| format!("\"{s}\"")).collect();
-                format!("[{}]", inner.join(","))
-            })
-            .unwrap_or_else(|| "[]".to_string());
-        println!(
-            "error TS18003: No inputs were found in config file '{}'. Specified 'include' paths were '{}' and 'exclude' paths were '{}'.",
-            tsconfig_path
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default(),
-            include_json,
-            exclude_json,
-        );
-        std::process::exit(1);
-    }
-
-    // Build file paths relative to tsconfig dir with "./" prefix (matching tsc)
-    let file_paths: Vec<String> = discovered_files
-        .iter()
-        .map(|f| {
-            if let Ok(rel) = f.strip_prefix(base_dir) {
-                format!("./{}", rel.display())
-            } else {
-                f.display().to_string()
-            }
-        })
-        .collect();
 
     // Issue 6: Auto-add outDir to exclude array (tsc behavior)
     let effective_exclude = {
@@ -2158,6 +2136,26 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     print!("{output}");
 
     Ok(())
+}
+
+/// Normalize a path for the --showConfig `files` array: strip the tsconfig
+/// base directory if the input is absolute, convert backslashes to forward
+/// slashes, and prepend `./` for plain relative paths so the output mirrors
+/// `tsc --showConfig` (`["./style.css"]` rather than `["style.css"]`).
+fn show_config_normalize_relative(base_dir: &std::path::Path, path: &std::path::Path) -> String {
+    let rel = if path.is_absolute() {
+        path.strip_prefix(base_dir)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|_| path.to_path_buf())
+    } else {
+        path.to_path_buf()
+    };
+    let s = rel.display().to_string().replace('\\', "/");
+    if s.starts_with("./") || s.starts_with("../") || s.starts_with('/') {
+        s
+    } else {
+        format!("./{s}")
+    }
 }
 
 fn show_config_relativize_resolved_path_options(

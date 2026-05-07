@@ -103,11 +103,16 @@ pub(super) fn is_namespace_like(arena: &NodeArena, node: &tsz_parser::parser::no
 pub(super) use crate::transforms::emit_utils::identifier_text as get_identifier_text;
 
 /// Convert function parameters to IR parameters (without type annotations)
-pub(super) fn convert_function_parameters(arena: &NodeArena, params: &NodeList) -> Vec<IRParam> {
+pub(super) fn convert_function_parameters(
+    arena: &NodeArena,
+    params: &NodeList,
+    source_text: Option<&str>,
+) -> Vec<IRParam> {
     params
         .nodes
         .iter()
         .filter_map(|&p| {
+            let param_node = arena.get(p)?;
             let param = arena.get_parameter_at(p)?;
             let name = get_identifier_text(arena, param.name)?;
             let rest = param.dot_dot_dot_token;
@@ -118,10 +123,49 @@ pub(super) fn convert_function_parameters(arena: &NodeArena, params: &NodeList) 
                 name: name.into(),
                 rest,
                 default_value,
-                leading_comment: None,
+                leading_comment: source_text
+                    .and_then(|text| {
+                        extract_parameter_leading_comment(arena, text, param_node, param.name)
+                    })
+                    .map(Into::into),
             })
         })
         .collect()
+}
+
+fn extract_parameter_leading_comment(
+    arena: &NodeArena,
+    source_text: &str,
+    param_node: &tsz_parser::parser::node::Node,
+    name_idx: NodeIndex,
+) -> Option<String> {
+    let name_node = arena.get(name_idx)?;
+    let scan_start = parameter_comment_scan_start(source_text, param_node.pos, name_node.pos);
+    let comments = tsz_common::comments::get_comment_ranges(source_text);
+    let mut texts = Vec::new();
+    for comment in comments {
+        if comment.pos >= scan_start && comment.end <= name_node.pos {
+            let text = comment.get_text(source_text);
+            if !text.is_empty() {
+                texts.push(text.to_string());
+            }
+        }
+    }
+    (!texts.is_empty()).then(|| texts.join(" "))
+}
+
+fn parameter_comment_scan_start(source_text: &str, param_pos: u32, name_pos: u32) -> u32 {
+    let bytes = source_text.as_bytes();
+    let mut pos = name_pos as usize;
+    while pos > 0 {
+        pos -= 1;
+        match bytes.get(pos) {
+            Some(b'(' | b',') => return (pos + 1) as u32,
+            Some(b'\n' | b'\r') => break,
+            _ => {}
+        }
+    }
+    param_pos
 }
 
 /// Convert function body to IR statements (without type annotations)
