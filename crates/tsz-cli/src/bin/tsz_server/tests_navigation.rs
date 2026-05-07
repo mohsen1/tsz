@@ -1831,3 +1831,61 @@ fn test_navtree_full_text_spans_use_utf16_units_for_non_ascii_source() {
     // source so the test guards against a UTF-8 regression.
     assert_ne!(function_name_utf16, function_name_byte as u64);
 }
+
+// Issue #3710: documentHighlights must honor `filesToSearch` and return
+// highlight groups for each searched file, not just the request file.
+#[test]
+fn test_document_highlights_honors_files_to_search_across_files() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "export const foo = 1;\n".to_string());
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import { foo } from \"./a\";\nconsole.log(foo);\n".to_string(),
+    );
+
+    // Click on the declaration in /a.ts and ask the server to search BOTH
+    // files. tsc returns highlight groups for both /a.ts (declaration) and
+    // /b.ts (import specifier + use).
+    let req = make_request(
+        "documentHighlights",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 1,
+            "offset": 14,
+            "filesToSearch": ["/a.ts", "/b.ts"]
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("documentHighlights body");
+    let groups = body.as_array().expect("body must be an array");
+
+    let files: std::collections::HashSet<&str> = groups
+        .iter()
+        .filter_map(|g| g.get("file").and_then(serde_json::Value::as_str))
+        .collect();
+    assert!(
+        files.contains("/a.ts"),
+        "expected highlight group for /a.ts, got groups: {groups:?}"
+    );
+    assert!(
+        files.contains("/b.ts"),
+        "expected highlight group for /b.ts, got groups: {groups:?}"
+    );
+
+    // /b.ts should have at least 2 highlight spans (import specifier + use)
+    let b_group = groups
+        .iter()
+        .find(|g| g.get("file").and_then(serde_json::Value::as_str) == Some("/b.ts"))
+        .expect("must have /b.ts group");
+    let b_spans = b_group
+        .get("highlightSpans")
+        .and_then(serde_json::Value::as_array)
+        .expect("/b.ts must have highlightSpans");
+    assert!(
+        b_spans.len() >= 2,
+        "expected 2+ highlight spans in /b.ts (import + use), got: {b_spans:?}"
+    );
+}
