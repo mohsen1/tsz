@@ -640,6 +640,9 @@ pub fn resolve_compiler_options(
     // alwaysStrict=false below can still suppress the prologue.
     resolved.printer.always_strict = true;
     let Some(options) = options else {
+        let default_module = default_module_kind_for_target(resolved.printer.target, false);
+        resolved.printer.module = default_module;
+        resolved.checker.module = default_module;
         resolved.checker.target = checker_target_from_emitter(resolved.printer.target);
         resolved.lib_files = resolve_default_lib_files(resolved.printer.target)?;
         resolved.lib_is_default = true;
@@ -652,6 +655,9 @@ pub fn resolve_compiler_options(
                 | ModuleResolutionKind::Bundler
         );
         resolved.resolve_package_json_imports = resolved.resolve_package_json_exports;
+        let resolve_json_module = matches!(default_resolution, ModuleResolutionKind::Bundler);
+        resolved.resolve_json_module = resolve_json_module;
+        resolved.checker.resolve_json_module = resolve_json_module;
         return Ok(resolved);
     };
 
@@ -5412,6 +5418,18 @@ mod tests {
             resolved.effective_module_resolution(),
             ModuleResolutionKind::Bundler
         );
+    }
+
+    #[test]
+    fn test_no_config_defaults_to_bundler_and_resolve_json_module() {
+        let resolved = resolve_compiler_options(None).unwrap();
+
+        assert_eq!(
+            resolved.effective_module_resolution(),
+            ModuleResolutionKind::Bundler
+        );
+        assert!(resolved.resolve_json_module);
+        assert!(resolved.checker.resolve_json_module);
     }
 
     #[test]
