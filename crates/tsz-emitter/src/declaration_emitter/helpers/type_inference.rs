@@ -4103,6 +4103,13 @@ impl<'a> DeclarationEmitter<'a> {
                     return None;
                 }
             }
+            if let (Some(source_path), Some(module_specifier)) =
+                (source_path.as_deref(), imported_module.as_deref())
+                && self.package_json_name_matches_import_specifier(source_path, module_specifier)
+            {
+                type_text =
+                    Self::rewrite_relative_import_type_specifiers(&type_text, module_specifier);
+            }
             Some(type_text)
         })
     }
@@ -4891,6 +4898,14 @@ impl<'a> DeclarationEmitter<'a> {
                         || self.node_modules_package_path_matches_import_specifier(
                             module_path,
                             module_specifier,
+                        )
+                        || self.node_modules_package_contains_import_specifier(
+                            module_path,
+                            module_specifier,
+                        )
+                        || self.package_json_name_matches_import_specifier(
+                            module_path,
+                            module_specifier,
                         ))
                     .then_some(module_path.as_str())
                 })
@@ -5087,6 +5102,10 @@ impl<'a> DeclarationEmitter<'a> {
             return binder.module_exports.iter().any(|(module_path, exports)| {
                 (self.node_modules_path_matches_import_specifier(module_path, module_specifier)
                     || self.node_modules_package_path_matches_import_specifier(
+                        module_path,
+                        module_specifier,
+                    )
+                    || self.node_modules_package_contains_import_specifier(
                         module_path,
                         module_specifier,
                     ))
