@@ -82,6 +82,13 @@ pub struct LineMap {
 
 impl LineMap {
     /// Build a line map from source text.
+    ///
+    /// Recognizes the four ECMAScript line terminators: LF (`\n`),
+    /// CR (`\r`), CR-LF, U+2028 (LINE SEPARATOR), and U+2029
+    /// (PARAGRAPH SEPARATOR). tsc treats U+2028 and U+2029 as line
+    /// breaks for diagnostic line/column reporting and for terminating
+    /// `//` comments, so any `LineMap` consumer driving diagnostic
+    /// positions must agree.
     #[must_use]
     pub fn build(source: &str) -> Self {
         let mut line_starts = vec![0u32];
@@ -98,6 +105,10 @@ impl LineMap {
                     line_starts.push(u32::try_from(next_idx).unwrap_or(u32::MAX));
                 }
                 // \r followed by \n - the \n will create the line start
+            } else if ch == '\u{2028}' || ch == '\u{2029}' {
+                // U+2028 and U+2029 are 3 bytes in UTF-8; the next line
+                // starts after the full code point.
+                line_starts.push(u32::try_from(i + ch.len_utf8()).unwrap_or(u32::MAX));
             }
         }
 
@@ -165,7 +176,7 @@ impl LineMap {
         let mut byte_count = 0usize;
 
         for ch in slice.chars() {
-            if ch == '\n' || ch == '\r' {
+            if ch == '\n' || ch == '\r' || ch == '\u{2028}' || ch == '\u{2029}' {
                 break;
             }
             let ch_utf16 = u32::try_from(ch.len_utf16()).ok()?;

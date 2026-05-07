@@ -822,9 +822,12 @@ impl ScannerState {
                         self.pos += 2;
                         while self.pos < self.end {
                             let c = self.char_code_unchecked(self.pos);
-                            if c == CharacterCodes::LINE_FEED
-                                || c == CharacterCodes::CARRIAGE_RETURN
-                            {
+                            // Single-line comments terminate at any ECMAScript
+                            // line terminator: LF, CR, U+2028, U+2029. tsc and
+                            // the spec treat U+2028/U+2029 as line breaks even
+                            // inside `//` comments, so a `// @ts-...` directive
+                            // followed by U+2028 must not swallow the next line.
+                            if is_line_break(c) {
                                 break;
                             }
                             self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
@@ -847,9 +850,7 @@ impl ScannerState {
                                 comment_closed = true;
                                 break;
                             }
-                            if c == CharacterCodes::LINE_FEED
-                                || c == CharacterCodes::CARRIAGE_RETURN
-                            {
+                            if is_line_break(c) {
                                 self.token_flags |= TokenFlags::PrecedingLineBreak as u32;
                             }
                             self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
@@ -3948,6 +3949,48 @@ mod tests {
         assert_eq!(tokens.len(), 2);
         assert_eq!(tokens[0].1, "a");
         assert_eq!(tokens[1].1, "b");
+    }
+
+    // Issue #3331: ECMAScript treats U+2028 / U+2029 as line terminators in
+    // `//` comments. The next logical line must be tokenized as code, not
+    // swallowed by the comment.
+    #[test]
+    fn single_line_comment_terminates_at_u2028() {
+        let tokens = scan_all("// hi\u{2028}let x = 1");
+        let kinds: Vec<_> = tokens.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                SyntaxKind::LetKeyword,
+                SyntaxKind::Identifier,
+                SyntaxKind::EqualsToken,
+                SyntaxKind::NumericLiteral,
+            ]
+        );
+    }
+
+    #[test]
+    fn single_line_comment_terminates_at_u2029() {
+        let tokens = scan_all("// hi\u{2029}let x = 1");
+        let kinds: Vec<_> = tokens.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                SyntaxKind::LetKeyword,
+                SyntaxKind::Identifier,
+                SyntaxKind::EqualsToken,
+                SyntaxKind::NumericLiteral,
+            ]
+        );
+    }
+
+    #[test]
+    fn token_after_u2028_in_comment_has_preceding_line_break() {
+        let mut scanner = ScannerState::new("// d\u{2028}b".to_string(), true);
+        let kind = scanner.scan();
+        assert_eq!(kind, SyntaxKind::Identifier);
+        assert_eq!(scanner.get_token_value(), "b");
+        assert!(scanner.has_preceding_line_break());
     }
 
     // ── Scanner state methods ─────────────────────────────────────────

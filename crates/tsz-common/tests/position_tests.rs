@@ -387,6 +387,72 @@ fn range_to_span_returns_none_for_line_past_eof() {
     assert_eq!(map.range_to_span(range, source), None);
 }
 
+// =============================================================================
+// U+2028 / U+2029 line terminators (issue #3331)
+//
+// ECMAScript treats LINE SEPARATOR (U+2028) and PARAGRAPH SEPARATOR (U+2029)
+// as line terminators alongside LF/CR. Diagnostic line numbers and column
+// counts must agree with tsc, which advances to the next line at these
+// codepoints.
+// =============================================================================
+
+#[test]
+fn line_map_treats_u2028_as_line_break() {
+    // Three lines separated by U+2028; each token is on its own logical line.
+    let source = "a\u{2028}b\u{2028}c";
+    let map = LineMap::build(source);
+
+    assert_eq!(map.line_count(), 3);
+    // Byte 0: 'a' on line 0; byte 1..4 is U+2028 (3 UTF-8 bytes).
+    assert_eq!(map.offset_to_position(0, source), Position::new(0, 0));
+    assert_eq!(map.offset_to_position(4, source), Position::new(1, 0));
+    assert_eq!(map.offset_to_position(8, source), Position::new(2, 0));
+    assert_eq!(map.line_start(1), Some(4));
+    assert_eq!(map.line_start(2), Some(8));
+}
+
+#[test]
+fn line_map_treats_u2029_as_line_break() {
+    let source = "a\u{2029}b";
+    let map = LineMap::build(source);
+
+    assert_eq!(map.line_count(), 2);
+    assert_eq!(map.offset_to_position(4, source), Position::new(1, 0));
+    assert_eq!(map.line_start(1), Some(4));
+}
+
+#[test]
+fn position_to_offset_breaks_on_u2028() {
+    // Column 99 on line 0 must clamp to the byte just before U+2028,
+    // not skip past it onto the following line.
+    let source = "ab\u{2028}cd";
+    let map = LineMap::build(source);
+
+    assert_eq!(
+        map.position_to_offset(Position::new(0, 99), source),
+        Some(2)
+    );
+    assert_eq!(map.position_to_offset(Position::new(1, 0), source), Some(5));
+    assert_eq!(map.position_to_offset(Position::new(1, 2), source), Some(7));
+}
+
+#[test]
+fn line_map_mixed_line_terminators() {
+    // Combine LF, CR-LF, U+2028, and U+2029 in a single source. Each
+    // produces exactly one new line, and `line_start(n)` returns the
+    // byte after the terminator(s).
+    let source = "one\ntwo\r\nthree\u{2028}four\u{2029}five";
+    let map = LineMap::build(source);
+
+    assert_eq!(map.line_count(), 5);
+    // Lines: "one" (0..3), "two" (4..7), "three" (9..14), "four" (17..21), "five" (24..28)
+    assert_eq!(map.line_start(0), Some(0));
+    assert_eq!(map.line_start(1), Some(4));
+    assert_eq!(map.line_start(2), Some(9));
+    assert_eq!(map.line_start(3), Some(17));
+    assert_eq!(map.line_start(4), Some(24));
+}
+
 #[test]
 fn range_to_span_clamps_character_past_line_end() {
     // `position_to_offset` already clamps the character index to the
