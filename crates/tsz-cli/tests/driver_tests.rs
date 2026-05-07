@@ -10913,7 +10913,6 @@ fn compile_bundler_dts_value_import_reports_ts2846_not_ts2307() {
             "target": "es2015",
             "module": "esnext",
             "moduleResolution": "bundler",
-            "allowImportingTsExtensions": true,
             "noEmit": true
           },
           "files": ["a.ts", "types.d.ts"]
