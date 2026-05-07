@@ -884,15 +884,34 @@ impl Server {
             let is_multi_declarator =
                 Self::is_multi_declarator_var(&decl_text, source_text, decl_offset);
 
+            // Issue #3752: tsc leaves the existing one-line JSDoc alone when
+            // the documented declaration is non-callable (type alias,
+            // interface, class, enum, namespace, module) even if a nested
+            // function-like signature appears on the same line. The previous
+            // line-scan happily found the nested `(...)` and produced
+            // spurious `@param`/`@returns` tags.
+            let is_non_callable_decl = [
+                "type ",
+                "interface ",
+                "class ",
+                "enum ",
+                "namespace ",
+                "module ",
+            ]
+            .iter()
+            .any(|kw| decl_text.starts_with(kw));
+
+            let suppress_signature_extraction = is_multi_declarator || is_non_callable_decl;
+
             // Extract parameters from the declaration
-            let params = if is_multi_declarator {
+            let params = if suppress_signature_extraction {
                 Vec::new()
             } else {
                 Self::extract_function_params(&decl_text, source_text, decl_offset)
             };
 
             // Check for return statement in function body if generate_return is enabled
-            let has_return = if generate_return && !is_multi_declarator {
+            let has_return = if generate_return && !suppress_signature_extraction {
                 Self::function_has_return(&decl_text, source_text, decl_offset)
             } else {
                 false

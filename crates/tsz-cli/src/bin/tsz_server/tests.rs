@@ -5695,3 +5695,127 @@ fn edits_for_refactor_accepts_position_only_request() {
         "edits-for-refactor body must contain `edits`: {body:?}"
     );
 }
+
+// Issue #3752: docCommentTemplate must NOT scan into a nested same-line
+// function-like signature when the documented declaration is a non-callable
+// kind (type alias, interface, class, …). tsc returns the unchanged
+// one-line `/** */` template in those cases.
+#[test]
+fn doc_comment_template_non_callable_type_alias_returns_one_line() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/src/type_alias.ts".to_string(),
+        "/** */\ntype F = (x: string) => number;\n".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "docCommentTemplate",
+        serde_json::json!({
+            "file": "/src/type_alias.ts",
+            "line": 1,
+            "offset": 4,
+            "generateReturnInDocTemplate": true,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("docCommentTemplate body");
+    assert_eq!(
+        body.get("newText").and_then(serde_json::Value::as_str),
+        Some("/** */"),
+        "type alias must not extract @param from nested signature, got: {body:?}"
+    );
+    assert_eq!(
+        body.get("caretOffset").and_then(serde_json::Value::as_u64),
+        Some(3)
+    );
+}
+
+#[test]
+fn doc_comment_template_non_callable_interface_returns_one_line() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/src/iface.ts".to_string(),
+        "/** */\ninterface I { m(x: string): void; }\n".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "docCommentTemplate",
+        serde_json::json!({
+            "file": "/src/iface.ts",
+            "line": 1,
+            "offset": 4,
+            "generateReturnInDocTemplate": true,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("docCommentTemplate body");
+    assert_eq!(
+        body.get("newText").and_then(serde_json::Value::as_str),
+        Some("/** */"),
+        "interface must not extract @param from nested method signature, got: {body:?}"
+    );
+}
+
+#[test]
+fn doc_comment_template_non_callable_class_returns_one_line() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/src/class.ts".to_string(),
+        "/** */\nclass C { constructor(public x: number) {} }\n".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "docCommentTemplate",
+        serde_json::json!({
+            "file": "/src/class.ts",
+            "line": 1,
+            "offset": 4,
+            "generateReturnInDocTemplate": true,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("docCommentTemplate body");
+    assert_eq!(
+        body.get("newText").and_then(serde_json::Value::as_str),
+        Some("/** */"),
+        "class must not extract @param from nested constructor, got: {body:?}"
+    );
+}
+
+// Sanity: a regular function declaration must STILL extract @param tags.
+#[test]
+fn doc_comment_template_function_decl_still_extracts_params() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/src/fn.ts".to_string(),
+        "/** */\nfunction f(x: string, y: number) {}\n".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "docCommentTemplate",
+        serde_json::json!({
+            "file": "/src/fn.ts",
+            "line": 1,
+            "offset": 4,
+            "generateReturnInDocTemplate": false,
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("docCommentTemplate body");
+    let new_text = body
+        .get("newText")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    assert!(
+        new_text.contains("@param x"),
+        "function decl should extract @param x, got: {new_text}"
+    );
+    assert!(
+        new_text.contains("@param y"),
+        "function decl should extract @param y, got: {new_text}"
+    );
+}
