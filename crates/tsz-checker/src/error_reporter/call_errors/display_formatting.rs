@@ -2390,6 +2390,8 @@ impl<'a> CheckerState<'a> {
             // of the alias (e.g. `'KeysExtendedBy<M, number>'`) when a generic
             // type-alias application reduces to a literal, primitive, or union of
             // those. Object/interface results keep the alias form.
+            let original_contains_type_parameters =
+                query_common::contains_type_parameters(self.ctx.types, param_type);
             let evaluated = self.evaluate_type_with_env(param_type);
             if evaluated != param_type
                 && query_common::is_literal_or_primitive_or_compound_of_those(
@@ -2402,6 +2404,7 @@ impl<'a> CheckerState<'a> {
             if evaluated != param_type
                 && evaluated != TypeId::ERROR
                 && !matches!(evaluated, TypeId::ANY | TypeId::UNKNOWN)
+                && !original_contains_type_parameters
                 && !query_common::contains_type_parameters(self.ctx.types, evaluated)
             {
                 return self.format_type_diagnostic(evaluated);
@@ -2525,7 +2528,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let computed_display = self.format_type_for_assignability_message(param_type);
-        if !computed_display.starts_with('{') {
+        if !computed_display.starts_with('{') && computed_display != "[]" {
             return None;
         }
 
