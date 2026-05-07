@@ -386,6 +386,31 @@ export interface I {
 }
 
 #[test]
+fn test_asserted_class_property_initializer_retains_local_type_alias() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type N = 1;
+export class Bar {
+    c3? = 1 as N;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("type N = 1;"),
+        "Expected asserted initializer alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("c3?: N;"),
+        "Expected optional asserted property to use the alias without widening: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected module marker when local alias is retained: {output}"
+    );
+}
+
+#[test]
 fn test_empty_named_export_has_no_extra_spacing() {
     let source = "export {};";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
