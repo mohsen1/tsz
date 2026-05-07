@@ -40,11 +40,6 @@ impl Server {
                     .collect()
             })
             .unwrap_or_default();
-        let request_start_line = request
-            .arguments
-            .get("startLine")
-            .and_then(serde_json::Value::as_u64)
-            .map(|line| line as usize);
         let request_span = request
             .arguments
             .get("startLine")
@@ -809,43 +804,6 @@ impl Server {
             Self::rewrite_jsdoc_import_fixes(&content, &mut response_actions);
             self.rewrite_commonjs_import_fixes(file_path, &content, &mut response_actions);
             self.rewrite_import_fixes_for_type_order(&content, &mut response_actions);
-            let jsdoc_infer_placeholders_enabled =
-                Self::should_emit_jsdoc_infer_placeholders(file_path);
-            let has_annotate_jsdoc = response_actions.iter().any(|action| {
-                action.get("fixName").and_then(serde_json::Value::as_str)
-                    == Some("annotateWithTypeFromJSDoc")
-            });
-            let has_infer_from_usage = response_actions.iter().any(|action| {
-                action.get("fixId").and_then(serde_json::Value::as_str) == Some("inferFromUsage")
-            });
-            if error_codes.len() == 1
-                && error_codes[0] == 80004
-                && jsdoc_infer_placeholders_enabled
-                && has_annotate_jsdoc
-                && !has_infer_from_usage
-            {
-                let infer_count =
-                    Self::estimate_jsdoc_infer_action_count(&content, request_start_line);
-                if infer_count > 0 {
-                    let infer_labels =
-                        Self::estimate_jsdoc_infer_action_labels(&content, request_start_line);
-                    let mut infer_actions = Vec::with_capacity(infer_count);
-                    for idx in 0..infer_count {
-                        let label = infer_labels
-                            .get(idx)
-                            .cloned()
-                            .unwrap_or_else(|| format!("arg{}", idx + 1));
-                        infer_actions.push(serde_json::json!({
-                            "fixName": "inferFromUsage",
-                            "description": format!("Infer type from usage: {label}"),
-                            "changes": [],
-                            "fixId": "inferFromUsage",
-                            "fixAllDescription": "Infer all types from usage",
-                        }));
-                    }
-                    response_actions.splice(0..0, infer_actions);
-                }
-            }
             if response_actions.iter().any(|action| {
                 action
                     .get("description")
@@ -3775,69 +3733,6 @@ impl Server {
         self.stub_response(seq, request, Some(serde_json::json!({"changes": []})))
     }
 
-    fn estimate_jsdoc_infer_action_labels(
-        content: &str,
-        start_line_one_based: Option<usize>,
-    ) -> Vec<String> {
-        let lines: Vec<&str> = content.lines().collect();
-        if lines.is_empty() {
-            return Vec::new();
-        }
-
-        let mut line_idx = start_line_one_based
-            .unwrap_or(1)
-            .saturating_sub(1)
-            .min(lines.len().saturating_sub(1));
-        while line_idx > 0 && !lines[line_idx].contains("/**") {
-            line_idx -= 1;
-        }
-        if !lines[line_idx].contains("/**") {
-            return Vec::new();
-        }
-
-        let mut block_end = line_idx;
-        while block_end < lines.len() && !lines[block_end].contains("*/") {
-            block_end += 1;
-        }
-        if block_end >= lines.len() {
-            return Vec::new();
-        }
-
-        let target_line = lines
-            .iter()
-            .enumerate()
-            .skip(block_end + 1)
-            .find_map(|(idx, line)| (!line.trim().is_empty()).then_some((idx, *line)));
-        let Some((_, target)) = target_line else {
-            return Vec::new();
-        };
-
-        let Some(open) = target.find('(') else {
-            return Vec::new();
-        };
-        let Some(close) = target.rfind(')') else {
-            return Vec::new();
-        };
-        if close <= open {
-            return Vec::new();
-        }
-
-        target[open + 1..close]
-            .split(',')
-            .filter_map(|segment| {
-                let trimmed = segment.trim();
-                if trimmed.is_empty() || trimmed.contains(':') {
-                    return None;
-                }
-                let label = trimmed.trim_start_matches("...").trim();
-                let label = label
-                    .chars()
-                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
-                    .collect::<String>();
-                (!label.is_empty()).then_some(label)
-            })
-            .collect()
-    }
 }
 
 #[cfg(test)]

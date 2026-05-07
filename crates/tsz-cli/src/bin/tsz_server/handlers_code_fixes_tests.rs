@@ -43,48 +43,63 @@ fn make_server() -> Server {
     }
 }
 
+// Issue #3848: getCodeFixes must NOT inject filename-gated `inferFromUsage`
+// placeholders. The same source text and request should produce the same
+// response regardless of the filename. Locks tsc parity for the JSDoc
+// fourslash fixture filename that previously triggered the gate.
 #[test]
-fn get_code_fixes_jsdoc_infer_placeholders_match_fourslash_order_16() {
-    let mut server = make_server();
-    let file = "/annotateWithTypeFromJSDoc16.ts";
+fn get_code_fixes_jsdoc_does_not_inject_infer_placeholders() {
     let content = "/** @type {function(*, ...number, ...boolean): void} */\nvar x = (x, ys, ...zs) => { x; ys; zs; };\n";
-    let annotate_index_zero_based = 3usize;
 
-    server
-        .open_files
-        .insert(file.to_string(), content.to_string());
-    let req = TsServerRequest {
-        seq: 1,
-        _msg_type: "request".to_string(),
-        command: "getCodeFixes".to_string(),
-        arguments: serde_json::json!({
-            "file": file,
-            "startLine": 1,
-            "startOffset": 1,
-            "endLine": 1,
-            "endOffset": 1,
-            "errorCodes": [80004]
-        }),
+    let collect = |file: &str| {
+        let mut server = make_server();
+        server
+            .open_files
+            .insert(file.to_string(), content.to_string());
+        let req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "getCodeFixes".to_string(),
+            arguments: serde_json::json!({
+                "file": file,
+                "startLine": 2,
+                "startOffset": 5,
+                "endLine": 2,
+                "endOffset": 6,
+                "errorCodes": [80004]
+            }),
+        };
+        let resp = server.handle_get_code_fixes(1, &req);
+        assert!(resp.success, "expected getCodeFixes to succeed for {file}");
+        resp.body
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default()
     };
-    let resp = server.handle_get_code_fixes(1, &req);
-    assert!(resp.success, "expected getCodeFixes to succeed for {file}");
-    let actions = resp
-        .body
-        .as_ref()
-        .and_then(serde_json::Value::as_array)
-        .expect("expected getCodeFixes actions array");
-    assert!(
-        actions.len() > annotate_index_zero_based,
-        "expected at least {} actions for {file}, got {actions:?}",
-        annotate_index_zero_based + 1
-    );
-    let annotate = &actions[annotate_index_zero_based];
+
+    // The fixture filename that previously triggered the gate must not
+    // produce extra placeholder actions.
+    let gated = collect("/annotateWithTypeFromJSDoc16.ts");
+    let unrelated = collect("/sameContentDifferentName.ts");
+
+    for (file, actions) in [("gated", &gated), ("unrelated", &unrelated)] {
+        for action in actions.iter() {
+            assert_ne!(
+                action.get("fixId").and_then(serde_json::Value::as_str),
+                Some("inferFromUsage"),
+                "{file}: did not expect inferFromUsage placeholder, got: {actions:?}"
+            );
+        }
+    }
+
+    // The two responses should be identical — the filename must not affect
+    // which actions appear. Pre-fix, the gated filename produced 4 actions
+    // (3 inferFromUsage placeholders + Annotate); the unrelated one produced 1.
     assert_eq!(
-        annotate
-            .get("description")
-            .and_then(serde_json::Value::as_str),
-        Some("Annotate with type from JSDoc"),
-        "unexpected action order for {file}: {actions:?}"
+        gated.len(),
+        unrelated.len(),
+        "filename should not affect action count: gated={gated:?}, unrelated={unrelated:?}"
     );
 }
 
