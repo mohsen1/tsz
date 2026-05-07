@@ -2198,7 +2198,26 @@ impl<'a> CheckerState<'a> {
             && let Some(t_param) =
                 crate::query_boundaries::common::type_param_info(self.ctx.types, t_obj)
             && s_param.name == t_param.name
-            && self.is_assignable_to(s_idx, t_idx)
+            && self.is_generic_index_key_assignable(s_idx, t_idx)
+        {
+            return true;
+        }
+
+        // Pre-evaluation IndexAccess covariance check: `U[J]` is assignable to
+        // `T[K]` when `U extends T` and `J extends K`. Evaluation can erase the
+        // source object identity before the key relationship is considered.
+        if let Some((s_obj, s_idx)) =
+            crate::query_boundaries::checkers::generic::index_access_components(
+                self.ctx.types,
+                source,
+            )
+            && let Some((t_obj, t_idx)) =
+                crate::query_boundaries::checkers::generic::index_access_components(
+                    self.ctx.types,
+                    target,
+                )
+            && self.type_param_constraint_chain_reaches(s_obj, t_obj)
+            && self.is_generic_index_key_assignable(s_idx, t_idx)
         {
             return true;
         }
@@ -2532,6 +2551,55 @@ impl<'a> CheckerState<'a> {
             && let Some(keyof_operand) = get_keyof_type(self.ctx.types, constraint)
         {
             return keyof_operand == object_type;
+        }
+
+        false
+    }
+
+    fn is_generic_index_key_assignable(&mut self, source_key: TypeId, target_key: TypeId) -> bool {
+        if source_key == target_key {
+            return true;
+        }
+
+        if let (Some(source_param), Some(target_param)) = (
+            crate::query_boundaries::common::type_param_info(self.ctx.types, source_key),
+            crate::query_boundaries::common::type_param_info(self.ctx.types, target_key),
+        ) {
+            return source_param.name == target_param.name
+                || self.type_param_constraint_chain_reaches(source_key, target_key);
+        }
+
+        self.is_assignable_to(source_key, target_key)
+    }
+
+    fn type_param_constraint_chain_reaches(&self, source: TypeId, target: TypeId) -> bool {
+        let target_param = crate::query_boundaries::common::type_param_info(self.ctx.types, target);
+        let mut current = source;
+        let mut seen = FxHashSet::default();
+
+        while seen.insert(current) {
+            if current == target {
+                return true;
+            }
+
+            if let (Some(current_param), Some(target_param)) = (
+                crate::query_boundaries::common::type_param_info(self.ctx.types, current),
+                target_param,
+            ) && current_param.name == target_param.name
+            {
+                return true;
+            }
+
+            let Some(current_param) =
+                crate::query_boundaries::common::type_param_info(self.ctx.types, current)
+            else {
+                return false;
+            };
+            let Some(constraint) = current_param.constraint else {
+                return false;
+            };
+
+            current = constraint;
         }
 
         false
