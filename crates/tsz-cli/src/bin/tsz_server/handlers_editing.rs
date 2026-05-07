@@ -184,6 +184,23 @@ impl Server {
         // braceCompletion returns boolean indicating whether the opening brace
         // should be auto-completed with the closing one.
         // We should NOT complete if we're inside a string or comment.
+        if request
+            .arguments
+            .get("openingBrace")
+            .and_then(|v| v.as_str())
+            == Some("<")
+        {
+            return TsServerResponse {
+                seq,
+                msg_type: "response".to_string(),
+                command: request.command.clone(),
+                request_seq: request.seq,
+                success: false,
+                message: Some("No content available.".to_string()),
+                body: None,
+            };
+        }
+
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
             let line = request.arguments.get("line")?.as_u64()? as u32;
@@ -289,8 +306,8 @@ impl Server {
                 return Some(serde_json::json!(false));
             }
 
-            // All valid opening braces should be completed
-            let valid = matches!(opening_brace, "{" | "(" | "[" | "'" | "\"" | "`" | "<");
+            // All valid opening braces should be completed.
+            let valid = matches!(opening_brace, "{" | "(" | "[" | "'" | "\"" | "`");
             Some(serde_json::json!(valid))
         })();
 
