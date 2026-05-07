@@ -408,6 +408,40 @@ fn prepare_paste_edits_accepts_protocol_copied_text_span() {
 }
 
 #[test]
+fn brace_completion_allows_template_substitution_expressions() {
+    let mut server = make_server();
+    assert!(
+        server
+            .handle_tsserver_request(make_request(
+                "open",
+                serde_json::json!({
+                    "file": "/src/index.ts",
+                    "fileContent": "const foo = 1; const x = `${foo}`;\n",
+                    "scriptKindName": "TS",
+                }),
+            ))
+            .success
+    );
+
+    for opening_brace in ["(", "{"] {
+        let response = server.handle_tsserver_request(make_request(
+            "braceCompletion",
+            serde_json::json!({
+                "file": "/src/index.ts",
+                "line": 1,
+                "offset": 32,
+                "openingBrace": opening_brace,
+            }),
+        ));
+        assert!(
+            response.success,
+            "expected {opening_brace} inside template substitution to succeed, got {response:?}"
+        );
+        assert_eq!(response.body, Some(serde_json::json!(true)));
+    }
+}
+
+#[test]
 fn brace_completion_allows_non_quote_openings_inside_comments() {
     let mut server = make_server();
     assert!(
@@ -4355,8 +4389,10 @@ fn test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol() {
         .join("\n"),
     );
 
+    // Symbol metadata (`name`) lives on the `-full` shape, not on plain
+    // `definition` (see #4002). Use `definition-full` to inspect it.
     let req = make_request(
-        "definition",
+        "definition-full",
         serde_json::json!({
             "file": "/foo.ts",
             "line": 3,
@@ -4367,10 +4403,10 @@ fn test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol() {
     assert!(resp.success);
     let defs = resp
         .body
-        .expect("definition should return body")
+        .expect("definition-full should return body")
         .as_array()
         .cloned()
-        .expect("definition response should be an array");
+        .expect("definition-full response should be an array");
     assert!(
         defs.iter()
             .any(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("foo")),
@@ -4392,8 +4428,10 @@ fn test_definition_type_only_quoted_alias_marks_non_declare_target_as_local_non_
         .join("\n"),
     );
 
+    // `isAmbient` / `isLocal` live on the `-full` shape, not on plain
+    // `definition` (see #4002). Use `definition-full` to inspect them.
     let req = make_request(
-        "definition",
+        "definition-full",
         serde_json::json!({
             "file": "/foo.ts",
             "line": 3,
@@ -4404,10 +4442,10 @@ fn test_definition_type_only_quoted_alias_marks_non_declare_target_as_local_non_
     assert!(resp.success);
     let defs = resp
         .body
-        .expect("definition should return body")
+        .expect("definition-full should return body")
         .as_array()
         .cloned()
-        .expect("definition response should be an array");
+        .expect("definition-full response should be an array");
     let foo_def = defs
         .iter()
         .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("foo"))

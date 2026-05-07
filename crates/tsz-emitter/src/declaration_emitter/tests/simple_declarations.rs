@@ -1599,6 +1599,37 @@ function C() {
 }
 
 #[test]
+fn test_js_commonjs_keyword_named_exports_emit_aliases() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.class = 123;
+exports.for = "loop";
+"#,
+    );
+
+    assert!(
+        output.contains("declare const _class: 123;"),
+        "Expected reserved export name to use a local alias: {output}"
+    );
+    assert!(
+        output.contains("declare const _for: \"loop\";"),
+        "Expected reserved export name to use a local alias: {output}"
+    );
+    assert!(
+        output.contains("export { _class as class, _for as for };"),
+        "Expected reserved export aliases to be grouped: {output}"
+    );
+    assert!(
+        !output.contains("export const class"),
+        "Did not expect invalid keyword binding declaration: {output}"
+    );
+    assert!(
+        !output.contains("export const for"),
+        "Did not expect invalid keyword binding declaration: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_bracket_string_exports_emit_named_declarations() {
     let output = emit_js_dts_with_usage_analysis(
         r#"

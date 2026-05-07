@@ -1026,9 +1026,7 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let module_kind = self.ctx.compiler_options.module;
-            let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
-            if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
+            if self.deprecated_mode_suppresses_module_not_found() {
                 return;
             }
             let mut error_code = error.code;
@@ -1062,9 +1060,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let module_kind = self.ctx.compiler_options.module;
-        let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
-        if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
+        if self.deprecated_mode_suppresses_module_not_found() {
             return;
         }
         if self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
