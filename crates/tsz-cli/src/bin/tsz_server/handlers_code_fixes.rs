@@ -1588,7 +1588,7 @@ impl Server {
     /// Returns `(name, updated_content)` or `None` when the call site doesn't
     /// look like an unresolved function call.
     ///
-    /// Regression for https://github.com/mohsen1/tsz/issues/3806 — without this
+    /// Regression for <https://github.com/mohsen1/tsz/issues/3806> — without this
     /// path, the empty `fixMissingImport` action stays in `response_actions`
     /// and the missing-function fallback never fires.
     fn apply_add_missing_function_declaration_for_plain_call_at_request(
