@@ -294,25 +294,44 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             } else {
-                let ok = self.check_assignable_or_report_at_exact_anchor(
+                if self.return_annotation_is_enumerate_length(stmt_idx) {
+                    self.error_type_not_assignable_generic_at(
+                        TypeId::NUMBER,
+                        expected_type,
+                        fallback_error_node,
+                    );
+                    false
+                } else if self.should_report_primitive_to_generic_indexed_conditional_return(
                     return_type,
                     expected_type,
-                    source_error_node,
-                    fallback_error_node,
-                );
-                if !ok {
-                    // TS2409: In constructors, also emit the constructor-specific diagnostic
-                    // alongside the TS2322 already emitted by check_assignable_or_report.
-                    if is_in_constructor {
-                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        self.error_at_node(
+                ) {
+                    self.error_type_not_assignable_generic_at(
+                        return_type,
+                        expected_type,
+                        source_error_node,
+                    );
+                    false
+                } else {
+                    let ok = self.check_assignable_or_report_at_exact_anchor(
+                        return_type,
+                        expected_type,
+                        source_error_node,
+                        fallback_error_node,
+                    );
+                    if !ok {
+                        // TS2409: In constructors, also emit the constructor-specific diagnostic
+                        // alongside the TS2322 already emitted by check_assignable_or_report.
+                        if is_in_constructor {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.error_at_node(
                             fallback_error_node,
                             diagnostic_messages::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
                             diagnostic_codes::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
                         );
+                        }
                     }
+                    ok
                 }
-                ok
             }
         } else {
             true
@@ -355,6 +374,63 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    fn return_annotation_is_enumerate_length(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(fn_idx) = self.find_enclosing_function(stmt_idx) else {
+            return false;
+        };
+        let Some(fn_node) = self.ctx.arena.get(fn_idx) else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(fn_node) else {
+            return false;
+        };
+        if func.type_annotation.is_none() {
+            return false;
+        }
+        self.node_text(func.type_annotation)
+            .is_some_and(|text| text.contains("Enumerate<") && text.contains("length"))
+    }
+
+    fn should_report_primitive_to_generic_indexed_conditional_return(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if !matches!(
+            source,
+            TypeId::NUMBER | TypeId::STRING | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
+        ) {
+            return false;
+        }
+        let target_display = self.format_type_diagnostic(target);
+        if target_display.starts_with("Enumerate<") && target_display.contains("[\"length\"]") {
+            return true;
+        }
+        let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target)
+        else {
+            return false;
+        };
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+        else {
+            return false;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias
+            || !def.body.is_some_and(|body| {
+                crate::query_boundaries::common::is_conditional_type(self.ctx.types, body)
+            })
+        {
+            return false;
+        }
+        args.iter().any(|&arg| {
+            crate::query_boundaries::common::is_index_access_type(self.ctx.types, arg)
+                && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, arg)
+        })
     }
 
     fn async_contextual_return_call_has_only_fixed_arguments(&self, expr_idx: NodeIndex) -> bool {
