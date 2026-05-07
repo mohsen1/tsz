@@ -1195,10 +1195,14 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(bindings) = self.arena.get_named_imports(bindings_node)
                     {
                         if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
-                            // Namespace import (import * as ns): skip in fallback mode
-                            // These are almost exclusively for value-level code (ns.method())
-                            // and rarely needed in .d.ts output
-                            named_count = 0;
+                            // Namespace import (import * as ns): in noCheck fallback,
+                            // preserve type-only namespace imports so declaration output
+                            // can still reference the namespace type alias (e.g. ns.Foo).
+                            named_count = usize::from(
+                                clause.is_type_only
+                                    && self
+                                        .import_alias_targets_type_entity(import.module_specifier),
+                            );
                         } else if is_type_only {
                             // Type-only named imports - keep all
                             named_count = bindings.elements.nodes.len();

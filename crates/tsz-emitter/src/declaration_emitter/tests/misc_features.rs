@@ -1334,6 +1334,28 @@ export let x: Foo;
 }
 
 #[test]
+fn type_only_namespace_import_preserved_in_dts_fallback() {
+    let output = emit_dts(
+        r#"
+import type * as ns from "./dep";
+export interface Foo {
+    x: string;
+}
+export type T = ns.Foo;
+"#,
+    );
+
+    assert!(
+        output.contains(r#"import type * as ns from "./dep";"#),
+        "Expected type-only namespace import to be preserved: {output}"
+    );
+    assert!(
+        output.contains("export type T = ns.Foo;"),
+        "Expected exported type to reference preserved namespace import: {output}"
+    );
+}
+
+#[test]
 fn value_only_ambient_dependency_from_exported_initializer_is_elided() {
     let output = emit_dts_with_usage_analysis(
         r#"
