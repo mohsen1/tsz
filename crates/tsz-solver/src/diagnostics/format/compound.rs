@@ -2298,10 +2298,44 @@ impl<'a> TypeFormatter<'a> {
             return (1, file_id, span_start);
         }
 
-        // Try Application - generic instantiation, get base type's position
+        // Try Application - generic instantiation. Use the MAX position of the
+        // base and the type arguments so that types like `Container<Cover>`
+        // (modeled as `Application(Container, [Cover])`) sort with their
+        // user-defined element type rather than with a built-in/lib base.
         if let Some(TypeData::Application(app_id)) = &data {
             let app = self.interner.type_application(*app_id);
-            return self.get_source_position_for_type(app.base, def_store);
+            let mut best = self.get_source_position_for_type(app.base, def_store);
+            for &arg in &app.args {
+                let candidate = self.get_source_position_for_type(arg, def_store);
+                if candidate > best {
+                    best = candidate;
+                }
+            }
+            return best;
+        }
+
+        // Try Array - structural shorthand for `Array<T>`. Use the element's
+        // position +1 so the array form sorts with its element but always
+        // immediately after it. This keeps `Cover | Cover[]` displays in
+        // source declaration order (and the canonical interner ordering of
+        // the union doesn't matter because the element vs. array tie-break
+        // is decided by this offset).
+        if let Some(TypeData::Array(elem)) = &data {
+            let (tier, file, span) = self.get_source_position_for_type(*elem, def_store);
+            if tier == 0 {
+                return (tier, file, span.saturating_add(100));
+            }
+            return (tier, file, span.saturating_add(1));
+        }
+
+        // Try ReadonlyType - `readonly T[]` modifier wrapping an inner type.
+        // Use the inner type's position +1 for the same reason.
+        if let Some(TypeData::ReadonlyType(inner)) = &data {
+            let (tier, file, span) = self.get_source_position_for_type(*inner, def_store);
+            if tier == 0 {
+                return (tier, file, span.saturating_add(100));
+            }
+            return (tier, file, span.saturating_add(1));
         }
 
         // Try Enum
