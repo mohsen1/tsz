@@ -145,10 +145,20 @@ export class Bar {
 "#;
     let output = emit_dts_strip_internal(source);
 
-    assert!(
-        !output.contains("    isInternal1: string;"),
-        "Expected @internal parameter properties to skip class fields: {output}"
-    );
+    for stripped_name in [
+        "isInternal1",
+        "isInternal2",
+        "isInternal3",
+        "isInternal4",
+        "isInternal5",
+        "isInternal6",
+        "isInternal7",
+    ] {
+        assert!(
+            !output.contains(&format!("    {stripped_name}: string;")),
+            "Expected @internal parameter property field {stripped_name} to be stripped: {output}"
+        );
+    }
     assert!(
         output.contains("notInternal1: string;")
             && output.contains("notInternal2: string;")

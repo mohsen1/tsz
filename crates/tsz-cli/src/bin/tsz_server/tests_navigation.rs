@@ -687,6 +687,111 @@ fn test_document_highlights_import_specifier_dedupes_and_has_context() {
 }
 
 #[test]
+fn test_references_include_cross_file_import_bindings_and_uses() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "export const value = 1;\n".to_string());
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import { value } from \"./a\";\nconsole.log(value);\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/c.ts".to_string(), "export * from \"./a\";\n".to_string());
+
+    let req = make_request(
+        "references",
+        serde_json::json!({"file": "/a.ts", "line": 1, "offset": 14}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("references should return a body");
+    let refs = body
+        .get("refs")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .expect("references should include refs array");
+
+    assert!(
+        refs.iter().any(|entry| {
+            entry.get("file").and_then(serde_json::Value::as_str) == Some("/a.ts")
+                && entry["start"]["line"].as_u64() == Some(1)
+                && entry["start"]["offset"].as_u64() == Some(14)
+                && entry["isDefinition"].as_bool() == Some(true)
+        }),
+        "expected declaration reference in /a.ts: {refs:?}"
+    );
+    assert!(
+        refs.iter().any(|entry| {
+            entry.get("file").and_then(serde_json::Value::as_str) == Some("/b.ts")
+                && entry["start"]["line"].as_u64() == Some(1)
+                && entry["start"]["offset"].as_u64() == Some(10)
+                && entry["isDefinition"].as_bool() == Some(false)
+        }),
+        "expected import binding reference in /b.ts: {refs:?}"
+    );
+    assert!(
+        refs.iter().any(|entry| {
+            entry.get("file").and_then(serde_json::Value::as_str) == Some("/b.ts")
+                && entry["start"]["line"].as_u64() == Some(2)
+                && entry["start"]["offset"].as_u64() == Some(13)
+                && entry["isDefinition"].as_bool() == Some(false)
+        }),
+        "expected imported value use reference in /b.ts: {refs:?}"
+    );
+}
+
+#[test]
+fn test_file_references_include_cross_file_module_specifiers() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "export const value = 1;\n".to_string());
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import { value } from \"./a\";\nconsole.log(value);\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/c.ts".to_string(), "export * from \"./a\";\n".to_string());
+
+    let req = make_request("fileReferences", serde_json::json!({"file": "/a.ts"}));
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("fileReferences should return a body");
+    let refs = body
+        .get("refs")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .expect("fileReferences should include refs array");
+
+    assert!(
+        refs.iter().any(|entry| {
+            entry.get("file").and_then(serde_json::Value::as_str) == Some("/b.ts")
+                && entry["start"]["line"].as_u64() == Some(1)
+                && entry["start"]["offset"].as_u64() == Some(24)
+                && entry["end"]["offset"].as_u64() == Some(27)
+        }),
+        "expected /b.ts import module specifier reference: {refs:?}"
+    );
+    assert!(
+        refs.iter().any(|entry| {
+            entry.get("file").and_then(serde_json::Value::as_str) == Some("/c.ts")
+                && entry["start"]["line"].as_u64() == Some(1)
+                && entry["start"]["offset"].as_u64() == Some(16)
+                && entry["end"]["offset"].as_u64() == Some(19)
+        }),
+        "expected /c.ts export-star module specifier reference: {refs:?}"
+    );
+    assert_eq!(
+        body.get("symbolName").and_then(serde_json::Value::as_str),
+        Some("\"/a.ts\""),
+        "fileReferences should report the requested file path as symbol name: {body:?}"
+    );
+}
+
+#[test]
 fn test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs() {
     let mut server = make_server();
     server.open_files.insert(

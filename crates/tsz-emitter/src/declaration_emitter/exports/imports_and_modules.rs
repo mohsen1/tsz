@@ -1486,7 +1486,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(" | undefined");
                     }
                 }
-                previous_param_end = param_node.end;
+                previous_param_end = self.parameter_semantic_end(param_node.end, param);
             }
         }
 
