@@ -873,22 +873,21 @@ fn test_widen_non_string_bigint_non_literal_passthrough() {
 // -------- apply_const_assertion ----------------------------------------------
 
 #[test]
-fn test_apply_const_assertion_array_becomes_readonly_tuple() {
-    // [1] as const → readonly [1] (tuple wrapped in ReadonlyType).
+fn test_apply_const_assertion_array_becomes_readonly_array() {
+    // Declared arrays keep array shape inside the ReadonlyType wrapper.
     let interner = TypeInterner::new();
     let lit = interner.literal_number(1.0);
     let arr = interner.array(lit);
     let result = apply_const_assertion(&interner, arr);
-    let tuple_inner = match interner.lookup(result) {
+    let array_inner = match interner.lookup(result) {
         Some(TypeData::ReadonlyType(inner)) => inner,
         other => panic!("Expected ReadonlyType, got {other:?}"),
     };
-    let elements = match interner.lookup(tuple_inner) {
-        Some(TypeData::Tuple(list_id)) => interner.tuple_list(list_id).to_vec(),
-        other => panic!("Expected Tuple, got {other:?}"),
+    let element = match interner.lookup(array_inner) {
+        Some(TypeData::Array(element)) => element,
+        other => panic!("Expected Array, got {other:?}"),
     };
-    assert_eq!(elements.len(), 1);
-    assert_eq!(elements[0].type_id, lit);
+    assert_eq!(element, lit);
 }
 
 #[test]
