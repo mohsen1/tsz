@@ -3208,6 +3208,69 @@ fn compile_allow_js_passthrough_emits_skipped_node_modules_js() {
 }
 
 #[test]
+fn compile_checked_js_prototype_optional_chain_method_call_suppresses_ts2531() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "strict": true,
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true,
+            "pretty": false,
+            "types": []
+          },
+          "files": ["index.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"
+// @ts-check
+Element.prototype.remove = function () {
+  this.parentNode?.removeChild(document.body);
+};
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|diag| diag.code != diagnostic_codes::OBJECT_IS_POSSIBLY_NULL),
+        "optional chain should suppress TS2531, got diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    write_file(
+        &base.join("index.js"),
+        r#"
+// @ts-check
+Element.prototype.remove = function () {
+  this.parentNode.removeChild(document.body);
+};
+"#,
+    );
+
+    let control = compile(&args, base).expect("compile should succeed");
+    assert!(
+        control
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::OBJECT_IS_POSSIBLY_NULL),
+        "plain nullable receiver should still report TS2531, got diagnostics: {:?}",
+        control.diagnostics
+    );
+}
+
+#[test]
 fn compile_emit_bom_prefixes_output_files() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
