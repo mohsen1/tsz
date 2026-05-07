@@ -2599,56 +2599,60 @@ impl Server {
                 _ => &[file_ext],
             };
 
-            // Collect candidate files from open files and project files
-            let mut files: Vec<String> = Vec::new();
-            for open_path in self.open_files.keys() {
-                if open_path == file {
-                    continue;
+            let push_candidate = |files: &mut Vec<String>,
+                                  candidate: &str,
+                                  compatible_exts: &[&str]| {
+                if candidate == file || files.iter().any(|p| p == candidate) {
+                    return;
                 }
-                // Skip declaration files and lib files
-                if open_path.ends_with(".d.ts")
-                    || open_path.ends_with(".d.mts")
-                    || open_path.ends_with(".d.cts")
+                if candidate.ends_with(".d.ts")
+                    || candidate.ends_with(".d.mts")
+                    || candidate.ends_with(".d.cts")
                 {
-                    continue;
+                    return;
                 }
-                if let Some(ext) = std::path::Path::new(open_path.as_str())
+                if candidate.contains("/node_modules/") || candidate.contains("\\node_modules\\") {
+                    return;
+                }
+                if let Some(ext) = std::path::Path::new(candidate)
                     .extension()
                     .and_then(|e| e.to_str())
                     && compatible_exts.contains(&ext)
                 {
-                    files.push(open_path.clone());
+                    files.push(candidate.to_string());
+                }
+            };
+
+            // Collect candidate files from open files, the configured tsconfig
+            // project (issue #3798), and external project lists.
+            let mut files: Vec<String> = Vec::new();
+            for open_path in self.open_files.keys() {
+                push_candidate(&mut files, open_path, compatible_exts);
+            }
+            // Issue #3798: include files from the owning tsconfig project, not
+            // just open files. tsc's language service ranges over the whole
+            // project file set when ranking move-to-file targets.
+            if let Some(project) = self.compile_on_save_project(file) {
+                for pf in &project.file_names {
+                    push_candidate(&mut files, pf, compatible_exts);
                 }
             }
-
-            // Also check external project files
             for project_files in self.external_project_files.values() {
                 for pf in project_files {
-                    if pf == file || files.contains(pf) {
-                        continue;
-                    }
-                    if pf.ends_with(".d.ts") || pf.ends_with(".d.mts") || pf.ends_with(".d.cts") {
-                        continue;
-                    }
-                    // Skip node_modules
-                    if pf.contains("/node_modules/") || pf.contains("\\node_modules\\") {
-                        continue;
-                    }
-                    if let Some(ext) = std::path::Path::new(pf.as_str())
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        && compatible_exts.contains(&ext)
-                    {
-                        files.push(pf.clone());
-                    }
+                    push_candidate(&mut files, pf, compatible_exts);
                 }
             }
 
             files.sort();
 
-            // Suggest a new filename based on the source file's directory
+            // Issue #3798: derive the suggested new-file name from the
+            // declaration's identifier in the requested range, falling back
+            // to "newFile" when no identifier is found. tsc names the
+            // suggestion after the moved symbol (e.g. "moveMe.ts").
             let parent = file_path.parent().unwrap_or(std::path::Path::new(""));
-            let new_file_name = parent.join(format!("newFile.{file_ext}"));
+            let symbol_stub = Self::move_to_file_symbol_name(self, request)
+                .unwrap_or_else(|| "newFile".to_string());
+            let new_file_name = parent.join(format!("{symbol_stub}.{file_ext}"));
 
             Some(serde_json::json!({
                 "newFileName": new_file_name.to_string_lossy(),
@@ -2661,6 +2665,59 @@ impl Server {
             request,
             Some(result.unwrap_or(serde_json::json!({"newFileName": "", "files": []}))),
         )
+    }
+
+    /// Extract the leading declaration identifier inside the request's
+    /// range. Used by `move-to-file` suggestions to name the new file
+    /// after the moved symbol (issue #3798). Falls back to None when no
+    /// matching declaration is found in the source slice.
+    fn move_to_file_symbol_name(&self, request: &TsServerRequest) -> Option<String> {
+        let file = request.arguments.get("file")?.as_str()?;
+        let source_text = self.open_files.get(file)?;
+        let line_map = LineMap::build(source_text);
+        let start_line = request.arguments.get("startLine")?.as_u64()? as u32;
+        let start_offset = request.arguments.get("startOffset")?.as_u64()? as u32;
+        let end_line = request.arguments.get("endLine")?.as_u64()? as u32;
+        let end_offset = request.arguments.get("endOffset")?.as_u64()? as u32;
+        let start_pos = Self::tsserver_to_lsp_position(start_line, start_offset);
+        let end_pos = Self::tsserver_to_lsp_position(end_line, end_offset);
+        let start_byte = line_map.position_to_offset(start_pos, source_text)? as usize;
+        let end_byte = line_map.position_to_offset(end_pos, source_text)? as usize;
+        let slice = source_text.get(start_byte..end_byte.min(source_text.len()))?;
+        // Look for the leading exported declaration's name. The text-search
+        // approximation matches tsc's typical move-to-file behavior for the
+        // common cases (function/class/const/let/var/interface/type/enum).
+        let after_export = slice
+            .trim_start()
+            .strip_prefix("export ")
+            .map_or(slice.trim_start(), str::trim_start);
+        for keyword in [
+            "function ",
+            "class ",
+            "interface ",
+            "enum ",
+            "type ",
+            "const ",
+            "let ",
+            "var ",
+            "namespace ",
+            "module ",
+            "abstract class ",
+            "default function ",
+            "default class ",
+        ] {
+            if let Some(rest) = after_export.strip_prefix(keyword) {
+                let name: String = rest
+                    .trim_start()
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                    .collect();
+                if !name.is_empty() {
+                    return Some(name);
+                }
+            }
+        }
+        None
     }
 
     /// `preparePasteEdits` — checks whether paste-with-imports is available.
