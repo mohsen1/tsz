@@ -1291,3 +1291,60 @@ export let x: Foo;
         "Expected type-only default import to still be preserved: {output}"
     );
 }
+
+#[test]
+fn value_only_ambient_dependency_from_exported_initializer_is_elided() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const t: number;
+export const out: number = t;
+"#,
+    );
+
+    assert!(
+        !output.contains("declare const t"),
+        "Did not expect ambient initializer-only dependency to leak: {output}"
+    );
+    assert!(
+        output.contains("export declare const out: number;"),
+        "Expected exported declaration to remain: {output}"
+    );
+}
+
+#[test]
+fn ambient_value_dependency_used_in_exported_type_query_is_preserved() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const t: number;
+export type T = typeof t;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const t: number;"),
+        "Expected ambient value referenced by exported typeof to remain: {output}"
+    );
+    assert!(
+        output.contains("export type T = typeof t;"),
+        "Expected exported type query to remain: {output}"
+    );
+}
+
+#[test]
+fn ambient_value_dependency_exported_by_specifier_is_preserved() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const t: number;
+export { t };
+"#,
+    );
+
+    assert!(
+        output.contains("declare const t: number;"),
+        "Expected ambient value exported by specifier to remain: {output}"
+    );
+    assert!(
+        output.contains("export { t };"),
+        "Expected export specifier to remain: {output}"
+    );
+}

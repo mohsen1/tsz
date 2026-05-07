@@ -1858,6 +1858,11 @@ impl<'a> DeclarationEmitter<'a> {
                                 decl.name,
                                 decl.initializer,
                             )
+                            && !self.declared_ambient_value_dependency_is_initializer_only(
+                                decl.name,
+                                decl.initializer,
+                                decl.type_annotation,
+                            )
                     });
                 }
 
