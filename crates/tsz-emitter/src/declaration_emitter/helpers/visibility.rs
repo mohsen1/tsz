@@ -871,7 +871,25 @@ impl<'a> DeclarationEmitter<'a> {
             return export.module_specifier.is_none()
                 && self.declaration_is_type_side_named(export.export_clause, None);
         }
-        self.declaration_is_type_side_named(decl_idx, None)
+        // Direct interface/type-alias declaration: require the `export`
+        // modifier so a non-exported `type fn = …` does not falsely mark a
+        // value-side const named `fn` as "type-only re-exported".
+        let has_export = match decl_node.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.arena.get_interface(decl_node).is_some_and(|iface| {
+                    self.arena
+                        .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.arena.get_type_alias(decl_node).is_some_and(|alias| {
+                    self.arena
+                        .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            _ => false,
+        };
+        has_export && self.declaration_is_type_side_named(decl_idx, None)
     }
 
     fn declaration_is_type_side_named(&self, decl_idx: NodeIndex, name: Option<&str>) -> bool {
