@@ -130,11 +130,45 @@ fn load_es5_lib_for_test() -> Vec<Arc<LibFile>> {
     Vec::new()
 }
 
+fn load_es5_and_dom_lib_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_paths = [
+        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
+    ];
+
+    let mut lib_files = Vec::new();
+    for lib_path in lib_paths {
+        if lib_path.exists()
+            && let Ok(content) = std::fs::read_to_string(&lib_path)
+            && let Some(file_name) = lib_path.file_name()
+        {
+            lib_files.push(Arc::new(LibFile::from_source(
+                file_name.to_string_lossy().to_string(),
+                content,
+            )));
+        }
+    }
+
+    lib_files
+}
+
 fn check_js_with_es5_lib(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
+    check_js_with_lib_files(source, options, load_es5_lib_for_test())
+}
+
+fn check_js_with_es5_and_dom_lib(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
+    check_js_with_lib_files(source, options, load_es5_and_dom_lib_for_test())
+}
+
+fn check_js_with_lib_files(
+    source: &str,
+    options: CheckerOptions,
+    lib_files: Vec<Arc<LibFile>>,
+) -> Vec<(u32, String)> {
     let mut parser =
         tsz_parser::parser::ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    let lib_files = load_es5_lib_for_test();
 
     let mut binder = tsz_binder::BinderState::new();
     if lib_files.is_empty() {
@@ -173,6 +207,65 @@ fn check_js_with_es5_lib(source: &str, options: CheckerOptions) -> Vec<(u32, Str
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
+}
+
+#[test]
+fn checked_js_prototype_optional_parent_method_call_suppresses_ts2531() {
+    let source = r#"
+Element.prototype.remove ??= function () {
+  this.parentNode?.removeChild(this);
+};
+
+/**
+ * @this Node
+ */
+Element.prototype.remove ??= function () {
+  this.parentNode?.removeChild(this);
+};
+"#;
+    let diagnostics = check_js_with_es5_and_dom_lib(
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(&diagnostics, 2531),
+        0,
+        "expected optional parentNode method calls to suppress TS2531, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn checked_js_prototype_plain_parent_method_call_reports_ts2531() {
+    let source = r#"
+Element.prototype.remove = function () {
+  this.parentNode.removeChild(this);
+};
+"#;
+    let diagnostics = check_js_with_es5_and_dom_lib(
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(&diagnostics, 2531),
+        1,
+        "expected non-optional parentNode method call to report TS2531 once, got: {diagnostics:?}"
+    );
 }
 
 #[test]

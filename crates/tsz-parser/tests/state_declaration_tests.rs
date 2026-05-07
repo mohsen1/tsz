@@ -175,6 +175,43 @@ fn parse_namespace_recovery_from_missing_closing_brace() {
 }
 
 #[test]
+fn parse_empty_arrow_body_close_brace_closes_namespace_block() {
+    let (parser, root) = parse_source(
+        "namespace outer {\n  namespace inner {\n    var a = () => };\n    var b = () => }\n  var c = () => };\n}\n",
+    );
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    assert_eq!(sf.statements.nodes.len(), 3);
+
+    let outer_node = arena.get(sf.statements.nodes[0]).unwrap();
+    assert_eq!(outer_node.kind, syntax_kind_ext::MODULE_DECLARATION);
+    let outer = arena.get_module(outer_node).unwrap();
+    let outer_block_node = arena.get(outer.body).unwrap();
+    let outer_block = arena.get_module_block(outer_block_node).unwrap();
+    let outer_statements = &outer_block.statements.as_ref().unwrap().nodes;
+    assert_eq!(outer_statements.len(), 3);
+
+    let inner_node = arena.get(outer_statements[0]).unwrap();
+    assert_eq!(inner_node.kind, syntax_kind_ext::MODULE_DECLARATION);
+    let inner = arena.get_module(inner_node).unwrap();
+    let inner_block_node = arena.get(inner.body).unwrap();
+    let inner_block = arena.get_module_block(inner_block_node).unwrap();
+    assert_eq!(inner_block.statements.as_ref().unwrap().nodes.len(), 1);
+
+    let inner_trailing_empty_node = arena.get(outer_statements[1]).unwrap();
+    assert_eq!(
+        inner_trailing_empty_node.kind,
+        syntax_kind_ext::EMPTY_STATEMENT
+    );
+    let outer_var_node = arena.get(outer_statements[2]).unwrap();
+    assert_eq!(outer_var_node.kind, syntax_kind_ext::VARIABLE_STATEMENT);
+    let top_var_node = arena.get(sf.statements.nodes[1]).unwrap();
+    assert_eq!(top_var_node.kind, syntax_kind_ext::VARIABLE_STATEMENT);
+    let stray_close_node = arena.get(sf.statements.nodes[2]).unwrap();
+    assert_eq!(stray_close_node.kind, syntax_kind_ext::EMPTY_STATEMENT);
+}
+
+#[test]
 fn parse_empty_arrow_body_close_brace_terminates_namespace_block() {
     let (parser, root) = parse_source(
         "namespace outer {\n  namespace inner {\n    var a = () => };\n  var b = () => }\nvar c = () => ;\n",
