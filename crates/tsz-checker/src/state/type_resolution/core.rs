@@ -232,6 +232,10 @@ impl<'a> CheckerState<'a> {
                 let symbol_info = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders);
                 let is_type_alias =
                     symbol_info.is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS));
+                let is_conditional_type_alias =
+                    is_type_alias && self.type_alias_symbol_contains_conditional_type(sym_id);
+                let defer_ts2589_to_indexed_access = is_conditional_type_alias
+                    && self.type_alias_symbol_direct_conditional_branches_are_array_like(sym_id);
                 // TS2589 detection for class types with generic type arguments that may
                 // recursively expand (e.g., `Foo<[...Elements, "abc"]>` where mapped types
                 // in the class cause infinite type instantiation)
@@ -255,10 +259,20 @@ impl<'a> CheckerState<'a> {
                     let should_check_depth = is_class || !args_have_type_params;
                     if should_check_depth {
                         self.ctx.depth_exceeded.set(false);
-                        let _ = self.evaluate_type_with_env_uncached(type_id);
+                        let exceeded = if is_conditional_type_alias
+                            && !defer_ts2589_to_indexed_access
+                        {
+                            query::get_application_info(self.ctx.types, type_id)
+                                .and_then(|(base, _)| query::get_lazy_def_id(self.ctx.types, base))
+                                .is_some_and(|def_id| {
+                                    self.evaluate_type_for_ts2589_check(type_id, def_id)
+                                })
+                        } else {
+                            let _ = self.evaluate_type_with_env_uncached(type_id);
+                            self.ctx.depth_exceeded.get()
+                        };
 
                         // TS2589: emit at the type reference node if depth was exceeded
-                        let exceeded = self.ctx.depth_exceeded.get();
 
                         // Also detect circular mapped-type aliases that the evaluator
                         // can't expand: if the alias body is a mapped type that
@@ -867,6 +881,12 @@ impl<'a> CheckerState<'a> {
                         .get_symbol_with_libs(sym_id, &lib_binders)
                         .is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS));
                     if is_type_alias {
+                        let is_conditional_type_alias =
+                            self.type_alias_symbol_contains_conditional_type(sym_id);
+                        let defer_ts2589_to_indexed_access = is_conditional_type_alias
+                            && self.type_alias_symbol_direct_conditional_branches_are_array_like(
+                                sym_id,
+                            );
                         let args_have_type_params =
                             type_ref.type_arguments.as_ref().is_some_and(|args| {
                                 self.type_arg_nodes_contain_scoped_type_parameter_for_depth_check(
@@ -882,10 +902,21 @@ impl<'a> CheckerState<'a> {
                         if !args_have_type_params {
                             // Reset depth_exceeded before evaluation so we detect fresh depth exceedance
                             self.ctx.depth_exceeded.set(false);
-                            let _ = self.evaluate_type_with_env_uncached(result);
+                            let exceeded =
+                                if is_conditional_type_alias && !defer_ts2589_to_indexed_access {
+                                    query::get_application_info(self.ctx.types, result)
+                                        .and_then(|(base, _)| {
+                                            query::get_lazy_def_id(self.ctx.types, base)
+                                        })
+                                        .is_some_and(|def_id| {
+                                            self.evaluate_type_for_ts2589_check(result, def_id)
+                                        })
+                                } else {
+                                    let _ = self.evaluate_type_with_env_uncached(result);
+                                    self.ctx.depth_exceeded.get()
+                                };
 
                             // TS2589: emit at the type reference node if depth was exceeded
-                            let exceeded = self.ctx.depth_exceeded.get();
 
                             // Also detect circular mapped-type aliases that the evaluator
                             // can't expand: if the alias body is a mapped type that
