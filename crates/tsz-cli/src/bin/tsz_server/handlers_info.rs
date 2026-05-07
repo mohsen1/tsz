@@ -2180,17 +2180,49 @@ impl Server {
                 })
             }
 
+            // tsserver protocol `TextSpan` numbers are UTF-16 code-unit
+            // positions, not Rust byte offsets. Without this conversion any
+            // non-ASCII char before a navtree item shifts the numbers
+            // returned to clients (issue #3912).
+            fn position_to_utf16_offset(
+                source_text: &str,
+                position: tsz_common::position::Position,
+            ) -> u32 {
+                let mut units: u32 = 0;
+                let mut current_line: u32 = 0;
+                let mut current_char: u32 = 0;
+                for ch in source_text.chars() {
+                    if current_line == position.line && current_char == position.character {
+                        return units;
+                    }
+                    let ch_utf16 = u32::try_from(ch.len_utf16()).unwrap_or(0);
+                    units = units.saturating_add(ch_utf16);
+                    if ch == '\n' {
+                        current_line = current_line.saturating_add(1);
+                        current_char = 0;
+                    } else if ch == '\r' {
+                        // CR or CRLF: tsc treats both as a single line break.
+                        // We don't peek the next char here because either
+                        // way the line counter advances; an immediately
+                        // following LF will be skipped on the next
+                        // iteration via the `\n` branch and current_char
+                        // already reset.
+                        current_line = current_line.saturating_add(1);
+                        current_char = 0;
+                    } else {
+                        current_char = current_char.saturating_add(ch_utf16);
+                    }
+                }
+                units
+            }
+
             fn range_to_text_span(
-                line_map: &LineMap,
+                _line_map: &LineMap,
                 source_text: &str,
                 range: tsz_common::position::Range,
             ) -> serde_json::Value {
-                let start = line_map
-                    .position_to_offset(range.start, source_text)
-                    .unwrap_or(0);
-                let end = line_map
-                    .position_to_offset(range.end, source_text)
-                    .unwrap_or(start);
+                let start = position_to_utf16_offset(source_text, range.start);
+                let end = position_to_utf16_offset(source_text, range.end);
                 serde_json::json!({
                     "start": start,
                     "length": end.saturating_sub(start),
@@ -2276,7 +2308,13 @@ impl Server {
                 ("<global>".to_string(), "script")
             };
             let root_span = if full {
-                serde_json::json!({"start": 0, "length": source_text.len()})
+                // UTF-16 length, not byte length — tsserver protocol uses
+                // UTF-16 code units (issue #3912).
+                let utf16_len: u32 = source_text
+                    .chars()
+                    .map(|c| u32::try_from(c.len_utf16()).unwrap_or(0))
+                    .sum();
+                serde_json::json!({"start": 0, "length": utf16_len})
             } else {
                 serde_json::json!({"start": {"line": 1, "offset": 1}, "end": {"line": total_lines, "offset": last_line_len + 1}})
             };

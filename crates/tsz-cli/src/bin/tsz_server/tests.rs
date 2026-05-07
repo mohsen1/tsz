@@ -3572,6 +3572,65 @@ fn test_definition_and_bound_span_has_no_body_without_definition() {
     );
 }
 
+/// Issue #3912: `navtree-full` `TextSpan` numbers must be UTF-16 code-unit
+/// positions (matching tsserver), not Rust byte offsets. A non-ASCII char
+/// before navigation items shifts byte offsets but not UTF-16 offsets.
+#[test]
+fn test_navtree_full_text_spans_are_utf16_positions() {
+    let mut server = make_server();
+    let file = "/utf16-spans.ts";
+    // `é` is 2 UTF-8 bytes but 1 UTF-16 code unit. With byte offsets the
+    // `function f` span would start at 16 (post-`é`) and have length 16;
+    // tsserver returns 15 / 15 because UTF-16 counts the `é` as 1 unit.
+    let content = "const s = \"é\";\nfunction f() {}\n";
+    server
+        .open_files
+        .insert(file.to_string(), content.to_string());
+    let req = make_request("navtree-full", serde_json::json!({"file": file}));
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success, "navtree-full should succeed");
+    let body = resp.body.expect("navtree-full should return a body");
+
+    let spans = body
+        .get("spans")
+        .and_then(serde_json::Value::as_array)
+        .expect("root spans");
+    let root_span = &spans[0];
+    let root_length = root_span
+        .get("length")
+        .and_then(serde_json::Value::as_u64)
+        .expect("root length");
+    let utf16_len: u64 = content
+        .chars()
+        .map(|c| u64::try_from(c.len_utf16()).unwrap_or(0))
+        .sum();
+    assert_eq!(
+        root_length, utf16_len,
+        "root span length must be UTF-16 code units, not bytes"
+    );
+
+    // Find the `function f` symbol. tsserver expects nameSpan.start = 24
+    // for this source (issue #3912 quotes the exact tsserver response).
+    // With byte offsets, `é` (2 UTF-8 bytes) would push the answer to 25.
+    let children = body
+        .get("childItems")
+        .and_then(serde_json::Value::as_array)
+        .expect("childItems");
+    let function_item = children
+        .iter()
+        .find(|item| item.get("text").and_then(serde_json::Value::as_str) == Some("f"))
+        .expect("function `f` navtree item");
+    let name_span_start = function_item
+        .get("nameSpan")
+        .and_then(|s| s.get("start"))
+        .and_then(serde_json::Value::as_u64)
+        .expect("nameSpan start");
+    assert_eq!(
+        name_span_start, 24,
+        "nameSpan start must be UTF-16 offset 24 (1 unit for `é`), got {name_span_start}"
+    );
+}
+
 #[test]
 fn test_navtree_fallback_has_spans() {
     // The navtree/navbar fallback must include a spans array so the harness
