@@ -665,6 +665,9 @@ impl<'a> CheckerState<'a> {
             if self
                 .jsdoc_callable_type_annotation_for_node(func_idx)
                 .is_some()
+                || self
+                    .get_jsdoc_for_function(func_idx)
+                    .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"))
             {
                 return None;
             }
