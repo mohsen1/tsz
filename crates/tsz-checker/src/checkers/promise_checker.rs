@@ -320,7 +320,9 @@ impl<'a> CheckerState<'a> {
     ///
     /// Called when processing async functions to ensure Promise is available.
     /// Matches TSC behavior which emits TS2318 "Cannot find global type 'Promise'"
-    /// when the Promise type is not in scope - INCLUDING when noLib is true.
+    /// when the Promise type is not in scope. Callers must gate on
+    /// `compiler_options.no_lib` because tsc skips this check under `--noLib`
+    /// (the user owns the global type surface). See #3787.
     ///
     /// Routes through the environment capability boundary for the decision.
     pub fn check_global_promise_available(&mut self) {

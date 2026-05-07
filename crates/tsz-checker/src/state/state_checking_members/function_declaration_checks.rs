@@ -168,7 +168,11 @@ impl<'a> CheckerState<'a> {
         // Check for missing Promise global type when function is async (TS2318)
         // TSC emits this at the start of the file when Promise is not available
         // Only check for non-generator async functions (async generators use AsyncGenerator, not Promise)
-        if func.is_async && !func.asterisk_token {
+        // Skip the check under `noLib`: with no library files, the user owns
+        // the global type surface, and tsc does not complain about missing
+        // `Promise` simply because an async function is declared. See
+        // https://github.com/mohsen1/tsz/issues/3787.
+        if func.is_async && !func.asterisk_token && !self.ctx.compiler_options.no_lib {
             self.check_global_promise_available();
         }
 
