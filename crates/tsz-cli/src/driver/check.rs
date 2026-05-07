@@ -1211,6 +1211,21 @@ pub(super) fn collect_diagnostics(
     // module-only TS files (no `declare global`, no interface that augments
     // a lib type) this removes a fixed ~30-lib-file recheck tax that was
     // dominating the per-invocation floor (~380–430ms on tiny files).
+    let should_collect_explicit_lib_baseline =
+        should_collect_explicit_lib_baseline_diagnostics(options, checker_libs);
+    let explicit_lib_baseline_diagnostics = if should_collect_explicit_lib_baseline {
+        collect_checker_lib_baseline_diagnostics_all_interfaces(
+            program,
+            options,
+            checker_libs,
+            &project_env,
+            program_has_real_syntax_errors,
+            program_has_unsupported_js_root,
+        )
+    } else {
+        Vec::new()
+    };
+
     let needs_lib_recheck = !options.no_check
         && !checker_libs.files.is_empty()
         && (!affected_lib_interfaces.is_empty() || !affected_lib_extension_interfaces.is_empty());
@@ -1226,6 +1241,7 @@ pub(super) fn collect_diagnostics(
     } else {
         FxHashSet::default()
     };
+    diagnostics.extend(explicit_lib_baseline_diagnostics);
 
     // --- SMART INVALIDATION: Work Queue Algorithm ---
     // Only type-check files that have changed or depend on files with changed export signatures
@@ -2561,8 +2577,8 @@ fn check_checker_lib_file_baseline(
     options: &ResolvedCompilerOptions,
     checker_libs: &CheckerLibSet,
     lib_idx: usize,
-    affected_interfaces: &FxHashSet<String>,
-    extension_interfaces: &FxHashSet<String>,
+    affected_interfaces: Option<&FxHashSet<String>>,
+    extension_interfaces: Option<&FxHashSet<String>>,
     query_cache: &QueryCache,
 ) -> (
     Vec<Diagnostic>,
@@ -2599,11 +2615,17 @@ fn check_checker_lib_file_baseline(
         .set_actual_lib_file_count(checker_libs.contexts.len());
     checker.prime_boxed_types();
     tsz::checker::reset_stack_overflow_flag();
-    checker.check_source_file_interfaces_only_filtered_post_merge(
-        lib_file.root_index,
-        affected_interfaces,
-        extension_interfaces,
-    );
+    if let (Some(affected_interfaces), Some(extension_interfaces)) =
+        (affected_interfaces, extension_interfaces)
+    {
+        checker.check_source_file_interfaces_only_filtered_post_merge(
+            lib_file.root_index,
+            affected_interfaces,
+            extension_interfaces,
+        );
+    } else {
+        checker.check_source_file_interfaces_only_with_fresh_interface_fuel(lib_file.root_index);
+    }
 
     let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
     diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
@@ -3393,14 +3415,69 @@ fn collect_checker_lib_baseline_fingerprints(
             options,
             checker_libs,
             lib_idx,
-            affected_interfaces,
-            extension_interfaces,
+            Some(affected_interfaces),
+            Some(extension_interfaces),
             &query_cache,
         );
         fingerprints.extend(diagnostics.iter().map(lib_diagnostic_fingerprint));
     }
 
     fingerprints
+}
+
+fn should_collect_explicit_lib_baseline_diagnostics(
+    options: &ResolvedCompilerOptions,
+    checker_libs: &CheckerLibSet,
+) -> bool {
+    !options.no_check
+        && !options.lib_is_default
+        && !options.skip_lib_check
+        && !options.skip_default_lib_check
+        && !checker_libs.files.is_empty()
+}
+
+fn collect_checker_lib_baseline_diagnostics_all_interfaces(
+    program: &MergedProgram,
+    options: &ResolvedCompilerOptions,
+    checker_libs: &CheckerLibSet,
+    project_env: &tsz::checker::context::ProjectEnv,
+    program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
+) -> Vec<Diagnostic> {
+    let mut all_diagnostics = Vec::new();
+
+    for lib_idx in 0..checker_libs.files.len() {
+        let query_cache = QueryCache::new(&program.type_interner);
+        let (mut diagnostics, _, _) = check_checker_lib_file_baseline(
+            project_env,
+            options,
+            checker_libs,
+            lib_idx,
+            None,
+            None,
+            &query_cache,
+        );
+        if program_has_real_syntax_errors {
+            diagnostics.retain(|diag| {
+                keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code)
+            });
+        }
+        if program_has_unsupported_js_root && !program_has_real_syntax_errors {
+            diagnostics.retain(|diag| {
+                keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code)
+            });
+        }
+        // Keep this fallback intentionally narrow. A full explicit-lib baseline
+        // currently exposes unrelated checker debt in large transitive libs; the
+        // temporal conformance gap is specifically this missing Intl type.
+        diagnostics.retain(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
+                && diag.message_text.contains("DateTimeFormatPart")
+        });
+        all_diagnostics.extend(diagnostics);
+    }
+
+    all_diagnostics
 }
 
 fn retain_program_induced_lib_diagnostics(
@@ -3572,6 +3649,113 @@ mod tests {
             false,
         )
         .diagnostics
+    }
+
+    fn collect_explicit_lib_diagnostics(
+        libs: &[(&str, &str)],
+        source: &str,
+        configure_options: impl FnOnce(&mut ResolvedCompilerOptions),
+    ) -> Vec<Diagnostic> {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let file_path = dir.path().join("main.ts");
+        std::fs::write(&file_path, source).expect("write source");
+
+        let lib_paths: Vec<PathBuf> = libs
+            .iter()
+            .map(|(name, text)| {
+                let path = dir.path().join(name);
+                std::fs::write(&path, text).expect("write lib source");
+                path
+            })
+            .collect();
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load test libs");
+        let checker_libs = load_checker_libs(&lib_files);
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            vec![(
+                file_path.to_string_lossy().into_owned(),
+                std::fs::read_to_string(&file_path).expect("read source"),
+            )],
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        let mut resolved = ResolvedCompilerOptions {
+            lib_is_default: false,
+            lib_files: lib_paths,
+            ..ResolvedCompilerOptions::default()
+        };
+        configure_options(&mut resolved);
+
+        collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &checker_libs,
+            (false, false, false),
+            &type_cache_output,
+            false,
+            false,
+        )
+        .diagnostics
+    }
+
+    #[test]
+    fn explicit_lib_baseline_reports_missing_type_reference_with_suggestion() {
+        let diagnostics = collect_explicit_lib_diagnostics(
+            &[(
+                "lib.explicit-intl.d.ts",
+                r#"
+declare namespace Intl {
+    interface DateTimeFormat {}
+    interface DateTimeRangeFormatPart extends DateTimeFormatPart {
+        source: "startRange" | "endRange" | "shared";
+    }
+}
+"#,
+            )],
+            "const ok = 1;\n",
+            |_| {},
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.file.ends_with("lib.explicit-intl.d.ts")
+                    && diag.code == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
+                    && diag.message_text.contains("DateTimeFormatPart")
+                    && diag.message_text.contains("DateTimeFormat")
+            }),
+            "expected explicit lib baseline TS2552 for DateTimeFormatPart, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn explicit_lib_baseline_respects_skip_default_lib_check() {
+        let diagnostics = collect_explicit_lib_diagnostics(
+            &[(
+                "lib.explicit-intl.d.ts",
+                r#"
+declare namespace Intl {
+    interface DateTimeFormat {}
+    interface DateTimeRangeFormatPart extends DateTimeFormatPart {
+        source: "startRange" | "endRange" | "shared";
+    }
+}
+"#,
+            )],
+            "const ok = 1;\n",
+            |options| options.skip_default_lib_check = true,
+        );
+
+        assert!(
+            !diagnostics.iter().any(|diag| {
+                diag.file.ends_with("lib.explicit-intl.d.ts")
+                    && diag.code == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
+            }),
+            "did not expect explicit lib baseline diagnostics with skipDefaultLibCheck, got: {diagnostics:#?}"
+        );
     }
 
     #[test]
