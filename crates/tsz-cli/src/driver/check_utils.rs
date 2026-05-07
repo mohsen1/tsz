@@ -1616,24 +1616,47 @@ pub(super) const fn is_js_only_syntactic_diagnostic(code: u32) -> bool {
     )
 }
 
-/// True when a checker-emitted diagnostic should be retained even though the
-/// program contains a JS-only-syntactic diagnostic.
+/// True when a diagnostic should be retained even though the program contains
+/// a JS-only-syntactic diagnostic.
 ///
 /// In tsc, `getSyntacticDiagnostics` (which contains the JS-only-syntactic
-/// codes for JS files) short-circuits `getSemanticDiagnostics` for every
-/// source file. We mirror that by keeping only:
-/// - real parse failures (parser-emitted, structural recovery)
-/// - `TS1xxx` codes that tsc legitimately emits for JS sources
-/// - `TS8xxx` JS grammar diagnostics (the gate trigger plus its peers)
-/// - `TS2427`/`TS2457` reserved type names (deferred parse-vs-checker validation)
+/// codes for JS files) short-circuits `getSemanticDiagnostics` program-wide
+/// in `emitFilesAndReportErrors`. The only diagnostics that survive are the
+/// ones tsc routes through `getSyntacticDiagnostics` itself: structural parse
+/// failures, plus the codes contributed by `getJSSyntacticDiagnosticsForFile`.
 ///
-/// Everything else — checker semantic diagnostics, including low-numbered
-/// codes like `TS1192` and `TS1295` — is suppressed to match tsc.
+/// tsz's emission map straddles parser and checker — many `TS1xxx` codes that
+/// `is_ts1xxx_allowed_in_js` legitimately accepts in JS files are nonetheless
+/// emitted from the *checker*'s grammar phase, so tsc would route them through
+/// `getSemanticDiagnostics` and drop them here. We honour that by keeping the
+/// broad `TS1xxx` allow-list and then explicitly excluding the checker/binder
+/// grammar checks tsc treats as semantic — break/continue (`TS1104`/`TS1105`)
+/// and the cross-function jump-target check (`TS1107`).
 pub(super) const fn keep_diagnostic_when_js_only_syntactic_skips_semantic(code: u32) -> bool {
+    if is_post_js_gate_suppressed_checker_grammar(code) {
+        return false;
+    }
     is_real_syntax_error(code)
         || is_ts1xxx_allowed_in_js(code)
         || (code >= 8000 && code < 9000)
         || matches!(code, 2427 | 2457)
+}
+
+/// Checker/binder grammar codes that tsc routes through `getSemanticDiagnostics`
+/// rather than `getSyntacticDiagnostics` — so when the JS-only-syntactic gate
+/// fires, tsc drops them program-wide. These codes appear in
+/// `is_ts1xxx_allowed_in_js` because tsc legitimately emits them for plain JS
+/// files when no syntactic gate-trigger is present, but once a gate-trigger
+/// fires they must be suppressed even though they are `TS1xxx`.
+const fn is_post_js_gate_suppressed_checker_grammar(code: u32) -> bool {
+    matches!(
+        code,
+        // The break/continue family — tsc's `checkBreakOrContinueStatement`
+        // emits these from the type checker.
+        1104 // A 'continue' statement can only be used within an enclosing iteration statement.
+        | 1105 // A 'break' statement can only be used within an enclosing iteration or switch statement.
+        | 1107 // Jump target cannot cross function boundary.
+    )
 }
 
 /// Pre-computed merged augmentation data shared across all per-file binders.
