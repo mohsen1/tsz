@@ -1610,9 +1610,30 @@ impl<'a> CheckerState<'a> {
                                     .get(arg_idx)
                                     .map(|node| (node.pos, node.end))
                                     .unwrap_or((0, 0));
+                                let is_call_like_arg =
+                                    self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                                        node.kind == syntax_kind_ext::CALL_EXPRESSION
+                                            || node.kind == syntax_kind_ext::NEW_EXPRESSION
+                                    });
+                                let callback_body_spans = self.callback_body_spans(arg_idx);
                                 self.ctx.diagnostics.retain(|diag| {
+                                    // Property-access failures found inside nested
+                                    // call arguments are definitive for this round.
+                                    // Preserve them while clearing provisional
+                                    // contextual diagnostics before the argument
+                                    // is retyped.
+                                    let is_property_access_failure_within_arg = diag.code
+                                        == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                                        && (is_call_like_arg
+                                            || callback_body_spans.iter().any(
+                                                |(body_start, body_end)| {
+                                                    diag.start >= *body_start
+                                                        && diag.start < *body_end
+                                                },
+                                            ));
                                     diag.start < start
                                         || diag.start >= end
+                                        || is_property_access_failure_within_arg
                                         // TS2454 (variable used before being assigned) is a
                                         // semantic fact about the variable, not a speculative
                                         // inference artifact. Preserve it across round 2

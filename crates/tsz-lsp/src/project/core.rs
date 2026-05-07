@@ -930,6 +930,9 @@ impl ProjectFile {
             return names;
         };
         let local_name = symbol.escaped_name.as_str();
+        if symbol.is_exported {
+            names.push(local_name.to_string());
+        }
 
         let Some(source_file) = arena.get_source_file_at(self.root()) else {
             return names;
