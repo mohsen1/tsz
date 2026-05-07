@@ -382,8 +382,8 @@ namespace N {
         "Expected only the missing-expression TS1109 for recovered arrow body, got {diagnostics:?}"
     );
     assert_eq!(
-        ts1128_count, 0,
-        "Recovered expression-bodied arrows should consume their synthetic close brace: {diagnostics:?}"
+        ts1128_count, 1,
+        "Recovered expression-bodied arrows should report one trailing close-brace diagnostic: {diagnostics:?}"
     );
 }
 
@@ -616,6 +616,45 @@ const regexes: RegExp[] = [
 }
 
 #[test]
+fn test_regex_unicode_set_class_operators_follow_v_mode_rules() {
+    let source = r#"
+const q = /[\q{ab}]/v;
+const sub = /[a--b]/v;
+const missing = /[a&&]/v;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes
+            .contains(&diagnostic_codes::THIS_CHARACTER_CANNOT_BE_ESCAPED_IN_A_REGULAR_EXPRESSION),
+        "Expected valid v-mode \\q string disjunction to avoid TS1535, got {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
+        "Expected v-mode set subtraction to avoid legacy TS1517, got {diagnostics:?}"
+    );
+
+    let ts1520: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPECTED_A_CLASS_SET_OPERAND)
+        .collect();
+    assert_eq!(
+        ts1520.len(),
+        1,
+        "Expected exactly one TS1520 for the trailing intersection, got {diagnostics:?}"
+    );
+    let expected_start = source.rfind("]/v;").expect("trailing class close") as u32;
+    assert_eq!(
+        ts1520[0].start, expected_start,
+        "Expected TS1520 at the missing operand before ']', got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_hyphen_after_range_is_literal() {
     let source = "const idSuffixPattern = /^([a-z][a-z0-9-]*)(:[a-z0-9-.]*)?$/i;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -627,6 +666,24 @@ fn test_regex_hyphen_after_range_is_literal() {
             .iter()
             .all(|d| d.code != diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
         "Hyphen after an already-consumed range should be literal: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_unicode_regex_trailing_hyphen_class_does_not_report_ts1508() {
+    let source = r#"
+const unicode = /[a-]/u;
+const unicode_sets = /[a-]/v;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.iter().all(
+            |d| d.code != diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH
+        ),
+        "Trailing hyphen before a class close should be a literal, got {diagnostics:?}"
     );
 }
 

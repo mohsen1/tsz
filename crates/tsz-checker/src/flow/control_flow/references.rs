@@ -347,6 +347,12 @@ impl<'a> FlowAnalyzer<'a> {
 
         let node_types = self.node_types?;
         let type_id = *node_types.get(&idx.0)?;
+        if let Some(atom) = crate::query_boundaries::type_computation::access::literal_property_name(
+            self.interner,
+            type_id,
+        ) {
+            return Some((atom, false));
+        }
         match classify_for_literal_value(self.interner, type_id) {
             LiteralValueKind::String(atom) => Some((atom, false)),
             LiteralValueKind::Number(value) => Some((self.atom_from_numeric_value(value), true)),
@@ -369,6 +375,12 @@ impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn literal_atom_from_type(&self, idx: NodeIndex) -> Option<Atom> {
         let node_types = self.node_types?;
         let type_id = *node_types.get(&idx.0)?;
+        if let Some(atom) = crate::query_boundaries::type_computation::access::literal_property_name(
+            self.interner,
+            type_id,
+        ) {
+            return Some(atom);
+        }
         match classify_for_literal_value(self.interner, type_id) {
             LiteralValueKind::String(atom) => Some(atom),
             LiteralValueKind::Number(value) => Some(self.atom_from_numeric_value(value)),

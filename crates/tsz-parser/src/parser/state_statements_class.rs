@@ -272,6 +272,14 @@ impl ParserState {
                             self.next_token();
                             if self.can_token_start_type() {
                                 self.parse_type();
+                            } else if !matches!(
+                                self.token(),
+                                SyntaxKind::CommaToken
+                                    | SyntaxKind::CloseParenToken
+                                    | SyntaxKind::OpenBraceToken
+                                    | SyntaxKind::EndOfFileToken
+                            ) {
+                                self.next_token();
                             }
                             if self.is_parameter_start() {
                                 continue;

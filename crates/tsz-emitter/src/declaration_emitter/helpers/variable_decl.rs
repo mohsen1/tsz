@@ -246,6 +246,13 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&type_text);
+            } else if !has_initializer
+                && keyword == "let"
+                && self
+                    .previous_duplicate_variable_declaration_type_text(decl_idx, decl_name)
+                    .is_some()
+            {
+                self.write(": any");
             } else if let Some(resolved_type) = self.resolve_declaration_type_text(
                 &[decl_idx, decl_name],
                 has_initializer.then_some(initializer),

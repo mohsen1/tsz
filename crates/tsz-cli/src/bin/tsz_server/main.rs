@@ -58,7 +58,7 @@ use tracing::{debug, info};
 
 use tsz::binder::BinderState;
 use tsz::lib_loader::LibFile;
-use tsz::lsp::position::Position;
+use tsz::lsp::position::{LineMap, Position};
 use tsz::parser::ParserState;
 use tsz::parser::base::NodeIndex;
 use tsz::parser::node::NodeArena;
@@ -848,7 +848,15 @@ impl Server {
         })
     }
 
-    /// Convert a `DefinitionInfo` to a tsserver-compatible JSON value.
+    /// Convert a `DefinitionInfo` to a tsserver-compatible JSON value for the
+    /// plain `definition` / `typeDefinition` / `findSourceDefinition` commands.
+    ///
+    /// This is the `FileSpanWithContext` shape: `file` plus 1-based
+    /// `start`/`end` line/offset positions, and optional `contextStart`/
+    /// `contextEnd` line/offset positions. Symbol metadata (`kind`, `name`,
+    /// `containerName`, `isLocal`, `isAmbient`, …) belongs to the `-full`
+    /// shape; including it here causes consumers that parse the protocol
+    /// strictly to treat the response as the full shape.
     fn definition_info_to_json(
         info: &tsz::lsp::definition::DefinitionInfo,
         file: &str,
@@ -862,18 +870,68 @@ impl Server {
             "file": out_file,
             "start": Self::lsp_to_tsserver_position(info.location.range.start),
             "end": Self::lsp_to_tsserver_position(info.location.range.end),
+        });
+        if let Some(ref ctx) = info.context_span {
+            result["contextStart"] = Self::lsp_to_tsserver_position(ctx.start);
+            result["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);
+        }
+        result
+    }
+
+    /// Convert a `DefinitionInfo` to a tsserver-compatible JSON value for the
+    /// `definition-full` / `typeDefinition-full` / `definitionAndBoundSpan-full`
+    /// commands.
+    ///
+    /// This is the `DefinitionInfo` shape: `fileName` plus a numeric
+    /// `textSpan` (`start`/`length`), an optional numeric `contextSpan`,
+    /// the symbol metadata (`kind`, `name`, `containerName`), and the
+    /// `isLocal` / `isAmbient` / `unverified` / `failedAliasResolution`
+    /// flags. The byte-offset positions are computed against `line_map` /
+    /// `source_text`, which the caller is expected to have built for the
+    /// requesting file (mirroring the cross-file handling of
+    /// `references-full`).
+    fn definition_info_to_json_full(
+        info: &tsz::lsp::definition::DefinitionInfo,
+        file: &str,
+        line_map: &LineMap,
+        source_text: &str,
+    ) -> serde_json::Value {
+        let out_file = if info.location.file_path.is_empty() {
+            file.to_string()
+        } else {
+            info.location.file_path.clone()
+        };
+        let span_start = line_map
+            .position_to_offset(info.location.range.start, source_text)
+            .unwrap_or(0);
+        let span_end = line_map
+            .position_to_offset(info.location.range.end, source_text)
+            .unwrap_or(span_start);
+        let mut result = serde_json::json!({
+            "fileName": out_file,
+            "textSpan": {
+                "start": span_start,
+                "length": span_end.saturating_sub(span_start),
+            },
             "kind": info.kind,
             "name": info.name,
             "containerName": info.container_name,
-            "containerKind": info.container_kind,
             "isLocal": info.is_local,
             "isAmbient": info.is_ambient,
             "unverified": false,
             "failedAliasResolution": false,
         });
         if let Some(ref ctx) = info.context_span {
-            result["contextStart"] = Self::lsp_to_tsserver_position(ctx.start);
-            result["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);
+            let ctx_start = line_map
+                .position_to_offset(ctx.start, source_text)
+                .unwrap_or(0);
+            let ctx_end = line_map
+                .position_to_offset(ctx.end, source_text)
+                .unwrap_or(ctx_start);
+            result["contextSpan"] = serde_json::json!({
+                "start": ctx_start,
+                "length": ctx_end.saturating_sub(ctx_start),
+            });
         }
         result
     }
@@ -997,7 +1055,7 @@ impl Server {
                 self.handle_encoded_semantic_classifications_full(seq, &request)
             }
             "inlayHints" | "provideInlayHints" => self.handle_inlay_hints(seq, &request),
-            "selectionRange" => self.handle_selection_range(seq, &request),
+            "selectionRange" | "selectionRange-full" => self.handle_selection_range(seq, &request),
             "linkedEditingRange" => self.handle_linked_editing_range(seq, &request),
             "prepareCallHierarchy" => self.handle_prepare_call_hierarchy(seq, &request),
             "provideCallHierarchyIncomingCalls" | "provideCallHierarchyOutgoingCalls" => {
@@ -1131,8 +1189,92 @@ impl Server {
 // Brace Matching Helpers
 // =============================================================================
 
+/// Decide whether a `/` at `pos` starts a regular-expression literal rather
+/// than a division operator. Uses the standard lexer heuristic: walk back to
+/// the previous in-code, non-whitespace token; if it is an operator/punctuator
+/// that cannot end an expression, or a keyword that introduces an expression,
+/// or there is no such token, the `/` begins a regex.
+///
+/// `map` reflects bytes already classified by `build_code_map` for
+/// `j < pos`; bytes inside earlier strings/comments are `false` and should be
+/// skipped here.
+fn is_regex_literal_start(bytes: &[u8], map: &[bool], pos: usize) -> bool {
+    let mut j = pos;
+    while j > 0 {
+        j -= 1;
+        let b = bytes[j];
+        if b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
+            continue;
+        }
+        if !map[j] {
+            // Inside a string/comment/template — skip.
+            continue;
+        }
+        if matches!(
+            b,
+            b'=' | b','
+                | b'('
+                | b'['
+                | b'{'
+                | b';'
+                | b':'
+                | b'?'
+                | b'!'
+                | b'+'
+                | b'-'
+                | b'*'
+                | b'/'
+                | b'%'
+                | b'&'
+                | b'|'
+                | b'^'
+                | b'<'
+                | b'>'
+                | b'~'
+        ) {
+            return true;
+        }
+        if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' {
+            // Walk back to the start of the identifier and decide based on
+            // whether it is a keyword that introduces an expression.
+            let end = j + 1;
+            let mut start = j;
+            while start > 0 {
+                let bb = bytes[start - 1];
+                if (bb.is_ascii_alphanumeric() || bb == b'_' || bb == b'$') && map[start - 1] {
+                    start -= 1;
+                } else {
+                    break;
+                }
+            }
+            return matches!(
+                &bytes[start..end],
+                b"return"
+                    | b"typeof"
+                    | b"delete"
+                    | b"void"
+                    | b"in"
+                    | b"of"
+                    | b"instanceof"
+                    | b"new"
+                    | b"throw"
+                    | b"do"
+                    | b"else"
+                    | b"case"
+                    | b"yield"
+                    | b"await"
+            );
+        }
+        // `)`, `]`, `}`, quotes, digits already handled above as alnum: end
+        // of expression — `/` is division.
+        return false;
+    }
+    // Start of file.
+    true
+}
+
 /// Build a boolean map indicating which byte positions are "in code"
-/// (i.e., not inside a string literal or comment).
+/// (i.e., not inside a string literal, comment, or regex literal).
 fn build_code_map(bytes: &[u8]) -> Vec<bool> {
     let len = bytes.len();
     let mut map = vec![true; len];
@@ -1163,6 +1305,51 @@ fn build_code_map(bytes: &[u8]) -> Vec<bool> {
                         }
                         map[i] = false;
                         i += 1;
+                    }
+                } else if is_regex_literal_start(bytes, &map, i) {
+                    // Regex literal `/.../flags`. Mark its body so brace
+                    // scanning ignores `{` / `}` that appear inside.
+                    map[i] = false;
+                    i += 1;
+                    let mut in_class = false;
+                    while i < len {
+                        match bytes[i] {
+                            b'\\' => {
+                                map[i] = false;
+                                i += 1;
+                                if i < len && bytes[i] != b'\n' {
+                                    map[i] = false;
+                                    i += 1;
+                                }
+                            }
+                            b'[' if !in_class => {
+                                in_class = true;
+                                map[i] = false;
+                                i += 1;
+                            }
+                            b']' if in_class => {
+                                in_class = false;
+                                map[i] = false;
+                                i += 1;
+                            }
+                            b'/' if !in_class => {
+                                map[i] = false;
+                                i += 1;
+                                while i < len && bytes[i].is_ascii_alphabetic() {
+                                    map[i] = false;
+                                    i += 1;
+                                }
+                                break;
+                            }
+                            b'\n' => {
+                                // Unterminated regex literal.
+                                break;
+                            }
+                            _ => {
+                                map[i] = false;
+                                i += 1;
+                            }
+                        }
                     }
                 } else {
                     i += 1;
