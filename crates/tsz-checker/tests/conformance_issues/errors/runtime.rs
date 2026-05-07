@@ -1352,3 +1352,52 @@ function test(a: A2) {
         ts18013_messages[0]
     );
 }
+
+/// TS2344 false positive: a generic indexed-access type argument `T[K]` whose
+/// resolved property values structurally satisfy a non-callable interface
+/// constraint should not emit TS2344. The conformance test
+/// `inferenceDoesNotAddUndefinedOrNull` triggers this when a user file
+/// declaration-merges with a lib interface (e.g. `interface Node`):
+/// `lib.dom.d.ts`'s `getElementsByTagName<K extends keyof HTMLElementTagNameMap>(...)
+/// : HTMLCollectionOf<HTMLElementTagNameMap[K]>` is re-checked, and the
+/// constraint `<T extends Element>` of `HTMLCollectionOf` fails for
+/// `HTMLElementTagNameMap[K]` even though every value extends `Element`.
+///
+/// Root cause (under investigation, 2026-05): the constraint validator at
+/// `crates/tsz-checker/src/checkers/generic_checker/constraint_validation.rs`
+/// resolves `Map[K]`'s base constraint to the union of property values
+/// (correct), but the subsequent `is_assignable_to(base, constraint)` check
+/// returns false when `base` is a lib-arena `TypeId` and `constraint` is the
+/// user-arena (declaration-merged) `TypeId` for the same nominal interface.
+/// `base_union_members_satisfy_constraint` masks this for union bases
+/// because each member's `is_assignable_to` runs in the same arena context
+/// during the lib re-check, but the user-file constraint check exposes the
+/// cross-arena divergence.
+///
+/// This test is `#[ignore]`'d because the unit-test harness does not
+/// reproduce the binary's lib re-check pathway (`check_source_file_interfaces_only_filtered_post_merge`).
+/// The corresponding conformance test
+/// `compiler/inferenceDoesNotAddUndefinedOrNull.ts` is the primary
+/// integration-level reproducer.
+#[test]
+#[ignore]
+fn test_no_false_ts2344_for_indexed_access_value_subtype_of_constraint() {
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        r#"
+interface NodeArray<T extends Node> extends ReadonlyArray<T> {}
+
+interface Node {
+    forEachChild<T>(cbNode: (node: Node) => T | undefined, cbNodeArray?: (nodes: NodeArray<Node>) => T | undefined): T | undefined;
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Should not emit TS2344 for `HTMLElementTagNameMap[K]` against an `extends Element` constraint when the user redeclares a lib interface (declaration-merge). Actual: {diagnostics:?}"
+    );
+}
