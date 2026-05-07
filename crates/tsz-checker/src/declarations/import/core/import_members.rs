@@ -772,36 +772,15 @@ impl<'a> CheckerState<'a> {
                             }
 
                             // Before emitting TS2614, try a type-level resolution for
-                            // `export =` modules where the member may be a key of a
-                            // mapped type stored as the type of the `export =` target.
+                            // "export =" modules where the member may be a key of a
+                            // mapped type stored as the type of the "export =" target.
                             let found_via_type = exports_table.has("export=")
                                 && self.has_named_export_via_export_equals_type(
                                     &exports_table,
                                     import_name,
                                 );
 
-                            // When esModuleInterop or allowSyntheticDefaultImports is
-                            // enabled and the module uses `export =`, tsc allows named
-                            // imports without emitting TS2614.
-                            let has_export_equals = exports_table.has("export=");
-                            let has_interop = self.ctx.compiler_options.es_module_interop
-                                || self.ctx.compiler_options.allow_synthetic_default_imports;
-                            let suppress_for_interop = has_export_equals && has_interop;
-
-                            if !found_via_type && !suppress_for_interop {
-                                // TS2614: Symbol doesn't exist but a default export does
-                                let message = format_message(
-                                    diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
-                                    &[&quoted_module, import_name],
-                                );
-                                self.error_at_node(
-                                    name_idx,
-                                    &message,
-                                    diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
-                                );
-                            }
-                        } else {
-                            // Check for spelling suggestions (TS2724) before TS2305
+                            // Check for spelling suggestions (TS2724) before TS2305 and TS2614.
                             let export_names: Vec<&str> = exports_table
                                 .iter()
                                 .map(|(name, _)| name.as_str())
@@ -823,16 +802,37 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
                                 );
                             } else {
-                                // TS2305: Symbol doesn't exist in the module at all
-                                let message = format_message(
-                                    diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                                    &[&quoted_module, import_name],
-                                );
-                                self.error_at_node(
-                                    name_idx,
-                                    &message,
-                                    diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
-                                );
+                                // When esModuleInterop or allowSyntheticDefaultImports is
+                                // enabled and the module uses "export =", tsc allows named
+                                // imports without emitting TS2614.
+                                let has_export_equals = exports_table.has("export=");
+                                let has_interop = self.ctx.compiler_options.es_module_interop
+                                    || self.ctx.compiler_options.allow_synthetic_default_imports;
+                                let suppress_for_interop = has_export_equals && has_interop;
+
+                                if !found_via_type && !suppress_for_interop {
+                                    // TS2614: Symbol does not exist but a default export does
+                                    let message = format_message(
+                                        diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                                        &[&quoted_module, import_name],
+                                    );
+                                    self.error_at_node(
+                                        name_idx,
+                                        &message,
+                                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                                    );
+                                } else {
+                                    // TS2305: Symbol does not exist in the module at all
+                                    let message = format_message(
+                                        diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                                        &[&quoted_module, import_name],
+                                    );
+                                    self.error_at_node(
+                                        name_idx,
+                                        &message,
+                                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+                                    );
+                                }
                             }
                         }
                     }
