@@ -18,22 +18,6 @@ function sanitizeLegacyBenchmarkResults(data) {
   return (data?.results || []).filter((row) => row.name !== "large-ts-repo");
 }
 
-const PROJECT_BENCHMARK_NAMES = new Set([
-  "large-ts-repo",
-  "nextjs",
-  "nextjs-fresh-app",
-  "rxjs-project",
-  "type-fest-project",
-  "zod-project",
-  "utility-types-project",
-  "ts-toolbelt-project",
-  "ts-essentials-project",
-]);
-
-function isProjectBenchmark(row) {
-  return PROJECT_BENCHMARK_NAMES.has(String(row?.name || ""));
-}
-
 function hasSuccessfulTiming(row) {
   return (
     !row?.status &&
@@ -118,7 +102,7 @@ function renderMeanChart(results) {
     return "";
   }
 
-  const valid = results.filter((r) => isProjectBenchmark(r) && hasSuccessfulTiming(r));
+  const valid = results.filter((r) => hasSuccessfulTiming(r));
   if (!valid.length) {
     return "";
   }
@@ -131,7 +115,7 @@ function renderMeanChart(results) {
   const speedupLabel = formatSpeedupLabel(tszTotal, tsgoTotal);
 
   return `<section class="benchmark-mean-card">
-  <p class="bench-category-desc">Sum across ${format(valid.length)} successful <a href="/benchmarks/">project benchmark cases</a>.</p>
+  <p class="bench-category-desc">Sum across ${format(valid.length)} successful <a href="/benchmarks/">benchmark cases</a>.</p>
   <div class="bench-bars">
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsz</span>
