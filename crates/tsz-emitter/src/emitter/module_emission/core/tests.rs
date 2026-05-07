@@ -1915,3 +1915,152 @@ fn script_import_equals_to_interface_preserves_alias_emit() {
         "Top-level script import-equals aliases should be preserved even when the target is type-only.\nOutput:\n{output}"
     );
 }
+
+/// `import Foo, { bar } from "x"; bar();` - when the default binding is
+/// not referenced as a value, tsc elides only the default and keeps the
+/// named binding. tsz must match. Regression for #3336.
+#[test]
+fn esnext_unused_default_beside_used_named_is_elided() {
+    let source = r#"import Foo, { bar } from "./dep";
+bar();
+export {};
+"#;
+
+    let mut parser = ParserState::new("main.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import { bar } from \"./dep\""),
+        "Used named binding must be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Foo"),
+        "Unused default binding should be elided.\nOutput:\n{output}"
+    );
+}
+
+/// Same import shape but with the default actually used as a value;
+/// the default must be preserved beside the named binding.
+#[test]
+fn esnext_used_default_beside_used_named_is_preserved() {
+    let source = r#"import Foo, { bar } from "./dep";
+bar();
+new Foo();
+export {};
+"#;
+
+    let mut parser = ParserState::new("main.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import Foo, { bar } from \"./dep\""),
+        "Both default and named bindings must be preserved when both are used.\nOutput:\n{output}"
+    );
+}
+
+/// `import Foo, * as ns from "x"; ns.bar();` - unused default beside a
+/// used namespace binding must drop only the default.
+#[test]
+fn esnext_unused_default_beside_used_namespace_is_elided() {
+    let source = r#"import Foo, * as ns from "./dep";
+ns.bar();
+export {};
+"#;
+
+    let mut parser = ParserState::new("main.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import * as ns from \"./dep\""),
+        "Used namespace binding must be preserved without the unused default.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Foo"),
+        "Unused default binding should be elided.\nOutput:\n{output}"
+    );
+}
+
+/// Bound-name choice must not matter - same elision rule for any
+/// default identifier name.
+#[test]
+fn esnext_unused_default_elision_is_name_agnostic() {
+    let source = r#"import X, { y } from "./dep";
+y();
+export {};
+"#;
+
+    let mut parser = ParserState::new("main.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import { y } from \"./dep\""),
+        "Used named binding must be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(" X "),
+        "Unused default binding should be elided regardless of its identifier name.\nOutput:\n{output}"
+    );
+}
+
+/// verbatimModuleSyntax must keep the source clause exactly - no elision.
+#[test]
+fn esnext_verbatim_module_syntax_keeps_unused_default() {
+    let source = r#"import Foo, { bar } from "./dep";
+bar();
+export {};
+"#;
+
+    let mut parser = ParserState::new("main.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        verbatim_module_syntax: true,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import Foo, { bar } from \"./dep\""),
+        "verbatimModuleSyntax must preserve the original import clause.\nOutput:\n{output}"
+    );
+}
