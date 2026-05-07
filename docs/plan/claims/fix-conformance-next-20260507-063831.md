@@ -19,14 +19,14 @@ scoped to the remaining mismatch.
 
 - `crates/tsz-checker/src/types/computation/object_literal_context.rs`
 - `crates/tsz-checker/src/tests/dispatch_tests.rs`
-- `scripts/conformance/conformance-baseline.txt`
-- `scripts/conformance/conformance-detail.json`
-- `scripts/conformance/conformance-snapshot.json`
 
 ## Verification
 
 - `cargo nextest run -p tsz-checker nested_mapped_application_property_preserves_literal_context`
 - `./scripts/conformance/conformance.sh run --filter "requiredMappedTypeModifierTrumpsVariance" --verbose`
-- `cargo fmt --check && ./scripts/conformance/conformance.sh run --max 200`
-- Pre-commit hook: clippy, wasm rustc warnings, architecture guardrails, and 16,089 affected-crate tests
-- `./scripts/conformance/conformance.sh snapshot` -> `12582 tests, 12474 passed, 108 failed`
+- `python3 scripts/conformance/check-snapshot-regression.py --base-ref origin/main --head-ref HEAD`
+
+The broad generated snapshot refresh was intentionally dropped from this PR
+because it introduced unrelated new failing paths even though the targeted
+fixture now passes. The snapshot gate should stay responsible for blocking that
+kind of churn.
