@@ -31,7 +31,7 @@ impl<'a> CheckerState<'a> {
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()
-            .with_display_properties()
+            .with_skip_application_alias_names()
             .with_expand_scalar_mapped_alias_applications()
             .with_preserve_optional_parameter_surface_syntax(true);
         formatter.format(type_id).into_owned()
@@ -66,6 +66,7 @@ impl<'a> CheckerState<'a> {
             .with_def_store(&self.ctx.definition_store)
             .with_diagnostic_mode()
             .with_long_property_receiver_display()
+            .with_skip_application_alias_names()
             .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
             .format(ty)
             .into_owned()
