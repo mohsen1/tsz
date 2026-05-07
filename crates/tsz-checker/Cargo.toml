@@ -190,6 +190,10 @@ name = "recursive_typeof_param_display_tests"
 path = "tests/recursive_typeof_param_display_tests.rs"
 
 [[test]]
+name = "interface_call_signature_typeof_param_tests"
+path = "tests/interface_call_signature_typeof_param_tests.rs"
+
+[[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"
 

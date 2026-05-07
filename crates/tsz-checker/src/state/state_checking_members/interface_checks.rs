@@ -233,10 +233,10 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     if sig.type_annotation.is_some() {
-                        self.check_type_node(sig.type_annotation);
                         let (params, _this_type) =
                             self.extract_params_from_signature_in_type_literal(sig);
                         self.push_typeof_param_scope(&params);
+                        self.check_type_node(sig.type_annotation);
                         self.get_type_from_type_node(sig.type_annotation);
                         self.pop_typeof_param_scope(&params);
                     }
