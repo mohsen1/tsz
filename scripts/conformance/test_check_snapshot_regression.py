@@ -35,14 +35,36 @@ class CheckSnapshotRegressionTests(unittest.TestCase):
         self.assertEqual(comparison.pass_delta, -1)
         self.assertTrue(comparison.has_blocking_regression())
 
-    def test_blocks_new_failure_even_when_net_positive(self):
+    def test_allows_new_failures_when_fixed_failures_outnumber_them(self):
+        comparison = compare_snapshots(
+            snapshot(
+                98,
+                {
+                    "old-1.ts": {"e": ["TS1"]},
+                    "old-2.ts": {"e": ["TS2"]},
+                },
+            ),
+            snapshot(99, {"new.ts": {"e": ["TS3"]}}),
+        )
+
+        self.assertEqual(comparison.fixed_failures, ["old-1.ts", "old-2.ts"])
+        self.assertEqual(comparison.new_failures, ["new.ts"])
+        self.assertFalse(comparison.has_blocking_regression())
+
+    def test_blocks_new_failures_when_the_failure_set_gets_worse(self):
         comparison = compare_snapshots(
             snapshot(98, {"old.ts": {"e": ["TS1"]}}),
-            snapshot(99, {"new.ts": {"e": ["TS2"]}}),
+            snapshot(
+                98,
+                {
+                    "new-1.ts": {"e": ["TS2"]},
+                    "new-2.ts": {"e": ["TS3"]},
+                },
+            ),
         )
 
         self.assertEqual(comparison.fixed_failures, ["old.ts"])
-        self.assertEqual(comparison.new_failures, ["new.ts"])
+        self.assertEqual(comparison.new_failures, ["new-1.ts", "new-2.ts"])
         self.assertTrue(comparison.has_blocking_regression())
 
     def test_allows_explicit_new_failure_override_when_pass_count_does_not_drop(self):
