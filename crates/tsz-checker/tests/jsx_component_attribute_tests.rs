@@ -2576,6 +2576,13 @@ fn test_jsx_excess_props_and_assignability_react16_fixture_matches_tsc() {
         "real react16 fixture should emit TS2322 for the number myProp JSX element, got: {diags:?}"
     );
     assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("ComposedComponentProps & { myProp: string; }")
+        }),
+        "real react16 fixture should not emit TS2322 for the string myProp JSX element, got: {diags:?}"
+    );
+    assert!(
         !has_code(&diags, diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT),
         "ComponentClass<WrapperComponentProps> should be accepted as a JSX component, got: {diags:?}"
     );
