@@ -96,6 +96,43 @@ function statusLabel(row) {
 
 const TINY_BENCHMARK_MAX_LINES = 200;
 
+const EXPECTED_PROJECT_BENCHMARKS = [
+  "large-ts-repo",
+  "utility-types-project",
+  "ts-toolbelt-project",
+  "ts-essentials-project",
+  "nextjs",
+  "nextjs-fresh-app",
+  "vite-vanilla-ts-app",
+  "rxjs-project",
+  "type-fest-project",
+  "zod-project",
+  "kysely-project",
+];
+
+function withExpectedProjectRows(results) {
+  const rows = Array.isArray(results) ? results.slice() : [];
+  const existingNames = new Set(rows.map((row) => row?.name).filter(Boolean));
+
+  for (const name of EXPECTED_PROJECT_BENCHMARKS) {
+    if (existingNames.has(name)) continue;
+    rows.push({
+      name,
+      lines: 0,
+      kb: 0,
+      tsz_ms: null,
+      tsgo_ms: null,
+      tsz_lps: null,
+      tsgo_lps: null,
+      winner: "error",
+      ratio: 0,
+      status: "not recorded in latest benchmark artifact",
+    });
+  }
+
+  return rows;
+}
+
 const PROJECT_README_PATHS = {
   "large-ts-repo": [".target-bench/external/large-ts-repo/README.md"],
   nextjs: [".target-bench/external/next.js/README.md"],
@@ -1124,7 +1161,7 @@ function decorateRow(row, category, options = {}) {
 }
 
 function buildGroupedBenchmarks(data) {
-  const allResults = data?.results || [];
+  const allResults = withExpectedProjectRows(data?.results);
   const results = allResults.filter(hasSuccessfulTiming);
   const grouped = new Map();
 
@@ -1148,9 +1185,11 @@ function buildGroupedBenchmarks(data) {
     "Projects: ts-essentials",
     "Projects: next.js",
     "Projects: fresh Next.js app",
+    "Projects: fresh Vite app",
     "Projects: rxjs",
     "Projects: type-fest",
     "Projects: zod",
+    "Projects: kysely",
     "Single file: utility-types",
     "Single file: ts-toolbelt",
     "Single file: ts-essentials",
