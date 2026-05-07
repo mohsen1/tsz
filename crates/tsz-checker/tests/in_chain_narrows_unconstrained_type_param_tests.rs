@@ -9,20 +9,41 @@
 //! type parameter, instead of just for the first one. tsc narrows
 //! after each successful `in`, so subsequent checks see `T & object`
 //! and pass the operand-type check.
+//!
+//! Bare type parameters report TS2322 ("Type 'T' is not assignable to
+//! type 'object'") rather than TS2638; intersections such as `T & {}`
+//! that surface a `NonNullable<T>` apparent type stay on the TS2638
+//! path. The truthy-chain narrowing invariant is the same — only the
+//! diagnostic code emitted at the first `in` differs.
+
+use tsz_checker::diagnostics as crate_diag;
+
+fn in_rhs_assignability_diagnostic_count(diagnostics: &[crate_diag::Diagnostic]) -> usize {
+    diagnostics
+        .iter()
+        .filter(|d| d.code == 2322 && d.message_text.contains("assignable to type 'object'"))
+        .count()
+}
 
 #[test]
-fn in_chain_emits_ts2638_only_at_first_link_for_unconstrained_type_param() {
+fn in_chain_emits_ts2322_only_at_first_link_for_unconstrained_type_param() {
+    // tsc routes bare type parameters through TS2322 (assignability to
+    // `object`) rather than TS2638 ("may represent a primitive"); only
+    // intersections that surface a `NonNullable<T>`-style apparent type
+    // keep the TS2638 path. The narrowing invariant remains the same:
+    // exactly one diagnostic at the first `in`, none afterwards.
     let source = r#"
 const f = <T>(x: T) => "a" in x && "b" in x && "c" in x;
 "#;
     let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
-    let ts2638: Vec<_> = diagnostics.iter().filter(|d| d.code == 2638).collect();
+    let count = in_rhs_assignability_diagnostic_count(&diagnostics);
     assert_eq!(
-        ts2638.len(),
+        count,
         1,
-        "expected exactly 1 TS2638 (only the first `in` on an unconstrained T), got: {:?}",
-        ts2638
+        "expected exactly 1 TS2322 (only the first `in` on an unconstrained T), got: {:?}",
+        diagnostics
             .iter()
+            .filter(|d| d.code == 2322 || d.code == 2638)
             .map(|d| (d.start, d.message_text.clone()))
             .collect::<Vec<_>>()
     );
@@ -46,14 +67,15 @@ fn in_chain_narrowing_keys_off_token_kind_not_param_or_property_names() {
             r#"const f = <{tparam}>(x: {tparam}) => "{p0}" in x && "{p1}" in x && "{p2}" in x;"#
         );
         let diagnostics = tsz_checker::test_utils::check_source_diagnostics(&source);
-        let ts2638: Vec<_> = diagnostics.iter().filter(|d| d.code == 2638).collect();
+        let count = in_rhs_assignability_diagnostic_count(&diagnostics);
         assert_eq!(
-            ts2638.len(),
+            count,
             1,
-            "param={tparam} props={props:?}: expected 1 TS2638, got {} ({:?})",
-            ts2638.len(),
-            ts2638
+            "param={tparam} props={props:?}: expected 1 TS2322, got {} ({:?})",
+            count,
+            diagnostics
                 .iter()
+                .filter(|d| d.code == 2322 || d.code == 2638)
                 .map(|d| d.message_text.clone())
                 .collect::<Vec<_>>()
         );
@@ -69,13 +91,14 @@ fn in_chain_in_or_chain_still_emits_per_link() {
 const f = <T>(x: T) => "a" in x || "b" in x;
 "#;
     let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
-    let ts2638: Vec<_> = diagnostics.iter().filter(|d| d.code == 2638).collect();
+    let count = in_rhs_assignability_diagnostic_count(&diagnostics);
     assert_eq!(
-        ts2638.len(),
+        count,
         2,
         "|| chain should report each `in` independently, got: {:?}",
-        ts2638
+        diagnostics
             .iter()
+            .filter(|d| d.code == 2322 || d.code == 2638)
             .map(|d| d.message_text.clone())
             .collect::<Vec<_>>()
     );
@@ -208,7 +231,10 @@ function f(x: object) {
 }
 
 #[test]
-fn in_operator_reports_ts2638_for_bare_generic_rhs() {
+fn in_operator_reports_ts2322_for_bare_generic_rhs() {
+    // tsc emits `Type 'T' is not assignable to type 'object'` (TS2322)
+    // for bare type parameters on the right side of `in`, NOT TS2638.
+    // The narrowing on the truthy branch must still expose property `a`.
     let diagnostics = tsz_checker::test_utils::check_source_code_messages(
         r#"
 function f<T>(x: T) {
@@ -220,14 +246,14 @@ function f<T>(x: T) {
     );
 
     assert!(
-        diagnostics
-            .iter()
-            .any(|(code, message)| { *code == 2638 && message.contains("NonNullable<T>") }),
-        "Expected TS2638 for bare generic `in` RHS, got {diagnostics:#?}"
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("'T'") && message.contains("'object'")
+        }),
+        "Expected TS2322 against `object` for bare generic `in` RHS, got {diagnostics:#?}"
     );
     assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 2322),
-        "Expected no TS2322 for bare generic `in` RHS, got {diagnostics:#?}"
+        !diagnostics.iter().any(|(code, _)| *code == 2638),
+        "Expected no TS2638 for bare generic `in` RHS (intersection-only path), got {diagnostics:#?}"
     );
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2339),
