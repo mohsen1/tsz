@@ -93,7 +93,10 @@ impl TsCompilerOptions {
             no_lib: self.no_lib.unwrap_or(false),
             no_types_and_symbols: false,
             types_explicitly_set: false,
-            target: tsz::checker::context::ScriptTarget::default(),
+            // Issue #3489: route the JS-supplied numeric `target` through to
+            // the checker. The hardcoded default silently dropped target-aware
+            // semantic diagnostics like TS2737 (BigInt literals).
+            target: tsz::config::checker_target_from_emitter(target_kind_from_u8(self.target)),
             module: self.resolve_module(),
             es_module_interop: false,
             allow_synthetic_default_imports: false,

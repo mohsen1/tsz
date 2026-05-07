@@ -240,6 +240,31 @@ function g<T, U extends T, K extends keyof T>(x: T, y: U, k: K) {
 }
 
 #[test]
+fn test_generic_indexed_write_respects_key_constraint_direction() {
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics(
+        r"
+function f<T, K extends Extract<keyof T, string>, U extends T, J extends K>(
+    tk: T[K], tj: T[J], uj: U[J]): void {
+    tk = tj;
+    tj = tk;
+    tk = uj;
+}
+        ",
+    ));
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("Type 'T[K]' is not assignable to type 'T[J]'")),
+        "Expected TS2322 for writing wider T[K] into narrower T[J].\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("Type 'U[J]' is not assignable to type 'T[K]'")),
+        "Did not expect TS2322 for writing U[J] into wider T[K].\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_partial_indexed_read_preserves_homomorphic_source_display() {
     let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics(
         r"

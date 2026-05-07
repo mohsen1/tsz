@@ -184,21 +184,52 @@ class TszServer {
     });
   }
 
-  _toLspDiagnostic(d, text) {
-    const lines = text.split('\n');
-    const line = d.line != null ? d.line : 0;
-    const char = d.character != null ? d.character : 0;
-    const endLine = d.endLine != null ? d.endLine : line;
-    const endChar = d.endCharacter != null ? d.endCharacter : char + (d.length || 1);
+  // Convert a UTF-16 offset into the source text into LSP-style
+  // {line, character}. The WASM API returns diagnostics as
+  // {start, length, ...}; older versions of this wrapper read non-existent
+  // line/character fields and defaulted them all to 0. Issue #3525.
+  _utf16OffsetToPosition(text, offset) {
+    if (!text) return { line: 0, character: 0 };
+    const clamped = Math.max(0, Math.min(offset >>> 0, text.length));
+    let line = 0;
+    let lineStart = 0;
+    for (let i = 0; i < clamped; i++) {
+      const ch = text.charCodeAt(i);
+      if (ch === 10 /* \n */) {
+        line += 1;
+        lineStart = i + 1;
+      } else if (ch === 13 /* \r */) {
+        line += 1;
+        lineStart = (text.charCodeAt(i + 1) === 10) ? i + 2 : i + 1;
+        if (text.charCodeAt(i + 1) === 10) i += 1;
+      } else if (ch === 0x2028 || ch === 0x2029) {
+        line += 1;
+        lineStart = i + 1;
+      }
+    }
+    return { line, character: clamped - lineStart };
+  }
 
-    const severityMap = { error: 1, warning: 2, suggestion: 3, message: 4 };
-    const severity = severityMap[String(d.category || 'error').toLowerCase()] || 1;
+  _toLspDiagnostic(d, text) {
+    // WASM diagnostics carry `start`/`length` (UTF-16 units) and a numeric
+    // `category` (1=error, 0=warning, 2=suggestion, 3=message). Translate
+    // both into LSP shape.
+    const start = d.start != null ? d.start >>> 0 : 0;
+    const length = d.length != null ? d.length >>> 0 : 1;
+    const startPos = this._utf16OffsetToPosition(text, start);
+    const endPos = this._utf16OffsetToPosition(text, start + length);
+
+    // Numeric category: error=1, warning=0, suggestion=2, message=3.
+    // LSP severity: error=1, warning=2, info=3, hint=4.
+    const numericMap = { 0: 2, 1: 1, 2: 3, 3: 4 };
+    const stringMap = { error: 1, warning: 2, suggestion: 3, message: 4 };
+    const severity =
+      typeof d.category === 'number'
+        ? numericMap[d.category] || 1
+        : stringMap[String(d.category || 'error').toLowerCase()] || 1;
 
     return {
-      range: {
-        start: { line, character: char },
-        end: { line: endLine, character: endChar },
-      },
+      range: { start: startPos, end: endPos },
       severity,
       code: d.code,
       source: 'tsz',
@@ -210,13 +241,18 @@ class TszServer {
     return uri.replace(/^file:\/\//, '').replace(/%20/g, ' ');
   }
 
-  _positionToOffset(text, line, character) {
-    const lines = text.split('\n');
-    let offset = 0;
-    for (let i = 0; i < Math.min(line, lines.length - 1); i++) {
-      offset += lines[i].length + 1;
+  // Convert a `{start, length}` UTF-16 text-span (returned by the WASM
+  // language-service APIs alongside hover/definition/reference results)
+  // into an LSP `{start, end}` range using `_utf16OffsetToPosition`. Issue #3525.
+  _textSpanToRange(text, span) {
+    if (!span || typeof span.start !== 'number' || typeof span.length !== 'number') {
+      const zero = { line: 0, character: 0 };
+      return { start: zero, end: zero };
     }
-    return offset + character;
+    return {
+      start: this._utf16OffsetToPosition(text, span.start),
+      end: this._utf16OffsetToPosition(text, span.start + span.length),
+    };
   }
 
   _completion(params) {
@@ -224,27 +260,24 @@ class TszServer {
     const doc = this._getService(textDocument.uri);
     if (!doc) return { isIncomplete: false, items: [] };
 
-    const offset = this._positionToOffset(doc.text, position.line, position.character);
+    // WASM API: `getCompletionsAtPosition(line, character)` returns a JSON
+    // array of `{label, kind, detail, documentation}`. Older versions of
+    // this wrapper passed a single offset and read `raw.entries`. Issue #3525.
     try {
-      const raw = JSON.parse(doc.service.getCompletionsAtPosition(offset));
-      if (!raw || !raw.entries) return { isIncomplete: false, items: [] };
+      const raw = JSON.parse(
+        doc.service.getCompletionsAtPosition(position.line, position.character),
+      );
+      if (!Array.isArray(raw)) return { isIncomplete: false, items: [] };
       return {
         isIncomplete: false,
-        items: raw.entries.map((e) => ({
-          label: e.name,
-          kind: this._completionKind(e.kind),
-          detail: e.kindModifiers,
+        items: raw.map((e) => ({
+          label: e.label,
+          kind: typeof e.kind === 'number' ? e.kind : 1,
+          detail: e.detail,
+          documentation: e.documentation,
         })),
       };
     } catch { return { isIncomplete: false, items: [] }; }
-  }
-
-  _completionKind(kind) {
-    const map = {
-      function: 3, method: 2, property: 10, field: 5, variable: 6,
-      class: 7, interface: 8, module: 9, keyword: 14, text: 1,
-    };
-    return map[kind] || 1;
   }
 
   _hover(params) {
@@ -252,12 +285,19 @@ class TszServer {
     const doc = this._getService(textDocument.uri);
     if (!doc) return null;
 
-    const offset = this._positionToOffset(doc.text, position.line, position.character);
+    // WASM API: `getQuickInfoAtPosition(line, character)` returns
+    // `{display_parts, documentation, text_span: {start, length}}` or null.
     try {
-      const raw = JSON.parse(doc.service.getQuickInfoAtPosition(offset));
-      if (!raw || !raw.displayString) return null;
+      const raw = JSON.parse(
+        doc.service.getQuickInfoAtPosition(position.line, position.character),
+      );
+      if (!raw) return null;
+      const parts = Array.isArray(raw.display_parts) ? raw.display_parts : [];
+      const value = parts.map((p) => p && p.text ? p.text : '').join('');
+      if (!value) return null;
       return {
-        contents: { kind: 'markdown', value: '```typescript\n' + raw.displayString + '\n```' },
+        contents: { kind: 'markdown', value: '```typescript\n' + value + '\n```' },
+        range: raw.text_span ? this._textSpanToRange(doc.text, raw.text_span) : undefined,
       };
     } catch { return null; }
   }
@@ -267,16 +307,16 @@ class TszServer {
     const doc = this._getService(textDocument.uri);
     if (!doc) return null;
 
-    const offset = this._positionToOffset(doc.text, position.line, position.character);
+    // WASM API: `getDefinitionAtPosition(line, character)` returns
+    // `[{file_name, text_span: {start, length}}]`.
     try {
-      const raw = JSON.parse(doc.service.getDefinitionAtPosition(offset));
-      if (!raw || !raw.length) return null;
+      const raw = JSON.parse(
+        doc.service.getDefinitionAtPosition(position.line, position.character),
+      );
+      if (!Array.isArray(raw) || raw.length === 0) return null;
       return raw.map((def) => ({
-        uri: 'file://' + def.fileName,
-        range: {
-          start: { line: def.line || 0, character: def.character || 0 },
-          end: { line: def.endLine || def.line || 0, character: def.endCharacter || def.character || 0 },
-        },
+        uri: 'file://' + (def.file_name || ''),
+        range: this._textSpanToRange(doc.text, def.text_span),
       }));
     } catch { return null; }
   }
@@ -286,16 +326,16 @@ class TszServer {
     const doc = this._getService(textDocument.uri);
     if (!doc) return [];
 
-    const offset = this._positionToOffset(doc.text, position.line, position.character);
+    // WASM API: `getReferencesAtPosition(line, character)` returns
+    // `[{file_name, text_span: {start, length}}]`.
     try {
-      const raw = JSON.parse(doc.service.getReferencesAtPosition(offset));
-      if (!raw || !raw.length) return [];
+      const raw = JSON.parse(
+        doc.service.getReferencesAtPosition(position.line, position.character),
+      );
+      if (!Array.isArray(raw)) return [];
       return raw.map((ref) => ({
-        uri: 'file://' + ref.fileName,
-        range: {
-          start: { line: ref.line || 0, character: ref.character || 0 },
-          end: { line: ref.endLine || ref.line || 0, character: ref.endCharacter || ref.character || 0 },
-        },
+        uri: 'file://' + (ref.file_name || ''),
+        range: this._textSpanToRange(doc.text, ref.text_span),
       }));
     } catch { return []; }
   }

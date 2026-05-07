@@ -42,6 +42,7 @@ fn make_server() -> Server {
         new_line_character: None,
         plugin_configs: FxHashMap::default(),
         native_ts_worker: None,
+        pending_events: Vec::new(),
     }
 }
 

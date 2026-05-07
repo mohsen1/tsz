@@ -52,6 +52,50 @@ fn union_no_nullish_unchanged() {
 }
 
 #[test]
+fn union_registered_to_nominal_interface_formats_structurally() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
+    let audio_data = crate::def::DefinitionInfo::interface(
+        db.intern_string("AudioData"),
+        vec![],
+        vec![PropertyInfo::new(
+            db.intern_string("duration"),
+            TypeId::NUMBER,
+        )],
+    );
+    let audio_data_def = def_store.register(audio_data);
+    def_store.register_type_to_def(primitive_key_union, audio_data_def);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(primitive_key_union),
+        "string | number | symbol",
+        "Nominal interface registrations must not repaint structural unions"
+    );
+}
+
+#[test]
+fn primitive_key_union_registered_to_type_alias_formats_structurally_without_origin() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
+    let alias_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("AudioData"),
+        vec![],
+        primitive_key_union,
+    ));
+    def_store.register_type_to_def(primitive_key_union, alias_def);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(primitive_key_union),
+        "string | number | symbol",
+        "The shared `keyof any` union must not be repainted by same-body aliases"
+    );
+}
+
+#[test]
 fn needs_property_name_quotes_basic() {
     // Valid identifiers: no quotes needed
     assert!(!super::needs_property_name_quotes("foo"));

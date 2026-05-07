@@ -822,8 +822,15 @@ impl ScannerState {
                         self.pos += 2;
                         while self.pos < self.end {
                             let c = self.char_code_unchecked(self.pos);
+                            // Single-line comments are terminated by any of
+                            // tsc's line-terminator characters: LF, CR,
+                            // U+2028, U+2029. Without U+2028/U+2029 the
+                            // comment would swallow the next source line.
+                            // See https://github.com/mohsen1/tsz/issues/3331.
                             if c == CharacterCodes::LINE_FEED
                                 || c == CharacterCodes::CARRIAGE_RETURN
+                                || c == CharacterCodes::LINE_SEPARATOR
+                                || c == CharacterCodes::PARAGRAPH_SEPARATOR
                             {
                                 break;
                             }

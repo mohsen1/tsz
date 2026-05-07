@@ -82,6 +82,12 @@ pub struct LineMap {
 
 impl LineMap {
     /// Build a line map from source text.
+    ///
+    /// Treats `\n`, `\r`, `\r\n`, U+2028 (LINE SEPARATOR), and U+2029
+    /// (PARAGRAPH SEPARATOR) as line terminators. tsc's scanner uses the same
+    /// set; recognizing all of them here keeps line numbers stable for
+    /// directive comments, diagnostic positions, and editor mappings.
+    /// See <https://github.com/mohsen1/tsz/issues/3331>.
     #[must_use]
     pub fn build(source: &str) -> Self {
         let mut line_starts = vec![0u32];
@@ -98,6 +104,10 @@ impl LineMap {
                     line_starts.push(u32::try_from(next_idx).unwrap_or(u32::MAX));
                 }
                 // \r followed by \n - the \n will create the line start
+            } else if ch == '\u{2028}' || ch == '\u{2029}' {
+                // Unicode line/paragraph separator. Both are 3 bytes in UTF-8.
+                let next_idx = i + ch.len_utf8();
+                line_starts.push(u32::try_from(next_idx).unwrap_or(u32::MAX));
             }
         }
 
@@ -165,7 +175,7 @@ impl LineMap {
         let mut byte_count = 0usize;
 
         for ch in slice.chars() {
-            if ch == '\n' || ch == '\r' {
+            if ch == '\n' || ch == '\r' || ch == '\u{2028}' || ch == '\u{2029}' {
                 break;
             }
             let ch_utf16 = u32::try_from(ch.len_utf16()).ok()?;
