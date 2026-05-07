@@ -2528,12 +2528,18 @@ impl<'a> DeclarationEmitter<'a> {
                 return self.rewrite_exported_import_equals_type_text(expanded);
             }
             let type_text = self
+                .rewrite_const_assertion_object_index_value_union(initializer, &type_text)
+                .unwrap_or(type_text);
+            let type_text = self
                 .enum_value_index_access_alias_type_text(&type_text)
                 .unwrap_or(type_text);
             return self.rewrite_exported_import_equals_type_text(type_text);
         }
 
         let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
+        let type_text = self
+            .rewrite_const_assertion_object_index_value_union(initializer, &type_text)
+            .unwrap_or(type_text);
         if let Some(expanded) =
             self.expand_portable_mapped_object_text_in_current_context(&type_text)
         {
@@ -2761,6 +2767,25 @@ impl<'a> DeclarationEmitter<'a> {
         ch == '.' || ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 
+    fn rewrite_const_assertion_object_index_value_union(
+        &self,
+        initializer: NodeIndex,
+        type_text: &str,
+    ) -> Option<String> {
+        let object_expr_idx = self
+            .const_assertion_expression(initializer)
+            .unwrap_or(initializer);
+        self.arena
+            .get(object_expr_idx)
+            .filter(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)?;
+        let source_union =
+            self.source_ordered_object_literal_index_value_union_text(object_expr_idx)?;
+        let mut lines = type_text.lines().map(str::to_string).collect::<Vec<_>>();
+        Self::rewrite_broad_index_signature_value_union(&mut lines, &source_union);
+        let rewritten = lines.join("\n");
+        (rewritten != type_text).then_some(rewritten)
+    }
+
     pub(in crate::declaration_emitter) fn strip_synthetic_anonymous_object_members(
         type_text: &str,
     ) -> String {
@@ -2889,6 +2914,51 @@ impl<'a> DeclarationEmitter<'a> {
         self.const_asserted_expression_type_text(assertion.expression, self.indent_level)
     }
 
+    pub(in crate::declaration_emitter) fn as_const_single_spread_array_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::AS_EXPRESSION {
+            return None;
+        }
+        let assertion = self.arena.get_type_assertion(expr_node)?;
+        if !self.type_assertion_is_const(assertion.type_node) {
+            return None;
+        }
+
+        let array_node = self.arena.get(assertion.expression)?;
+        if array_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+        let array = self.arena.get_literal_expr(array_node)?;
+        let [element_idx] = array.elements.nodes.as_slice() else {
+            return None;
+        };
+        let element_node = self.arena.get(*element_idx)?;
+        if element_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
+            return None;
+        }
+        let spread = self.arena.get_spread(element_node)?;
+        let spread_expr_node = self.arena.get(spread.expression)?;
+        if spread_expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let spread_type = self
+            .get_node_type_or_names(&[spread.expression])
+            .map(|type_id| self.print_type_id_for_inferred_declaration(type_id))
+            .or_else(|| {
+                self.infer_fallback_type_text_at(spread.expression, self.indent_level + 1)
+            })?;
+        let inner = spread_type
+            .strip_prefix("readonly ")
+            .unwrap_or(&spread_type)
+            .strip_suffix("[]")?;
+        (!inner.contains('|') && !inner.contains('&') && !inner.starts_with('['))
+            .then(|| format!("readonly {inner}[]"))
+    }
+
     fn type_assertion_is_const(&self, type_node_idx: NodeIndex) -> bool {
         self.arena
             .get(type_node_idx)
@@ -2898,6 +2968,18 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.emit_type_node_text(type_node_idx))
                 .as_deref()
                 == Some("const")
+    }
+
+    fn const_assertion_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::AS_EXPRESSION
+            && expr_node.kind != syntax_kind_ext::TYPE_ASSERTION
+        {
+            return None;
+        }
+        let assertion = self.arena.get_type_assertion(expr_node)?;
+        self.type_assertion_is_const(assertion.type_node)
+            .then_some(assertion.expression)
     }
 
     fn const_asserted_expression_type_text(
@@ -7575,6 +7657,11 @@ impl<'a> DeclarationEmitter<'a> {
         if lines.len() < 2 {
             return Some(printed);
         }
+        if let Some(source_union) =
+            self.source_ordered_object_literal_index_value_union_text(initializer)
+        {
+            Self::rewrite_broad_index_signature_value_union(&mut lines, &source_union);
+        }
 
         if has_non_emittable_computed_members {
             let index_signature_value_types: Vec<String> = lines
@@ -7738,6 +7825,129 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some(lines.join("\n"))
+    }
+
+    fn source_ordered_object_literal_index_value_union_text(
+        &self,
+        object_expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let object_node = self.arena.get(object_expr_idx)?;
+        let object = self.arena.get_literal_expr(object_node)?;
+        let mut value_types = Vec::new();
+
+        for &member_idx in &object.elements.nodes {
+            let member_type = self.object_literal_member_index_value_type_text(member_idx)?;
+            let member_type = Self::parenthesize_type_text_in_union_position(&member_type);
+            if !value_types.iter().any(|existing| existing == &member_type) {
+                value_types.push(member_type);
+            }
+        }
+
+        (value_types.len() > 1).then(|| value_types.join(" | "))
+    }
+
+    fn object_literal_member_index_value_type_text(&self, member_idx: NodeIndex) -> Option<String> {
+        let member_node = self.arena.get(member_idx)?;
+        if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+            return None;
+        }
+        if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+            let method = self.arena.get_method_decl(member_node)?;
+            return self.method_function_type_text(member_idx, method, self.indent_level + 1);
+        }
+
+        let initializer = self.object_literal_member_initializer(member_node)?;
+        self.const_asserted_expression_type_text(initializer, self.indent_level + 1)
+            .or_else(|| self.preferred_expression_type_text(initializer))
+            .or_else(|| {
+                self.get_node_type_or_names(&[initializer])
+                    .map(|type_id| self.print_type_id_for_inferred_declaration(type_id))
+            })
+            .or_else(|| self.infer_fallback_type_text_at(initializer, self.indent_level + 1))
+    }
+
+    fn parenthesize_type_text_in_union_position(type_text: &str) -> String {
+        let trimmed = type_text.trim();
+        if (trimmed.contains("=>") || trimmed.starts_with("new "))
+            && !(trimmed.starts_with('(') && trimmed.ends_with(')'))
+        {
+            format!("({trimmed})")
+        } else {
+            trimmed.to_string()
+        }
+    }
+
+    fn rewrite_broad_index_signature_value_union(lines: &mut [String], source_union: &str) {
+        let source_parts = Self::split_top_level_union_type_parts(source_union);
+        if source_parts.len() <= 1 {
+            return;
+        }
+
+        for line in lines {
+            let Some(existing_union) = Self::broad_object_index_signature_value_type(line) else {
+                continue;
+            };
+            let existing_parts = Self::split_top_level_union_type_parts(existing_union);
+            if existing_parts.len() != source_parts.len() {
+                continue;
+            }
+            if !source_parts
+                .iter()
+                .all(|source| existing_parts.iter().any(|existing| existing == source))
+            {
+                continue;
+            }
+            *line = line.replacen(existing_union, source_union, 1);
+        }
+    }
+
+    fn split_top_level_union_type_parts(type_text: &str) -> Vec<String> {
+        let bytes = type_text.as_bytes();
+        let mut parts = Vec::new();
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut angle_depth = 0usize;
+        let mut part_start = 0usize;
+        let mut i = 0usize;
+
+        while i < bytes.len() {
+            match bytes[i] {
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                b'<' => angle_depth += 1,
+                b'>' if i == 0 || bytes[i - 1] != b'=' => {
+                    angle_depth = angle_depth.saturating_sub(1);
+                }
+                b'|' if paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0
+                    && angle_depth == 0 =>
+                {
+                    if let Some(part) = type_text.get(part_start..i) {
+                        let trimmed = part.trim();
+                        if !trimmed.is_empty() {
+                            parts.push(trimmed.to_string());
+                        }
+                    }
+                    part_start = i + 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        if let Some(part) = type_text.get(part_start..) {
+            let trimmed = part.trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed.to_string());
+            }
+        }
+        parts
     }
 
     fn object_literal_method_line_matches_name(existing: &str, name_text: &str) -> bool {
