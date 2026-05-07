@@ -1282,18 +1282,10 @@ fn compile_inner(
     }
 
     let root_file_paths = file_paths.clone();
-    let source_directive_no_types_and_symbols = if resolved.checker.no_types_and_symbols {
-        true
-    } else {
-        file_paths.iter().any(|path| match read_source_file(path) {
-            FileReadResult::Text(text) => sources::has_no_types_and_symbols_directive(&text),
-            FileReadResult::Binary { text, .. } => {
-                sources::has_no_types_and_symbols_directive(&text)
-            }
-            FileReadResult::Error(_) => false,
-        })
-    };
-    resolved.checker.no_types_and_symbols = source_directive_no_types_and_symbols;
+    // `@noTypesAndSymbols` is a TypeScript test-corpus pragma, not a real
+    // compiler directive. Honor only the explicit value coming from
+    // tsconfig/CLI; never let an ordinary source comment override the
+    // project's type-root resolution. See issue #3014.
 
     let (type_files, unresolved_types) = collect_type_root_files(&base_dir, &resolved);
 
@@ -1538,8 +1530,9 @@ fn compile_inner(
     }
 
     let disable_default_libs = resolved.lib_is_default && sources_have_no_default_lib(&sources);
-    resolved.checker.no_types_and_symbols =
-        resolved.checker.no_types_and_symbols || sources_have_no_types_and_symbols(&sources);
+    // `@noTypesAndSymbols` source comments must not override the project's
+    // resolved compiler options here either. The tsc `/// <reference no-default-lib />`
+    // directive above is a real TypeScript directive and stays.
     let lib_paths =
         resolve_effective_lib_paths(&resolved, &sources, &base_dir, disable_default_libs)?;
     config_diagnostics.extend(collect_source_reference_lib_diagnostics(
@@ -2793,8 +2786,6 @@ fn hash_text(text: &str) -> u64 {
 
 #[path = "sources.rs"]
 mod sources;
-#[cfg(test)]
-pub(crate) use sources::has_no_types_and_symbols_directive;
 pub use sources::{FileReadResult, find_tsconfig, read_source_file};
 pub(crate) use sources::{
     ResolveTsconfigError, config_base_dir, load_config, load_config_with_diagnostics,
@@ -2802,7 +2793,7 @@ pub(crate) use sources::{
 };
 use sources::{
     SourceEntry, SourceReadResult, build_discovery_options, collect_type_root_files,
-    read_source_files, sources_have_no_default_lib, sources_have_no_types_and_symbols,
+    read_source_files, sources_have_no_default_lib,
 };
 
 #[path = "check.rs"]

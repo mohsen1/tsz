@@ -195,10 +195,15 @@ fn source_file_test_pragmas_do_not_override_project_options() {
             "strictNullChecks": true,
             "allowJs": true,
             "checkJs": true,
-            "noUnusedLocals": true
+            "noUnusedLocals": true,
+            "types": ["ambient"]
           },
-          "files": ["strict-off.js", "unused-off.ts"]
+          "files": ["strict-off.js", "unused-off.ts", "no-types-off.ts"]
         }"#,
+    );
+    write_file(
+        &base.join("node_modules/@types/ambient/index.d.ts"),
+        "declare const injectedFromTypes: number;\n",
     );
     write_file(
         &base.join("strict-off.js"),
@@ -218,6 +223,13 @@ export {};
 const unused = 1;
 "#,
     );
+    write_file(
+        &base.join("no-types-off.ts"),
+        r#"// @noTypesAndSymbols: true
+
+injectedFromTypes.toFixed();
+"#,
+    );
 
     let args = default_args();
     let result = compile(&args, base).expect("compilation should succeed");
@@ -230,6 +242,10 @@ const unused = 1;
     assert!(
         codes.contains(&6133),
         "source @noUnusedLocals pragma should not suppress project noUnusedLocals, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2304),
+        "source @noTypesAndSymbols pragma must not suppress tsconfig `types` resolution, got: {codes:?}"
     );
 }
 
@@ -14884,69 +14900,6 @@ fn compile_tsbuildinfo_without_incremental_does_not_report_ts5033() {
             .all(|d| d.code != diagnostic_codes::COULD_NOT_WRITE_FILE),
         "Expected no TS5033 when incremental build info is disabled, got: {result:?}"
     );
-}
-
-// Tests for @noTypesAndSymbols parsing
-
-use crate::driver::has_no_types_and_symbols_directive;
-
-#[test]
-fn test_has_no_types_and_symbols_directive_true() {
-    let source = r#"// @noTypesAndSymbols: true
-async function f(x, y = z) {}"#;
-    assert!(has_no_types_and_symbols_directive(source));
-}
-
-#[test]
-fn test_has_no_types_and_symbols_directive_false() {
-    let source = r#"// @noTypesAndSymbols: false
-async function f(x, y = z) {}"#;
-    assert!(!has_no_types_and_symbols_directive(source));
-}
-
-#[test]
-fn test_has_no_types_and_symbols_directive_not_present() {
-    let source = r#"// @strict: true
-async function f(x, y = z) {}"#;
-    assert!(!has_no_types_and_symbols_directive(source));
-}
-
-#[test]
-fn test_has_no_types_and_symbols_directive_case_insensitive() {
-    let source = r#"// @NOTYPESANDSYMBOLS: true
-async function f(x, y = z) {}"#;
-    assert!(has_no_types_and_symbols_directive(source));
-}
-
-#[test]
-fn test_has_no_types_and_symbols_directive_with_other_options() {
-    let source = r#"// @strict: false
-// @target: es2015
-// @noTypesAndSymbols: true
-async function f(x, y = z) {}"#;
-    assert!(has_no_types_and_symbols_directive(source));
-}
-
-#[test]
-fn test_has_no_types_and_symbols_directive_comma_separated() {
-    let source = r#"// @noTypesAndSymbols: true, false
-async function f(x, y = z) {}"#;
-    // First value is true, so should return true
-    assert!(has_no_types_and_symbols_directive(source));
-}
-
-#[test]
-fn test_has_no_types_and_symbols_directive_after_32_lines() {
-    // Comments after 32 lines should not be parsed
-    let source = format!("{}\n// @noTypesAndSymbols: true", "\n".repeat(35));
-    assert!(!has_no_types_and_symbols_directive(&source));
-}
-
-#[test]
-fn test_has_no_types_and_symbols_directive_semicolon_terminated() {
-    let source = r#"// @noTypesAndSymbols: true;
-async function f(x, y = z) {}"#;
-    assert!(has_no_types_and_symbols_directive(source));
 }
 
 #[test]
