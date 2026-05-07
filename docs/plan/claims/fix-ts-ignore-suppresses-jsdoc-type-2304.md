@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-07
 - **Branch**: `fix/ts-ignore-suppresses-jsdoc-type-2304`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #4404
+- **Status**: ready
 - **Workstream**: declaration-emit / directive parity (issue #3996)
 
 ## Intent
