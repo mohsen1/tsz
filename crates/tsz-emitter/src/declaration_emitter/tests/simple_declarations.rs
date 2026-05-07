@@ -386,6 +386,31 @@ export interface I {
 }
 
 #[test]
+fn test_asserted_class_property_initializer_retains_local_type_alias() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type N = 1;
+export class Bar {
+    c3? = 1 as N;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("type N = 1;"),
+        "Expected asserted initializer alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("c3?: N;"),
+        "Expected optional asserted property to use the alias without widening: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected module marker when local alias is retained: {output}"
+    );
+}
+
+#[test]
 fn test_empty_named_export_has_no_extra_spacing() {
     let source = "export {};";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1570,6 +1595,37 @@ function C() {
     assert!(
         !output.contains("export const k:"),
         "Did not expect void exports to synthesize declarations: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_keyword_named_exports_emit_aliases() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.class = 123;
+exports.for = "loop";
+"#,
+    );
+
+    assert!(
+        output.contains("declare const _class: 123;"),
+        "Expected reserved export name to use a local alias: {output}"
+    );
+    assert!(
+        output.contains("declare const _for: \"loop\";"),
+        "Expected reserved export name to use a local alias: {output}"
+    );
+    assert!(
+        output.contains("export { _class as class, _for as for };"),
+        "Expected reserved export aliases to be grouped: {output}"
+    );
+    assert!(
+        !output.contains("export const class"),
+        "Did not expect invalid keyword binding declaration: {output}"
+    );
+    assert!(
+        !output.contains("export const for"),
+        "Did not expect invalid keyword binding declaration: {output}"
     );
 }
 

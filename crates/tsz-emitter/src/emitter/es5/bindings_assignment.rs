@@ -1376,11 +1376,49 @@ impl<'a> Printer<'a> {
             self.emit_assignment_separator(&mut first);
             self.write(&temp);
             self.write(" = ");
-            self.emit(right_idx);
+            // The RHS sits inside a comma expression `(_a = RHS, ...)` — never at
+            // statement-leading position, so a paren wrapping a type-erased object
+            // literal (e.g. `({ } as any)` -> after erasure -> `({})`) is redundant.
+            // tsc emits `_a = {}` here, not `_a = ({})`. Peel through paren+type-
+            // erasure if the unwrapped expression is an object literal so the strip
+            // matches tsc's own placement decision.
+            let emit_idx = self.peel_assign_rhs_object_literal_paren(right_idx);
+            self.emit(emit_idx);
             temp
         };
 
         self.emit_assignment_pattern_with_object_rest(left_idx, &source_name, true, &mut first);
+    }
+
+    /// Peel a single layer of `(<TypeErasure>{...})` paren wrapping when the
+    /// expression is the RHS of an assignment in a comma expression — that
+    /// position never has the leading-`{` block-vs-object ambiguity, so the
+    /// outer paren is redundant. Returns the inner expression if the shape
+    /// matches; otherwise returns the original index unchanged.
+    fn peel_assign_rhs_object_literal_paren(&self, idx: NodeIndex) -> NodeIndex {
+        let Some(node) = self.arena.get(idx) else {
+            return idx;
+        };
+        if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return idx;
+        }
+        let Some(paren) = self.arena.get_parenthesized(node) else {
+            return idx;
+        };
+        let Some(inner) = self.arena.get(paren.expression) else {
+            return idx;
+        };
+        let is_type_erasure = inner.kind == syntax_kind_ext::TYPE_ASSERTION
+            || inner.kind == syntax_kind_ext::AS_EXPRESSION
+            || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            || inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS;
+        if !is_type_erasure {
+            return idx;
+        }
+        match self.unwrap_type_assertion_kind(paren.expression) {
+            Some(k) if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => paren.expression,
+            _ => idx,
+        }
     }
 
     pub(in crate::emitter) fn emit_assignment_object_rest_destructuring_from_source(

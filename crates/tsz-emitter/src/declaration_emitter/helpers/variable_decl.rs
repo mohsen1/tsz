@@ -141,6 +141,11 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if has_initializer
+                && let Some(type_text) = self.as_const_single_spread_array_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
                 && self.declaration_type_is_uninformative(&[decl_idx, decl_name, initializer])
                 && let Some(type_text) = self.as_const_assertion_type_text(initializer)
             {
@@ -157,6 +162,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if exported_call_initializer
+                && self.preferred_expression_type_text(initializer).is_none()
                 && let Some(type_text) = self.const_literal_initializer_text_deep(initializer)
             {
                 self.write(": ");

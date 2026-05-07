@@ -524,7 +524,7 @@ mod tests {
         assert_eq!(
             build_include_patterns(&options),
             vec![
-                "*.ts", "*.tsx", "*.mts", "*.cts", "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+                "*.ts", "*.tsx", "*.mts", "*.cts", "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts",
             ]
         );
     }

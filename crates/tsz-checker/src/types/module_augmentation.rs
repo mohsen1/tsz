@@ -694,7 +694,18 @@ impl<'a> CheckerState<'a> {
                         && let Some(id_data) = arena.get_identifier(name_node)
                     {
                         let type_id = if std::ptr::eq(arena, self.ctx.arena) {
-                            let mut type_id = self.get_type_of_interface_member_simple(member_idx);
+                            let mut type_id = if member_node.kind == PROPERTY_SIGNATURE
+                                && sig.type_annotation.is_some()
+                                && let Some(self_ref_type) = self
+                                    .module_augmentation_self_reference_type(
+                                        module_spec,
+                                        interface_name,
+                                        sig.type_annotation,
+                                    ) {
+                                self_ref_type
+                            } else {
+                                self.get_type_of_interface_member_simple(member_idx)
+                            };
                             if let Some(substitution) = interface_substitution.as_ref() {
                                 type_id = crate::query_boundaries::common::instantiate_type(
                                     self.ctx.types,
@@ -1018,6 +1029,63 @@ impl<'a> CheckerState<'a> {
         }
 
         members
+    }
+
+    /// Preserve `self: Foo` inside `declare module "./m" { interface Foo { ... } }`
+    /// as a Lazy DefId so the post-merge cache update can redirect it to the merged type.
+    fn module_augmentation_self_reference_type(
+        &mut self,
+        module_spec: &str,
+        interface_name: &str,
+        type_annotation: tsz_parser::parser::NodeIndex,
+    ) -> Option<TypeId> {
+        use crate::symbol_resolver::TypeSymbolResolution;
+        use tsz_parser::parser::syntax_kind_ext::{QUALIFIED_NAME, TYPE_REFERENCE};
+
+        let annotation_node = self.ctx.arena.get(type_annotation)?;
+        if annotation_node.kind != TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.ctx.arena.get_type_ref(annotation_node)?;
+        let name_node = self.ctx.arena.get(type_ref.type_name)?;
+        if name_node.kind == QUALIFIED_NAME {
+            return None;
+        }
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        if ident.escaped_text != interface_name {
+            return None;
+        }
+
+        let sym_id = match self.resolve_identifier_symbol_in_type_position(type_ref.type_name) {
+            TypeSymbolResolution::Type(sym_id) => sym_id,
+            TypeSymbolResolution::ValueOnly(_) | TypeSymbolResolution::NotFound => return None,
+        };
+        let aug_module = self.ctx.binder.augmentation_target_modules.get(&sym_id)?;
+        if aug_module != module_spec
+            && !self
+                .module_augmentation_key_candidates(module_spec)
+                .iter()
+                .any(|candidate| candidate == aug_module)
+        {
+            return None;
+        }
+
+        let base_type = self.ctx.create_lazy_type_ref(sym_id);
+        let type_args = type_ref
+            .type_arguments
+            .as_ref()
+            .map(|args| {
+                args.nodes
+                    .iter()
+                    .map(|&arg_idx| self.get_type_from_type_node_in_type_literal(arg_idx))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if type_args.is_empty() {
+            Some(base_type)
+        } else {
+            Some(self.ctx.types.factory().application(base_type, type_args))
+        }
     }
 
     pub(crate) fn get_module_augmentation_members(

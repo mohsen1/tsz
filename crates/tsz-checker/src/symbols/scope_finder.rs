@@ -201,6 +201,12 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn enclosing_function_has_jsdoc_this_tag(&self, idx: NodeIndex) -> bool {
+        self.find_enclosing_non_arrow_function(idx)
+            .and_then(|func_idx| self.get_jsdoc_for_function(func_idx))
+            .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"))
+    }
+
     /// Check if `this` is inside a nested regular function (`FUNCTION_EXPRESSION` or
     /// `FUNCTION_DECLARATION`) within a class body. In such cases, the regular function
     /// creates its own `this` binding, so the enclosing class's `this` type should
