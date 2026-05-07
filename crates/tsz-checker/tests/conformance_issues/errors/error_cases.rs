@@ -151,6 +151,26 @@ const arguments = 10
 }
 
 #[test]
+fn test_delete_identifier_diagnostic_still_reports_without_syntax_errors() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "deleteIdentifier.ts",
+        r#"
+class C {
+    method(s: unknown) {
+        delete s;
+    }
+}
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        has_error(&diagnostics, 1102),
+        "Expected TS1102 for delete on an identifier in strict mode.\nGot: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_import_equals_reserved_word_uses_ts1214() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
