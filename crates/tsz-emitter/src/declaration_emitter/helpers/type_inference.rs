@@ -3847,6 +3847,7 @@ impl<'a> DeclarationEmitter<'a> {
 
             let mut type_param_names = Vec::new();
             let mut type_param_substitutions = Vec::new();
+            let mut type_param_constraints = Vec::new();
             let mut type_param_fallbacks = Vec::new();
             if let Some(type_params) = callable.type_parameters {
                 for &param_idx in &type_params.nodes {
@@ -3868,6 +3869,15 @@ impl<'a> DeclarationEmitter<'a> {
                         } else {
                             None
                         };
+                        if param.constraint.is_some()
+                            && let Some(constraint) = self
+                                .emit_type_node_text_from_arena(source_arena, param.constraint)
+                                .or_else(|| {
+                                    self.source_slice_from_arena(source_arena, param.constraint)
+                                })
+                        {
+                            type_param_constraints.push((name_text.clone(), constraint));
+                        }
                         if let Some(fallback) = fallback {
                             type_param_fallbacks.push((name_text.clone(), fallback));
                         }
@@ -3888,6 +3898,7 @@ impl<'a> DeclarationEmitter<'a> {
                             callable.parameters,
                             call,
                             &type_param_names,
+                            &type_param_constraints,
                         ),
                     );
                 }
@@ -4039,6 +4050,7 @@ impl<'a> DeclarationEmitter<'a> {
                 type_text =
                     Self::rewrite_relative_import_type_specifiers(&type_text, module_specifier);
             }
+            type_text = Self::ensure_single_line_type_literal_member_semicolon(&type_text);
             Some(type_text)
         })
     }
@@ -4121,6 +4133,25 @@ impl<'a> DeclarationEmitter<'a> {
             current = parent_idx;
         }
         None
+    }
+
+    fn ensure_single_line_type_literal_member_semicolon(type_text: &str) -> String {
+        let trimmed = type_text.trim();
+        if trimmed.contains('\n') {
+            return type_text.to_string();
+        }
+        let Some(inner) = trimmed
+            .strip_prefix('{')
+            .and_then(|text| text.strip_suffix('}'))
+            .map(str::trim)
+        else {
+            return type_text.to_string();
+        };
+        if inner.is_empty() || inner.ends_with(';') || inner.contains(';') || !inner.contains(':') {
+            type_text.to_string()
+        } else {
+            format!("{{ {inner}; }}")
+        }
     }
 
     pub(in crate::declaration_emitter) fn imported_static_method_declared_return_type_text(
