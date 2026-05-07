@@ -370,6 +370,91 @@ impl<'a> NamespaceES5Transformer<'a> {
         None
     }
 
+    fn extract_namespace_trailing_comment(&self, body_idx: NodeIndex) -> Option<String> {
+        let source_text = self.source_text?;
+        let body_node = self.arena.get(body_idx)?;
+        let pos = self.find_module_block_close_pos(body_node)? as usize;
+
+        let comments = crate::emitter::get_trailing_comment_ranges(source_text, pos + 1);
+        if comments.is_empty() {
+            return None;
+        }
+
+        Some(
+            comments
+                .iter()
+                .map(|comment| source_text[comment.pos as usize..comment.end as usize].to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+    }
+
+    fn find_module_block_close_pos(&self, body_node: &Node) -> Option<u32> {
+        let source_text = self.source_text?;
+        let bytes = source_text.as_bytes();
+        let limit = std::cmp::min(body_node.end as usize, bytes.len());
+        let mut pos = body_node.pos as usize;
+        while pos < limit && bytes.get(pos) != Some(&b'{') {
+            pos += 1;
+        }
+        if pos >= limit {
+            return None;
+        }
+
+        let mut depth = 0u32;
+        while pos < limit {
+            match bytes[pos] {
+                b'{' => {
+                    depth += 1;
+                    pos += 1;
+                }
+                b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(pos as u32);
+                    }
+                    pos += 1;
+                }
+                b'/' if pos + 1 < limit && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < limit && !matches!(bytes[pos], b'\n' | b'\r') {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < limit && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < limit && !(bytes[pos] == b'*' && bytes[pos + 1] == b'/') {
+                        pos += 1;
+                    }
+                    pos = std::cmp::min(pos + 2, limit);
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < limit {
+                        if bytes[pos] == b'\\' {
+                            pos = std::cmp::min(pos + 2, limit);
+                        } else if bytes[pos] == quote {
+                            pos += 1;
+                            break;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                _ => pos += 1,
+            }
+        }
+        None
+    }
+
+    fn trailing_same_line_comment_end_after(&self, pos: u32) -> Option<u32> {
+        let source_text = self.source_text?;
+        crate::emitter::get_trailing_comment_ranges(source_text, pos as usize)
+            .last()
+            .map(|comment| comment.end)
+    }
+
     /// Transform a namespace declaration to IR
     ///
     /// Returns `Some(IRNode::NamespaceIIFE { ... })` for valid namespaces,
@@ -480,6 +565,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             parent_name: None,
             param_name: param_name.map(Into::into),
             skip_sequence_indent: false,
+            trailing_comment: self
+                .extract_namespace_trailing_comment(innermost_body)
+                .map(Into::into),
         })
     }
 
@@ -806,18 +894,9 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Find the position of the closing '}' of the module block.
         // The last statement's node.end may extend into this brace, so we
         // constrain ASTRef nodes to not include it.
-        let body_close_pos = if let Some(text) = self.source_text {
-            let mut pos = body_node.end as usize;
-            while pos > body_node.pos as usize {
-                pos -= 1;
-                if text.as_bytes().get(pos) == Some(&b'}') {
-                    break;
-                }
-            }
-            pos as u32
-        } else {
-            body_node.end.saturating_sub(1)
-        };
+        let body_close_pos = self
+            .find_module_block_close_pos(body_node)
+            .unwrap_or_else(|| body_node.end.saturating_sub(1));
 
         // Check if it's a module block
         if let Some(block_data) = self.arena.get_module_block(body_node)
@@ -839,7 +918,8 @@ impl<'a> NamespaceES5Transformer<'a> {
                 // be emitted immediately after the current statement.
                 let code_end = self.find_code_end_of_erased_stmt(stmt_node.pos, stmt_node.end);
                 let is_class_like = self.is_class_like_member(stmt_idx);
-                let trailing_standalone = if is_class_like {
+                let is_namespace_like_stmt = is_namespace_like(self.arena, stmt_node);
+                let trailing_standalone = if is_class_like || is_namespace_like_stmt {
                     Vec::new()
                 } else {
                     self.extract_standalone_comments_in_range(code_end, stmt_node.end)
@@ -901,7 +981,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                         } else {
                             None
                         };
-                    let skip = is_namespace_like(self.arena, stmt_node)
+                    let skip = is_namespace_like_stmt
                         || stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
                         || matches!(export_clause_kind, Some(k) if k == syntax_kind_ext::CLASS_DECLARATION || k == syntax_kind_ext::MODULE_DECLARATION);
                     let trailing =
@@ -944,8 +1024,13 @@ impl<'a> NamespaceES5Transformer<'a> {
                 // leading-comment extraction picks them up. For other members
                 // `trailing_standalone` already drained that gap, so advancing
                 // to `stmt_node.end` is safe and keeps current behavior.
-                prev_end = if is_class_like {
-                    code_end
+                prev_end = if is_class_like || is_namespace_like_stmt {
+                    if is_namespace_like_stmt {
+                        self.trailing_same_line_comment_end_after(code_end)
+                            .unwrap_or(code_end)
+                    } else {
+                        code_end
+                    }
                 } else {
                     stmt_node.end
                 };
@@ -958,8 +1043,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             if let Some(last_stmt) = stmts.nodes.last()
                 && let Some(last_node) = self.arena.get(*last_stmt)
             {
+                let code_end = self.find_code_end_of_erased_stmt(last_node.pos, last_node.end);
                 let standalone_comments =
-                    self.extract_comments_in_range(last_node.end, body_close_pos);
+                    self.extract_standalone_comments_in_range(code_end, body_close_pos);
                 for c in standalone_comments {
                     result.push(c);
                 }
@@ -1174,7 +1260,11 @@ impl<'a> NamespaceES5Transformer<'a> {
             // Convert function to IR (stripping type annotations)
             IRNode::FunctionDecl {
                 name: func_name.clone().into(),
-                parameters: convert_function_parameters(self.arena, &func_data.parameters),
+                parameters: convert_function_parameters(
+                    self.arena,
+                    &func_data.parameters,
+                    self.source_text,
+                ),
                 body: convert_function_body(self.arena, func_data.body),
                 body_source_range,
                 leading_comment: None,
@@ -1419,6 +1509,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             parent_name: is_exported.then(|| parent_ns.to_string().into()),
             param_name: param_name.map(Into::into),
             skip_sequence_indent: true, // Nested namespace IIFEs need to skip indent when in sequence
+            trailing_comment: self
+                .extract_namespace_trailing_comment(ns_data.body)
+                .map(Into::into),
         })
     }
 }

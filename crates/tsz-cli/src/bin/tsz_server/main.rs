@@ -997,7 +997,7 @@ impl Server {
                 self.handle_encoded_semantic_classifications_full(seq, &request)
             }
             "inlayHints" | "provideInlayHints" => self.handle_inlay_hints(seq, &request),
-            "selectionRange" => self.handle_selection_range(seq, &request),
+            "selectionRange" | "selectionRange-full" => self.handle_selection_range(seq, &request),
             "linkedEditingRange" => self.handle_linked_editing_range(seq, &request),
             "prepareCallHierarchy" => self.handle_prepare_call_hierarchy(seq, &request),
             "provideCallHierarchyIncomingCalls" | "provideCallHierarchyOutgoingCalls" => {
@@ -1131,8 +1131,92 @@ impl Server {
 // Brace Matching Helpers
 // =============================================================================
 
+/// Decide whether a `/` at `pos` starts a regular-expression literal rather
+/// than a division operator. Uses the standard lexer heuristic: walk back to
+/// the previous in-code, non-whitespace token; if it is an operator/punctuator
+/// that cannot end an expression, or a keyword that introduces an expression,
+/// or there is no such token, the `/` begins a regex.
+///
+/// `map` reflects bytes already classified by `build_code_map` for
+/// `j < pos`; bytes inside earlier strings/comments are `false` and should be
+/// skipped here.
+fn is_regex_literal_start(bytes: &[u8], map: &[bool], pos: usize) -> bool {
+    let mut j = pos;
+    while j > 0 {
+        j -= 1;
+        let b = bytes[j];
+        if b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
+            continue;
+        }
+        if !map[j] {
+            // Inside a string/comment/template — skip.
+            continue;
+        }
+        if matches!(
+            b,
+            b'=' | b','
+                | b'('
+                | b'['
+                | b'{'
+                | b';'
+                | b':'
+                | b'?'
+                | b'!'
+                | b'+'
+                | b'-'
+                | b'*'
+                | b'/'
+                | b'%'
+                | b'&'
+                | b'|'
+                | b'^'
+                | b'<'
+                | b'>'
+                | b'~'
+        ) {
+            return true;
+        }
+        if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' {
+            // Walk back to the start of the identifier and decide based on
+            // whether it is a keyword that introduces an expression.
+            let end = j + 1;
+            let mut start = j;
+            while start > 0 {
+                let bb = bytes[start - 1];
+                if (bb.is_ascii_alphanumeric() || bb == b'_' || bb == b'$') && map[start - 1] {
+                    start -= 1;
+                } else {
+                    break;
+                }
+            }
+            return matches!(
+                &bytes[start..end],
+                b"return"
+                    | b"typeof"
+                    | b"delete"
+                    | b"void"
+                    | b"in"
+                    | b"of"
+                    | b"instanceof"
+                    | b"new"
+                    | b"throw"
+                    | b"do"
+                    | b"else"
+                    | b"case"
+                    | b"yield"
+                    | b"await"
+            );
+        }
+        // `)`, `]`, `}`, quotes, digits already handled above as alnum: end
+        // of expression — `/` is division.
+        return false;
+    }
+    // Start of file.
+    true
+}
+
 /// Build a boolean map indicating which byte positions are "in code"
-/// (i.e., not inside a string literal or comment).
+/// (i.e., not inside a string literal, comment, or regex literal).
 fn build_code_map(bytes: &[u8]) -> Vec<bool> {
     let len = bytes.len();
     let mut map = vec![true; len];
@@ -1163,6 +1247,51 @@ fn build_code_map(bytes: &[u8]) -> Vec<bool> {
                         }
                         map[i] = false;
                         i += 1;
+                    }
+                } else if is_regex_literal_start(bytes, &map, i) {
+                    // Regex literal `/.../flags`. Mark its body so brace
+                    // scanning ignores `{` / `}` that appear inside.
+                    map[i] = false;
+                    i += 1;
+                    let mut in_class = false;
+                    while i < len {
+                        match bytes[i] {
+                            b'\\' => {
+                                map[i] = false;
+                                i += 1;
+                                if i < len && bytes[i] != b'\n' {
+                                    map[i] = false;
+                                    i += 1;
+                                }
+                            }
+                            b'[' if !in_class => {
+                                in_class = true;
+                                map[i] = false;
+                                i += 1;
+                            }
+                            b']' if in_class => {
+                                in_class = false;
+                                map[i] = false;
+                                i += 1;
+                            }
+                            b'/' if !in_class => {
+                                map[i] = false;
+                                i += 1;
+                                while i < len && bytes[i].is_ascii_alphabetic() {
+                                    map[i] = false;
+                                    i += 1;
+                                }
+                                break;
+                            }
+                            b'\n' => {
+                                // Unterminated regex literal.
+                                break;
+                            }
+                            _ => {
+                                map[i] = false;
+                                i += 1;
+                            }
+                        }
                     }
                 } else {
                     i += 1;
