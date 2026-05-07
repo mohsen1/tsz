@@ -2538,6 +2538,82 @@ fn empty_object_interface_application_preserves_type_args() {
     );
 }
 
+/// Regression test for `undefinedAssignableToEveryType`: the lib resolution
+/// path registers `Promise`'s interface def against the canonical empty `{}`
+/// TypeId without setting `instance_shape` and without a `display_alias`.
+/// The interface has type params (`Promise<T>`), so the formatter would
+/// reach the bare-type-param fallback and render every user-written `{}`
+/// annotation as `Promise<T>`. The formatter must render `{}` structurally
+/// when there is no concrete instantiation to display.
+#[test]
+fn empty_object_does_not_repaint_as_generic_interface_without_display_alias() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let evaluated = db.object(vec![]);
+    let name = db.intern_string("Promise");
+    let info = crate::def::DefinitionInfo::interface(
+        name,
+        vec![TypeParamInfo {
+            name: db.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        vec![],
+    );
+    let def_id = def_store.register(info);
+    def_store.register_type_to_def(evaluated, def_id);
+    // Note: no `store_display_alias`. This mirrors the lib-resolution
+    // registration path for `Promise`, which never sets a display alias for
+    // the canonical empty `{}` TypeId.
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(evaluated),
+        "{}",
+        "A user-written `{{}}` annotation must format as `{{}}`, not as \
+         `Promise<T>`, when a generic interface def has been registered \
+         against the universal empty-object TypeId without provenance."
+    );
+
+    // The same shape must hold inside derived TypeData, e.g. inside a
+    // function return type. `var j: () => {} = undefined` previously
+    // rendered the target as `() => Promise<T>`.
+    let func = db.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: evaluated,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let mut fmt2 = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt2.format(func),
+        "() => {}",
+        "Empty `{{}}` inside a function return type must render structurally \
+         even when an unrelated generic interface is keyed on its TypeId."
+    );
+
+    // A non-generic empty interface (`interface I {}`) must still display
+    // its name when registered against the empty-object TypeId.
+    let db2 = TypeInterner::new();
+    let store2 = crate::def::DefinitionStore::new();
+    let evaluated2 = db2.object(vec![]);
+    let i_name = db2.intern_string("I");
+    let i_info = crate::def::DefinitionInfo::interface(i_name, vec![], vec![]);
+    let i_def = store2.register(i_info);
+    store2.register_type_to_def(evaluated2, i_def);
+    let mut fmt3 = TypeFormatter::new(&db2).with_def_store(&store2);
+    assert_eq!(
+        fmt3.format(evaluated2),
+        "I",
+        "A non-generic empty interface registered against the empty-object \
+         TypeId must keep its name."
+    );
+}
+
 /// Second half of the `unknownType1` regression: the type-alias `T52` is
 /// declared as `type T52 = T50<unknown>`, and the checker registers the
 /// evaluated body `{}` against `T52` via `register_type_to_def`. Without

@@ -1969,17 +1969,24 @@ impl<'a> TypeFormatter<'a> {
         // false matches.
         //
         // Exception: for empty anonymous shapes (`{}`), skip the fallback
-        // when the matched def is a type alias. Any alias whose body reduces
-        // to `{}` (e.g., `type T52 = T50<unknown>`) would otherwise repaint
-        // every user-written `{}` annotation with the alias name; tsc shows
-        // the literal `{}` in that case. Lib interfaces do not have empty
-        // shapes, so the guard never hides them.
+        // when the matched def's name would repaint the universal empty
+        // shape:
+        //   - a type alias whose body reduces to `{}`
+        //     (e.g., `type T52 = T50<unknown>`),
+        //   - a generic interface or class whose own shape registration was
+        //     created with empty properties (e.g., `Promise<T>` registered
+        //     before its body was populated).
+        // In all of these, every user-written `{}` annotation would otherwise
+        // pick up the unrelated def name. tsc shows the literal `{}`.
         if let Some(def_store) = self.def_store
             && let Some(def_id) = def_store.find_def_by_shape(shape)
             && let Some(def) = def_store.get(def_id)
         {
             use crate::def::DefKind;
-            let skip_for_empty_alias = shape_is_empty_anonymous && def.kind == DefKind::TypeAlias;
+            let skip_for_empty_alias = shape_is_empty_anonymous
+                && (def.kind == DefKind::TypeAlias
+                    || (matches!(def.kind, DefKind::Interface | DefKind::Class)
+                        && !def.type_params.is_empty()));
             if !skip_for_empty_alias {
                 return Some(self.format_def_name(&def));
             }

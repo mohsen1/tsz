@@ -927,6 +927,20 @@ impl<'a> TypeFormatter<'a> {
                         && shape.number_index.is_none()
                 }
         );
+        // A truly anonymous empty object (a user-written `{}` annotation)
+        // has no symbol stamp on its shape. Class instance types whose
+        // bodies happen to be empty (e.g., `class B<T> { constructor() {} }`)
+        // keep their shape symbol and remain distinguishable, so they may
+        // still use the def-name path with type params (`B<T>`). The
+        // generic-interface/class skip below gates on this distinction to
+        // avoid repainting bare `{}` annotations as unrelated def names
+        // without losing class identity for empty-body classes.
+        let is_empty_anonymous_object = is_empty_object
+            && matches!(
+                &key,
+                TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)
+                    if self.interner.object_shape(*shape_id).symbol.is_none()
+            );
 
         // For composite types that might be named (interfaces, type aliases, classes),
         // check if this TypeId maps to a definition name. This handles:
@@ -972,6 +986,19 @@ impl<'a> TypeFormatter<'a> {
                 // reduction or conditional evaluation. tsc shows the expanded
                 // form for these types, not the alias name.
                 use crate::def::DefKind;
+                let shape_is_non_empty = |shape: &ObjectShape| -> bool {
+                    !shape.properties.is_empty()
+                        || shape.string_index.is_some()
+                        || shape.number_index.is_some()
+                };
+                let def_represents_non_empty_object = def
+                    .instance_shape
+                    .as_ref()
+                    .is_some_and(|s| shape_is_non_empty(s.as_ref()))
+                    || def
+                        .static_shape
+                        .as_ref()
+                        .is_some_and(|s| shape_is_non_empty(s.as_ref()));
                 let skip_alias = if def.kind == DefKind::TypeAlias {
                     self.skip_type_alias_def_ids.contains(&def_id)
                         || def.body.is_some_and(|b| def_store.is_computed_body(b))
@@ -990,12 +1017,39 @@ impl<'a> TypeFormatter<'a> {
                         // program (`{}` is the universal empty-shape target of
                         // interning). Following the alias name here would
                         // repaint user-written `{}` annotations; tsc shows `{}`
-                        // structurally in that case, so we do too. Classes and
-                        // interfaces are unaffected: they keep their name and
-                        // remain distinguishable via `shape.symbol`.
+                        // structurally in that case, so we do too.
                         || is_empty_object
                 } else {
-                    false
+                    // Interfaces and classes are also subject to the universal
+                    // empty-shape interning: a non-empty interface/class def
+                    // (e.g. `interface Promise<T> { then; catch; ... }`) may
+                    // have been registered against the canonical empty `{}`
+                    // TypeId during lib resolution. When the type we're
+                    // rendering is the truly anonymous empty `{}` (no shape
+                    // symbol stamp), do not repaint it as the unrelated def
+                    // name.
+                    //
+                    // Two skip cases (both gated on `is_empty_anonymous_object`):
+                    //   1. The def's recorded shape is itself non-empty.
+                    //   2. The def is generic (has type params) and has no
+                    //      `display_alias` provenance for this TypeId. The
+                    //      fall-through path would render `Promise<T>` from
+                    //      the bare type-param names, which is wrong: there
+                    //      is no concrete instantiation, just the universal
+                    //      `{}` shape that happens to share the TypeId.
+                    //
+                    // Empty interfaces (`interface I {}`) keep their name:
+                    // `def_represents_non_empty_object` is false for them and
+                    // they have no type params.
+                    //
+                    // Class instance types with empty bodies but a shape
+                    // symbol stamp (e.g., `class B<T> { constructor() {} }`)
+                    // keep `B<T>`: `is_empty_anonymous_object` is false
+                    // because the shape carries the class's symbol.
+                    is_empty_anonymous_object
+                        && (def_represents_non_empty_object
+                            || (!def.type_params.is_empty()
+                                && self.interner.get_display_alias(type_id).is_none()))
                 };
                 if skip_alias {
                     // Fall through to format the structural type
