@@ -328,6 +328,176 @@ impl Server {
         )
     }
 
+    /// Implement the `encodedSyntacticClassifications-full` tsserver
+    /// command. Walks the source text via the scanner and emits
+    /// `(start, length, classificationId)` triples for every non-trivia
+    /// token. Classification IDs match tsc's `TokenClass` (0 = punctuation,
+    /// 1 = comment, 2 = identifier, 3 = keyword, 4 = numericLiteral,
+    /// 5 = operator, 6 = stringLiteral, 7 = regexLiteral, 10 = punctuation).
+    ///
+    /// `start` and `length` are UTF-16 unit counts (matching tsserver). For
+    /// ASCII source, byte == UTF-16 unit; multi-byte content widens
+    /// correctly via `len_utf16()`. See #3717.
+    pub(crate) fn handle_encoded_syntactic_classifications_full(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let span_start_byte = request
+                .arguments
+                .get("start")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize;
+            let span_length_byte = request
+                .arguments
+                .get("length")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(u32::MAX as u64) as usize;
+            let span_end_byte = span_start_byte.saturating_add(span_length_byte);
+
+            let source_text = self.open_files.get(file)?.clone();
+
+            // UTF-16 prefix counts so each token's byte offset translates to
+            // a UTF-16 offset in O(1) after a single pass.
+            let mut utf16_prefix: Vec<u32> = Vec::with_capacity(source_text.len() + 1);
+            utf16_prefix.push(0);
+            let mut count: u32 = 0;
+            for ch in source_text.chars() {
+                count = count.saturating_add(ch.len_utf16() as u32);
+                for _ in 0..ch.len_utf8() {
+                    utf16_prefix.push(count);
+                }
+            }
+            let to_utf16 = |byte: usize| -> u32 {
+                let idx = byte.min(utf16_prefix.len().saturating_sub(1));
+                utf16_prefix[idx]
+            };
+
+            let mut scanner =
+                tsz_scanner::scanner_impl::ScannerState::new(source_text.clone(), false);
+            let mut spans: Vec<u32> = Vec::new();
+
+            loop {
+                let token = scanner.scan();
+                if token == tsz_scanner::SyntaxKind::EndOfFileToken {
+                    break;
+                }
+                let token_start = scanner.get_token_start();
+                let token_end = scanner.get_token_end();
+
+                if token_start >= span_end_byte {
+                    break;
+                }
+                if token_end <= span_start_byte {
+                    continue;
+                }
+
+                let class_id = match Self::classify_syntactic_token(token) {
+                    Some(id) => id,
+                    None => continue,
+                };
+
+                let utf16_start = to_utf16(token_start);
+                let utf16_end = to_utf16(token_end);
+                let length = utf16_end.saturating_sub(utf16_start);
+                if length == 0 {
+                    continue;
+                }
+                spans.push(utf16_start);
+                spans.push(length);
+                spans.push(class_id);
+            }
+
+            Some(serde_json::json!({
+                "spans": spans,
+                "endOfLineState": 0,
+            }))
+        })();
+        self.stub_response(
+            seq,
+            request,
+            Some(result.unwrap_or(serde_json::json!({"spans": [], "endOfLineState": 0}))),
+        )
+    }
+
+    /// Map a scanner `SyntaxKind` to tsc's syntactic-classification token
+    /// class id. Returns `None` for trivia/EOF that should be skipped.
+    fn classify_syntactic_token(token: tsz_scanner::SyntaxKind) -> Option<u32> {
+        use tsz_scanner::{SyntaxKind, token_is_keyword};
+        // Trivia and EOF: skip.
+        if matches!(
+            token,
+            SyntaxKind::EndOfFileToken
+                | SyntaxKind::NewLineTrivia
+                | SyntaxKind::WhitespaceTrivia
+                | SyntaxKind::ShebangTrivia
+                | SyntaxKind::ConflictMarkerTrivia
+                | SyntaxKind::NonTextFileMarkerTrivia
+        ) {
+            return None;
+        }
+        // Comments → class 1.
+        if matches!(
+            token,
+            SyntaxKind::SingleLineCommentTrivia | SyntaxKind::MultiLineCommentTrivia
+        ) {
+            return Some(1);
+        }
+        // Identifiers → class 2.
+        if token == SyntaxKind::Identifier
+            || token == SyntaxKind::PrivateIdentifier
+            || token == SyntaxKind::JsxText
+        {
+            return Some(2);
+        }
+        // Keywords → class 3.
+        if token_is_keyword(token) {
+            return Some(3);
+        }
+        // Literals.
+        match token {
+            SyntaxKind::NumericLiteral | SyntaxKind::BigIntLiteral => return Some(4),
+            SyntaxKind::StringLiteral | SyntaxKind::NoSubstitutionTemplateLiteral => {
+                return Some(6);
+            }
+            SyntaxKind::RegularExpressionLiteral => return Some(7),
+            SyntaxKind::TemplateHead | SyntaxKind::TemplateMiddle | SyntaxKind::TemplateTail => {
+                return Some(6);
+            }
+            _ => {}
+        }
+        // Punctuation/operators. tsc folds `=`, `+`, `-`, etc. into class 5
+        // (operator) and structural punctuation (`,`, `;`, `(`, `)`, `{`, `}`,
+        // `[`, `]`, `.`, `:`, `?`, `=>`) into class 10. The `SyntaxKind`
+        // numeric ranges aren't ideal for this distinction, so use a small
+        // explicit set for class-10 punctuation; everything else punctuation
+        // -shaped becomes class 5.
+        if matches!(
+            token,
+            SyntaxKind::CommaToken
+                | SyntaxKind::SemicolonToken
+                | SyntaxKind::OpenParenToken
+                | SyntaxKind::CloseParenToken
+                | SyntaxKind::OpenBraceToken
+                | SyntaxKind::CloseBraceToken
+                | SyntaxKind::OpenBracketToken
+                | SyntaxKind::CloseBracketToken
+                | SyntaxKind::DotToken
+                | SyntaxKind::DotDotDotToken
+                | SyntaxKind::ColonToken
+                | SyntaxKind::QuestionToken
+                | SyntaxKind::EqualsGreaterThanToken
+                | SyntaxKind::AtToken
+                | SyntaxKind::HashToken
+                | SyntaxKind::BacktickToken
+        ) {
+            return Some(10);
+        }
+        Some(5)
+    }
+
     pub(crate) fn handle_emit_output(
         &mut self,
         seq: u64,
