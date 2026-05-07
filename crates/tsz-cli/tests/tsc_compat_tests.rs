@@ -3144,6 +3144,68 @@ fn tsc_parity_ts2427_any_alone_still_reported() {
     );
 }
 
+/// Regression for #3908: when `noEmit` comes from tsconfig.json (not the
+/// CLI flag), tsz must exit with `DiagnosticsPresent_OutputsGenerated` (2),
+/// matching tsc. Previously the exit-code branch only consulted the CLI
+/// arg, so config-only `noEmit` fell through to the outputs-skipped path
+/// (1).
+#[test]
+fn tsconfig_no_emit_with_errors_exits_outputs_generated() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("tsconfig_no_emit_exit_code").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "let x: string = 1;\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true},"files":["a.ts"]}"#,
+    );
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["-p", "tsconfig.json", "--pretty", "false"])
+            .expect("tsz should run");
+    assert!(
+        output.contains("TS2322"),
+        "expected TS2322 diagnostic, got:\n{output}"
+    );
+    assert_eq!(
+        code, 2,
+        "tsconfig noEmit with errors should exit 2 (DiagnosticsPresent_OutputsGenerated), got {code}\n{output}"
+    );
+}
+
+/// Companion to the test above: the same program with `--noEmit` on the
+/// command line must produce the same exit code. This locks the parity
+/// between CLI-driven and tsconfig-driven `noEmit`.
+#[test]
+fn cli_no_emit_with_errors_exits_outputs_generated() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("cli_no_emit_exit_code").expect("temp dir");
+    write_file(&temp.path.join("a.ts"), "let x: string = 1;\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{},"files":["a.ts"]}"#,
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", "tsconfig.json", "--noEmit", "--pretty", "false"],
+    )
+    .expect("tsz should run");
+    assert!(
+        output.contains("TS2322"),
+        "expected TS2322 diagnostic, got:\n{output}"
+    );
+    assert_eq!(
+        code, 2,
+        "CLI --noEmit with errors should exit 2 (DiagnosticsPresent_OutputsGenerated), got {code}\n{output}"
+    );
+}
+
 // --- Regression tests for issue #3919 ---
 //
 // `tsz --showConfig` must print the resolved config without validating root
