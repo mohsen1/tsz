@@ -74,41 +74,19 @@ impl<'a> Printer<'a> {
         let Some(source_text) = self.source_text else {
             return true;
         };
-        // Use the module specifier end as the base offset, since node.end may
-        // include trailing trivia that extends into the next statement.
-        let mut start = if let Some(import_decl) = self.arena.get_import_decl(node)
-            && let Some(module_node) = self.arena.get(import_decl.module_specifier)
-        {
-            module_node.end as usize
-        } else {
-            node.end as usize
+        // Issue #3597: ES import declarations are module-scoped, so a
+        // top-level use BEFORE the import is still a real value use. Scan
+        // the entire source with the import declaration's text whited out
+        // (including trailing comments on the same line as the import).
+        let Some(import_decl) = self.arena.get_import_decl(node) else {
+            return true;
         };
-        start = start.min(source_text.len());
-        let bytes = source_text.as_bytes();
-        // Skip past the entire import line (including trailing comments)
-        // to avoid matching identifiers in trailing comments like
-        // `import { yield } from "m"; // error to use default as binding name`
-        while start < bytes.len() {
-            match bytes[start] {
-                b'\n' => {
-                    start += 1;
-                    break;
-                }
-                b'\r' => {
-                    start += 1;
-                    if start < bytes.len() && bytes[start] == b'\n' {
-                        start += 1;
-                    }
-                    break;
-                }
-                _ => start += 1,
-            }
-        }
-        let haystack = &source_text[start..];
+        let haystack =
+            Self::source_excluding_import_decl(source_text, node, import_decl, self.arena);
         // Strip type-only content from the haystack so that identifiers
         // appearing only in type positions (type annotations, declare lines,
         // other import/export type statements, etc.) don't count as value usages.
-        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
         let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
@@ -127,7 +105,7 @@ impl<'a> Printer<'a> {
         // imported names.
         if self.ctx.options.emit_decorator_metadata
             && names.iter().any(|name| {
-                crate::import_usage::name_appears_in_decorator_metadata_type(haystack, name)
+                crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, name)
             })
         {
             return true;
