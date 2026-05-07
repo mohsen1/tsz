@@ -94,6 +94,9 @@ impl<'a> CheckerState<'a> {
         let Some(callee_access) = self.ctx.arena.get_access_expr(callee_node) else {
             return;
         };
+        if callee_access.question_dot_token {
+            return;
+        }
 
         let receiver_idx = self
             .ctx
