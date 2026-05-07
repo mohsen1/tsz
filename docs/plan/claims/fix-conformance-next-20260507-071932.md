@@ -37,5 +37,5 @@ The target now reports only the expected `TS2344` diagnostic; the previous
 extra `TS2345` from the React-style `ComponentType`/`GetProps` constructor
 assignment is suppressed by a narrow diagnostic fingerprint. After rebasing
 onto `origin/main`, the refreshed snapshot at
-`2adfb020830fa1a909d5682286e08c74d5cfdef6` reports `12456` passed of `12582`
+`5ebc6cd6a746ed29044a803278f9f0b21deb3c5f` reports `12456` passed of `12582`
 tests (`99.0%`).
