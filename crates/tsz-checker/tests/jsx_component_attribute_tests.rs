@@ -4528,8 +4528,7 @@ let mixedText = <Blah3>Hello unexpected text!</Blah3>;
     assert!(
         diags.iter().any(|(code, _, msg)| {
             *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && msg
-                    .contains("Type '(x: number) => number' is not assignable to type")
+                && msg.contains("Type '(x: number) => number' is not assignable to type")
                 && (msg.contains("Cb[] | Cb") || msg.contains("Cb | Cb[]"))
         }),
         "Union children mismatch should report against the declared union surface, got: {diags:?}"
