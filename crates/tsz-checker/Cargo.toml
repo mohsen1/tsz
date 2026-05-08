@@ -822,6 +822,10 @@ name = "unused_jsdoc_pattern_comment_scoped_tests"
 path = "tests/unused_jsdoc_pattern_comment_scoped_tests.rs"
 
 [[test]]
+name = "unused_jsdoc_template_declaration_tests"
+path = "tests/unused_jsdoc_template_declaration_tests.rs"
+
+[[test]]
 name = "unused_internal_name_suppression_tests"
 path = "tests/unused_internal_name_suppression_tests.rs"
 

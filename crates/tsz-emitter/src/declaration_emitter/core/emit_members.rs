@@ -1263,10 +1263,9 @@ impl<'a> DeclarationEmitter<'a> {
             class_decl.members.nodes.clone()
         } else if let Some(interface) = self.arena.get_interface(parent_node) {
             interface.members.nodes.clone()
-        } else if let Some(literal) = self.arena.get_literal_expr(parent_node) {
-            literal.elements.nodes.clone()
         } else {
-            return None;
+            let literal = self.arena.get_literal_expr(parent_node)?;
+            literal.elements.nodes.clone()
         };
 
         let setter_node = self.arena.get(accessor_idx)?;
