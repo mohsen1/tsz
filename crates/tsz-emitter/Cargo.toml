@@ -134,5 +134,9 @@ path = "tests/using_force_strict_mode_3516_tests.rs"
 name = "jsx_cjs_runtime_collision_tests"
 path = "tests/jsx_cjs_runtime_collision_tests.rs"
 
+[[test]]
+name = "async_method_super_capture_3759_tests"
+path = "tests/async_method_super_capture_3759_tests.rs"
+
 [lints]
 workspace = true
