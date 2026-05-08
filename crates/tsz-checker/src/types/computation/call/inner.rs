@@ -1280,7 +1280,18 @@ impl<'a> CheckerState<'a> {
                                 .is_some_and(|((return_base, _), (ctx_base, _))| {
                                     return_base == ctx_base
                                 });
-                        if !return_param_names.is_empty() && !same_return_context_application {
+                        let return_context_specializes_return_params = !return_param_names
+                            .is_empty()
+                            && self.contextual_return_type_specializes_wrapped_params(
+                                shape.return_type,
+                                ctx_type,
+                                &return_param_names,
+                                &mut FxHashSet::default(),
+                            );
+                        if !return_param_names.is_empty()
+                            && !same_return_context_application
+                            && !return_context_specializes_return_params
+                        {
                             let mut filtered =
                                 crate::query_boundaries::common::TypeSubstitution::new();
                             for (&name, &type_id) in return_context_substitution.map() {
@@ -1626,30 +1637,9 @@ impl<'a> CheckerState<'a> {
                                     .get(arg_idx)
                                     .map(|node| (node.pos, node.end))
                                     .unwrap_or((0, 0));
-                                let is_call_like_arg =
-                                    self.ctx.arena.get(arg_idx).is_some_and(|node| {
-                                        node.kind == syntax_kind_ext::CALL_EXPRESSION
-                                            || node.kind == syntax_kind_ext::NEW_EXPRESSION
-                                    });
-                                let callback_body_spans = self.callback_body_spans(arg_idx);
                                 self.ctx.diagnostics.retain(|diag| {
-                                    // Property-access failures found inside nested
-                                    // call arguments are definitive for this round.
-                                    // Preserve them while clearing provisional
-                                    // contextual diagnostics before the argument
-                                    // is retyped.
-                                    let is_property_access_failure_within_arg = diag.code
-                                        == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
-                                        && (is_call_like_arg
-                                            || callback_body_spans.iter().any(
-                                                |(body_start, body_end)| {
-                                                    diag.start >= *body_start
-                                                        && diag.start < *body_end
-                                                },
-                                            ));
                                     diag.start < start
                                         || diag.start >= end
-                                        || is_property_access_failure_within_arg
                                         // TS2454 (variable used before being assigned) is a
                                         // semantic fact about the variable, not a speculative
                                         // inference artifact. Preserve it across round 2
@@ -1792,6 +1782,11 @@ impl<'a> CheckerState<'a> {
                                                 )
                                                 || common::contains_type_parameters(
                                                     self.ctx.types,
+                                                    existing,
+                                                )
+                                                || assign_query::is_fresh_subtype_of(
+                                                    self.ctx.types,
+                                                    ty,
                                                     existing,
                                                 )
                                         }
@@ -2544,14 +2539,34 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let retry_contextual_param_types = if is_generic_call && had_return_context_substitution {
+            generic_instantiated_params.as_ref().map(|params| {
+                self.contextual_param_types_from_instantiated_params(params, args.len())
+            })
+        } else {
+            None
+        };
+        let has_contextual_signature_instantiation_arg =
+            args.iter().enumerate().any(|(i, &arg_idx)| {
+                let expected_type = retry_contextual_param_types
+                    .as_ref()
+                    .and_then(|types| types.get(i).copied().flatten())
+                    .or_else(|| base_contextual_param_types.get(i).copied().flatten());
+                self.expression_needs_contextual_signature_instantiation(arg_idx, expected_type)
+            });
+        let has_contextual_refresh_arg = args.iter().enumerate().any(|(i, &arg_idx)| {
+            self.argument_needs_refresh_for_contextual_call(
+                arg_idx,
+                retry_contextual_param_types
+                    .as_ref()
+                    .and_then(|types| types.get(i).copied().flatten())
+                    .or_else(|| base_contextual_param_types.get(i).copied().flatten()),
+            )
+        });
         let should_retry_generic_call = if is_generic_call
-            && !had_return_context_substitution
-            && args.iter().enumerate().any(|(i, &arg_idx)| {
-                self.argument_needs_refresh_for_contextual_call(
-                    arg_idx,
-                    base_contextual_param_types.get(i).copied().flatten(),
-                )
-            }) {
+            && (!had_return_context_substitution || has_contextual_signature_instantiation_arg)
+            && has_contextual_refresh_arg
+        {
             if let Some(ctx_type) = contextual_type {
                 match &result {
                     CallResult::Success(ret) => {
@@ -2712,10 +2727,20 @@ impl<'a> CheckerState<'a> {
                 .into_iter()
                 .collect();
             let same_return_context_application =
-                common::application_info(self.ctx.types, return_type)
+                common::application_info(self.ctx.types, shape.return_type)
                     .zip(common::application_info(self.ctx.types, ctx_type))
                     .is_some_and(|((return_base, _), (ctx_base, _))| return_base == ctx_base);
-            if !return_param_names.is_empty() && !same_return_context_application {
+            let return_context_specializes_return_params = !return_param_names.is_empty()
+                && self.contextual_return_type_specializes_wrapped_params(
+                    shape.return_type,
+                    ctx_type,
+                    &return_param_names,
+                    &mut FxHashSet::default(),
+                );
+            if !return_param_names.is_empty()
+                && !same_return_context_application
+                && !return_context_specializes_return_params
+            {
                 let mut filtered = crate::query_boundaries::common::TypeSubstitution::new();
                 for (&name, &type_id) in return_context_substitution.map() {
                     if !return_param_names.contains(&name) {

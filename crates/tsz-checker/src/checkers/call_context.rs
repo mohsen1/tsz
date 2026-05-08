@@ -572,6 +572,14 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            if self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::CALL_EXPRESSION
+                    || node.kind == syntax_kind_ext::NEW_EXPRESSION
+            }) && call_checker::get_contextual_signature(self.ctx.types, param_type).is_some()
+            {
+                continue;
+            }
+
             // Skip function expressions: they are deferred arguments whose return
             // types contribute to inference in Round 2. Including them here would
             // incorrectly suppress the contextual return type even when the callback
@@ -602,7 +610,38 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn contextual_return_type_specializes_wrapped_params(
+    fn contextual_signature_after_evaluation(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<tsz_solver::FunctionShape> {
+        if let Some(shape) = call_checker::get_contextual_signature(self.ctx.types, type_id) {
+            return Some(shape);
+        }
+
+        let evaluated = self.evaluate_type_with_env(type_id);
+        if evaluated != type_id {
+            if let Some(shape) = call_checker::get_contextual_signature(self.ctx.types, evaluated) {
+                return Some(shape);
+            }
+
+            let evaluated_application = self.evaluate_application_type(evaluated);
+            if evaluated_application != evaluated
+                && let Some(shape) =
+                    call_checker::get_contextual_signature(self.ctx.types, evaluated_application)
+                {
+                    return Some(shape);
+                }
+        }
+
+        let evaluated_application = self.evaluate_application_type(type_id);
+        if evaluated_application != type_id {
+            return call_checker::get_contextual_signature(self.ctx.types, evaluated_application);
+        }
+
+        None
+    }
+
+    pub(crate) fn contextual_return_type_specializes_wrapped_params(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -636,6 +675,35 @@ impl<'a> CheckerState<'a> {
                         visited,
                     )
                 });
+        }
+
+        let source_signature = self.contextual_signature_after_evaluation(source);
+        let target_signature = self.contextual_signature_after_evaluation(target);
+        if let (Some(source_shape), Some(target_shape)) = (source_signature, target_signature)
+            && source_shape.params.len() <= target_shape.params.len()
+        {
+            let params_specialize = source_shape
+                .params
+                .iter()
+                .zip(target_shape.params.iter())
+                .any(|(source_param, target_param)| {
+                    self.contextual_return_type_specializes_wrapped_params(
+                        source_param.type_id,
+                        target_param.type_id,
+                        tracked_type_params,
+                        visited,
+                    )
+                });
+            if params_specialize
+                || self.contextual_return_type_specializes_wrapped_params(
+                    source_shape.return_type,
+                    target_shape.return_type,
+                    tracked_type_params,
+                    visited,
+                )
+            {
+                return true;
+            }
         }
 
         if let (Some(source_elem), Some(target_elem)) = (

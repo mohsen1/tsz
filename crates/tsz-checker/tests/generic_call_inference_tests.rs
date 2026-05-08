@@ -1807,6 +1807,31 @@ const result: Container<number> = box_it(42);
     );
 }
 
+#[test]
+fn returned_function_parameters_keep_same_application_return_context() {
+    let source = r#"
+type Mapper<T, U> = (x: T) => U;
+declare function wrap<T, U>(cb: Mapper<T, U>): Mapper<T, U>;
+declare function arrayize<T, U>(cb: Mapper<T, U>): Mapper<T, U[]>;
+declare function combine<A, B, C>(f: (x: A) => B, g: (x: B) => C): (x: A) => C;
+declare function foo(f: Mapper<string, number>): void;
+declare const strings: { map<U>(cb: (x: string, index: number, array: string[]) => U): U[] };
+declare function identity<T>(x: T): T;
+
+let f3: Mapper<string, number[]> = arrayize(wrap(s => s.length));
+let f4: Mapper<string, boolean> = combine(wrap(s => s.length), wrap(n => n >= 10));
+foo(wrap(s => s.length));
+let a4 = strings.map(combine(wrap(s => s.length), wrap(n => n > 10)));
+let a5 = strings.map(combine(identity, wrap(s => s.length)));
+let a6 = strings.map(combine(wrap(s => s.length), identity));
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Returned function parameter type should be preserved for same-application return context. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Contextual instantiation through intersections ────────────────────
 
 #[test]
