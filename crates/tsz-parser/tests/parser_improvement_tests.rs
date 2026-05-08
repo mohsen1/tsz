@@ -1,6 +1,7 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives
 
 use crate::parser::ParserState;
+use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::position::LineMap;
 
@@ -2998,6 +2999,60 @@ fn invalid_surrogate_unicode_escapes_in_class_member_emit_ts1127() {
             (diagnostic_codes::INVALID_CHARACTER, second_escape),
         ],
         "invalid surrogate escapes in class member names should report scanner-shaped TS1127 diagnostics, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn es5_astral_identifier_chars_recover_as_invalid_declaration_tail() {
+    let source = "export var _𐊧 = new Foo();";
+    let astral_pos = source.find('𐊧').expect("astral identifier char") as u32;
+    let equals_pos = source.find('=').expect("equals") as u32;
+    let new_pos = source.find("new").expect("new keyword") as u32;
+
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::INVALID_CHARACTER && d.start == astral_pos),
+        "ES5 astral identifier char must emit TS1127 at its source position, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(
+            |d| d.code == diagnostic_codes::VARIABLE_DECLARATION_EXPECTED && d.start == equals_pos
+        ),
+        "ES5 astral identifier recovery must keep `=` visible for TS1134, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code
+            == diagnostic_codes::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME
+            && d.start == new_pos),
+        "ES5 astral identifier recovery must report TS1389 at `new`, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es2015_astral_identifier_chars_remain_valid_identifier_parts() {
+    let source = "export var _𐊧 = new Foo();";
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES2015,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::INVALID_CHARACTER),
+        "ES2015 astral identifier chars should remain valid identifier parts, got {diagnostics:?}"
     );
 }
 

@@ -117,7 +117,7 @@ impl ParserState {
                 end_of_file_token: eof_token,
                 file_name: self.file_name.clone(),
                 text: self.scanner.source_text_arc(),
-                language_version: 99,
+                language_version: u32::from(self.language_version.ts_numeric_value()),
                 language_variant: 0,
                 script_kind: 3,
                 is_declaration_file: self.is_declaration_file(),
@@ -142,6 +142,7 @@ impl ParserState {
 
         self.file_name = file_name;
         self.scanner.set_text(source_text, Some(start), None);
+        self.scanner.set_language_version(self.language_version);
         self.context_flags = 0;
         self.current_token = SyntaxKind::Unknown;
         self.parse_diagnostics.clear();

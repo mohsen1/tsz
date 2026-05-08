@@ -27,7 +27,7 @@ use tsz::lib_loader::LibFile;
 use tsz::module_resolver::ModuleResolver;
 use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
-use tsz_common::common::{ModuleKind, NewLineKind};
+use tsz_common::common::{ModuleKind, NewLineKind, ScriptTarget};
 use tsz_common::file_extensions::{
     JS_FAMILY_EXTENSIONS, JSON_EXTENSION, TS_FAMILY_EXTENSIONS, is_json_file,
 };
@@ -1574,7 +1574,7 @@ fn compile_inner(
 
     let build_program_start = Instant::now();
     let (program, dirty_paths) = if let Some(ref mut c) = effective_cache {
-        let result = build_program_with_cache(sources, c, &lib_files);
+        let result = build_program_with_cache(sources, c, &lib_files, resolved.checker.target);
         (result.program, Some(result.dirty_paths))
     } else {
         let compile_inputs: Vec<(String, String)> = sources
@@ -1588,7 +1588,11 @@ fn compile_inner(
                 (source.path.to_string_lossy().into_owned(), text)
             })
             .collect();
-        let bind_results = parallel::parse_and_bind_parallel_with_libs(compile_inputs, &lib_files);
+        let bind_results = parallel::parse_and_bind_parallel_with_libs_and_target(
+            compile_inputs,
+            &lib_files,
+            resolved.checker.target,
+        );
         (parallel::merge_bind_results(bind_results), None)
     };
     let parse_bind_duration = build_program_start.elapsed();
@@ -2557,6 +2561,7 @@ fn build_program_with_cache(
     sources: Vec<SourceEntry>,
     cache: &mut CompilationCache,
     lib_files: &[Arc<LibFile>],
+    language_version: ScriptTarget,
 ) -> BuildProgramResult {
     let mut meta = Vec::with_capacity(sources.len());
     let mut to_parse = Vec::new();
@@ -2566,7 +2571,7 @@ fn build_program_with_cache(
         let file_name = source.path.to_string_lossy().into_owned();
         let (hash, cached_ok) = match source.text {
             Some(text) => {
-                let hash = hash_text(&text);
+                let hash = hash_text_with_language_version(&text, language_version);
                 let cached_ok = cache
                     .bind_cache
                     .get(&source.path)
@@ -2600,7 +2605,11 @@ fn build_program_with_cache(
         // This ensures global symbols like console, Array, Promise are available
         // during binding, which prevents "Any poisoning" where unresolved symbols
         // default to Any type instead of emitting TS2304 errors.
-        parallel::parse_and_bind_parallel_with_libs(to_parse, lib_files)
+        parallel::parse_and_bind_parallel_with_libs_and_target(
+            to_parse,
+            lib_files,
+            language_version,
+        )
     };
 
     let mut parsed_map: FxHashMap<String, BindResult> = parsed_results
@@ -2784,9 +2793,10 @@ fn update_import_symbol_ids(
     cache.star_export_dependencies = star_export_dependencies;
 }
 
-fn hash_text(text: &str) -> u64 {
+fn hash_text_with_language_version(text: &str, language_version: ScriptTarget) -> u64 {
     let mut hasher = FxHasher::default();
     text.hash(&mut hasher);
+    language_version.ts_numeric_value().hash(&mut hasher);
     hasher.finish()
 }
 
