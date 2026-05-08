@@ -213,8 +213,9 @@ fn test_emitter_file_size_ceiling() {
     //   emitter/core.rs (2158),
     //   declaration_emitter/exports/mod.rs (2063),
     //   emitter/module_emission/core/mod.rs (2069),
-    //   emitter/declarations/namespace.rs (2063).
-    const FILE_COUNT_CEILING: usize = 17;
+    //   emitter/declarations/namespace.rs (2063),
+    //   declaration_emitter/core/emit_members.rs (2079, added on main in #4621).
+    const FILE_COUNT_CEILING: usize = 18;
     assert!(
         oversized.len() <= FILE_COUNT_CEILING,
         "Number of emitter source files over 2000 LOC has grown to {} (ceiling: {FILE_COUNT_CEILING}). \
