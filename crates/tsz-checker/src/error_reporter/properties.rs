@@ -331,34 +331,7 @@ impl<'a> CheckerState<'a> {
                 return annotation_display;
             }
         }
-        let display = Self::collapse_pick_literal_union_display(&inferred_display)
-            .unwrap_or(inferred_display);
-        Self::filter_generic_excess_union_display(&display).unwrap_or(display)
-    }
-
-    fn filter_generic_excess_union_display(display: &str) -> Option<String> {
-        if !display.contains(" | ") {
-            return None;
-        }
-        let members = display.split(" | ").collect::<Vec<_>>();
-        let concrete = members
-            .iter()
-            .copied()
-            .filter(|member| !Self::display_looks_generic_excess_union_member(member))
-            .collect::<Vec<_>>();
-        (!concrete.is_empty() && concrete.len() < members.len()).then(|| concrete.join(" | "))
-    }
-
-    fn display_looks_generic_excess_union_member(display: &str) -> bool {
-        let head = display
-            .split_once(" & ")
-            .map_or(display, |(head, _)| head)
-            .trim_matches(['(', ')', ' ']);
-        !head.is_empty()
-            && head.len() <= 2
-            && head
-                .chars()
-                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        Self::collapse_pick_literal_union_display(&inferred_display).unwrap_or(inferred_display)
     }
 
     fn same_simple_alias_array_union_display(left: &str, right: &str) -> bool {
@@ -506,7 +479,6 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) -> (u32, String) {
         let type_str = self.excess_property_target_display_for_site(target, idx);
-        let type_str = Self::filter_generic_excess_union_display(&type_str).unwrap_or(type_str);
         let suggestion_target = self.strip_non_object_union_members_for_excess_display(target);
         if !self.has_syntax_parse_errors()
             && let Some(suggestion) = self
@@ -2043,7 +2015,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let type_str = self.excess_property_target_display_for_site(target, idx);
-        let type_str = Self::filter_generic_excess_union_display(&type_str).unwrap_or(type_str);
         let message = format!(
             "Object literal may only specify known properties, and '{prop_name}' does not exist in type '{type_str}'."
         );
