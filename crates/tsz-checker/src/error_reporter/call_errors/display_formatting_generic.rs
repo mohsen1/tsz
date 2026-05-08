@@ -50,7 +50,7 @@ impl<'a> CheckerState<'a> {
             .and_then(|sig| Self::raw_param_for_call_arg(&sig.params, arg_index));
 
         // Resolve the underlying type parameter that this argument is being
-        // checked against. Two cases produce a primitive-base widened display:
+        // checked against. These cases produce a primitive-base widened display:
         //
         // 1. Rest parameter whose element is a generic — the legacy
         //    `f<T>(...args: T[])` path. Gated on a sibling argument having
@@ -64,9 +64,11 @@ impl<'a> CheckerState<'a> {
         //    fixed to `number`), the argument-not-assignable diagnostic
         //    renders both source and target as primitives ('string' /
         //    'number') instead of preserving the inference candidate's
-        //    literal display. Type parameters with no primitive constraint
-        //    (e.g. `<T>(a: T, b: T)`) keep their literal candidate display
-        //    — tsc preserves `'3' / '""'` in those cases.
+        //    literal display.
+        // 3. Bare implementation-signature type parameters that are not part
+        //    of the annotated return surface widen after a previous argument
+        //    fixes the primitive base. If the return annotation exposes the
+        //    type parameter, tsc preserves literal candidates.
         let (type_param_name, requires_prev_arg_match) = if raw_param
             .is_some_and(|param| param.rest)
         {
@@ -79,13 +81,17 @@ impl<'a> CheckerState<'a> {
         } else if let Some(param) = raw_param {
             let info =
                 query_common::type_param_info(self.ctx.types.as_type_database(), param.type_id)?;
-            // Only widen when the type parameter's effective constraint is a
-            // primitive whose base matches `param_base`. Otherwise preserve
-            // the inference candidate's literal display (matching tsc's
-            // `typeInferenceConflictingCandidates.ts` behaviour).
+            // Widen when the type parameter's declared-constraint chain
+            // bottoms out at a primitive whose base matches `param_base`.
+            // The `<T, U extends T>` conformance case also widens when the
+            // return annotation exposes `U`; the existing `: void` case keeps
+            // literal candidates, so do not treat every unconstrained terminal
+            // type parameter as a widening trigger.
             let constraint_matches_param_base = self
                 .resolve_type_parameter_primitive_constraint_base(info)
-                .is_some_and(|base| base == param_base);
+                .is_some_and(|base| base == param_base)
+                || (self.declared_constraint_chain_ends_at_unconstrained_type_param(info)
+                    && self.ast_function_return_mentions_type_param(call.expression, info.name));
             if !constraint_matches_param_base {
                 let implemented_signature_param = self
                     .ast_generic_implementation_param_name_for_call_arg(call.expression, arg_index)
@@ -176,6 +182,39 @@ impl<'a> CheckerState<'a> {
             current = inner.constraint?;
         }
         None
+    }
+
+    /// Returns true when the declared-constraint chain of a type parameter
+    /// (e.g. U in `<T, U extends T>`) bottoms out at *another* type
+    /// parameter that itself has no declared constraint. The inference
+    /// algorithm then widens fresh-literal candidates for both U and its
+    /// terminal constraint (T), and the failing constraint check uses
+    /// those widened values for the TS2345 diagnostic. Type parameters
+    /// with no declared constraint at all (`<T>(a: T)`) and chains that
+    /// reach a non-type-parameter non-primitive (e.g. `<U extends T[]>`)
+    /// must continue to preserve their literal candidate display.
+    fn declared_constraint_chain_ends_at_unconstrained_type_param(
+        &self,
+        info: tsz_solver::TypeParamInfo,
+    ) -> bool {
+        const MAX_DEPTH: usize = 8;
+        let db = self.ctx.types.as_type_database();
+        let Some(mut current) = info.constraint else {
+            return false;
+        };
+        for _ in 0..MAX_DEPTH {
+            if self.primitive_display_base(current).is_some() {
+                return false;
+            }
+            let Some(inner) = query_common::type_param_info(db, current) else {
+                return false;
+            };
+            match inner.constraint {
+                Some(next) => current = next,
+                None => return true,
+            }
+        }
+        false
     }
 
     fn raw_param_for_call_arg(
@@ -359,5 +398,43 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn ast_function_return_mentions_type_param(
+        &mut self,
+        callee_expr: NodeIndex,
+        type_param_name: tsz_common::interner::Atom,
+    ) -> bool {
+        let type_param_name = self.ctx.types.resolve_atom_ref(type_param_name).to_string();
+        let Some(callee_sym) = self
+            .resolve_identifier_symbol(callee_expr)
+            .or_else(|| self.resolve_qualified_symbol(callee_expr))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(callee_sym) else {
+            return false;
+        };
+        let declarations = symbol.declarations.clone();
+
+        for decl_idx in declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(func) = self.ctx.arena.get_function(node) else {
+                continue;
+            };
+            let Some(return_annotation) = func.type_annotation.into_option() else {
+                continue;
+            };
+            if self
+                .sanitized_type_node_display(return_annotation)
+                .is_some_and(|display| display.contains(type_param_name.as_str()))
+            {
+                return true;
+            }
+        }
+
+        false
     }
 }
