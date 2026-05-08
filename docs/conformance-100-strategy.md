@@ -1,6 +1,6 @@
 # 100% Conformance Strategy
 
-Last updated: 2026-05-08 on `origin/main` at `79d848589f`.
+Last updated: 2026-05-08 on `origin/main` at `b39d5d3180`.
 
 ## Target
 
@@ -17,26 +17,29 @@ The goal is complete only when all of these are true on the same merged main com
 Fourslash and emit remain merge gates, but they are not substitutes for diagnostic
 conformance.
 
-## Current Baseline
+## Latest Local Baseline
 
-Current checked-in snapshot after `#4541`:
+Latest local snapshot run after `#4558` and `#4559`:
 
 - `scripts/conformance/conformance-snapshot.json`: `12511/12582` passed, `71` failed, `99.4%`.
-- `scripts/conformance/conformance-detail.json`: `12511/12581` passed, `70` failed, `4` known failures.
+- `scripts/conformance/conformance-detail.json`: `12511/12581` passed, `70` failed, `5` known failures.
 
 Dashboard from `python3 scripts/conformance/query-conformance.py --dashboard`:
 
-- Category split: `3` false positives, `11` wrong-code tests, `52` fingerprint-only tests.
+- Category split: `2` false positives, `6` wrong-code tests, `59` fingerprint-only tests.
 - All-missing failures: `0`.
-- Top extra codes: `TS2322` in `4` tests, `TS2345` in `3`, `TS2741` in `2`.
-- Top missing parser/module codes are mostly singleton: `TS1110`, `TS1127`, `TS1011`, `TS1109`, `TS1128`, `TS1136`, `TS1005`, `TS1068`, `TS1134`, `TS1351`, `TS1389`, `TS2809`.
-- Close-to-passing by code-set diff <= 2: `59` tests.
+- Top extra codes: `TS2345` in `2` tests, `TS2322` in `2`, plus singleton `TS2349`, `TS1102`, `TS2304`, and `TS2339`.
+- Top missing codes are singleton: `TS1127`, `TS1134`, `TS1389`, and `TS2416`.
+- Close-to-passing by code-set diff <= 2: `7` code-set tests, with most remaining failures now fingerprint-only.
 
-The behavior queue improved materially during 2026-05-07 and early 2026-05-08.
-This snapshot was regenerated on the snapshot branch after `origin/main`
-advanced to `ce169015ba` (`#4541`). Keep using focused conformance runs for
-candidate selection because active behavior PRs can stale this snapshot quickly.
-Older notes that cite `12451/12582`, `12470/12582`, `12488/12581`,
+The behavior queue improved materially during 2026-05-07 and 2026-05-08.
+This local snapshot was generated after `origin/main` advanced to `b39d5d3180`
+with `#4558` and `#4559` merged. The generated artifacts were not checked in
+because the snapshot gate rejects refreshes that introduce more new failure
+entries than fixed entries, even when the total pass count is unchanged. Keep
+using focused conformance runs for candidate selection because active behavior
+PRs can stale this snapshot quickly. Older notes that cite pre-`#4558`
+parser/keyof failures, `12451/12582`, `12470/12582`, `12488/12581`,
 `12501/12582`, or 99.0-99.3% are stale.
 
 ## Active PR Queue
@@ -45,11 +48,10 @@ Monitor these PRs without sitting idle for CI:
 
 | PR | Purpose | Action |
 | --- | --- | --- |
-| #4534 | `fix(checker): preserve accepted overload callback diagnostics` | Non-draft behavior PR; blocked at last check. |
-| #4533 | `fix(cli): surface --isolatedDeclarations diagnostics under --noCheck` | Non-draft behavior PR; status unknown at last check. |
-| #4530 | `fix(diagnostics): preserve property alias display in TS2339` | Non-draft behavior PR; status unknown at last check. |
-| #4529 | `fix(checker): preserve async return literal context` | Non-draft behavior PR; blocked at last check. |
-| #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Draft and not auto-merge enabled because the last version had broad unit/conformance regressions. |
+| #4560 | `fix(checker): preserve generic rest callback inference` | Non-draft behavior PR; CI running at last update. Expected to remove the `genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts` false positive after merge. |
+| #4550 | `[WIP] fix(checker): drop hardcoded Comparable<number> diagnostic rewrite (#3057)` | Draft; do not merge. |
+| #4517 | `[do not merge] chore(checker-tests): consolidate load_lib_files_for_test variants` | Draft; do not merge. |
+| #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Draft; leave blocked unless it is rebased and revalidated. |
 
 Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434`,
 `#4438`, `#4439`, `#4443`, `#4444`, `#4447`, `#4448`, `#4449`, `#4450`,
@@ -57,7 +59,9 @@ Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434
 `#4495`, `#4496`, `#4497`, `#4498`, `#4499`, `#4500`, `#4501`, `#4488`,
 `#4504`, `#4502`, `#4503`, `#4505`, `#4507`, `#4508`, `#4509`, `#4511`,
 `#4513`, `#4514`, `#4515`, `#4516`, `#4518`, `#4519`, `#4521`, `#4522`,
-`#4523`, `#4520`, `#4525`, `#4526`, `#4527`, `#4528`, `#4531`, and `#4532`.
+`#4523`, `#4520`, `#4525`, `#4526`, `#4527`, `#4528`, `#4531`, `#4532`,
+`#4544`, `#4545`, `#4546`, `#4547`, `#4548`, `#4549`, `#4551`, `#4552`,
+`#4554`, `#4555`, `#4556`, `#4557`, `#4558`, and `#4559`.
 `#4510` and `#4512` also merged and are no longer active.
 
 ## Work Selection
@@ -86,23 +90,26 @@ Best remaining targets on current `main`, excluding work already covered by open
 
 | Target | Current impact | Suggested lane |
 | --- | --- | --- |
-| Type display parity | `52` fingerprint-only tests | Shared type-printer/display policy for `TS2322`, `TS2345`, and `TS2339` fingerprint-only failures. |
-| Diagnostic count accuracy | `7` close code-set tests | Remove duplicate diagnostics or add missing instances where tsc emits the same code set. |
-| Big 3 wrong-code problems | `11` wrong-code tests | Relation/property/call diagnostic selection. |
-| One-extra false positives | `3` tests where tsc expects no diagnostics | Suppress one extra diagnostic only when a focused current-main conformance run reproduces it. |
-| Parser recovery | `2` code-set tests plus fingerprint-only parser anchors | Specific TS1xxx parser recovery selection. |
+| Type display parity | `59` fingerprint-only tests | Shared type-printer/display policy for recurring `TS2322`, `TS2345`, `TS2339`, and lib declaration fingerprints. |
+| False positives | `2` tests where tsc expects no diagnostics | `#4560` covers one `TS2345`; `propTypeValidatorInference.ts` remains a separate `TS2322` lane. |
+| Wrong-code singleton gaps | `6` tests | Missing `TS1127`, `TS1134`, `TS1389`, `TS2416`; extra singleton `TS2349`, `TS1102`, `TS2304`, `TS2339`. |
+| Parser recovery | `constructorWithIncompleteTypeAnnotation.ts` and `unicodeEscapesInNames02.ts` | Specific TS1xxx parser recovery and unicode escape diagnostic selection. |
+| Node/Salsa relation diagnostics | `node` has `4` failures, `salsa` has `2` | Keep module/export, JS, and relation fixes in isolated PRs with focused regression coverage. |
 
 Active local worker assignments from this tranche:
 
 - `codex/conformance-type-display-*` for type display parity; first slice merged as `#4515`.
 - `codex/conformance-diagnostic-count-*` for diagnostic count accuracy.
-- `codex/conformance-parser-recovery-*` for parser recovery.
+- `codex/parser-syntax-stale-20260508` landed as `#4558`; remaining parser recovery is now `constructorWithIncompleteTypeAnnotation.ts` and `unicodeEscapesInNames02.ts`.
 - `codex/big3-relation-*` for a focused Big 3 wrong-code semantic fix.
 - `codex/one-extra-diagnostic-*` for a focused one-extra or false-positive diagnostic fix; bundled-lib filtering merged as `#4507`.
-- `codex/indexed-write-followup-*` for remaining `keyofAndIndexedAccessErrors` indexed-write mismatches after #4503 landed; first follow-up merged as `#4511`.
+- `codex/keyof-indexed-access-20260508` landed as `#4559`; remaining `keyof` failures are fingerprint-only, not the older indexed-write code-set issue.
 - `codex/ts2552-temporal-*` for the one-missing TS2552 lane in `temporal.ts`; published as `#4510`.
 - `codex/js-salsa-one-extra-*` for remaining JS/Salsa one-extra false positives.
-- `codex/snapshot-readme-refresh-*` for strategy, README, and snapshot refreshes based on current `origin/main`.
+- `codex/inference-contextual-fp-20260508043950` is published as `#4560` for the generic rest callback false positive.
+- `codex/delete-invalid-ops-ts1102-20260508` owns the current extra `TS1102` in `deleteOperatorInvalidOperations.ts`.
+- `codex/assignment-compat-signature-ts2741-20260508` is checking whether the signature `TS2741` lane is stale after `#4554`.
+- `codex/snapshot-refresh-20260508-post4544` owns strategy and README refresh tooling based on current `origin/main`; generated snapshot artifacts should be refreshed in a later PR once the snapshot gate accepts the failure-set delta.
 
 Already published or merged from earlier tranches:
 
@@ -133,14 +140,10 @@ Already published or merged from earlier tranches:
 
 ### Tier 1: Fingerprint Parity
 
-Fingerprint parity is most of the remaining work: `60` tests and about four fifths of
-failures. The main sub-buckets are:
-
-- `TS2322`: `33` tests.
-- `TS2345`: `16` tests.
-- `TS2339`: `9` tests.
-- `TS2564`: `3` tests.
-- `TS2454`: `1` test.
+Fingerprint parity is most of the remaining work: `59` tests and most of the
+remaining failures. The recurring families are assignment/call/property-access
+display parity, lib declaration fingerprints, and parser recovery fingerprints
+where the code set now matches.
 
 Root-cause campaigns from `--campaigns`:
 
