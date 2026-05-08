@@ -84,50 +84,7 @@ enum MemberName {
     Private(String),
 }
 
-/// Returns true when `haystack` contains `needle` as a complete identifier
-/// (not as a substring of a longer identifier).
-fn contains_identifier_token(haystack: &str, needle: &str) -> bool {
-    let bytes = haystack.as_bytes();
-    let needle_bytes = needle.as_bytes();
-    if needle_bytes.is_empty() || needle_bytes.len() > bytes.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i + needle_bytes.len() <= bytes.len() {
-        if &bytes[i..i + needle_bytes.len()] == needle_bytes {
-            let prev_ok = i == 0 || !is_identifier_part(bytes[i - 1]);
-            let next_ok = i + needle_bytes.len() == bytes.len()
-                || !is_identifier_part(bytes[i + needle_bytes.len()]);
-            if prev_ok && next_ok {
-                return true;
-            }
-        }
-        i += 1;
-    }
-    false
-}
-
-const fn is_identifier_part(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
-}
-
-/// Pick a temporary name that doesn't collide with any identifier reference
-/// inside `class_span`. Returns `base` when there's no collision, or
-/// `base_1`, `base_2`, … until a free name is found. Mirrors tsc's
-/// `_classDescriptor_1` rename for decorator transform temps.
-fn hygienic_temp_name(base: &str, class_span: &str) -> String {
-    if !contains_identifier_token(class_span, base) {
-        return base.to_string();
-    }
-    for suffix in 1u32..=100 {
-        let candidate = format!("{base}_{suffix}");
-        if !contains_identifier_token(class_span, &candidate) {
-            return candidate;
-        }
-    }
-    // Should never happen for any real class; fall back to the base name.
-    base.to_string()
-}
+use crate::transforms::emit_utils::hygienic_temp_name;
 
 /// TC39 Decorator Emitter
 pub struct TC39DecoratorEmitter<'a> {
