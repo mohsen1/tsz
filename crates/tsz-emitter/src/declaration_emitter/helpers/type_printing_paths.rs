@@ -107,7 +107,12 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            let module_specifier = if let Some(package_specifier) =
+            let module_specifier = if binder.declared_modules.contains(module_path) {
+                // Ambient module declaration `declare module "url" {}` — the
+                // module specifier is the declared name itself, which is
+                // valid wherever the declaration is reachable in scope.
+                module_path.clone()
+            } else if let Some(package_specifier) =
                 self.package_specifier_for_node_modules_path(current_path, module_path)
             {
                 package_specifier
