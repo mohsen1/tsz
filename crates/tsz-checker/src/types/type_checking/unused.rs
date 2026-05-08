@@ -1706,6 +1706,12 @@ impl<'a> CheckerState<'a> {
         };
         let text: &str = &sf.text;
 
+        // `@template T` *declares* a scoped type parameter; it does not
+        // *reference* an existing symbol. Don't include
+        // `format!("@template {name}")` here — that would falsely mark
+        // an unrelated value/local of the same name as "used", and the
+        // raw substring would also match `@template TypeParam` as a
+        // hit for `@template T` (issue #3506).
         let patterns = [
             format!("{{@link {name}}}"),
             format!("{{@link {name}."),
@@ -1720,7 +1726,6 @@ impl<'a> CheckerState<'a> {
             format!("@returns {{{name}}}"),
             format!("@returns {{{name}[]}}"),
             format!("@returns {{ {name} }}"),
-            format!("@template {name}"),
         ];
 
         let comment_ranges = tsz_common::comments::get_comment_ranges(text);

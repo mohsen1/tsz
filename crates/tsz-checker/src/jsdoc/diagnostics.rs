@@ -1121,8 +1121,15 @@ impl<'a> CheckerState<'a> {
                 let line_start = comment_text[..offset_in_comment]
                     .rfind('\n')
                     .map_or(0, |idx| idx + 1);
+                // Single-line JSDoc (`/** @param {T} y */`) needs the
+                // `/**` prefix stripped before tag detection works;
+                // multi-line JSDoc lines start with `* …` and need the
+                // existing `*` strip. Apply both unconditionally —
+                // `trim_start_matches` is a no-op when the prefix is
+                // absent.
                 let line = comment_text[line_start..]
                     .trim_start()
+                    .trim_start_matches("/**")
                     .trim_start_matches('*')
                     .trim_start();
                 let is_param_tag = Self::strip_jsdoc_tag_prefix(line, "param").is_some();
@@ -2401,7 +2408,17 @@ impl<'a> CheckerState<'a> {
         let mut line_offset = 0usize;
         for raw_line in comment_text.split_inclusive('\n') {
             let line = raw_line.trim_end_matches('\n').trim_end_matches('\r');
-            let trimmed = line.trim().trim_start_matches('*').trim();
+            // Strip both single-line (`/** … */`) and multi-line (`* …`)
+            // JSDoc framing so single-line JSDoc tags like
+            // `/** @param {T} y */` are recognised. Without the `/**` /
+            // `*/` strip, the per-line `@param` detection below missed
+            // every single-line JSDoc, leaking diagnostics like #3506.
+            let trimmed = line
+                .trim()
+                .trim_start_matches("/**")
+                .trim_start_matches('*')
+                .trim_end_matches("*/")
+                .trim();
             let is_param_or_return = trimmed.starts_with("@param ")
                 || trimmed.starts_with("@param\t")
                 || trimmed.starts_with("@param{")
