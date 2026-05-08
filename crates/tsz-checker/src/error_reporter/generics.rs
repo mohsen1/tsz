@@ -334,7 +334,45 @@ impl<'a> CheckerState<'a> {
                 .collect();
             return format!("{}<{}>", alias_name, arg_displays.join(", "));
         }
+        // When the evaluated form differs from the as-written input AND the
+        // input is an intersection that still carries Application wrappers,
+        // format the as-written input. Reduction to the intersection's
+        // mapped/object body strips alias names that tsc preserves on the
+        // result (e.g. `{x:number} & InvalidKeys2<"a">` reduces to a shape
+        // that interns equally with `{x:number} & InvalidKeys<"a">`, so
+        // formatting the evaluated form depends on a global last-writer-wins
+        // `display_alias` map and may pick a sibling alias). The as-written
+        // intersection still names `InvalidKeys2`, so the printer renders
+        // it correctly via `print_type_application` without consulting the
+        // shared cache.
+        if type_id != evaluated
+            && crate::query_boundaries::common::is_intersection_type(self.ctx.types, type_id)
+            && self.intersection_has_named_application_member(type_id)
+        {
+            return self.format_type_for_assignability_message(type_id);
+        }
         self.format_type_for_assignability_message(evaluated)
+    }
+
+    /// True when the given intersection has at least one member that is a
+    /// `TypeApplication` whose base resolves to a named type alias / interface
+    /// / class (i.e. the printer can render it as `Name<Args>` directly,
+    /// without falling back to `display_alias` lookup on its evaluated form).
+    fn intersection_has_named_application_member(&self, type_id: TypeId) -> bool {
+        let Some(list_id) =
+            crate::query_boundaries::common::intersection_list_id(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        let members = self.ctx.types.type_list(list_id);
+        members.iter().any(|&member| {
+            let Some(app) =
+                crate::query_boundaries::common::type_application(self.ctx.types, member)
+            else {
+                return false;
+            };
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base).is_some()
+        })
     }
 
     fn assertion_declared_type_texts(&self, idx: NodeIndex) -> Option<(String, String)> {
