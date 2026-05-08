@@ -1815,8 +1815,16 @@ impl<'a> CheckerState<'a> {
         // for the underlying target. Skip the literal-preserving branch in
         // that case so the argument widens to its widened display type
         // (e.g. `string` instead of `'"hello"'`).
+        //
+        // Additionally, only preserve the source literal when the target's
+        // primitive structure makes the literal display informative — for a
+        // mixed-primitive target like `string | "hello"` whose unique base
+        // appears in plain primitive form, the source widens to its base to
+        // match tsc's output. See `literal_widening_policy` for the full
+        // rule.
         if self.is_literal_sensitive_assignment_target(param_type)
             && !self.literal_sensitivity_is_only_synthetic_optional_undefined(param_type, arg_idx)
+            && self.source_literal_primitive_matches_target_literal(arg_type, arg_idx, param_type)
             && let Some(display) = self.literal_call_argument_display(arg_idx)
         {
             return display;
@@ -1865,6 +1873,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.call_target_preserves_literal_argument_surface(param_type, arg_idx)
+            && self.source_literal_primitive_matches_target_literal(arg_type, arg_idx, param_type)
             && let Some(display) = self.literal_call_argument_display(arg_idx)
         {
             if (display == "true" || display == "false")
