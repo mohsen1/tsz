@@ -933,14 +933,34 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let retry_contextual_param_types = if is_generic_call && had_return_context_substitution {
+            generic_instantiated_params.as_ref().map(|params| {
+                self.contextual_param_types_from_instantiated_params(params, args.len())
+            })
+        } else {
+            None
+        };
+        let has_contextual_signature_instantiation_arg =
+            args.iter().enumerate().any(|(i, &arg_idx)| {
+                let expected_type = retry_contextual_param_types
+                    .as_ref()
+                    .and_then(|types| types.get(i).copied().flatten())
+                    .or_else(|| base_contextual_param_types.get(i).copied().flatten());
+                self.expression_needs_contextual_signature_instantiation(arg_idx, expected_type)
+            });
+        let has_contextual_refresh_arg = args.iter().enumerate().any(|(i, &arg_idx)| {
+            self.argument_needs_refresh_for_contextual_call(
+                arg_idx,
+                retry_contextual_param_types
+                    .as_ref()
+                    .and_then(|types| types.get(i).copied().flatten())
+                    .or_else(|| base_contextual_param_types.get(i).copied().flatten()),
+            )
+        });
         let should_retry_generic_call = if is_generic_call
-            && !had_return_context_substitution
-            && args.iter().enumerate().any(|(i, &arg_idx)| {
-                self.argument_needs_refresh_for_contextual_call(
-                    arg_idx,
-                    base_contextual_param_types.get(i).copied().flatten(),
-                )
-            }) {
+            && (!had_return_context_substitution || has_contextual_signature_instantiation_arg)
+            && has_contextual_refresh_arg
+        {
             if let Some(ctx_type) = contextual_type {
                 match &result {
                     crate::query_boundaries::common::CallResult::Success(ret) => {
@@ -1062,10 +1082,20 @@ impl<'a> CheckerState<'a> {
                 .into_iter()
                 .collect();
             let same_return_context_application =
-                common::application_info(self.ctx.types, return_type)
+                common::application_info(self.ctx.types, shape.return_type)
                     .zip(common::application_info(self.ctx.types, ctx_type))
                     .is_some_and(|((return_base, _), (ctx_base, _))| return_base == ctx_base);
-            if !return_param_names.is_empty() && !same_return_context_application {
+            let return_context_specializes_return_params = !return_param_names.is_empty()
+                && self.contextual_return_type_specializes_wrapped_params(
+                    shape.return_type,
+                    ctx_type,
+                    &return_param_names,
+                    &mut rustc_hash::FxHashSet::default(),
+                );
+            if !return_param_names.is_empty()
+                && !same_return_context_application
+                && !return_context_specializes_return_params
+            {
                 let mut filtered = crate::query_boundaries::common::TypeSubstitution::new();
                 for (&name, &type_id) in return_context_substitution.map() {
                     if !return_param_names.contains(&name) {
