@@ -37,5 +37,9 @@ path = "tests/scopes_tests.rs"
 name = "lib_merge_external_module_tests"
 path = "tests/lib_merge_external_module_tests.rs"
 
+[[test]]
+name = "lib_shadow_preservation_tests"
+path = "tests/lib_shadow_preservation_tests.rs"
+
 [lints]
 workspace = true

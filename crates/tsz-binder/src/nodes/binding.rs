@@ -19,16 +19,38 @@ type PreservedDeclArenaEntry = (NodeIndex, DeclSpan, SmallVec<[Arc<NodeArena>; 1
 /// Lib-symbol meaning carried over to a module-local shadowing symbol.
 ///
 /// See [`BinderState::collect_preserved_lib_meaning`].
+///
+/// For VALUE-only locals shadowing lib types (`const Array = 1` shadows
+/// `interface Array<T>`, `declare const Readonly: unique symbol` shadows
+/// `type Readonly<T>`), we preserve only the TYPE flag — not the lib's
+/// type-alias / interface declarations themselves. Polluting the local
+/// shadow symbol's `declarations` with lib type-alias nodes causes
+/// downstream type-traversal (e.g. `Static<typeof X>`-style indexed
+/// access through TypeBox-style `unique symbol` keys) to read the lib's
+/// computational type-alias body as if it belonged to the local symbol,
+/// which conflates independent type evaluations (issue #4687).
+///
+/// For TYPE-only locals shadowing lib values (`interface Symbol` shadows
+/// `var Symbol: SymbolConstructor`), we still preserve the lib's
+/// `value_declaration` because property access like `Symbol.iterator`
+/// needs the lib's `SymbolConstructor` shape attached to the shadow
+/// symbol — there is no "type-namespace fallback by name" symmetric to
+/// what we have on the type side, and the lib's value declaration is a
+/// nominal `var` binding that does not drive property-key traversal.
 #[derive(Default)]
 struct PreservedLibMeaning {
     /// Lib flags that belong to the namespace the local declaration does NOT
     /// occupy (e.g. lib's INTERFACE flag when shadowing with `const X = ...`).
     flags: u32,
     /// Lib declarations to copy onto the new shadow symbol's `declarations`
-    /// vec. Each entry is `(decl_node_idx, span)`.
+    /// vec. Each entry is `(decl_node_idx, span)`. Only populated for
+    /// VALUE-side preservation (lib `var X` shadowed by `interface X`); the
+    /// TYPE side preserves flags only and lets type resolution fall back to
+    /// lib symbols by name.
     declarations: Vec<PreservedDecl>,
     /// Per-declaration arena entries to copy into `declaration_arenas` so the
     /// checker can resolve each declaration back to its owning lib arena.
+    /// Same scope as `declarations`.
     declaration_arenas: Vec<PreservedDeclArenaEntry>,
     /// Lib's `value_declaration` to adopt when the local doesn't supply one.
     value_declaration: Option<PreservedDecl>,
@@ -121,12 +143,29 @@ impl BinderState {
                 continue;
             }
 
-            preserved.declarations.push((decl, span));
-            preserved.declaration_arenas.push((decl, span, arenas));
+            // TYPE-side preservation must NOT carry the lib's
+            // INTERFACE/TYPE_ALIAS declaration onto the local shadow
+            // symbol's `declarations` / `declaration_arenas`. Doing so
+            // makes downstream type-traversal walk the lib's type-alias
+            // body as if it were part of the user's symbol, conflating
+            // independent type evaluations like `Static<typeof Input>`
+            // vs `Static<typeof Output>` in TypeBox-style fixtures
+            // (issue #4687). The TYPE flag alone is enough for type
+            // resolution to keep working: lib type-reference lookups
+            // already fall back to lib contexts by name (see
+            // `crates/tsz-checker/src/types/queries/lib_decls.rs`).
+            //
+            // VALUE-side preservation keeps the declaration because
+            // `Symbol.iterator`-style property access needs the lib's
+            // `var Symbol: SymbolConstructor` declaration attached to
+            // the shadow, and `var` declarations don't drive the
+            // problematic computed-key / mapped-type traversal.
             if declares_type {
                 preserved.flags |= lib_flags & symbol_flags::TYPE;
             }
             if declares_value {
+                preserved.declarations.push((decl, span));
+                preserved.declaration_arenas.push((decl, span, arenas));
                 preserved.flags |= lib_flags & symbol_flags::VALUE;
                 if preserve_value && preserved.value_declaration.is_none() && lib_value_decl == decl
                 {
