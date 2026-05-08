@@ -2718,7 +2718,10 @@ fn test_tuple_array_assignment_tuple_to_union_array() {
 
 #[test]
 fn test_array_to_variadic_tuple() {
-    // string[] is NOT assignable to [...string[]]
+    // `string[]` IS assignable to `[...string[]]` — a variadic tuple with a
+    // single rest element of array type is structurally equivalent to that
+    // array type. tsc accepts this and tsz must too; the symmetric case is
+    // `[...T] <: T` (handled in `visit_tuple`).
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -2730,7 +2733,17 @@ fn test_array_to_variadic_tuple() {
         rest: true,
     }]);
 
-    assert!(!checker.is_subtype_of(string_array, target));
+    assert!(checker.is_subtype_of(string_array, target));
+
+    // The reduction must still respect element-type compatibility: a mismatched
+    // element type still rejects.
+    let number_array_target = interner.tuple(vec![TupleElement {
+        type_id: interner.array(TypeId::NUMBER),
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+    assert!(!checker.is_subtype_of(string_array, number_array_target));
 }
 
 #[test]

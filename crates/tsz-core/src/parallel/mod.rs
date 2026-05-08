@@ -5,6 +5,7 @@
 
 mod core;
 pub mod dep_graph;
+mod lib_snapshot;
 pub mod residency;
 pub mod skeleton;
 

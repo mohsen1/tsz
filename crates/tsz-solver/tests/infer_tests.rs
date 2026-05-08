@@ -16108,3 +16108,136 @@ fn test_reverse_mapped_inference_preserves_source_declaration_order() {
          (zalpha < alpha < mid); got zalpha={z_order} alpha={a_order} mid={m_order}"
     );
 }
+
+/// Inferring from an array argument against a `[...T]` parameter must produce
+/// `T = sourceArray`. The variadic tuple `[...T]` is structurally equivalent
+/// to `T` (when `T` is array-typed), so a generic call like
+/// `function f<T extends unknown[]>(t: [...T]): T; f(arr)` infers `T = arr`'s
+/// type. Without this rule, inference falls through and `T` defaults to its
+/// constraint (`unknown[]`), then the assignability check emits a spurious
+/// TS2345 because `[...unknown[]]` is not normalized to `unknown[]`.
+#[test]
+fn test_inference_from_array_against_single_rest_variadic_tuple() {
+    use crate::types::{InferencePriority, TupleElement};
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let t_type = interner.intern(TypeData::TypeParameter(crate::types::TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Source: number[]
+    let source = interner.array(TypeId::NUMBER);
+
+    // Target: [...T]
+    let target = interner.tuple(vec![TupleElement {
+        type_id: t_type,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+    assert_eq!(
+        result, source,
+        "inferring number[] against [...T] should produce T = number[]"
+    );
+}
+
+/// Same rule with a different type-parameter name to guard against any
+/// hardcoded-name regression. The behaviour must be structural.
+#[test]
+fn test_inference_from_array_against_single_rest_variadic_tuple_alt_name() {
+    use crate::types::{InferencePriority, TupleElement};
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    // Use a different name to prove the rule is structural.
+    let p_name = interner.intern_string("P");
+    let var_p = ctx.fresh_type_param(p_name, false);
+    let p_type = interner.intern(TypeData::TypeParameter(crate::types::TypeParamInfo {
+        name: p_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let source = interner.array(TypeId::STRING);
+
+    let target = interner.tuple(vec![TupleElement {
+        type_id: p_type,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let result = ctx.resolve_with_constraints(var_p).unwrap();
+    assert_eq!(
+        result, source,
+        "rule is structural and must not depend on the type-parameter name"
+    );
+}
+
+/// Targets with multiple elements (e.g., `[...T, number]`) are *not* in scope
+/// for the new single-rest rule — the spread-tuple-equals-array reduction only
+/// applies when the rest is the sole element. This test pins that boundary so
+/// future refactors don't accidentally over-broaden the case.
+#[test]
+fn test_inference_from_array_against_mixed_variadic_tuple_does_not_match() {
+    use crate::types::{InferencePriority, TupleElement};
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let t_type = interner.intern(TypeData::TypeParameter(crate::types::TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let source = interner.array(TypeId::NUMBER);
+
+    // Target: [...T, number] — has a fixed trailing element after the rest.
+    let target = interner.tuple(vec![
+        TupleElement {
+            type_id: t_type,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    // The single-rest reduction must not fire here. Either no candidate is
+    // recorded, or any recorded candidate must come from a different rule —
+    // we only assert that the rule under test does not naively bind T to the
+    // entire source array.
+    let resolved = ctx.resolve_with_constraints(var_t).unwrap_or(TypeId::ERROR);
+    assert_ne!(
+        resolved, source,
+        "single-rest rule must not fire on multi-element variadic tuples"
+    );
+}

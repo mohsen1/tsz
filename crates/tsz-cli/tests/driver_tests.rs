@@ -17810,8 +17810,7 @@ fn cli_removed_compiler_option_flags_emit_ts5102() {
             removed_diags
                 .iter()
                 .any(|d| d.message_text.contains(option_name)),
-            "TS5102 message must mention {option_name:?}, got: {:#?}",
-            removed_diags
+            "TS5102 message must mention {option_name:?}, got: {removed_diags:#?}"
         );
     }
 }

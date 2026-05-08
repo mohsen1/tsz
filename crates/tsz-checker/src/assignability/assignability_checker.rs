@@ -2397,12 +2397,35 @@ impl<'a> CheckerState<'a> {
         if self.format_type_diagnostic(source_base) == "Static" {
             return true;
         }
-        source_args
-            .iter()
-            .zip(target_args.iter())
-            .any(|(&source_arg, &target_arg)| {
-                !target_arg.is_any() && !self.is_assignable_to(source_arg, target_arg)
-            })
+        let variances = tsz_solver::relations::variance::compute_type_param_variances_with_resolver(
+            self.ctx.types.as_type_database(),
+            &self.ctx,
+            def_id,
+        );
+        source_args.iter().zip(target_args.iter()).enumerate().any(
+            |(i, (&source_arg, &target_arg))| {
+                if target_arg.is_any() {
+                    return false;
+                }
+                // When variance for this parameter is `rejection_unreliable`
+                // (e.g. the type parameter only appears inside a template
+                // literal interpolation, where stringification can make a
+                // structurally valid assignment look like a covariant
+                // failure), the structural check that already passed is the
+                // authoritative signal. Forcing strict covariance here would
+                // override that with a spurious rejection — for example
+                // `AGen<number>` should be assignable to `AGen<string>` when
+                // `type AGen<T> = { field: \`a${T}\` }` because
+                // \`a${number}\` <: \`a${string}\`.
+                if let Some(ref vs) = variances
+                    && let Some(variance) = vs.get(i)
+                    && variance.rejection_unreliable()
+                {
+                    return false;
+                }
+                !self.is_assignable_to(source_arg, target_arg)
+            },
+        )
     }
 
     fn type_alias_args_are_unwitnessed(

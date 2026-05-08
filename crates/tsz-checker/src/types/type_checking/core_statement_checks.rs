@@ -896,6 +896,9 @@ impl<'a> CheckerState<'a> {
         let is_valid = crate::query_boundaries::common::is_valid_mapped_type_key_type(
             self.ctx.types,
             evaluated,
+        ) || crate::query_boundaries::common::is_valid_mapped_type_key_type(
+            self.ctx.types,
+            constraint_type,
         );
         let is_deferred_index_access =
             crate::query_boundaries::common::index_access_types(self.ctx.types, evaluated)

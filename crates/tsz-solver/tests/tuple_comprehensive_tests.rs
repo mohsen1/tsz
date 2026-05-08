@@ -959,6 +959,176 @@ fn test_spread_tuple_subtype_preserves_type_param_relation() {
     );
 }
 
+// =============================================================================
+// Array-source-to-variadic-tuple-target tests
+//
+// These exercise the symmetric case of `[...T] <: T`: when source is a plain
+// array `S[]` and target is a single-rest variadic tuple `[...X]`, the variadic
+// tuple is structurally equivalent to its rest element's array form, so
+// `S[] <: [...X]` reduces to `S[] <: X`. tsc accepts these patterns; tsz used
+// to incorrectly reject them as "array not assignable to tuple", producing
+// false-positive TS2345s on calls like `concat<T extends unknown[]>(t: [...T])(arr)`.
+// =============================================================================
+
+/// `string[]` should be assignable to `[...string[]]` — the concrete spread
+/// is structurally identical to the array.
+#[test]
+fn test_concrete_array_assignable_to_concrete_spread_tuple() {
+    let interner = TypeInterner::new();
+
+    let string_array = interner.array(TypeId::STRING);
+    let target = interner.tuple(vec![TupleElement {
+        type_id: string_array,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(string_array, target),
+        "string[] should be assignable to [...string[]]"
+    );
+}
+
+/// `string[]` should be assignable to `[...readonly string[]]` when the
+/// target's rest element is a readonly array — the readonly-tuple/readonly-array
+/// rule still applies, but the spread-equals-array reduction holds when the
+/// source itself is mutable. This guards against name- or shape-specific
+/// hardcoding by varying the rest element kind.
+#[test]
+fn test_concrete_array_assignable_to_readonly_concrete_spread_tuple() {
+    let interner = TypeInterner::new();
+
+    let string_array = interner.array(TypeId::STRING);
+    let readonly_string_array = interner.readonly_type(string_array);
+    let target = interner.tuple(vec![TupleElement {
+        type_id: readonly_string_array,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(string_array, target),
+        "string[] should be assignable to [...readonly string[]]"
+    );
+}
+
+/// Concrete `number[]` is NOT assignable to `[...T]` when `T` is a free type
+/// parameter (uninstantiated): tsc rejects this because `T` could be
+/// instantiated to any subtype of `unknown[]` (e.g., `string[]`), and the
+/// concrete-source-vs-opaque-target rule strictly disallows the assignment.
+/// In real call sites inference resolves `T` to a concrete type *before* this
+/// check runs; the new fix kicks in at that point. This test pins the
+/// boundary so that the new single-rest reduction does not erroneously open
+/// up the type-parameter case.
+#[test]
+fn test_concrete_array_not_assignable_to_uninstantiated_type_param_spread() {
+    let interner = TypeInterner::new();
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    }));
+
+    let number_array = interner.array(TypeId::NUMBER);
+    let target = interner.tuple(vec![TupleElement {
+        type_id: t_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(number_array, target),
+        "number[] should NOT be subtype-of [...T] when T is a free type parameter"
+    );
+}
+
+/// `string[]` should NOT be assignable to `[...number[]]` — the element types
+/// are incompatible, so the reduction `S[] <: X` (= `string[] <: number[]`)
+/// must reject.
+#[test]
+fn test_concrete_array_not_assignable_to_incompatible_spread_tuple() {
+    let interner = TypeInterner::new();
+
+    let string_array = interner.array(TypeId::STRING);
+    let number_array = interner.array(TypeId::NUMBER);
+    let target = interner.tuple(vec![TupleElement {
+        type_id: number_array,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(string_array, target),
+        "string[] should NOT be assignable to [...number[]]"
+    );
+}
+
+/// `string[]` is NOT assignable to a fixed tuple even when the fixed element
+/// is optional — the source could be an empty array, but a single optional
+/// position is not equivalent to a variadic spread.
+#[test]
+fn test_array_not_assignable_to_optional_fixed_tuple() {
+    let interner = TypeInterner::new();
+
+    let string_array = interner.array(TypeId::STRING);
+    // [string?] is one fixed (optional) element, not a rest.
+    let target = interner.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: true,
+        rest: false,
+    }]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(string_array, target),
+        "string[] should NOT be assignable to [string?] (not a variadic spread)"
+    );
+}
+
+/// Pre-existing behavior: `string[]` is NOT assignable to a mixed variadic
+/// tuple like `[string, ...string[]]` because the source can be empty but the
+/// target requires a leading element. The new single-rest rule must not
+/// regress this.
+#[test]
+fn test_array_not_assignable_to_mixed_variadic_tuple() {
+    let interner = TypeInterner::new();
+
+    let string_array = interner.array(TypeId::STRING);
+    // [string, ...string[]] — required leading element + rest.
+    let target = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: string_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(string_array, target),
+        "string[] should NOT be assignable to [string, ...string[]]"
+    );
+}
+
 /// [...T] should NOT be assignable to [...U] when T and U are unrelated type params.
 #[test]
 fn test_spread_tuple_not_assignable_to_unrelated_spread() {

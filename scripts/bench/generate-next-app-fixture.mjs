@@ -251,7 +251,7 @@ export function Dashboard(props: Parameters<typeof DashboardInner>[0]) {
 `);
 
 write("lib/domain.ts", `import { formatISO, addDays } from "date-fns";
-import type { JsonValue, ReadonlyDeep, SetRequired, Simplify } from "type-fest";
+import type { JsonValue, ReadonlyDeep, SetRequired } from "type-fest";
 import superjson from "superjson";
 import { createStore } from "zustand/vanilla";
 import { match, P } from "ts-pattern";
@@ -289,10 +289,10 @@ type AuditTrail<T> = ReadonlyDeep<{
   payload: T;
 }>;
 
-export type IssueDraft = Simplify<SetRequired<IssueInput, "priority"> & {
+export type IssueDraft = SetRequired<IssueInput, "priority"> & {
   id: string;
   audit: AuditTrail<IssueInput>;
-}>;
+};
 
 export type ReleaseMatrix = {
   current: Release;

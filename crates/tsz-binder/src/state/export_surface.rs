@@ -44,7 +44,7 @@ use tsz_scanner::SyntaxKind;
 ///
 /// These are kept separate to preserve hash-section compatibility with
 /// `ExportSignatureInput` (section 0 vs section 5).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ExportSurface {
     /// Module-level exports from `binder.module_exports`, keyed by public name.
     pub module_exports: FxHashMap<String, ExportedSymbol>,
@@ -81,7 +81,7 @@ pub struct ExportSurface {
 }
 
 /// A single exported local symbol.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ExportedSymbol {
     pub symbol_id: SymbolId,
     pub flags: u32,
@@ -89,7 +89,7 @@ pub struct ExportedSymbol {
 }
 
 /// A named re-export entry.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct NamedReexport {
     pub export_name: String,
     pub source_module: String,
@@ -97,7 +97,7 @@ pub struct NamedReexport {
 }
 
 /// A wildcard re-export entry.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WildcardReexport {
     pub source_module: String,
     pub is_type_only: bool,

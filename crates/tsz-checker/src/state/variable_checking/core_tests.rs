@@ -1055,6 +1055,29 @@ type ObjectValueDiff<TValue, TShape> = {
     }
 
     #[test]
+    fn mapped_type_preserves_keyof_constraint_validity_after_evaluation() {
+        let source = r#"
+type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+        "#;
+
+        let ts2322 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2322)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2322.len(),
+            0,
+            "Expected no TS2322 for a mapped keyof constraint after evaluation: {ts2322:?}"
+        );
+    }
+
+    #[test]
     fn mapped_type_index_access_constraint_exceeds_keyof_reports_ts2322() {
         // When a mapped type constraint is an indexed access like AB[S] and S's
         // constraint exceeds keyof AB, tsc emits TS2322 for the mapped type constraint.

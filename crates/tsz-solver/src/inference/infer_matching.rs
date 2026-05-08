@@ -191,6 +191,35 @@ impl<'a> InferenceContext<'a> {
                 self.infer_tuples(source_elems, target_elems, priority)?;
             }
 
+            // Array source against single-rest variadic tuple target `[...T]`
+            // where `T` is itself a type parameter being inferred: the variadic
+            // tuple is structurally equivalent to its rest element, so infer
+            // the source array against that type parameter. This is the case
+            // tsc handles for parameters like `(t: [...T]) => ...` called with
+            // an array argument — tsc infers `T = sourceArray`. Without this
+            // rule, `T` falls back to its constraint (`unknown[]`) and the
+            // assignability check then reports the constraint in the
+            // diagnostic. The rest element must be a type parameter (i.e. an
+            // inference variable); for concrete-array rest elements like
+            // `[...string[]]` there is nothing to infer, and for nested
+            // structural rest types we want the regular structural recursion
+            // to apply, not this single-rest reduction.
+            (Some(TypeData::Array(_)), Some(TypeData::Tuple(target_elems))) => {
+                let target_list = self.interner.tuple_list(target_elems);
+                if target_list.len() == 1 && target_list[0].rest {
+                    let rest_type = target_list[0].type_id;
+                    let rest_is_inference_param = match self.interner.lookup(rest_type) {
+                        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+                            self.find_type_param(info.name).is_some()
+                        }
+                        _ => false,
+                    };
+                    if rest_is_inference_param {
+                        self.infer_from_types(source, rest_type, priority)?;
+                    }
+                }
+            }
+
             // Union types: try to infer against each member
             (Some(TypeData::Union(source_members)), Some(TypeData::Union(target_members))) => {
                 self.infer_unions(source_members, target_members, priority)?;

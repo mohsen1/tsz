@@ -109,6 +109,9 @@ else
     LARGE_TS_DIR="$EXTERNAL_BENCH_DIR/large-ts-repo"
 fi
 LARGE_TS_NODE_OPTIONS="${LARGE_TS_NODE_OPTIONS:---max-old-space-size=8192}"
+# Deep project fixtures can exhaust Rust's default worker-thread stack before
+# producing a benchmark result. Keep the default overrideable for local runs.
+TSZ_RUST_MIN_STACK="${TSZ_RUST_MIN_STACK:-536870912}"
 
 # Parse arguments
 QUICK_MODE=false
@@ -794,6 +797,9 @@ run_project_benchmark() {
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
         tsz_prefix+=(env "TSZ_LIB_DIR=$TSZ_LIB_DIR")
     fi
+    if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
+        tsz_prefix+=(env "RUST_MIN_STACK=$TSZ_RUST_MIN_STACK")
+    fi
 
     # For project fixtures (except nextjs and large-ts-repo), require
     # a clean tsc pass before benchmarking. large-ts-repo is too expensive
@@ -943,6 +949,9 @@ run_project_benchmark() {
     fi
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
         tsz_cmd_prefix="${tsz_cmd_prefix}env TSZ_LIB_DIR=$TSZ_LIB_DIR "
+    fi
+    if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
+        tsz_cmd_prefix="${tsz_cmd_prefix}env RUST_MIN_STACK=$TSZ_RUST_MIN_STACK "
     fi
     local -a hyperfine_prepare_args=()
     if [[ "${BENCH_COLD:-0}" == "1" ]]; then
@@ -1361,7 +1370,7 @@ ensure_ts_toolbelt_fixture() {
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "ignoreDeprecations": "5.0"
+    "ignoreDeprecations": "6.0"
   },
   "include": ["sources/**/*.ts"],
   "exclude": ["tests/**/*", "scripts/**/*", "node_modules/**/*"]
@@ -1587,6 +1596,13 @@ ensure_kysely_fixture() {
         fi
     fi
     local flat_tsconfig="$KYSELY_DIR/tsconfig.flat.json"
+    local bench_globals="$KYSELY_DIR/tsz-bench-globals.d.ts"
+    cat > "$bench_globals" << 'GLOBALSEOF'
+declare const Buffer: {
+  isBuffer(value: unknown): boolean;
+  compare(left: unknown, right: unknown): number;
+};
+GLOBALSEOF
     if [ ! -f "$flat_tsconfig" ]; then
         cat > "$flat_tsconfig" << 'FLATEOF'
 {
@@ -1602,7 +1618,7 @@ ensure_kysely_fixture() {
     "moduleResolution": "node",
     "ignoreDeprecations": "6.0"
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "tsz-bench-globals.d.ts"],
   "exclude": [
     "**/*.test.ts",
     "test/**/*",
