@@ -84,6 +84,51 @@ enum MemberName {
     Private(String),
 }
 
+/// Returns true when `haystack` contains `needle` as a complete identifier
+/// (not as a substring of a longer identifier).
+fn contains_identifier_token(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    if needle_bytes.is_empty() || needle_bytes.len() > bytes.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i + needle_bytes.len() <= bytes.len() {
+        if &bytes[i..i + needle_bytes.len()] == needle_bytes {
+            let prev_ok = i == 0 || !is_identifier_part(bytes[i - 1]);
+            let next_ok = i + needle_bytes.len() == bytes.len()
+                || !is_identifier_part(bytes[i + needle_bytes.len()]);
+            if prev_ok && next_ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+const fn is_identifier_part(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
+/// Pick a temporary name that doesn't collide with any identifier reference
+/// inside `class_span`. Returns `base` when there's no collision, or
+/// `base_1`, `base_2`, … until a free name is found. Mirrors tsc's
+/// `_classDescriptor_1` rename for decorator transform temps.
+fn hygienic_temp_name(base: &str, class_span: &str) -> String {
+    if !contains_identifier_token(class_span, base) {
+        return base.to_string();
+    }
+    for suffix in 1u32..=100 {
+        let candidate = format!("{base}_{suffix}");
+        if !contains_identifier_token(class_span, &candidate) {
+            return candidate;
+        }
+    }
+    // Should never happen for any real class; fall back to the base name.
+    base.to_string()
+}
+
 /// TC39 Decorator Emitter
 pub struct TC39DecoratorEmitter<'a> {
     arena: &'a NodeArena,
@@ -219,6 +264,21 @@ impl<'a> TC39DecoratorEmitter<'a> {
             next_temp_var(&mut temp_counter) // _a
         };
 
+        // tsc avoids shadowing user bindings inside the transformed class wrapper
+        // by suffixing decorator temporaries that collide with identifiers used
+        // anywhere in the class span (decorators, name, extends, body). Without
+        // this rename, e.g. a class body referring to a user `const _classDescriptor`
+        // would resolve to the generated temp instead. See issue #3091.
+        let class_span_text = self
+            .source_text
+            .map(|src| {
+                let start = class_node.pos as usize;
+                let end = (class_node.end as usize).min(src.len());
+                if start <= end { &src[start..end] } else { "" }
+            })
+            .unwrap_or("");
+        let class_descriptor_var = hygienic_temp_name("_classDescriptor", class_span_text);
+
         // Compute propKey temp vars for computed members
         let mut computed_key_vars: Vec<(usize, String)> = Vec::new();
         for (i, member) in decorated_members.iter().enumerate() {
@@ -259,7 +319,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 "{i1}let _classDecorators = [{}];\n",
                 class_decorators.join(", ")
             ));
-            out.push_str(&format!("{i1}let _classDescriptor;\n"));
+            out.push_str(&format!("{i1}let {class_descriptor_var};\n"));
             out.push_str(&format!("{i1}let _classExtraInitializers = [];\n"));
             out.push_str(&format!("{i1}let _classThis;\n"));
             // When a decorated class extends a base class, tsc captures the super class
@@ -438,6 +498,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &i3,
                 &mut out,
                 defer_class_init_inner,
+                &class_descriptor_var,
             );
             out.push_str(&format!("{i2}}}\n"));
         }
@@ -504,6 +565,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &i2,
                 &mut out,
                 false,
+                &class_descriptor_var,
             );
             out.push_str(&format!("{i1}}})();\n"));
 
@@ -541,6 +603,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &i3,
                 &mut out,
                 false,
+                &class_descriptor_var,
             );
             out.push_str(&format!("{i2}}})(),\n"));
 
@@ -585,6 +648,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         indent: &str,
         out: &mut String,
         defer_class_extra_init: bool,
+        class_descriptor: &str,
     ) {
         // Metadata
         let has_class_decorators = !class_decorators.is_empty();
@@ -661,9 +725,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let es_decorate = self.helper("__esDecorate");
         let run_initializers = self.helper("__runInitializers");
         if !class_decorators.is_empty() {
-            out.push_str(&format!("{indent}{es_decorate}(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n"));
+            out.push_str(&format!("{indent}{es_decorate}(null, {class_descriptor} = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n"));
             out.push_str(&format!(
-                "{indent}{class_name} = _classThis = _classDescriptor.value;\n"
+                "{indent}{class_name} = _classThis = {class_descriptor}.value;\n"
             ));
         }
 

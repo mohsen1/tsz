@@ -108,6 +108,67 @@ fn test_class_decorator_has_class_extra_initializers() {
 }
 
 // =============================================================================
+// Decorator Temp Hygiene (#3091)
+// =============================================================================
+
+/// When the source class body references an identifier with the same name as
+/// a generated decorator temporary (e.g. `_classDescriptor`), the transform
+/// must rename its temp so the user's reference still resolves to the outer
+/// binding. tsc emits `_classDescriptor_1` in this case.
+#[test]
+fn test_class_descriptor_temp_renamed_when_user_binding_collides() {
+    let source = "\
+@dec
+class C {
+    static value = _classDescriptor;
+}";
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("source file");
+    let class_idx = source_file.statements.nodes[0];
+
+    let mut emitter = TC39DecoratorEmitter::new(&parser.arena);
+    emitter.set_source_text(source);
+    let output = emitter.emit_class(class_idx);
+
+    assert!(
+        output.contains("let _classDescriptor_1;"),
+        "Expected the generated temp to be renamed to _classDescriptor_1 to avoid \
+         shadowing the user reference. Output:\n{output}"
+    );
+    assert!(
+        !output.contains("let _classDescriptor;"),
+        "Generated temp must not keep the colliding name. Output:\n{output}"
+    );
+    // The user reference inside the class body must be preserved verbatim.
+    assert!(
+        output.contains("static value = _classDescriptor;"),
+        "User binding reference must be preserved unchanged. Output:\n{output}"
+    );
+}
+
+/// Without a collision, the temp name stays at the default. This locks the
+/// hygiene policy as collision-driven, not unconditional rename.
+#[test]
+fn test_class_descriptor_temp_unchanged_when_no_collision() {
+    let source = "@dec class C { }";
+    let output = emit_decorator(source);
+    assert!(
+        output.contains("let _classDescriptor;"),
+        "Expected default temp name when no collision exists.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_classDescriptor_1"),
+        "Should not suffix when there's no collision.\nOutput:\n{output}"
+    );
+}
+
+// =============================================================================
 // Method Decorator
 // =============================================================================
 
