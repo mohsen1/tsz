@@ -1632,95 +1632,13 @@ impl<'a> CheckerState<'a> {
                     if !Self::is_simple_type_name(expr) {
                         continue;
                     }
-                    // A recursive generic JSDoc alias can fail to resolve as a whole while
-                    // its base name is valid (for example `ReadonlyArray<Json>` while
-                    // resolving `Json`). In that case the expression is not an unknown name.
-                    if let Some(angle_idx) = Self::find_top_level_char(expr, '<')
-                        && expr.ends_with('>')
-                    {
-                        let base_name = expr[..angle_idx].trim();
-                        if self.jsdoc_generic_base_suppresses_full_name_error(base_name) {
-                            // Recurse into each type argument so unknown
-                            // identifiers like `@typedef {Record<Keyword, V>} T`
-                            // surface as TS2304 — tsc validates the entire
-                            // typedef body, not just the base name.
-                            let args_str = &expr[angle_idx + 1..expr.len() - 1];
-                            for arg in Self::split_type_args_respecting_nesting(args_str) {
-                                let arg_trimmed = arg.trim();
-                                if arg_trimmed.is_empty() || !Self::is_simple_type_name(arg_trimmed)
-                                {
-                                    continue;
-                                }
-                                if template_names.iter().any(|t| t == arg_trimmed) {
-                                    continue;
-                                }
-                                if self.resolve_jsdoc_type_str(arg_trimmed).is_some() {
-                                    continue;
-                                }
-                                // Forward / recursive references like
-                                // `@typedef {ReadonlyArray<Json>} JsonArray`
-                                // declared above the `@typedef Json` itself
-                                // can fail point-in-time resolution while
-                                // still being valid. Skip when a visible
-                                // `@typedef Name` matches this argument —
-                                // text-based, so it is immune to typedef
-                                // resolution re-entrancy. Cross-file typedefs
-                                // are visible only from global scripts; typedefs
-                                // inside external modules require imports.
-                                let mut declared_as_typedef = false;
-                                if let Some(arenas) = self.ctx.all_arenas.as_ref() {
-                                    for (file_idx, arena) in arenas.iter().enumerate() {
-                                        if file_idx != self.ctx.current_file_idx
-                                            && !self.jsdoc_file_is_global_script(file_idx)
-                                        {
-                                            continue;
-                                        }
-                                        for sf in arena.source_files.iter() {
-                                            if Self::source_file_has_jsdoc_typedef_named(
-                                                sf,
-                                                arg_trimmed,
-                                            ) {
-                                                declared_as_typedef = true;
-                                                break;
-                                            }
-                                        }
-                                        if declared_as_typedef {
-                                            break;
-                                        }
-                                    }
-                                }
-                                if !declared_as_typedef {
-                                    for sf in self.ctx.arena.source_files.iter() {
-                                        if Self::source_file_has_jsdoc_typedef_named(
-                                            sf,
-                                            arg_trimmed,
-                                        ) {
-                                            declared_as_typedef = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                                if declared_as_typedef {
-                                    continue;
-                                }
-                                self.emit_jsdoc_cannot_find_name(
-                                    arg_trimmed,
-                                    comment.pos,
-                                    comment.end,
-                                    &source_text,
-                                );
-                            }
-                            continue;
-                        }
-                    }
-                    if self.resolve_jsdoc_type_str(expr).is_none() {
-                        self.emit_jsdoc_cannot_find_name(
-                            expr,
-                            comment.pos,
-                            comment.end,
-                            &source_text,
-                        );
-                    }
+                    self.validate_jsdoc_typedef_body_expr(
+                        expr,
+                        &template_names,
+                        comment.pos,
+                        comment.end,
+                        &source_text,
+                    );
                 }
             }
         }
@@ -2073,6 +1991,120 @@ impl<'a> CheckerState<'a> {
         }
 
         self.error_cannot_find_name_at_position(name, start, length);
+    }
+
+    /// Validate a JSDoc `@typedef` body type expression for unresolvable
+    /// names (TS2304). Recurses into nested generic arguments so that
+    /// `@typedef {Record<string, Array<Missing>>} T` reports `Missing`,
+    /// matching tsc's per-identifier diagnostic instead of treating
+    /// `Array<Missing>` as one opaque missing name.
+    ///
+    /// `expr` is expected to already be trimmed and to satisfy
+    /// `is_simple_type_name` — the caller filters out function types,
+    /// object literals, and unions before reaching here.
+    fn validate_jsdoc_typedef_body_expr(
+        &mut self,
+        expr: &str,
+        template_names: &[String],
+        comment_pos: u32,
+        comment_end: u32,
+        source_text: &str,
+    ) {
+        if expr.is_empty() || !Self::is_simple_type_name(expr) {
+            return;
+        }
+        if template_names.iter().any(|t| t == expr) {
+            return;
+        }
+        // Forward / recursive references like
+        // `@typedef {ReadonlyArray<Json>} JsonArray` declared above the
+        // `@typedef Json` itself can fail point-in-time resolution while
+        // still being valid. Skip when a visible `@typedef Name` matches
+        // — text-based, so it is immune to typedef resolution
+        // re-entrancy. Cross-file typedefs are visible only from global
+        // scripts; typedefs inside external modules require imports.
+        if self.jsdoc_typedef_named_visible(expr) {
+            return;
+        }
+
+        // Generic shape: `Name<arg, arg, ...>`. Recurse into each inner
+        // arg when the base resolves; otherwise the unresolvable name is
+        // the base, not the whole expression. Issue #3137.
+        if let Some(angle_idx) = Self::find_top_level_char(expr, '<')
+            && expr.ends_with('>')
+        {
+            // JSDoc allows `Object.<K, V>` / `Array.<T>` (dot-generic
+            // form) — the trailing `.` is part of the syntax, not part
+            // of the base name. Strip it before resolution so the base
+            // looks up `Object`, `Array`, etc.
+            let raw_base = expr[..angle_idx].trim();
+            let base_name = raw_base.strip_suffix('.').unwrap_or(raw_base);
+            let args_str = &expr[angle_idx + 1..expr.len() - 1];
+            if self.jsdoc_generic_base_suppresses_full_name_error(base_name) {
+                for arg in Self::split_type_args_respecting_nesting(args_str) {
+                    self.validate_jsdoc_typedef_body_expr(
+                        arg.trim(),
+                        template_names,
+                        comment_pos,
+                        comment_end,
+                        source_text,
+                    );
+                }
+                return;
+            }
+            // Base name does not resolve. tsc reports the missing
+            // identifier at the base, not the whole generic application.
+            if !template_names.iter().any(|t| t == base_name)
+                && !self.jsdoc_typedef_named_visible(base_name)
+            {
+                self.emit_jsdoc_cannot_find_name(base_name, comment_pos, comment_end, source_text);
+            }
+            // Still recurse into args — `Bogus<Missing>` should also
+            // surface `Missing` if it would have, matching tsc's
+            // multi-error JSDoc diagnostics.
+            for arg in Self::split_type_args_respecting_nesting(args_str) {
+                self.validate_jsdoc_typedef_body_expr(
+                    arg.trim(),
+                    template_names,
+                    comment_pos,
+                    comment_end,
+                    source_text,
+                );
+            }
+            return;
+        }
+
+        if self.resolve_jsdoc_type_str(expr).is_some() {
+            return;
+        }
+        self.emit_jsdoc_cannot_find_name(expr, comment_pos, comment_end, source_text);
+    }
+
+    /// Whether a JSDoc `@typedef Name` matching `name` is visible from
+    /// the current file's resolution context. Used to skip TS2304 for
+    /// forward/recursive references that resolve correctly once all
+    /// JSDoc is processed.
+    fn jsdoc_typedef_named_visible(&self, name: &str) -> bool {
+        if let Some(arenas) = self.ctx.all_arenas.as_ref() {
+            for (file_idx, arena) in arenas.iter().enumerate() {
+                if file_idx != self.ctx.current_file_idx
+                    && !self.jsdoc_file_is_global_script(file_idx)
+                {
+                    continue;
+                }
+                for sf in arena.source_files.iter() {
+                    if Self::source_file_has_jsdoc_typedef_named(sf, name) {
+                        return true;
+                    }
+                }
+            }
+        }
+        for sf in self.ctx.arena.source_files.iter() {
+            if Self::source_file_has_jsdoc_typedef_named(sf, name) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Check whether a JSDoc type expression is a simple identifier name

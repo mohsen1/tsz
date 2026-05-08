@@ -630,6 +630,10 @@ name = "jsdoc_typedef_lib_global_conflict_tests"
 path = "tests/jsdoc_typedef_lib_global_conflict_tests.rs"
 
 [[test]]
+name = "jsdoc_nested_generic_missing_name_tests"
+path = "tests/jsdoc_nested_generic_missing_name_tests.rs"
+
+[[test]]
 name = "ts2374_lib_merged_index_signature_tests"
 path = "tests/ts2374_lib_merged_index_signature_tests.rs"
 
