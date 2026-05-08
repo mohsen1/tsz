@@ -5863,6 +5863,23 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(decl_node) = source_arena.get(decl_idx) else {
                 continue;
             };
+            if let Some(signature) = source_arena.get_signature(decl_node)
+                && signature.type_annotation.is_some()
+                && let Some(type_text) =
+                    self.source_slice_from_arena(source_arena.as_ref(), signature.type_annotation)
+            {
+                let type_text = type_text
+                    .trim_end()
+                    .trim_end_matches(';')
+                    .trim_end()
+                    .to_string();
+                if signature.parameters.is_some() {
+                    return Some(type_text);
+                }
+                if let Some((_, return_text)) = type_text.rsplit_once("=>") {
+                    return Some(return_text.trim().to_string());
+                }
+            }
             let Some(func) = source_arena.get_function(decl_node) else {
                 continue;
             };
