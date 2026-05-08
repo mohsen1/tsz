@@ -422,9 +422,17 @@ impl<'a> CheckerState<'a> {
                 if crate::query_boundaries::common::is_callable_type(self.ctx.types, member) {
                     return Some(member);
                 }
+                let had_prior_complexity = self.ctx.types.take_union_too_complex();
                 let evaluated = self.evaluate_type_with_env(member);
                 let evaluated = self.resolve_lazy_type(evaluated);
                 let evaluated = self.evaluate_application_type(evaluated);
+                let produced_complexity = self.ctx.types.take_union_too_complex();
+                if had_prior_complexity || produced_complexity {
+                    self.ctx.types.mark_union_too_complex();
+                }
+                if produced_complexity {
+                    return None;
+                }
                 crate::query_boundaries::common::is_callable_type(self.ctx.types, evaluated)
                     .then_some(evaluated)
             })
