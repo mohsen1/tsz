@@ -19,8 +19,7 @@ pub(crate) use super::assignability_type_helpers::{
 };
 pub(super) use super::assignability_type_helpers::{
     has_own_signature_type_params, is_builtin_wrapper_name, is_callable_application_type,
-    is_function_type_display, is_object_prototype_method,
-    is_object_prototype_method_for_array_target,
+    is_object_prototype_method, is_object_prototype_method_for_array_target,
 };
 
 impl<'a> CheckerState<'a> {

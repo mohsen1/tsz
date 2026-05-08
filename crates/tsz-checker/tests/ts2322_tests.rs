@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::diagnostics::diagnostic_codes;
+use tsz_checker::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_checker::state::CheckerState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
@@ -161,6 +161,29 @@ fn count_errors_with_code(source: &str, code: u32) -> usize {
 /// Helper that returns all diagnostics for inspection
 fn get_all_diagnostics(source: &str) -> Vec<(u32, String)> {
     with_lib_contexts(source, "test.ts", CheckerOptions::default())
+}
+
+fn assert_no_missing_property_diagnostics(diagnostics: &[Diagnostic]) {
+    let missing_property_codes = [
+        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+    ];
+    let actual: Vec<u32> = diagnostics
+        .iter()
+        .map(|d| d.code)
+        .chain(
+            diagnostics
+                .iter()
+                .flat_map(|d| d.related_information.iter().map(|related| related.code)),
+        )
+        .filter(|code| missing_property_codes.contains(code))
+        .collect();
+
+    assert!(
+        actual.is_empty(),
+        "Expected no missing-property diagnostics, got codes {actual:?}. Diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]
@@ -899,6 +922,96 @@ b16 = x.a16;
         3,
         "Expected the three invalid reverse member construct-signature assignments to report TS2322, got: {ts2322_errors:?}"
     );
+}
+
+#[test]
+fn callable_source_missing_call_signature_member_reports_only_ts2322() {
+    let source = r#"
+interface T {
+    f(x: number): void;
+}
+
+let t: T;
+t = () => 1;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for function-to-object assignment. Diagnostics: {diagnostics:#?}"
+    );
+    assert_no_missing_property_diagnostics(&diagnostics);
+}
+
+#[test]
+fn callable_source_missing_construct_signature_member_reports_only_ts2322() {
+    let source = r#"
+interface T {
+    f: new (x: number) => void;
+}
+
+let t: T;
+t = () => 1;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for function-to-constructor-member assignment. Diagnostics: {diagnostics:#?}"
+    );
+    assert_no_missing_property_diagnostics(&diagnostics);
+}
+
+#[test]
+fn callable_argument_missing_call_signature_member_has_no_missing_property_related() {
+    let source = r#"
+interface T {
+    f(x: number): void;
+}
+
+declare function takesT(t: T): void;
+takesT(() => 1);
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code
+                == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE),
+        "Expected TS2345 for function argument to object parameter. Diagnostics: {diagnostics:#?}"
+    );
+    assert_no_missing_property_diagnostics(&diagnostics);
+}
+
+#[test]
+fn callable_argument_missing_construct_signature_member_has_no_missing_property_related() {
+    let source = r#"
+interface T {
+    f: new (x: number) => void;
+}
+
+declare function takesT(t: T): void;
+takesT(() => 1);
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code
+                == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE),
+        "Expected TS2345 for function argument to constructor-member object parameter. Diagnostics: {diagnostics:#?}"
+    );
+    assert_no_missing_property_diagnostics(&diagnostics);
 }
 
 #[test]
