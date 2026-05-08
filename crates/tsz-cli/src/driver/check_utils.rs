@@ -1407,7 +1407,7 @@ pub(super) fn collect_no_check_parse_diagnostics_for_file(
 }
 
 /// Run the checker's JS grammar pass on a parsed JS source file. The pass
-/// surfaces the TS8xxx diagnostics tsc emits for TypeScript-only constructs in
+/// surfaces the `TS8xxx` diagnostics tsc emits for TypeScript-only constructs in
 /// JS files. Used by the `--noCheck` parse-only path to align with tsc, which
 /// reports these from its parser regardless of `--noCheck`.
 fn collect_js_grammar_diagnostics(

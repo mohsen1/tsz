@@ -929,6 +929,58 @@ fn test_variance_template_literal_covariant() {
     );
 }
 
+#[test]
+fn test_variance_object_property_template_literal_marks_unreliable() {
+    // type AGen<T> = { field: `a${T}` }
+    // T appears inside a template literal nested in a property — variance must
+    // still be marked REJECTION_UNRELIABLE so a failed covariant check (e.g.
+    // AGen<number> vs AGen<string>) falls through to structural comparison
+    // instead of being conclusively rejected. tsc treats `a${number}` as a
+    // structural subtype of `a${string}`.
+    let interner = create_interner();
+    let t_param = intern_type_param(&interner, "T");
+    let field_atom = interner.intern_string("field");
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("a")),
+        TemplateSpan::Type(t_param),
+    ]);
+    let obj = interner.object(vec![PropertyInfo::readonly(field_atom, template)]);
+
+    let t_atom = interner.intern_string("T");
+    let variance = compute_variance(&interner, obj, t_atom);
+
+    assert!(
+        variance.is_covariant(),
+        "Property holding template literal interpolation should remain covariant"
+    );
+    assert!(
+        variance.rejection_unreliable(),
+        "Property-wrapped template literal must propagate REJECTION_UNRELIABLE so variance failures fall through to structural comparison"
+    );
+}
+
+#[test]
+fn test_variance_object_property_template_literal_unreliable_alt_param_name() {
+    // Same shape but with parameter spelled `K` instead of `T` — proves the
+    // rule is structural, not name-based.
+    let interner = create_interner();
+    let k_param = intern_type_param(&interner, "K");
+    let field_atom = interner.intern_string("field");
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("a")),
+        TemplateSpan::Type(k_param),
+    ]);
+    let obj = interner.object(vec![PropertyInfo::readonly(field_atom, template)]);
+
+    let k_atom = interner.intern_string("K");
+    let variance = compute_variance(&interner, obj, k_atom);
+
+    assert!(variance.is_covariant());
+    assert!(variance.rejection_unreliable());
+}
+
 // =============================================================================
 // Intrinsic / Literal Type Variance Tests
 // =============================================================================
