@@ -9,13 +9,13 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch:
 
-# Full benchmark runs are intentionally serialized across CI completions,
-# schedules, and manual dispatches. Keep only the newest benchmark target active:
-# stale in-progress runs can otherwise spend the runner budget preparing and
-# sharding obsolete commits while the current main benchmark waits.
+# Workflow-run benchmarks coalesce aggressively so stale main commits do not
+# spend self-hosted runner time in prepare/shards. Scheduled and manual runs are
+# protected from workflow-run cancellation; workflow-run gates skip cheaply while
+# an explicit benchmark is active.
 concurrency:
-  group: bench
-  cancel-in-progress: true
+  group: bench-${{ github.event_name == 'workflow_run' && 'workflow-run' || 'explicit' }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
 
 permissions:
   contents: read
@@ -57,6 +57,18 @@ jobs:
               if [[ "${BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS}" != "0" ]]; then
                 echo "Waiting ${BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS}s for main to settle before starting bench."
                 sleep "${BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS}"
+              fi
+
+              active_explicit_runs=$(gh run list \
+                --repo "${{ github.repository }}" \
+                --workflow Bench \
+                --status in_progress \
+                --json databaseId,event \
+                --jq "[.[] | select((.event == \"schedule\" or .event == \"workflow_dispatch\") and (.databaseId != ${GITHUB_RUN_ID}))] | length" \
+                2>/dev/null || echo "0")
+              if [[ "${active_explicit_runs}" != "0" ]]; then
+                echo "A scheduled/manual Bench run is already active; skipping workflow-run bench."
+                should_run=false
               fi
 
               latest_main_sha=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" \
