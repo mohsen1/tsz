@@ -1738,6 +1738,21 @@ impl ScannerState {
         });
     }
 
+    fn push_invalid_character(&mut self, pos: usize) {
+        if let Some(last) = self.scanner_diagnostics.last()
+            && last.pos == pos
+        {
+            return;
+        }
+        self.scanner_diagnostics.push(ScannerDiagnostic {
+            pos,
+            length: 1,
+            message: diagnostic_messages::INVALID_CHARACTER,
+            code: diagnostic_codes::INVALID_CHARACTER,
+            args: Vec::new(),
+        });
+    }
+
     /// Scan an identifier.
     /// ZERO-ALLOCATION: Identifiers are interned, returning an Atom (u32) for O(1) comparison.
     /// When a unicode escape is encountered mid-identifier, switches to allocation mode.
@@ -1756,6 +1771,9 @@ impl ScannerState {
                     // Switch to allocation mode and continue scanning with escapes
                     self.continue_identifier_with_escapes(start);
                     return;
+                }
+                if self.peek_unicode_escape().is_some() {
+                    self.push_invalid_character(self.pos);
                 }
                 // Invalid escape or not an identifier part - stop here
                 break;
@@ -1800,6 +1818,9 @@ impl ScannerState {
                         result.push(c);
                     }
                     continue;
+                }
+                if self.peek_unicode_escape().is_some() {
+                    self.push_invalid_character(self.pos);
                 }
                 // Invalid escape or not an identifier part - stop here
                 break;
@@ -1881,6 +1902,9 @@ impl ScannerState {
                     }
                     continue;
                 }
+                if self.peek_unicode_escape().is_some() {
+                    self.push_invalid_character(self.pos);
+                }
                 break;
             }
             if !self.is_identifier_part(ch) {
@@ -1933,6 +1957,9 @@ impl ScannerState {
                                 }
                                 continue;
                             }
+                            if self.peek_unicode_escape().is_some() {
+                                self.push_invalid_character(self.pos);
+                            }
                             break;
                         }
                         if !self.is_identifier_part(ch2) {
@@ -1946,6 +1973,9 @@ impl ScannerState {
                     self.token_value = result;
                     self.token_flags |= TokenFlags::UnicodeEscape as u32;
                     return true;
+                }
+                if self.peek_unicode_escape().is_some() {
+                    self.push_invalid_character(self.pos);
                 }
                 break;
             }
@@ -1980,6 +2010,9 @@ impl ScannerState {
                         result.push(c);
                     }
                     continue;
+                }
+                if self.peek_unicode_escape().is_some() {
+                    self.push_invalid_character(self.pos);
                 }
                 break;
             }
