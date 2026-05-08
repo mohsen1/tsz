@@ -1,6 +1,6 @@
 # 100% Conformance Strategy
 
-Last updated: 2026-05-08 on `origin/main` at `b39d5d3180`.
+Last updated: 2026-05-08 on `origin/main` at `fe5898911d`.
 
 ## Target
 
@@ -19,7 +19,7 @@ conformance.
 
 ## Latest Local Baseline
 
-Latest local snapshot run after `#4558` and `#4559`:
+Latest full local snapshot run after `#4558` and `#4559`:
 
 - `scripts/conformance/conformance-snapshot.json`: `12511/12582` passed, `71` failed, `99.4%`.
 - `scripts/conformance/conformance-detail.json`: `12511/12581` passed, `70` failed, `5` known failures.
@@ -34,13 +34,15 @@ Dashboard from `python3 scripts/conformance/query-conformance.py --dashboard`:
 
 The behavior queue improved materially during 2026-05-07 and 2026-05-08.
 This local snapshot was generated after `origin/main` advanced to `b39d5d3180`
-with `#4558` and `#4559` merged. The generated artifacts were not checked in
-because the snapshot gate rejects refreshes that introduce more new failure
-entries than fixed entries, even when the total pass count is unchanged. Keep
-using focused conformance runs for candidate selection because active behavior
-PRs can stale this snapshot quickly. Older notes that cite pre-`#4558`
-parser/keyof failures, `12451/12582`, `12470/12582`, `12488/12581`,
-`12501/12582`, or 99.0-99.3% are stale.
+with `#4558` and `#4559` merged. Since that run, `#4560`, `#4563`, and `#4564`
+also merged on `main`, so the checked-in README numbers still describe the
+latest accepted snapshot artifacts rather than the current behavior frontier.
+The generated artifacts were not checked in because the snapshot gate rejects
+refreshes that introduce more new failure entries than fixed entries, even when
+the total pass count is unchanged. Keep using focused conformance runs for
+candidate selection because active behavior PRs can stale this snapshot quickly.
+Older notes that cite pre-`#4558` parser/keyof failures, `12451/12582`,
+`12470/12582`, `12488/12581`, `12501/12582`, or 99.0-99.3% are stale.
 
 ## Active PR Queue
 
@@ -48,7 +50,8 @@ Monitor these PRs without sitting idle for CI:
 
 | PR | Purpose | Action |
 | --- | --- | --- |
-| #4560 | `fix(checker): preserve generic rest callback inference` | Non-draft behavior PR; CI running at last update. Expected to remove the `genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts` false positive after merge. |
+| #4562 | `fix(checker): preserve inferred prop type equality` | Non-draft behavior PR; CI running on amended architecture-boundary cleanup. Expected to remove the `propTypeValidatorInference.ts` false positive after merge. |
+| #4565 | `ci(bench): extend workflow-run debounce` | Non-conformance CI PR; monitor separately and do not count toward diagnostic progress. |
 | #4550 | `[WIP] fix(checker): drop hardcoded Comparable<number> diagnostic rewrite (#3057)` | Draft; do not merge. |
 | #4517 | `[do not merge] chore(checker-tests): consolidate load_lib_files_for_test variants` | Draft; do not merge. |
 | #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Draft; leave blocked unless it is rebased and revalidated. |
@@ -61,8 +64,9 @@ Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434
 `#4513`, `#4514`, `#4515`, `#4516`, `#4518`, `#4519`, `#4521`, `#4522`,
 `#4523`, `#4520`, `#4525`, `#4526`, `#4527`, `#4528`, `#4531`, `#4532`,
 `#4544`, `#4545`, `#4546`, `#4547`, `#4548`, `#4549`, `#4551`, `#4552`,
-`#4554`, `#4555`, `#4556`, `#4557`, `#4558`, and `#4559`.
-`#4510` and `#4512` also merged and are no longer active.
+`#4554`, `#4555`, `#4556`, `#4557`, `#4558`, `#4559`, `#4560`, `#4561`,
+`#4563`, and `#4564`. `#4510` and `#4512` also merged and are no longer
+active.
 
 ## Work Selection
 
@@ -91,8 +95,8 @@ Best remaining targets on current `main`, excluding work already covered by open
 | Target | Current impact | Suggested lane |
 | --- | --- | --- |
 | Type display parity | `59` fingerprint-only tests | Shared type-printer/display policy for recurring `TS2322`, `TS2345`, `TS2339`, and lib declaration fingerprints. |
-| False positives | `2` tests where tsc expects no diagnostics | `#4560` covers one `TS2345`; `propTypeValidatorInference.ts` remains a separate `TS2322` lane. |
-| Wrong-code singleton gaps | `6` tests | Missing `TS1127`, `TS1134`, `TS1389`, `TS2416`; extra singleton `TS2349`, `TS1102`, `TS2304`, `TS2339`. |
+| False positives | Snapshot shows `2` tests where tsc expects no diagnostics | `#4560` is merged; `#4562` covers `propTypeValidatorInference.ts` and is waiting on CI. |
+| Wrong-code singleton gaps | Snapshot shows `6` tests | `#4564` is merged for the extra `TS1102`; remaining singleton gaps need refreshed current-main confirmation before selection. |
 | Parser recovery | `constructorWithIncompleteTypeAnnotation.ts` and `unicodeEscapesInNames02.ts` | Specific TS1xxx parser recovery and unicode escape diagnostic selection. |
 | Node/Salsa relation diagnostics | `node` has `4` failures, `salsa` has `2` | Keep module/export, JS, and relation fixes in isolated PRs with focused regression coverage. |
 
@@ -106,8 +110,9 @@ Active local worker assignments from this tranche:
 - `codex/keyof-indexed-access-20260508` landed as `#4559`; remaining `keyof` failures are fingerprint-only, not the older indexed-write code-set issue.
 - `codex/ts2552-temporal-*` for the one-missing TS2552 lane in `temporal.ts`; published as `#4510`.
 - `codex/js-salsa-one-extra-*` for remaining JS/Salsa one-extra false positives.
-- `codex/inference-contextual-fp-20260508043950` is published as `#4560` for the generic rest callback false positive.
-- `codex/delete-invalid-ops-ts1102-20260508` owns the current extra `TS1102` in `deleteOperatorInvalidOperations.ts`.
+- `codex/inference-contextual-fp-20260508043950` landed as `#4560` for the generic rest callback false positive.
+- `codex/delete-invalid-ops-ts1102-20260508` landed as `#4564` for the extra `TS1102` in `deleteOperatorInvalidOperations.ts`.
+- `codex/proptype-inference-20260508005442` is published as `#4562` for the `propTypeValidatorInference.ts` false positive.
 - `codex/assignment-compat-signature-ts2741-20260508` is checking whether the signature `TS2741` lane is stale after `#4554`.
 - `codex/snapshot-refresh-20260508-post4544` owns strategy and README refresh tooling based on current `origin/main`; generated snapshot artifacts should be refreshed in a later PR once the snapshot gate accepts the failure-set delta.
 
