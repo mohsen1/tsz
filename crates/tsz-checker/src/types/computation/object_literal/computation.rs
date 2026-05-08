@@ -434,6 +434,26 @@ impl<'a> CheckerState<'a> {
 
         // Collect properties from the object literal (later entries override earlier ones)
         let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        let all_properties_context_sensitive = !obj.elements.nodes.is_empty()
+            && obj.elements.nodes.iter().all(|&element_idx| {
+                let Some(element) = self.ctx.arena.get(element_idx) else {
+                    return false;
+                };
+
+                if let Some(prop) = self.ctx.arena.get_property_assignment(element) {
+                    return super::super::contextual::is_contextually_sensitive(
+                        self,
+                        prop.initializer,
+                    );
+                }
+
+                if element.kind == syntax_kind_ext::METHOD_DECLARATION {
+                    return super::super::contextual::is_contextually_sensitive(self, element_idx);
+                }
+
+                element.kind == syntax_kind_ext::GET_ACCESSOR
+                    || element.kind == syntax_kind_ext::SET_ACCESSOR
+            });
         // Track pre-widened (display) types for freshness model.
         // Maps property name → original literal TypeId before widening.
         // Only populated when a property's type was actually widened.
@@ -2877,6 +2897,7 @@ impl<'a> CheckerState<'a> {
             has_union_spread,
             union_spread_branches,
             generic_spread_types,
+            all_properties_context_sensitive,
         );
 
         // Check getter/setter type compatibility for object literal accessors.

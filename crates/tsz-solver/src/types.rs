@@ -1301,6 +1301,10 @@ bitflags::bitflags! {
         /// This is semantically structural, but diagnostics should keep tsc's
         /// `Record<..., unknown>` display surface.
         const IN_OPERATOR_RECORD = 1 << 5;
+        /// Fresh object literal whose own properties all require contextual typing.
+        /// Generic-call inference must defer these literals to Round 2; otherwise
+        /// already-contextualized callback properties can feed back into Round 1.
+        const ALL_PROPERTIES_CONTEXT_SENSITIVE = 1 << 6;
     }
 }
 
@@ -1361,6 +1365,20 @@ impl ObjectShape {
     /// Return true if this shape is a fresh object literal.
     pub const fn is_fresh_literal(&self) -> bool {
         self.flags.contains(ObjectFlags::FRESH_LITERAL)
+    }
+
+    /// Mark this fresh literal as requiring full contextual Round 2 inference.
+    ///
+    /// Use this instead of importing `ObjectFlags::ALL_PROPERTIES_CONTEXT_SENSITIVE`
+    /// directly outside the solver.
+    pub fn mark_all_properties_context_sensitive(&mut self) {
+        self.flags |= ObjectFlags::ALL_PROPERTIES_CONTEXT_SENSITIVE;
+    }
+
+    /// Return true if every own property of this fresh literal needed contextual typing.
+    pub const fn all_properties_context_sensitive(&self) -> bool {
+        self.flags
+            .contains(ObjectFlags::ALL_PROPERTIES_CONTEXT_SENSITIVE)
     }
 
     /// Mark this shape as having late-bound (computed) members.
