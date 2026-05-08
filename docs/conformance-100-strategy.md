@@ -19,27 +19,25 @@ conformance.
 
 ## Current Baseline
 
-Current checked-in snapshot on `origin/main` after `#4532`:
+Current checked-in snapshot after `#4541`:
 
-- `scripts/conformance/conformance-snapshot.json`: `12501/12582` passed, `81` failed, `99.4%`.
-- `scripts/conformance/conformance-detail.json`: `12501/12580` passed, `79` failed, `5` known failures.
+- `scripts/conformance/conformance-snapshot.json`: `12511/12582` passed, `71` failed, `99.4%`.
+- `scripts/conformance/conformance-detail.json`: `12511/12581` passed, `70` failed, `4` known failures.
 
 Dashboard from `python3 scripts/conformance/query-conformance.py --dashboard`:
 
-- Big 3 wrong-code problems: `8` tests across `TS2322`, `TS2339`, and `TS2345`.
-- Other tracked parser/excess-property codes: `1` test.
-- Likely crashes: `0`.
-- Node lane estimate: `7`.
-- Fingerprint-only failures: `60` tests, about `80%` of remaining failures.
-- False positives where tsc expects no diagnostics: `4` tests.
-- Diff <= 2: `11` tests.
+- Category split: `3` false positives, `11` wrong-code tests, `52` fingerprint-only tests.
+- All-missing failures: `0`.
+- Top extra codes: `TS2322` in `4` tests, `TS2345` in `3`, `TS2741` in `2`.
+- Top missing parser/module codes are mostly singleton: `TS1110`, `TS1127`, `TS1011`, `TS1109`, `TS1128`, `TS1136`, `TS1005`, `TS1068`, `TS1134`, `TS1351`, `TS1389`, `TS2809`.
+- Close-to-passing by code-set diff <= 2: `59` tests.
 
 The behavior queue improved materially during 2026-05-07 and early 2026-05-08.
-The checked-in snapshot is current through the latest merged conformance/emitter
-PRs on `79d848589f`; keep using focused conformance runs for candidate
-selection because active behavior PRs can stale this snapshot quickly. Older
-notes that cite `12451/12582`, `12470/12582`, `12488/12581`, or 99.0-99.3%
-are stale.
+This snapshot was regenerated on the snapshot branch after `origin/main`
+advanced to `ce169015ba` (`#4541`). Keep using focused conformance runs for
+candidate selection because active behavior PRs can stale this snapshot quickly.
+Older notes that cite `12451/12582`, `12470/12582`, `12488/12581`,
+`12501/12582`, or 99.0-99.3% are stale.
 
 ## Active PR Queue
 
@@ -88,11 +86,11 @@ Best remaining targets on current `main`, excluding work already covered by open
 
 | Target | Current impact | Suggested lane |
 | --- | --- | --- |
-| Type display parity | About `30` tests | Shared type-printer/display policy for `TS2322`, `TS2345`, and `TS2339` fingerprint-only failures. |
-| Diagnostic count accuracy | About `12` tests | Remove duplicate diagnostics or add missing instances where tsc emits the same code set. |
-| Big 3 wrong-code problems | `8` tests | Relation/property/call diagnostic selection. |
-| One-extra false positives | `5` tests | Suppress one extra diagnostic only when a focused current-main conformance run reproduces it. |
-| Parser recovery | `2` tests | Specific TS1xxx parser recovery selection. |
+| Type display parity | `52` fingerprint-only tests | Shared type-printer/display policy for `TS2322`, `TS2345`, and `TS2339` fingerprint-only failures. |
+| Diagnostic count accuracy | `7` close code-set tests | Remove duplicate diagnostics or add missing instances where tsc emits the same code set. |
+| Big 3 wrong-code problems | `11` wrong-code tests | Relation/property/call diagnostic selection. |
+| One-extra false positives | `3` tests where tsc expects no diagnostics | Suppress one extra diagnostic only when a focused current-main conformance run reproduces it. |
+| Parser recovery | `2` code-set tests plus fingerprint-only parser anchors | Specific TS1xxx parser recovery selection. |
 
 Active local worker assignments from this tranche:
 
