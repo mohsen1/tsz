@@ -1381,9 +1381,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let is_iat =
-                |t| crate::query_boundaries::common::is_index_access_type(self.ctx.types, t);
-            if is_iat(target_prop_type) || is_iat(target_prop_type_for_diagnostic) {
+            let has_index_access_target = |t| {
+                crate::query_boundaries::common::is_index_access_type(self.ctx.types, t)
+                    || tsz_solver::type_queries::contains_generic_deferred_type_operation(
+                        self.ctx.types,
+                        t,
+                    )
+            };
+            if has_index_access_target(target_prop_type)
+                || has_index_access_target(target_prop_type_for_diagnostic)
+            {
                 continue; // tsc elaborateElementwise: keep TS2322 on outer object for generic indexed-access props
             }
 

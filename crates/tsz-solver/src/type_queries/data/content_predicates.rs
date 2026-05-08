@@ -98,6 +98,23 @@ pub fn contains_index_access_with_type_parameter_object(
     )
 }
 
+/// Check if a type contains a deferred type operation whose inputs are generic.
+pub fn contains_generic_deferred_type_operation(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_type_matching(db, type_id, |key| match key {
+        TypeData::IndexAccess(object, index) => {
+            contains_type_parameters_db(db, *object) || contains_type_parameters_db(db, *index)
+        }
+        TypeData::Conditional(cond_id) => {
+            let cond = db.conditional_type(*cond_id);
+            contains_type_parameters_db(db, cond.check_type)
+                || contains_type_parameters_db(db, cond.extends_type)
+                || contains_type_parameters_db(db, cond.true_type)
+                || contains_type_parameters_db(db, cond.false_type)
+        }
+        _ => false,
+    })
+}
+
 /// Check if a type contains an indexed access whose object is a variadic tuple
 /// rest element containing a type parameter.
 pub fn contains_index_access_with_variadic_tuple_object(
