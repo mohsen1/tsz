@@ -3,9 +3,9 @@
   "git_sha": "0d6bdbdfc4e5b756644694f92b555e5f9a38abf1",
   "summary": {
     "total_tests": 12582,
-    "passed": 12523,
-    "failed": 59,
-    "pass_rate": 99.5
+    "passed": 12525,
+    "failed": 57,
+    "pass_rate": 99.55
   },
   "areas_by_pass_rate": [
     {
@@ -93,6 +93,13 @@
       "pass_rate": 99.24
     },
     {
+      "area": "classes/members",
+      "total": 198,
+      "passed": 197,
+      "failed": 1,
+      "pass_rate": 99.49
+    },
+    {
       "area": "jsx",
       "total": 195,
       "passed": 194,
@@ -102,16 +109,9 @@
     {
       "area": "compiler",
       "total": 6519,
-      "passed": 6486,
-      "failed": 33,
-      "pass_rate": 99.49
-    },
-    {
-      "area": "classes/members",
-      "total": 198,
-      "passed": 197,
-      "failed": 1,
-      "pass_rate": 99.49
+      "passed": 6488,
+      "failed": 31,
+      "pass_rate": 99.52
     },
     {
       "area": "ambient",
@@ -720,27 +720,11 @@
   "one_missing_zero_extra": [],
   "one_extra_zero_missing": [
     {
-      "code": "TS5088",
-      "count": 1
-    },
-    {
-      "code": "TS2345",
-      "count": 1
-    },
-    {
       "code": "TS2322",
       "count": 1
     }
   ],
   "false_positive_codes": [
-    {
-      "code": "TS5088",
-      "count": 1
-    },
-    {
-      "code": "TS2345",
-      "count": 1
-    },
     {
       "code": "TS2322",
       "count": 1
@@ -753,14 +737,6 @@
     }
   ],
   "top_extra_codes": [
-    {
-      "code": "TS5088",
-      "count": 1
-    },
-    {
-      "code": "TS2345",
-      "count": 1
-    },
     {
       "code": "TS2322",
       "count": 1
@@ -775,7 +751,7 @@
     }
   ],
   "categories": {
-    "false_positive": 3,
+    "false_positive": 1,
     "all_missing": 0,
     "wrong_code": 1,
     "fingerprint_only": 50,
