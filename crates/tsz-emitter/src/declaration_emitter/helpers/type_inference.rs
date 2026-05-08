@@ -5919,6 +5919,21 @@ impl<'a> DeclarationEmitter<'a> {
             .filter_map(|(index, &arg)| {
                 let node = self.arena.get(arg)?;
                 let mut text = self.get_source_slice_no_semi(node.pos, node.end)?;
+                // The parser captures `LiteralType`/`UnionType`/
+                // `IntersectionType` end positions with `token_end()`, which
+                // reflects the *next* scanned token rather than the type
+                // itself.  Inside a type-argument list, that next token is
+                // typically `>` or `,` — so a slice of the type-arg's node
+                // span pulls those trailing characters into the text we
+                // splice into d.ts emit.  Strip them here, since this
+                // helper is the only call site that observes the overshoot.
+                while text
+                    .as_bytes()
+                    .last()
+                    .is_some_and(|&b| b == b'>' || b == b',' || b.is_ascii_whitespace())
+                {
+                    text.pop();
+                }
                 if self.first_type_argument_needs_parentheses(arg, index == 0) {
                     text = format!("({text})");
                 }
