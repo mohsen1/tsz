@@ -615,6 +615,10 @@ impl<'a> Printer<'a> {
 
     /// Get the CJS variable name for the JSX runtime module import.
     /// e.g., "react/jsx-runtime" -> "`jsx_runtime_1`", "react/jsx-dev-runtime" -> "`jsx_dev_runtime_1`"
+    ///
+    /// Issue #3090: when the file already declares an identifier matching the
+    /// default name (e.g. a user `const jsx_runtime_1 = ...`), tsc picks the
+    /// next available suffix (`_2`, `_3`, …). Same hygiene applies here.
     pub(in super::super) fn jsx_cjs_runtime_var(&self) -> String {
         if let Some(var_name) = self.jsx_legacy_cjs_runtime_var.as_ref() {
             return var_name.clone();
@@ -625,7 +629,11 @@ impl<'a> Printer<'a> {
             _ => "jsx-runtime",
         };
         let sanitized = crate::transforms::emit_utils::sanitize_module_name(suffix);
-        format!("{sanitized}_1")
+        let base = format!("{sanitized}_1");
+        match self.source_text {
+            Some(text) => crate::transforms::emit_utils::hygienic_temp_name(&base, text),
+            None => base,
+        }
     }
 
     pub(in super::super) fn jsx_dev_file_name_text(&self) -> Option<String> {
@@ -637,6 +645,9 @@ impl<'a> Printer<'a> {
     /// Get the CJS variable name for the base JSX module import.
     /// Used for createElement fallback when key appears after spread.
     /// e.g., "react" -> "`react_1`", "preact" -> "`preact_1`"
+    ///
+    /// Issue #3090: hygienic against existing file bindings — bumps the
+    /// suffix when the user already declared a same-named identifier.
     pub(in super::super) fn jsx_cjs_base_var(&self) -> String {
         let pragma_source = self.extract_jsx_import_source_pragma();
         let source = pragma_source
@@ -644,7 +655,11 @@ impl<'a> Printer<'a> {
             .or(self.ctx.options.jsx_import_source.as_deref())
             .unwrap_or("react");
         let sanitized = crate::transforms::emit_utils::sanitize_module_name(source);
-        format!("{sanitized}_1")
+        let base = format!("{sanitized}_1");
+        match self.source_text {
+            Some(text) => crate::transforms::emit_utils::hygienic_temp_name(&base, text),
+            None => base,
+        }
     }
 
     /// Extract `@jsxImportSource <package>` pragma from the file's leading comments.
