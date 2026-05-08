@@ -100,8 +100,8 @@ type T = Record<object, number>;
     assert!(
         ts2344
             .iter()
-            .any(|message| message.contains("constraint 'string | number | symbol'")),
-        "Record's key constraint should display the primitive key union, got: {diagnostics:#?}"
+            .any(|message| message.contains("constraint 'PropertyKey'")),
+        "Record's key constraint should display PropertyKey, got: {diagnostics:#?}"
     );
     assert!(
         ts2344.iter().all(|message| !message.contains("AudioData")),
