@@ -91,8 +91,7 @@ fn write_baseline(key: &str, value: usize) {
             path.display()
         );
     }
-    fs::write(&path, out)
-        .unwrap_or_else(|e| panic!("failed to rewrite {}: {e}", path.display()));
+    fs::write(&path, out).unwrap_or_else(|e| panic!("failed to rewrite {}: {e}", path.display()));
 }
 
 /// Assert `actual <= ceiling` for `key`. In ratchet-update mode, rewrite the
