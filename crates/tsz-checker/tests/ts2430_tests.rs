@@ -591,12 +591,19 @@ class C implements ClassComponent<MyAttrs> {
     view(v: Vnode<MyAttrs, C>) { return 0; }
     [_: number]: unknown;
 }
+
+const test8: ClassComponent<any> = new C();
 "#;
     let diags = get_diagnostics(source);
     let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
     assert!(
         ts2430.is_empty(),
         "Should NOT emit TS2430 for class implementing interface with `this` type references. Got: {ts2430:?}"
+    );
+    let ts2322 = diags.iter().filter(|d| d.0 == 2322).collect::<Vec<_>>();
+    assert!(
+        ts2322.is_empty(),
+        "Should NOT emit TS2322 for assigning a class instance to an interface with `this` type references. Got: {ts2322:?}"
     );
 }
 
