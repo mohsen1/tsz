@@ -1061,6 +1061,35 @@ export = Foo;
 }
 
 #[test]
+fn test_export_default_identifier_keeps_ambient_value_declaration() {
+    // Regression for uniqueSymbolPropertyDeclarationEmit: a `declare const X`
+    // (no initializer, with a value-side type annotation) whose only public
+    // API consumer is `export default X` was being filtered out by the
+    // initializer-only-dependency check. The check's name-export lookup
+    // only considered `EXPORT_SPECIFIER` and `EXPORT_ASSIGNMENT` nodes;
+    // tsz parses `export default X` as an `EXPORT_DECLARATION` with
+    // `is_default_export: true` and the identifier in `export_clause`,
+    // which neither path matched.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const Op: {
+  readonly or: unique symbol;
+};
+
+export default Op;
+"#,
+    );
+    assert!(
+        output.contains("declare const Op:"),
+        "Expected `declare const Op` to be emitted when `export default Op` is the consumer: {output}"
+    );
+    assert!(
+        output.contains("export default Op;"),
+        "Expected the default export to be preserved: {output}"
+    );
+}
+
+#[test]
 fn test_destructuring_variable_declaration_groups_typed_bindings() {
     let source = r#"var [x, y] = [1, "hello"];"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
