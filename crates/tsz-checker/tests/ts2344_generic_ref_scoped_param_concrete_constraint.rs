@@ -171,3 +171,80 @@ type OkArray<U> = AcceptArrayLike<Array<U>>;
     // skip block left this path alone. It must continue to behave that way.
     let _ = ts2344;
 }
+
+#[test]
+fn generic_ref_with_object_constraint_defers_mapped_key_remap_result() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Values<T> = T[keyof T];
+type Record<K extends keyof any, T> = { [P in K]: T };
+type ProvidedActor = { src: string; logic: unknown };
+
+interface StateMachineConfig<TActors extends ProvidedActor> {
+  invoke: { src: TActors["src"] };
+}
+
+declare function setup<TActors extends Record<string, unknown>>(_: {
+  actors: { [K in keyof TActors]: TActors[K] };
+}): {
+  createMachine: (
+    config: StateMachineConfig<
+      Values<{
+        [K in keyof TActors as K & string]: {
+          src: K;
+          logic: TActors[K];
+        };
+      }>
+    >,
+  ) => void;
+};
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2344),
+        "Did not expect TS2344 for key-remapped Values<TActors> satisfying ProvidedActor. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_ref_with_tuple_constraint_defers_mapped_tuple_result() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Readonly<T> = { readonly [P in keyof T]: T[P] };
+type Writeable<T> = { -readonly [P in keyof T]: T[P] };
+type Values<T extends [string, ...string[]]> = { [k in T[number]]: k; };
+
+declare class ZodEnum<T extends [string, ...string[]]> {
+  get enum(): Values<T>
+}
+
+declare function createZodEnum<
+  U extends string,
+  T extends Readonly<[U, ...U[]]>
+>(values: T): ZodEnum<Writeable<T>>;
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2344),
+        "Did not expect TS2344 for Writeable<T> preserving the tuple constraint. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_ref_in_conditional_true_branch_respects_extends_substitution() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Set<T> { value?: T }
+
+type Foo<A> = Set<A> extends Set<unknown[]> ? Bar<Set<A>> : "else";
+type Bar<T extends Set<unknown[]>> = T;
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2344),
+        "Did not expect TS2344 for Set<A> in the true branch of a matching conditional. Got: {diagnostics:?}"
+    );
+}
