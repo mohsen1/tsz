@@ -118,6 +118,46 @@ interface Foo extends Array<string> {}
 }
 
 #[test]
+fn test_array_literal_of_function_expressions_drops_optional_param_subtypes() {
+    // Regression for narrowingUnionToUnion: when inferring an array element
+    // union from `[(x: T) => …, (x?: T) => …, …]` literals, the optional-
+    // parameter form is a structural subtype of the required-parameter
+    // form, so tsc's UnionReduction.Subtype drops the `?` arm. Mirror that
+    // text-side: any function-typed arm whose only difference from another
+    // arm is one or more `?:` parameters should be removed.
+    let output = emit_dts(
+        r#"
+const TEST_CASES = [
+    (value: string) => {},
+    (value?: string) => {},
+    (value: number) => {},
+    (value?: number) => {},
+];
+"#,
+    );
+    let elem_text = output
+        .lines()
+        .find(|line| line.contains("TEST_CASES:"))
+        .expect("TEST_CASES line missing");
+    assert!(
+        elem_text.contains("((value: string) => void)"),
+        "Expected required-param string arm to remain: {output}"
+    );
+    assert!(
+        elem_text.contains("((value: number) => void)"),
+        "Expected required-param number arm to remain: {output}"
+    );
+    assert!(
+        !elem_text.contains("(value?: string)"),
+        "Optional-param string arm should be subsumed by required-param sibling: {output}"
+    );
+    assert!(
+        !elem_text.contains("(value?: number)"),
+        "Optional-param number arm should be subsumed by required-param sibling: {output}"
+    );
+}
+
+#[test]
 fn test_array_literal_of_function_expressions_paren_wraps_each_arm() {
     // Regression for narrowingUnionToUnion: when an array literal contains
     // multiple function expressions that don't all share an identical type,
