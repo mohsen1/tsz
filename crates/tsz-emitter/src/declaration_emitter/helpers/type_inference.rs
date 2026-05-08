@@ -66,7 +66,188 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        if let Some(text) = self.mixin_call_intersection_source_text(expr_idx) {
+            return Some(text);
+        }
+
         self.call_expression_returned_local_class_constructor_text(expr_idx, true)
+    }
+
+    /// Recover the source-side return type for a heritage call like
+    /// `Mix(A, B)` where `Mix` is a generic function declared with the
+    /// signature `<T1, T2, …>(p1: T1, p2: T2, …): T1 & T2 & …`. tsc
+    /// computes `T1 & T2 & …` after inferring `Ti = typeof argi`,
+    /// producing an intersection synthetic-base alias. Tsz's heritage
+    /// inference path collapses this to just the last `Ti`, so synthesize
+    /// the intersection text directly from the AST: read the callee's
+    /// signature, check the intersection-of-bare-type-parameters return
+    /// shape, and rebuild it with `typeof argi` substitutions.
+    fn mixin_call_intersection_source_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        let arguments = call.arguments.as_ref()?;
+        let arg_idxs: Vec<NodeIndex> = arguments.nodes.to_vec();
+        if arg_idxs.is_empty() {
+            return None;
+        }
+
+        let sym_id = self.value_reference_symbol(call.expression)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        // Walk every declaration of the callee symbol; only one needs to be
+        // a function-like declaration with the recognised intersection-of-
+        // type-parameters return.
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let (type_parameters, parameters, return_type) =
+                if let Some(func) = self.arena.get_function(decl_node) {
+                    (
+                        func.type_parameters.as_ref(),
+                        &func.parameters,
+                        func.type_annotation,
+                    )
+                } else if let Some(method) = self.arena.get_method_decl(decl_node) {
+                    (
+                        method.type_parameters.as_ref(),
+                        &method.parameters,
+                        method.type_annotation,
+                    )
+                } else {
+                    continue;
+                };
+
+            // Need at least one type parameter and matching arity.
+            let Some(type_params) = type_parameters else {
+                continue;
+            };
+            if type_params.nodes.is_empty() || parameters.nodes.len() != arg_idxs.len() {
+                continue;
+            }
+
+            // Collect type-parameter names in declaration order.
+            let mut type_param_names: Vec<String> = Vec::with_capacity(type_params.nodes.len());
+            for &param_idx in &type_params.nodes {
+                let Some(param_node) = self.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(type_param) = self.arena.get_type_parameter(param_node) else {
+                    continue;
+                };
+                let Some(name) = self.get_identifier_text(type_param.name) else {
+                    continue;
+                };
+                type_param_names.push(name);
+            }
+            if type_param_names.len() != type_params.nodes.len() {
+                continue;
+            }
+
+            // Each parameter must be annotated as a bare reference to a
+            // distinct type parameter, and the parameters must cover the
+            // type parameters in order. `<T, U>(t: T, u: U)` qualifies;
+            // `<T>(t: T, u: T)` does not.
+            let mut param_to_type_param: Vec<usize> = Vec::with_capacity(parameters.nodes.len());
+            for &param_idx in &parameters.nodes {
+                let param_node = self.arena.get(param_idx)?;
+                let param = self.arena.get_parameter(param_node)?;
+                let annotation = self.arena.get(param.type_annotation)?;
+                if annotation.kind != syntax_kind_ext::TYPE_REFERENCE {
+                    return None;
+                }
+                let type_ref = self.arena.get_type_ref(annotation)?;
+                if type_ref
+                    .type_arguments
+                    .as_ref()
+                    .is_some_and(|ta| !ta.nodes.is_empty())
+                {
+                    return None;
+                }
+                let name = self.get_identifier_text(type_ref.type_name)?;
+                let idx = type_param_names.iter().position(|n| *n == name)?;
+                param_to_type_param.push(idx);
+            }
+            if param_to_type_param.len() != parameters.nodes.len() {
+                continue;
+            }
+
+            // Return type must be an intersection of bare type-parameter
+            // references that exactly matches the type-parameter list.
+            let Some(return_node) = self.arena.get(return_type) else {
+                continue;
+            };
+            if return_node.kind != syntax_kind_ext::INTERSECTION_TYPE {
+                continue;
+            }
+            let Some(inter) = self.arena.get_composite_type(return_node) else {
+                continue;
+            };
+            if inter.types.nodes.len() != type_param_names.len() {
+                continue;
+            }
+            let mut return_uses: Vec<usize> = Vec::with_capacity(inter.types.nodes.len());
+            let mut return_ok = true;
+            for &member_idx in &inter.types.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    return_ok = false;
+                    break;
+                };
+                if member_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                    return_ok = false;
+                    break;
+                }
+                let Some(type_ref) = self.arena.get_type_ref(member_node) else {
+                    return_ok = false;
+                    break;
+                };
+                if type_ref
+                    .type_arguments
+                    .as_ref()
+                    .is_some_and(|ta| !ta.nodes.is_empty())
+                {
+                    return_ok = false;
+                    break;
+                }
+                let Some(name) = self.get_identifier_text(type_ref.type_name) else {
+                    return_ok = false;
+                    break;
+                };
+                let Some(idx) = type_param_names.iter().position(|n| *n == name) else {
+                    return_ok = false;
+                    break;
+                };
+                return_uses.push(idx);
+            }
+            if !return_ok {
+                continue;
+            }
+            // Each type parameter must appear in the return exactly once and
+            // in the same order — otherwise the inferred intersection uses
+            // a different shape than `T1 & T2 & …`.
+            let mut sorted = return_uses.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            if sorted.len() != type_param_names.len() {
+                continue;
+            }
+
+            // Build `typeof arg_for_T1 & typeof arg_for_T2 & …`.
+            let mut parts: Vec<String> = Vec::with_capacity(return_uses.len());
+            for tp_idx in &return_uses {
+                let arg_position = param_to_type_param.iter().position(|&i| i == *tp_idx)?;
+                let arg_idx = arg_idxs[arg_position];
+                let arg_text = self.direct_value_reference_typeof_text(arg_idx)?;
+                parts.push(arg_text);
+            }
+            if parts.is_empty() {
+                continue;
+            }
+            return Some(parts.join(" & "));
+        }
+
+        None
     }
 
     pub(in crate::declaration_emitter) fn call_expression_returned_local_class_constructor_text(
