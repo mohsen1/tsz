@@ -4320,3 +4320,77 @@ export default validate;
         "TS files should preserve source order (declaration first): {trimmed}"
     );
 }
+
+/// Regression: a TypeScript class whose computed-name members appear
+/// *before* the constructor must keep that order in d.ts.  Prior code
+/// hoisted the constructor between statics and instance members
+/// whenever a class had any computed name, which mangled
+/// `[a]: number; [b]: number; constructor();` into
+/// `constructor(); [a]: number; [b]: number;`.  tsc preserves source
+/// order here (statics still hoist, but the constructor stays in its
+/// non-static slot).
+#[test]
+fn ts_class_with_computed_names_keeps_constructor_after_instance_members() {
+    let output = emit_dts(
+        r#"
+declare const a: 'a';
+declare const b: unique symbol;
+class C12 {
+    [a]: number;
+    [b]: number;
+    ['c']: number;
+    constructor() {}
+}
+"#,
+    );
+    let trimmed = output.trim();
+    let a_pos = trimmed.find("[a]: number;").expect("expected [a] member");
+    let b_pos = trimmed.find("[b]: number;").expect("expected [b] member");
+    let c_pos = trimmed
+        .find("['c']: number;")
+        .expect("expected ['c'] member");
+    let ctor_pos = trimmed
+        .find("constructor();")
+        .expect("expected constructor declaration");
+    assert!(
+        a_pos < b_pos && b_pos < c_pos && c_pos < ctor_pos,
+        "TS class with computed names should preserve source order — instance members before constructor: {trimmed}"
+    );
+}
+
+/// Counter-regression: when computed-named instance members appear in
+/// source order *before* static members, the static members must still
+/// hoist to the top of the d.ts class body — that's the actual rule
+/// tsc follows for computed-name TS classes (see
+/// `declarationEmitSimpleComputedNames1`).  Verifies the static-hoist
+/// rule didn't regress when the constructor-handling fix landed.
+#[test]
+fn ts_class_with_computed_names_hoists_static_members_above_instance() {
+    let output = emit_dts(
+        r#"
+declare const classFieldName: string;
+declare const otherField: string;
+declare const staticField: string;
+export class Holder {
+    [classFieldName]() { return "value"; }
+    [otherField]() { return 42; }
+    static [staticField]() { return { static: true as boolean }; }
+    static [staticField]() { return { static: "sometimes" as string }; }
+}
+"#,
+    );
+    let trimmed = output.trim();
+    let static_a = trimmed
+        .find("static [staticField]")
+        .expect("expected first static member");
+    let instance_a = trimmed
+        .find("[classFieldName]")
+        .expect("expected first instance member");
+    let instance_b = trimmed
+        .find("[otherField]")
+        .expect("expected second instance member");
+    assert!(
+        static_a < instance_a && static_a < instance_b,
+        "static members should hoist above instance members for TS classes with computed names: {trimmed}"
+    );
+}
