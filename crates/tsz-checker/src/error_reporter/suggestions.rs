@@ -352,23 +352,34 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Only search lib globals when the lookup includes VALUE meaning.
-        // For TYPE-only lookups, lib globals contain thousands of interfaces
-        // that produce noisy false-positive suggestions. Built-in type keywords
-        // (string, number, etc.) are still searched for TYPE-meaning lookups.
-        let include_lib_globals =
-            meaning_flags == 0 || meaning_flags & tsz_binder::symbol_flags::VALUE != 0;
+        // For TYPE-only lookups, restrict the lib search to *core* lib files
+        // (lib.es*, lib.scripthost, lib.decorators) to surface useful
+        // suggestions like `Array`, `Promise`, `Map` while keeping DOM
+        // interface noise (`ParentNode`, `Cache`, `CSSStyleDeclaration`, ...)
+        // from drowning out matches in user code (#3282).
+        // VALUE-meaning and unconstrained lookups search the full set as
+        // before so suggestions like `array` -> `Array` keep working.
+        let lib_globals_filtered: Vec<crate::context::LibContext>;
+        let lib_globals_for_search: &[crate::context::LibContext] =
+            if meaning_flags == tsz_binder::symbol_flags::TYPE {
+                lib_globals_filtered = self
+                    .ctx
+                    .lib_contexts
+                    .iter()
+                    .filter(|lib_ctx| Self::lib_context_is_core_typings(lib_ctx))
+                    .cloned()
+                    .collect();
+                &lib_globals_filtered
+            } else {
+                &self.ctx.lib_contexts
+            };
 
         Self::search_global_candidates(
             name,
             name_len,
             maximum_length_difference,
             meaning_flags,
-            if include_lib_globals {
-                &self.ctx.lib_contexts
-            } else {
-                &[]
-            },
+            lib_globals_for_search,
             &mut best_distance,
             &mut best_candidate,
         );
@@ -416,6 +427,7 @@ impl<'a> CheckerState<'a> {
             let is_type_only_lookup = meaning_flags == tsz_binder::symbol_flags::TYPE;
             if is_type_only_lookup
                 && self.is_lib_origin_symbol(candidate)
+                && !self.lib_origin_symbol_is_core_typing(candidate)
                 && !is_builtin_lib_file_name(&self.ctx.file_name)
             {
                 return None;
@@ -423,6 +435,60 @@ impl<'a> CheckerState<'a> {
         }
 
         best_candidate.map(|c| vec![c])
+    }
+
+    /// Whether a `LibContext` represents one of the *core* TypeScript lib
+    /// files (`lib.es*.d.ts`, `lib.scripthost.d.ts`, `lib.decorators*.d.ts`)
+    /// rather than a DOM-flavoured lib like `lib.dom.d.ts`. Used to scope
+    /// TYPE-only spelling suggestions to widely-used types and avoid
+    /// drowning user diagnostics in DOM interface noise (#3282).
+    fn lib_context_is_core_typings(lib_ctx: &crate::context::LibContext) -> bool {
+        let Some(file_name) = lib_ctx
+            .arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.as_str())
+        else {
+            return false;
+        };
+        Self::lib_file_name_is_core_typings(file_name)
+    }
+
+    /// Check whether a lib file name corresponds to a core TS lib —
+    /// i.e. one whose globals (Array, Promise, Map, ...) tsc surfaces in
+    /// spelling suggestions for type positions in user code.
+    fn lib_file_name_is_core_typings(file_name: &str) -> bool {
+        // Strip any directory prefix.
+        let base = file_name
+            .rsplit('/')
+            .next()
+            .and_then(|n| n.rsplit('\\').next())
+            .unwrap_or(file_name);
+        base.starts_with("lib.es")
+            || base.starts_with("lib.scripthost")
+            || base.starts_with("lib.decorators")
+    }
+
+    /// Whether `candidate` is declared (and *only* declared) in one of
+    /// the core lib files. Used to refine the TYPE-only post-filter so
+    /// `Array`, `Promise`, `Map`, etc. survive when they're the closest
+    /// match to a user-typed type name (#3282).
+    fn lib_origin_symbol_is_core_typing(&self, candidate: &str) -> bool {
+        // If the user shadowed the name in their own file, defer to the
+        // existing non-suppressed logic.
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate)
+            && !self.ctx.binder.lib_symbol_ids.contains(&sym_id)
+        {
+            return false;
+        }
+        for lib_ctx in self.ctx.lib_contexts.iter() {
+            if lib_ctx.binder.file_locals.get(candidate).is_some()
+                && Self::lib_context_is_core_typings(lib_ctx)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Check if a candidate suggestion originates from a lib file.
