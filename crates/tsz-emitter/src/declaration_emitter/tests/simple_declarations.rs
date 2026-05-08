@@ -4394,3 +4394,51 @@ export class Holder {
         "static members should hoist above instance members for TS classes with computed names: {trimmed}"
     );
 }
+
+/// Direct regression test for the trim helper used by
+/// `type_argument_list_source_text`.  Two-axis property: a bare
+/// overshoot `Foo>` becomes `Foo`, and a nested balanced `<…>` like
+/// `C.A<C.B>` is left intact (naive trimming would corrupt it into
+/// `C.A<C.B`).  The parser's `token_full_start()` correctly anchors
+/// `TypeReference` ends; only `LiteralType`/`UnionType`/
+/// `IntersectionType` have the `token_end()` overshoot quirk this
+/// helper fixes.
+#[test]
+fn strip_type_argument_overshoot_balances_nested_angle_brackets() {
+    use crate::declaration_emitter::DeclarationEmitter;
+
+    let mut overshoot = String::from("\"Hello\">");
+    DeclarationEmitter::strip_type_argument_overshoot_for_test(&mut overshoot);
+    assert_eq!(
+        overshoot, "\"Hello\"",
+        "literal-type overshoot must be trimmed"
+    );
+
+    let mut nested = String::from("C.A<C.B>");
+    DeclarationEmitter::strip_type_argument_overshoot_for_test(&mut nested);
+    assert_eq!(
+        nested, "C.A<C.B>",
+        "balanced nested `<…>` must not be trimmed"
+    );
+
+    let mut nested_with_overshoot = String::from("C.A<C.B>>");
+    DeclarationEmitter::strip_type_argument_overshoot_for_test(&mut nested_with_overshoot);
+    assert_eq!(
+        nested_with_overshoot, "C.A<C.B>",
+        "trailing overshoot `>` must be trimmed but inner `>` kept"
+    );
+
+    let mut trailing_comma = String::from("\"foo\", ");
+    DeclarationEmitter::strip_type_argument_overshoot_for_test(&mut trailing_comma);
+    assert_eq!(
+        trailing_comma, "\"foo\"",
+        "trailing `,`/whitespace must drop"
+    );
+
+    let mut quoted_gt = String::from("\"a>b\"");
+    DeclarationEmitter::strip_type_argument_overshoot_for_test(&mut quoted_gt);
+    assert_eq!(
+        quoted_gt, "\"a>b\"",
+        "`>` inside string literals must not affect the balance count"
+    );
+}
