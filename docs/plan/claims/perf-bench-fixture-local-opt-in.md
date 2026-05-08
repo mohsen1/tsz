@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-08
 - **Branch**: `perf/bench-fixture-local-opt-in`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #4699
+- **Status**: ready
 - **Workstream**: PERFORMANCE_PLAN T0.1 (Tier 0 — Measurement and fixture correctness)
 
 ## Intent
