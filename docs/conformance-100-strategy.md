@@ -1,6 +1,6 @@
 # 100% Conformance Strategy
 
-Last updated: 2026-05-08 on `origin/main` at `5d8e7825`.
+Last updated: 2026-05-08 on `origin/main` at `000e204366`.
 
 ## Target
 
@@ -19,33 +19,27 @@ conformance.
 
 ## Latest Local Baseline
 
-Latest accepted snapshot artifacts on `main` still show:
+Latest accepted snapshot artifacts on `main` now show:
 
-- `scripts/conformance/conformance-snapshot.json`: `12511/12582` passed, `71` failed, `99.4%`.
-- `scripts/conformance/conformance-detail.json`: `12511/12581` passed, `70` failed, `5` known failures.
-
-Snapshot refresh PR `#4571` is open and non-draft with a newer current-main run:
-
-- `scripts/conformance/conformance-snapshot.json`: `12519/12582` passed, `63` failed, `99.5%`.
-- Net `+15` passing tests versus the previous checked-in snapshot.
-- One new failure is fingerprint-only: `genericFunctionInference1` still has matching `TS2345` codes.
-- The assignment-compat pair now drops the extra `TS2741`; it remains fingerprint-only, not fully passing.
+- `scripts/conformance/conformance-snapshot.json`: `12522/12582` passed, `60` failed, `99.5%`.
+- `scripts/conformance/conformance-detail.json`: `12522/12581` passed, `59` failed, `4` known failures.
 
 Dashboard from `python3 scripts/conformance/query-conformance.py --dashboard`:
 
-- Category split: `2` false positives, `6` wrong-code tests, `59` fingerprint-only tests.
-- All-missing failures: `0`.
-- Top extra codes: `TS2345` in `2` tests, `TS2322` in `2`, plus singleton `TS2349`, `TS1102`, `TS2304`, and `TS2339`.
-- Top missing codes are singleton: `TS1127`, `TS1134`, `TS1389`, and `TS2416`.
-- Close-to-passing by code-set diff <= 2: `7` code-set tests, with most remaining failures now fingerprint-only.
+- Category split: `0` false positives, `0` all-missing, `5` wrong-code tests, `51` fingerprint-only tests, `4` close-to-passing code-set tests.
+- Big 3 wrong-code problems: `3` tests (`TS2322`, `TS2339`, `TS2345` singletons).
+- Top remaining close-to-passing tests:
+  - `doubleMixinConditionalTypeBaseClassWorks.ts`: one extra `TS2313`; covered by PR `#4598`.
+  - `inferFromGenericFunctionReturnTypes2.ts`: extras `TS2322`, `TS2345`; active next implementation target.
+  - `constructorWithIncompleteTypeAnnotation.ts`: missing `TS1127`.
+  - `unicodeEscapesInNames02.ts`: missing `TS1134`, `TS1389`.
+- Fingerprint-only is still most of the remaining work: `51` tests, about `73.6%` of failures.
 
-The behavior queue improved materially during 2026-05-07 and 2026-05-08.
-The checked-in README numbers still describe the latest accepted snapshot
-artifacts rather than the current behavior frontier until `#4571` merges.
-Keep using focused conformance runs for candidate selection because active
-behavior PRs can stale this snapshot quickly. Older notes that cite pre-`#4558`
-parser/keyof failures, `12451/12582`, `12470/12582`, `12488/12581`,
-`12501/12582`, or 99.0-99.3% are stale.
+The checked-in snapshot is now close to the current behavior frontier, but active
+behavior PRs can stale it quickly. Keep using focused conformance runs for
+candidate selection. Older notes that cite pre-`#4558` parser/keyof failures,
+`12451/12582`, `12470/12582`, `12488/12581`, `12501/12582`, `12511/12582`, or
+99.0-99.4% are stale.
 
 ## Active PR Queue
 
@@ -53,17 +47,18 @@ Monitor these PRs without sitting idle for CI:
 
 | PR | Purpose | Action |
 | --- | --- | --- |
-| #4562 | `fix(checker): preserve inferred prop type equality` | Non-draft behavior PR for `propTypeValidatorInference.ts`; amended head moves checker `TypeData` inspection behind solver query helpers. CI restarted on `41c87cdb5e`. |
-| #4566 | `fix(checker): honor re-export resolution-mode aliases` | Non-draft behavior PR for `nodeModulesImport*ModeDeclarationEmit*`; failed once because only 5/6 conformance shards uploaded. Failed shard rerun is active. |
-| #4568 | `fix(checker): gate Required<T> mapped-utility shortcut on lib symbol` | Non-draft behavior PR; local worker confirmed lint/wasm focused checks. Prior CI failure was runner cancellation; failed jobs rerun and are active. |
-| #4570 | `Fix checker lib-local type shadowing` | Non-draft behavior PR for stale assignment-compat `TS2741` lane; reviewed from draft and marked ready. CI active. |
-| #4571 | `chore(conformance): refresh snapshot to 99.5% (+15 tests)` | Snapshot/README-adjacent artifact PR only. Merge after checks if no behavior PR needs to land first; do not mix with behavior changes. |
-| #4569 | `fix(parser): gate astral identifiers by target` | Draft partial parser recovery; improves `unicodeEscapesInNames02` code set but leaves fingerprint/missing recovery work. Do not merge while draft. |
-| #4550 | `[WIP] fix(checker): drop hardcoded Comparable<number> diagnostic rewrite (#3057)` | Draft; do not merge. |
-| #4517 | `[do not merge] chore(checker-tests): consolidate load_lib_files_for_test variants` | Draft; do not merge. |
-| #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Draft; leave blocked unless it is rebased and revalidated. |
+| #4599 | `fix(checker): preserve keyof mapped key validity` | Non-draft checker PR; CI active. It addresses project-check fallout, not the main diagnostic conformance queue. |
+| #4598 | `fix(checker): avoid false TS2313 for conditional mixin constraints` | Non-draft behavior PR for `doubleMixinConditionalTypeBaseClassWorks.ts`; local full pre-commit passed and focused conformance is green. CI is active; do not wait idle. |
+| #4597 | `fix(checker): respect REJECTION_UNRELIABLE in same-base alias guard` | Non-draft behavior PR; CI active. Review conformance impact before merge because it touches relation diagnostics. |
+| #4596 | `fix(bench): give project checks stack headroom` | Non-draft bench/CI reliability PR; CI active. Merge if green to keep benchmark gates healthy. |
+| #4595 | `fix(emitter): preserve ambient value declaration consumed by export default X` | Non-draft emit PR; CI active. Keep separate from diagnostic conformance work. |
+| #4590 | `fix(emitter): collapse optional-param function arms in inferred array element unions` | Non-draft emit PR; conformance aggregate is green, but `unit`/CI summary failed. Keep separate from diagnostic conformance work. |
+| #4587 | `perf(core): persistent lib snapshot disk cache` | Non-draft perf PR; conformance aggregate is green, but `lint`/CI summary failed. Do not mix with conformance repairs. |
+| #4585 | `fix(emitter): skip hoisting JS functions folded into export specifier` | Non-draft emit PR; dirty plus `lint`/CI summary failed. Needs rebase/repair before merge. |
+| #4577 | `fix(checker): remove hardcoded Comparable<number> diagnostic rewrite` | Non-draft but dirty. Needs rebase before useful CI signal. |
+| #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Non-draft but has failing unit/conformance aggregate and stale history. Do not merge without focused repair/rebase. |
 
-Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434`,
+Recently merged during this cycle and no longer active include `#4430`, `#4433`, `#4434`,
 `#4438`, `#4439`, `#4443`, `#4444`, `#4447`, `#4448`, `#4449`, `#4450`,
 `#4451`, `#4475`, `#4479`, `#4480`, `#4490`, `#4491`, `#4492`, `#4494`,
 `#4495`, `#4496`, `#4497`, `#4498`, `#4499`, `#4500`, `#4501`, `#4488`,
@@ -72,8 +67,16 @@ Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434
 `#4523`, `#4520`, `#4525`, `#4526`, `#4527`, `#4528`, `#4531`, `#4532`,
 `#4544`, `#4545`, `#4546`, `#4547`, `#4548`, `#4549`, `#4551`, `#4552`,
 `#4554`, `#4555`, `#4556`, `#4557`, `#4558`, `#4559`, `#4560`, `#4561`,
-`#4563`, `#4564`, and `#4565`. `#4510` and `#4512` also merged and are no
-longer active.
+`#4563`, `#4564`, `#4565`, `#4566`, `#4568`, `#4570`, `#4571`, `#4573`,
+`#4574`, `#4576`, `#4588`, `#4592`, and `#4594`. `#4510` and `#4512` also merged and are no
+longer active. Treat older #456x queue entries in this document as stale unless
+they still appear in `gh pr list`.
+
+`#4588` specifically had a scary stale local conformance note in the PR body:
+`12511 -> 12483`. Its GitHub CI completed green, including all six conformance
+shards and `conformance-aggregate`, before it merged at `f2952a3126`. Treat
+that body delta as stale branch/snapshot bookkeeping, not a completed CI
+regression.
 
 ## Work Selection
 
@@ -101,11 +104,12 @@ Best remaining targets on current `main`, excluding work already covered by open
 
 | Target | Current impact | Suggested lane |
 | --- | --- | --- |
-| Type display parity | `59` fingerprint-only tests | Shared type-printer/display policy for recurring `TS2322`, `TS2345`, `TS2339`, and lib declaration fingerprints. |
-| False positives | Checked-in snapshot shows `2` tests where tsc expects no diagnostics | `#4560` is merged; `#4562` covers `propTypeValidatorInference.ts` and is waiting on CI. |
-| Wrong-code singleton gaps | `#4571` reduces wrong-code failures by `3` in the refreshed artifact set | `#4564` is merged for the extra `TS1102`; remaining singleton gaps need refreshed current-main confirmation before selection. |
+| Type display parity | `51` fingerprint-only tests | Shared type-printer/display policy for recurring `TS2322`, `TS2345`, `TS2339`, and lib declaration fingerprints. |
+| One-extra code-set failure | One test has one extra code: `doubleMixinConditionalTypeBaseClassWorks.ts` extra `TS2313` | PR `#4598` is open and should remove this case after merge. |
+| Nested generic callback inference | `inferFromGenericFunctionReturnTypes2.ts` has extras `TS2322`, `TS2345` | Active worker/explorer lane. Current diagnosis: return-context substitution is computed, then post-solver refinement filters out the returned-function parameter type because it compares against the resolved return instead of `shape.return_type`. |
+| Wrong-code singleton gaps | `5` wrong-code tests remain; Big 3 wrong-code count is `3` | Confirm each on current main before implementation; prefer narrow semantic fixes with focused tests. |
 | Parser recovery | `constructorWithIncompleteTypeAnnotation.ts` and `unicodeEscapesInNames02.ts` | Specific TS1xxx parser recovery and unicode escape diagnostic selection. |
-| Node/Salsa relation diagnostics | `node` has `4` failures, `salsa` has `2` | Keep module/export, JS, and relation fixes in isolated PRs with focused regression coverage. |
+| Node/Salsa relation diagnostics | Node lane estimate is `1`; JS/Salsa failures are mostly fingerprint or relation-display issues | Keep module/export, JS, and relation fixes in isolated PRs with focused regression coverage. |
 
 Active local worker assignments from this tranche:
 
@@ -122,6 +126,8 @@ Active local worker assignments from this tranche:
 - `codex/proptype-inference-20260508005442` is published as `#4562` for the `propTypeValidatorInference.ts` false positive.
 - `codex/assignment-compat-signature-ts2741-20260508` is published as `#4570` for lib-local type shadowing in the signature assignment lane.
 - `chore/refresh-conformance-snapshot-99-5` is published as `#4571` for the `12519/12582` snapshot artifact refresh.
+- `codex/double-mixin-ts2313-20260508` is published as `#4598` for the extra `TS2313` in `doubleMixinConditionalTypeBaseClassWorks.ts`.
+- `infer-generic-return` worker/explorer lanes are active for `inferFromGenericFunctionReturnTypes2.ts`.
 
 Already published or merged from earlier tranches:
 
@@ -152,15 +158,15 @@ Already published or merged from earlier tranches:
 
 ### Tier 1: Fingerprint Parity
 
-Fingerprint parity is most of the remaining work: `59` tests and most of the
+Fingerprint parity is most of the remaining work: `51` tests and most of the
 remaining failures. The recurring families are assignment/call/property-access
 display parity, lib declaration fingerprints, and parser recovery fingerprints
 where the code set now matches.
 
 Root-cause campaigns from `--campaigns`:
 
-- Type display parity: estimated `30` tests from the checked-in dashboard, with the campaign query still flagging broader message-format impact.
-- Diagnostic count accuracy: estimated `12` tests from the checked-in dashboard, with broader count-rule impact in the campaign query.
+- Type display parity: estimated `25` tests from the checked-in dashboard, with the campaign query still flagging broader message-format impact.
+- Diagnostic count accuracy: estimated `10` tests from the checked-in dashboard, with broader count-rule impact in the campaign query.
 
 Rules:
 
