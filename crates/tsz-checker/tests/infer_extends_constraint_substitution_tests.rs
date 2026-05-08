@@ -6,125 +6,37 @@
 //! constraint TypeId was not substituted, causing `keyof T` to reference a stale
 //! type parameter instead of the concrete type, making the infer pattern fail.
 
-use rustc_hash::FxHashSet;
-use std::path::Path;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::{check_source, check_source_with_libs, load_lib_files};
 
-fn check_strict(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+const LIB_NAMES: &[&str] = &[
+    "es5.d.ts",
+    "es2015.d.ts",
+    "es2015.core.d.ts",
+    "es2015.collection.d.ts",
+    "es2015.iterable.d.ts",
+    "es2015.generator.d.ts",
+    "es2015.promise.d.ts",
+    "es2015.proxy.d.ts",
+    "es2015.reflect.d.ts",
+    "es2015.symbol.d.ts",
+    "es2015.symbol.wellknown.d.ts",
+];
 
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-
-    let options = CheckerOptions {
+fn strict_options() -> CheckerOptions {
+    CheckerOptions {
         strict: true,
         ..Default::default()
-    };
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    }
 }
 
-fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-    let lib_names = [
-        "es5.d.ts",
-        "es2015.d.ts",
-        "es2015.core.d.ts",
-        "es2015.collection.d.ts",
-        "es2015.iterable.d.ts",
-        "es2015.generator.d.ts",
-        "es2015.promise.d.ts",
-        "es2015.proxy.d.ts",
-        "es2015.reflect.d.ts",
-        "es2015.symbol.d.ts",
-        "es2015.symbol.wellknown.d.ts",
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if !seen_files.insert(file_name.to_string()) {
-                    break;
-                }
-                lib_files.push(Arc::new(LibFile::from_source(
-                    file_name.to_string(),
-                    content,
-                )));
-                break;
-            }
-        }
-    }
-
-    lib_files
+fn check_strict(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
+    check_source(source, "test.ts", strict_options())
 }
 
 fn check_strict_with_libs(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let lib_files = load_lib_files_for_test();
-
-    let mut binder = BinderState::new();
-    if lib_files.is_empty() {
-        binder.bind_source_file(parser.get_arena(), root);
-    } else {
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    }
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        strict: true,
-        ..Default::default()
-    };
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
-            .iter()
-            .map(|lib| tsz_checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    let libs = load_lib_files(LIB_NAMES);
+    check_source_with_libs(source, "test.ts", strict_options(), &libs)
 }
 
 fn has_error(diags: &[tsz_checker::diagnostics::Diagnostic], code: u32) -> bool {
