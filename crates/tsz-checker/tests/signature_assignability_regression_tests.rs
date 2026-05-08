@@ -9,6 +9,20 @@ fn get_codes_with_options(source: &str, options: CheckerOptions) -> Vec<u32> {
         .collect()
 }
 
+fn conformance_default_options() -> CheckerOptions {
+    CheckerOptions {
+        strict: false,
+        strict_null_checks: false,
+        strict_function_types: false,
+        strict_property_initialization: false,
+        no_implicit_any: false,
+        no_implicit_this: false,
+        use_unknown_in_catch_variables: false,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    }
+}
+
 #[test]
 fn method_only_generic_variance_is_bivariant() {
     let source = r#"
@@ -39,6 +53,48 @@ dogComparer = animalComparer;
     assert!(
         !codes.contains(&2322),
         "method-only generic comparer assignments should be bivariant, got {codes:?}"
+    );
+}
+
+#[test]
+fn interface_method_signature_satisfies_structural_method_property() {
+    let source = r#"
+interface T {
+    f(x: number): void;
+}
+declare var t: T;
+declare var a: { f(x: number): void };
+
+t = a;
+a = t;
+"#;
+
+    let codes = get_codes_with_options(source, conformance_default_options());
+
+    assert!(
+        codes.is_empty(),
+        "interface method signature should satisfy matching structural method property, got {codes:?}"
+    );
+}
+
+#[test]
+fn interface_construct_signature_property_satisfies_structural_construct_property() {
+    let source = r#"
+interface T {
+    f: new (x: number) => void;
+}
+declare var t: T;
+declare var a: { f: new (x: number) => void };
+
+t = a;
+a = t;
+"#;
+
+    let codes = get_codes_with_options(source, conformance_default_options());
+
+    assert!(
+        codes.is_empty(),
+        "interface construct signature property should satisfy matching structural construct property, got {codes:?}"
     );
 }
 
@@ -104,20 +160,7 @@ a18 = b18;
 b18 = a18;
 "#;
 
-    let codes = get_codes_with_options(
-        source,
-        CheckerOptions {
-            strict: false,
-            strict_null_checks: false,
-            strict_function_types: false,
-            strict_property_initialization: false,
-            no_implicit_any: false,
-            no_implicit_this: false,
-            use_unknown_in_catch_variables: false,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
+    let codes = get_codes_with_options(source, conformance_default_options());
 
     assert!(
         codes.iter().all(|&code| code == 2322),
