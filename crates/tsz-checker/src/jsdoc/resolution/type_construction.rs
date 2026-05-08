@@ -745,7 +745,6 @@ impl<'a> CheckerState<'a> {
                 .factory()
                 .application(base_type, type_args.to_vec());
             instantiated = substitute_this_type(self.ctx.types, instantiated, self_type);
-            self.ctx.types.store_display_alias(instantiated, self_type);
         }
         instantiated
     }
