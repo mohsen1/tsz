@@ -26,7 +26,7 @@ env:
   BENCH_FULL: "1"
   BENCH_COLD: "1"
   BENCH_PGO: "1"
-  BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS: "300"
+  BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS: "900"
   TSC_NPM_SPEC: "6.0.2"
   GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
