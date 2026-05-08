@@ -1,6 +1,6 @@
 # 100% Conformance Strategy
 
-Last updated: 2026-05-08 on `origin/main` at `fe5898911d`.
+Last updated: 2026-05-08 on `origin/main` at `5d8e7825`.
 
 ## Target
 
@@ -19,10 +19,17 @@ conformance.
 
 ## Latest Local Baseline
 
-Latest full local snapshot run after `#4558` and `#4559`:
+Latest accepted snapshot artifacts on `main` still show:
 
 - `scripts/conformance/conformance-snapshot.json`: `12511/12582` passed, `71` failed, `99.4%`.
 - `scripts/conformance/conformance-detail.json`: `12511/12581` passed, `70` failed, `5` known failures.
+
+Snapshot refresh PR `#4571` is open and non-draft with a newer current-main run:
+
+- `scripts/conformance/conformance-snapshot.json`: `12519/12582` passed, `63` failed, `99.5%`.
+- Net `+15` passing tests versus the previous checked-in snapshot.
+- One new failure is fingerprint-only: `genericFunctionInference1` still has matching `TS2345` codes.
+- The assignment-compat pair now drops the extra `TS2741`; it remains fingerprint-only, not fully passing.
 
 Dashboard from `python3 scripts/conformance/query-conformance.py --dashboard`:
 
@@ -33,16 +40,12 @@ Dashboard from `python3 scripts/conformance/query-conformance.py --dashboard`:
 - Close-to-passing by code-set diff <= 2: `7` code-set tests, with most remaining failures now fingerprint-only.
 
 The behavior queue improved materially during 2026-05-07 and 2026-05-08.
-This local snapshot was generated after `origin/main` advanced to `b39d5d3180`
-with `#4558` and `#4559` merged. Since that run, `#4560`, `#4563`, and `#4564`
-also merged on `main`, so the checked-in README numbers still describe the
-latest accepted snapshot artifacts rather than the current behavior frontier.
-The generated artifacts were not checked in because the snapshot gate rejects
-refreshes that introduce more new failure entries than fixed entries, even when
-the total pass count is unchanged. Keep using focused conformance runs for
-candidate selection because active behavior PRs can stale this snapshot quickly.
-Older notes that cite pre-`#4558` parser/keyof failures, `12451/12582`,
-`12470/12582`, `12488/12581`, `12501/12582`, or 99.0-99.3% are stale.
+The checked-in README numbers still describe the latest accepted snapshot
+artifacts rather than the current behavior frontier until `#4571` merges.
+Keep using focused conformance runs for candidate selection because active
+behavior PRs can stale this snapshot quickly. Older notes that cite pre-`#4558`
+parser/keyof failures, `12451/12582`, `12470/12582`, `12488/12581`,
+`12501/12582`, or 99.0-99.3% are stale.
 
 ## Active PR Queue
 
@@ -50,8 +53,12 @@ Monitor these PRs without sitting idle for CI:
 
 | PR | Purpose | Action |
 | --- | --- | --- |
-| #4562 | `fix(checker): preserve inferred prop type equality` | Non-draft behavior PR; CI running on amended architecture-boundary cleanup. Expected to remove the `propTypeValidatorInference.ts` false positive after merge. |
-| #4565 | `ci(bench): extend workflow-run debounce` | Non-conformance CI PR; monitor separately and do not count toward diagnostic progress. |
+| #4562 | `fix(checker): preserve inferred prop type equality` | Non-draft behavior PR for `propTypeValidatorInference.ts`; amended head moves checker `TypeData` inspection behind solver query helpers. CI restarted on `41c87cdb5e`. |
+| #4566 | `fix(checker): honor re-export resolution-mode aliases` | Non-draft behavior PR for `nodeModulesImport*ModeDeclarationEmit*`; failed once because only 5/6 conformance shards uploaded. Failed shard rerun is active. |
+| #4568 | `fix(checker): gate Required<T> mapped-utility shortcut on lib symbol` | Non-draft behavior PR; local worker confirmed lint/wasm focused checks. Prior CI failure was runner cancellation; failed jobs rerun and are active. |
+| #4570 | `Fix checker lib-local type shadowing` | Non-draft behavior PR for stale assignment-compat `TS2741` lane; reviewed from draft and marked ready. CI active. |
+| #4571 | `chore(conformance): refresh snapshot to 99.5% (+15 tests)` | Snapshot/README-adjacent artifact PR only. Merge after checks if no behavior PR needs to land first; do not mix with behavior changes. |
+| #4569 | `fix(parser): gate astral identifiers by target` | Draft partial parser recovery; improves `unicodeEscapesInNames02` code set but leaves fingerprint/missing recovery work. Do not merge while draft. |
 | #4550 | `[WIP] fix(checker): drop hardcoded Comparable<number> diagnostic rewrite (#3057)` | Draft; do not merge. |
 | #4517 | `[do not merge] chore(checker-tests): consolidate load_lib_files_for_test variants` | Draft; do not merge. |
 | #4428 | `fix(checker): prefer local interface symbols over leaked generic scope` | Draft; leave blocked unless it is rebased and revalidated. |
@@ -65,8 +72,8 @@ Recently merged during this cycle and no longer active: `#4430`, `#4433`, `#4434
 `#4523`, `#4520`, `#4525`, `#4526`, `#4527`, `#4528`, `#4531`, `#4532`,
 `#4544`, `#4545`, `#4546`, `#4547`, `#4548`, `#4549`, `#4551`, `#4552`,
 `#4554`, `#4555`, `#4556`, `#4557`, `#4558`, `#4559`, `#4560`, `#4561`,
-`#4563`, and `#4564`. `#4510` and `#4512` also merged and are no longer
-active.
+`#4563`, `#4564`, and `#4565`. `#4510` and `#4512` also merged and are no
+longer active.
 
 ## Work Selection
 
@@ -95,8 +102,8 @@ Best remaining targets on current `main`, excluding work already covered by open
 | Target | Current impact | Suggested lane |
 | --- | --- | --- |
 | Type display parity | `59` fingerprint-only tests | Shared type-printer/display policy for recurring `TS2322`, `TS2345`, `TS2339`, and lib declaration fingerprints. |
-| False positives | Snapshot shows `2` tests where tsc expects no diagnostics | `#4560` is merged; `#4562` covers `propTypeValidatorInference.ts` and is waiting on CI. |
-| Wrong-code singleton gaps | Snapshot shows `6` tests | `#4564` is merged for the extra `TS1102`; remaining singleton gaps need refreshed current-main confirmation before selection. |
+| False positives | Checked-in snapshot shows `2` tests where tsc expects no diagnostics | `#4560` is merged; `#4562` covers `propTypeValidatorInference.ts` and is waiting on CI. |
+| Wrong-code singleton gaps | `#4571` reduces wrong-code failures by `3` in the refreshed artifact set | `#4564` is merged for the extra `TS1102`; remaining singleton gaps need refreshed current-main confirmation before selection. |
 | Parser recovery | `constructorWithIncompleteTypeAnnotation.ts` and `unicodeEscapesInNames02.ts` | Specific TS1xxx parser recovery and unicode escape diagnostic selection. |
 | Node/Salsa relation diagnostics | `node` has `4` failures, `salsa` has `2` | Keep module/export, JS, and relation fixes in isolated PRs with focused regression coverage. |
 
@@ -113,8 +120,8 @@ Active local worker assignments from this tranche:
 - `codex/inference-contextual-fp-20260508043950` landed as `#4560` for the generic rest callback false positive.
 - `codex/delete-invalid-ops-ts1102-20260508` landed as `#4564` for the extra `TS1102` in `deleteOperatorInvalidOperations.ts`.
 - `codex/proptype-inference-20260508005442` is published as `#4562` for the `propTypeValidatorInference.ts` false positive.
-- `codex/assignment-compat-signature-ts2741-20260508` is checking whether the signature `TS2741` lane is stale after `#4554`.
-- `codex/snapshot-refresh-20260508-post4544` owns strategy and README refresh tooling based on current `origin/main`; generated snapshot artifacts should be refreshed in a later PR once the snapshot gate accepts the failure-set delta.
+- `codex/assignment-compat-signature-ts2741-20260508` is published as `#4570` for lib-local type shadowing in the signature assignment lane.
+- `chore/refresh-conformance-snapshot-99-5` is published as `#4571` for the `12519/12582` snapshot artifact refresh.
 
 Already published or merged from earlier tranches:
 
@@ -209,6 +216,16 @@ Before merge:
 
 Snapshot/readme refresh PRs are separate unless the user explicitly asks for a combined
 batch.
+
+Current snapshot artifact PR:
+
+- `#4571` refreshes `conformance-snapshot.json`, `conformance-detail.json`, and
+  `conformance-baseline.txt` to `12519/12582` (`99.5%`).
+- The refresh is net-positive and documents the one fingerprint-only regression
+  (`genericFunctionInference1`) explicitly.
+- Wait for behavior PRs only when they would materially change the same artifact
+  set; otherwise keep the artifact refresh unblocked so README/snapshot drift stays
+  small.
 
 Use a clean, current worktree:
 
