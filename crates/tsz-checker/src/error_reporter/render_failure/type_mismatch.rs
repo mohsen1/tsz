@@ -63,7 +63,9 @@ impl<'a> CheckerState<'a> {
             self.format_assignability_type_for_message(target, source)
         };
         if depth == 0 {
-            if let Some(display) = self.evaluated_literal_alias_source_display(source) {
+            if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
+                && let Some(display) = self.evaluated_literal_alias_source_display(source)
+            {
                 source_str = self.canonicalize_assignment_numeric_literal_union_display(display);
             }
             if let Some(display) = self.evaluated_literal_alias_source_display(target) {
@@ -359,7 +361,9 @@ impl<'a> CheckerState<'a> {
         if depth == 0 {
             (source_str, target_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
-            if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
+            if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
+                && let Some(unfolded) = self.ts2739_alias_of_application_source_display(source)
+            {
                 source_str = self.format_type_diagnostic(unfolded);
             }
             if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {

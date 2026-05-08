@@ -21,6 +21,7 @@ mod core_formatting;
 mod emitters;
 mod fingerprint_policy;
 mod generics;
+mod literal_alias_rewrites;
 mod name_resolution;
 mod operator_errors;
 mod primitive_intersection_display;

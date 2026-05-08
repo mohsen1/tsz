@@ -13,7 +13,10 @@ impl<'a> CheckerState<'a> {
     /// which tsc reports with literal widening applied. Logical compound
     /// assignments (`&&=`, `||=`, `??=`) preserve the narrow RHS type and are
     /// deliberately excluded.
-    pub(super) fn in_arithmetic_compound_assignment_context(&self, anchor_idx: NodeIndex) -> bool {
+    pub(in crate::error_reporter) fn in_arithmetic_compound_assignment_context(
+        &self,
+        anchor_idx: NodeIndex,
+    ) -> bool {
         let is_arith_compound_op = |op: u16| -> bool {
             crate::query_boundaries::common::is_compound_assignment_operator(op)
                 && !crate::query_boundaries::common::is_logical_compound_assignment_operator(op)
