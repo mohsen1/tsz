@@ -218,7 +218,14 @@ pub struct LiteralData {
     pub raw_text: Option<String>,
     /// For numeric literals only
     pub value: Option<f64>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    /// `serde(default)` keeps deserialise back-compat with older outputs
+    /// that elided this field. We dropped `skip_serializing_if` because
+    /// the lib-snapshot pipeline serializes `NodeArena` via bincode, and
+    /// bincode's positional format desyncs on conditionally-elided
+    /// fields. Always emitting a 1-byte bool adds <0.1% to JSON IPC
+    /// payloads and is invisible in binary. See
+    /// `crates/tsz-core/src/parallel/lib_snapshot.rs`.
+    #[serde(default)]
     pub has_invalid_escape: bool,
 }
 
@@ -755,8 +762,10 @@ pub struct FunctionTypeData {
     pub type_parameters: Option<NodeList>,
     pub parameters: NodeList,
     pub type_annotation: NodeIndex,
-    /// True if this is an abstract constructor type: `abstract new () => T`
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    /// True if this is an abstract constructor type: `abstract new () => T`.
+    /// `skip_serializing_if` removed for bincode round-trip compatibility
+    /// (see `LiteralData::has_invalid_escape` for the same rationale).
+    #[serde(default)]
     pub is_abstract: bool,
 }
 
