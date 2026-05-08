@@ -2245,7 +2245,29 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
 
-                self.emit_node(param.name);
+                // When the parser recovered from a missing identifier (the
+                // user's "name" token was a reserved word and unusable, e.g.
+                // `<in in>`), the synthesized name has an empty atom and
+                // zero-width source range.  tsc renders this case as a
+                // phantom comma after the modifier (`<in , >`), reflecting
+                // its own recovery shape (one modifier-only param + one
+                // empty trailing slot).  We mirror that rendering only when
+                // (a) at least one modifier was emitted, and (b) the name
+                // is genuinely synthesized — never for user-chosen names.
+                let name_is_synthesized = self
+                    .arena
+                    .get(param.name)
+                    .and_then(|n| self.arena.get_identifier(n))
+                    .is_some_and(|id| id.escaped_text.is_empty());
+                let has_modifier = param
+                    .modifiers
+                    .as_ref()
+                    .is_some_and(|m| !m.nodes.is_empty());
+                if name_is_synthesized && has_modifier {
+                    self.write(", ");
+                } else {
+                    self.emit_node(param.name);
+                }
 
                 if param.constraint.is_some() {
                     self.write(" extends ");
