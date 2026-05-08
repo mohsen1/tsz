@@ -235,7 +235,7 @@ impl ModuleAugmentation {
 /// Binder state using `NodeArena`.
 ///
 /// `Serialize`/`Deserialize` impls round-trip the bound state to disk for
-/// the lib snapshot cache (see `docs/plan/perf-lib-snapshot-design.md`).
+/// the lib snapshot cache (see `docs/plan/PERFORMANCE_PLAN.md`).
 /// Two `CloneableRwLock<...>` fields below carry resolution caches that
 /// are intentionally `#[serde(skip)]` — they're regenerable on first
 /// access (the `clear_resolution_caches` method confirms the lazy-rebuild

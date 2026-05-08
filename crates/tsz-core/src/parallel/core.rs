@@ -1140,7 +1140,7 @@ pub fn clone_lib_files_for_checker(
 /// loaded from disk (skipping both parse and bind). On a miss the
 /// parse + bind result is written back. See
 /// `crates/tsz-core/src/parallel/lib_snapshot.rs` and
-/// `docs/plan/perf-lib-snapshot-design.md`.
+/// `docs/plan/PERFORMANCE_PLAN.md`.
 fn parse_and_bind_lib_file(
     file_name: String,
     source_text: String,

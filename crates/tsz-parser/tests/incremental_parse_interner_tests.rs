@@ -134,7 +134,7 @@ fn incremental_parse_resolves_new_identifier_through_get_identifier_text() {
     );
 }
 
-/// Phase 1.3 (perf-lib-snapshot-design): the snapshot pipeline serialises a
+/// Phase 1.3 (`PERFORMANCE_PLAN` T3.1): the snapshot pipeline serialises a
 /// parsed `NodeArena` to disk and restores it on a later run. The arena's
 /// internal `Interner` field used to be `#[serde(skip)]`, which silently
 /// stripped identifier text on round-trip. This test pins the post-fix

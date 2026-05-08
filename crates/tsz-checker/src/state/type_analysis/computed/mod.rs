@@ -373,7 +373,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
-        // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Counts every
+        // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Counts every
         // entry to type-of-symbol computation; PR 1 uses this against
         // unique-SymbolId estimates to characterize recomputation.
         tsz_common::perf_counters::inc(

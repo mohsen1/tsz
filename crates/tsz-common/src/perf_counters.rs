@@ -1,5 +1,5 @@
 //! Process-wide performance counters used to drive the perf-architectural
-//! plan in `docs/plan/PERF_ARCHITECTURAL_PLAN.md`.
+//! plan in `docs/plan/PERFORMANCE_PLAN.md`.
 //!
 //! Counters are gated by the `TSZ_PERF_COUNTERS` environment variable. When
 //! the variable is unset the increments still fire (`AtomicU64::fetch_add`

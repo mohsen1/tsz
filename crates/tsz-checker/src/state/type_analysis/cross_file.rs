@@ -639,7 +639,7 @@ impl<'a> CheckerState<'a> {
 
         if should_delegate {
             // PERF: count cross-arena delegation calls for the perf plan.
-            // See `docs/plan/PERF_ARCHITECTURAL_PLAN.md`.
+            // See `docs/plan/PERFORMANCE_PLAN.md`.
             let perf = tsz_common::perf_counters::counters();
             tsz_common::perf_counters::inc(&perf.delegate_cross_arena_calls);
 

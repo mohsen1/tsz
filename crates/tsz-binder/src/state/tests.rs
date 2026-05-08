@@ -7177,7 +7177,7 @@ class Qux {}
 // BinderState round-trip (lib snapshot campaign)
 // =============================================================================
 
-/// Phase 1.5 (perf-lib-snapshot-design.md): `BinderState` must round-trip
+/// Phase 1.5 (`PERFORMANCE_PLAN.md)`: `BinderState` must round-trip
 /// through serde with diagnostic-identical behaviour, otherwise the
 /// disk-backed lib cache would silently corrupt symbol resolution. The
 /// resolution caches (`resolved_export_cache`, `resolved_identifier_cache`)

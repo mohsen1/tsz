@@ -3039,7 +3039,7 @@ fn package_type_from_json(package_json: Option<&PackageJson>) -> Option<PackageT
 }
 
 fn read_package_json_uncached(path: &Path) -> Option<PackageJson> {
-    // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Resolver hot path
+    // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Resolver hot path
     // — package.json reads dominate sample profiles on full large-ts-repo.
     tsz_common::perf_counters::inc(
         &tsz_common::perf_counters::counters().resolver_read_package_json_calls,
