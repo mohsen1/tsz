@@ -286,6 +286,124 @@ fn test_package_imports_conditional_falls_back_after_missing_target() {
 }
 
 #[test]
+fn test_package_imports_conditional_prefers_versioned_types_branch() {
+    // Regression for https://github.com/mohsen1/tsz/issues/3564.
+    //
+    // The package.json#imports field supports the same conditional key syntax
+    // as the exports field, including versioned `types@<range>` keys. tsc
+    // honors the highest-matching versioned `types@...` branch before falling
+    // back to the plain `types` key. Previously, the imports path matched
+    // condition keys via simple equality, so `types@>=1` could never match
+    // and the resolver fell through to `./old.d.ts`.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_imports_versioned_types_condition");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(
+        dir.join("package.json"),
+        r##"{
+            "name": "app",
+            "type": "module",
+            "imports": {
+                "#x": {
+                    "types@>=1": "./new.d.ts",
+                    "types": "./old.d.ts",
+                    "default": "./x.js"
+                }
+            }
+        }"##,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("new.d.ts"),
+        "export declare function onlyNew(): void;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("old.d.ts"),
+        "export declare function onlyOld(): void;",
+    )
+    .unwrap();
+    fs::write(dir.join("x.js"), "export function onlyNew() {}").unwrap();
+    fs::write(
+        dir.join("main.ts"),
+        "import { onlyNew } from '#x'; onlyNew();",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("#x", &dir.join("main.ts"), Span::new(0, 2));
+
+    let resolved =
+        result.expect("versioned types@>=1 branch should resolve before plain types fallback");
+    assert!(
+        resolved.resolved_path.ends_with("new.d.ts"),
+        "expected versioned types branch (new.d.ts), got {}",
+        resolved.resolved_path.display()
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_imports_versioned_types_skips_when_range_does_not_match() {
+    // Companion to the above: when the compiler version is *below* the
+    // declared `types@<range>` floor, the versioned branch must be skipped
+    // and the plain `types` fallback must win.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_imports_versioned_types_skip");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    fs::write(
+        dir.join("package.json"),
+        r##"{
+            "name": "app",
+            "type": "module",
+            "imports": {
+                "#x": {
+                    "types@>=10000": "./future.d.ts",
+                    "types": "./old.d.ts",
+                    "default": "./x.js"
+                }
+            }
+        }"##,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("future.d.ts"),
+        "export declare const future: number;",
+    )
+    .unwrap();
+    fs::write(dir.join("old.d.ts"), "export declare const old: number;").unwrap();
+    fs::write(dir.join("x.js"), "export const old = 1;").unwrap();
+    fs::write(dir.join("main.ts"), "import { old } from '#x'; old;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        resolve_package_json_imports: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("#x", &dir.join("main.ts"), Span::new(0, 2));
+
+    let resolved = result.expect("plain types branch should win when versioned range mismatches");
+    assert!(
+        resolved.resolved_path.ends_with("old.d.ts"),
+        "expected plain types fallback (old.d.ts), got {}",
+        resolved.resolved_path.display()
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_match_types_versions_pattern() {
     assert_eq!(
         match_types_versions_pattern("*", "index"),

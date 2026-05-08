@@ -179,7 +179,8 @@ impl ModuleResolver {
             && !key.contains('*')
         {
             let resolved_using_ts_extension = key_ends_with_ts_extension(key);
-            return Self::resolve_export_targets_to_strings(value, conditions)
+            return self
+                .resolve_export_targets_to_strings(value, conditions)
                 .into_iter()
                 .map(|target| (target, resolved_using_ts_extension))
                 .collect();
@@ -204,7 +205,8 @@ impl ModuleResolver {
         if let Some((_, pattern, wildcard, value)) = best_match {
             let resolved_using_ts_extension = key_ends_with_ts_extension(pattern);
             let is_directory_match = pattern.ends_with('/') && !pattern.contains('*');
-            return Self::resolve_export_targets_to_strings(value, conditions)
+            return self
+                .resolve_export_targets_to_strings(value, conditions)
                 .into_iter()
                 .map(|target| {
                     (
@@ -223,7 +225,13 @@ impl ModuleResolver {
     }
 
     /// Resolve an export/import value to ordered string path candidates.
+    ///
+    /// Conditional keys are matched via [`Self::condition_key_matches`], which
+    /// honors versioned `types@<range>` keys the same way the
+    /// `package.json#exports` resolver does. This keeps the imports and
+    /// exports paths aligned on conditional matching.
     fn resolve_export_targets_to_strings(
+        &self,
         value: &PackageExports,
         conditions: &[String],
     ) -> Vec<String> {
@@ -233,11 +241,11 @@ impl ModuleResolver {
                 // Iterate condition map entries in JSON key order
                 let mut results = Vec::new();
                 for (key, nested) in cond_entries {
-                    if conditions.iter().any(|c| c == key) {
+                    if self.condition_key_matches(key, conditions) {
                         if matches!(nested, PackageExports::Null) {
                             return Vec::new();
                         }
-                        results.extend(Self::resolve_export_targets_to_strings(nested, conditions));
+                        results.extend(self.resolve_export_targets_to_strings(nested, conditions));
                     }
                 }
                 results
@@ -247,7 +255,7 @@ impl ModuleResolver {
                 // probe each syntactically applicable target.
                 let mut results = Vec::new();
                 for element in elements {
-                    results.extend(Self::resolve_export_targets_to_strings(element, conditions));
+                    results.extend(self.resolve_export_targets_to_strings(element, conditions));
                 }
                 results
             }
