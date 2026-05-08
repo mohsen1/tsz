@@ -555,13 +555,113 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
-        let Some(type_id) = self.get_node_type_or_names(&[expr_idx, name_idx]) else {
-            return false;
-        };
-        type_id != tsz_solver::types::TypeId::ANY
+        if let Some(type_id) = self.get_node_type_or_names(&[expr_idx, name_idx])
+            && type_id != tsz_solver::types::TypeId::ANY
             && self.type_interner.is_some_and(|interner| {
                 type_queries::is_type_usable_as_property_name(interner, type_id)
             })
+        {
+            return true;
+        }
+
+        // tsc also preserves method syntax when the computed-name identifier
+        // is a const annotated with `typeof Symbol.<id>` or initialized with
+        // `Symbol.<id>` — the binding is a stable late-bound key whose
+        // declaration shape carries enough information for the d.ts
+        // consumer to resolve the same name back. The runtime type may
+        // still be the widened `symbol` (so the
+        // `is_type_usable_as_property_name` check above doesn't fire), but
+        // tsc treats the symbol-of-Symbol pattern specially for accessor
+        // syntax preservation.
+        self.identifier_resolves_to_symbol_member_const(expr_idx)
+    }
+
+    /// Return true when `expr_idx` is an identifier whose binding (a
+    /// const declaration in scope) was annotated with `typeof Symbol.<id>`
+    /// or initialized with the property access `Symbol.<id>`.
+    fn identifier_resolves_to_symbol_member_const(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(name) = self.get_identifier_text(expr_idx) else {
+            return false;
+        };
+        let sym_id = binder
+            .node_symbols
+            .get(&expr_idx.0)
+            .copied()
+            .or_else(|| binder.file_locals.get(&name));
+        let Some(sym_id) = sym_id else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            // `const X: typeof Symbol.<id>` — the type query alone is
+            // enough; tsc treats it as a late-bound key.
+            if let Some(type_node) = self.arena.get(decl.type_annotation)
+                && type_node.kind == syntax_kind_ext::TYPE_QUERY
+                && let Some(type_query) = self.arena.get_type_query(type_node)
+                && self.entity_name_root_is(type_query.expr_name, "Symbol")
+            {
+                return true;
+            }
+            // `const X = Symbol.<id>` — initializer is a property access
+            // on the global `Symbol` identifier.
+            if let Some(init_node) = self.arena.get(decl.initializer)
+                && init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(init_node)
+                && self.get_identifier_text(access.expression).as_deref() == Some("Symbol")
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Walk the entity-name AST (Identifier, `QualifiedName`, or
+    /// `PropertyAccessExpression`) and return true when its leftmost root
+    /// is the identifier `target_root`.
+    fn entity_name_root_is(&self, name_idx: NodeIndex, target_root: &str) -> bool {
+        let mut current = name_idx;
+        for _ in 0..32 {
+            let Some(node) = self.arena.get(current) else {
+                return false;
+            };
+            match node.kind {
+                k if k == SyntaxKind::Identifier as u16 => {
+                    return self.get_identifier_text(current).as_deref() == Some(target_root);
+                }
+                k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                    let Some(qualified) = self.arena.get_qualified_name(node) else {
+                        return false;
+                    };
+                    current = qualified.left;
+                }
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                    let Some(access) = self.arena.get_access_expr(node) else {
+                        return false;
+                    };
+                    current = access.expression;
+                }
+                _ => return false,
+            }
+        }
+        false
     }
 
     pub(in crate::declaration_emitter) fn emit_constructor_declaration(
