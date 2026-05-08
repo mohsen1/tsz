@@ -120,6 +120,29 @@ var w: M.A = new Other();
 }
 
 #[test]
+fn ts2322_tuple_target_qualifies_same_named_namespace_aliases() {
+    let source = r#"
+namespace Foo {
+    export type Yep = { type: "foo.yep" };
+}
+namespace Bar {
+    export type Yep = { type: "bar.yep" };
+}
+
+const y = [{ type: "a" }, { type: "b" }];
+const val: [Foo.Yep, Bar.Yep] = y;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert_eq!(ts2322.len(), 1, "expected one TS2322, got: {diags:?}");
+    let msg = &ts2322[0].1;
+    assert!(
+        msg.contains("[Foo.Yep, Bar.Yep]"),
+        "tuple target should qualify same-named namespace aliases, got: {msg}"
+    );
+}
+
+#[test]
 fn ts2559_assignment_qualifies_weak_type_pair_when_names_collide() {
     let source = r#"
 namespace M { export interface A { m?: string; } }
