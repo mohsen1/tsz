@@ -2,6 +2,7 @@
 
 mod assignment_formatting;
 mod compound_assignment_context;
+mod literal_widening_policy;
 mod object_literal_targets;
 mod static_schema;
 mod type_query_alias;

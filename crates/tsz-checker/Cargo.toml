@@ -902,8 +902,8 @@ name = "generic_call_primitive_widening_display_tests"
 path = "tests/generic_call_primitive_widening_display_tests.rs"
 
 [[test]]
-name = "class_implements_predicate_inference_tests"
-path = "tests/class_implements_predicate_inference_tests.rs"
+name = "union_target_literal_primitive_mismatch_tests"
+path = "tests/union_target_literal_primitive_mismatch_tests.rs"
 
 [lints]
 workspace = true
