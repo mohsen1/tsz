@@ -4,70 +4,14 @@
 //! Verifies that @type annotations are used for type checking initializers
 //! and that @type function types provide parameter types in JS files.
 
-use rustc_hash::FxHashSet;
-use std::path::Path;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::context::LibContext;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::{check_source, check_source_with_libs, load_default_lib_files};
 
 #[derive(Debug)]
 struct Diag {
     code: u32,
     message_text: String,
-}
-
-fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-    let lib_names = [
-        "es5.d.ts",
-        "es2015.d.ts",
-        "es2015.core.d.ts",
-        "es2015.collection.d.ts",
-        "es2015.iterable.d.ts",
-        "es2015.generator.d.ts",
-        "es2015.promise.d.ts",
-        "es2015.proxy.d.ts",
-        "es2015.reflect.d.ts",
-        "es2015.symbol.d.ts",
-        "es2015.symbol.wellknown.d.ts",
-        "dom.d.ts",
-        "dom.generated.d.ts",
-        "dom.iterable.d.ts",
-        "esnext.d.ts",
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if !seen_files.insert(file_name.to_string()) {
-                    break;
-                }
-                lib_files.push(Arc::new(LibFile::from_source(
-                    file_name.to_string(),
-                    content,
-                )));
-                break;
-            }
-        }
-    }
-
-    lib_files
 }
 
 fn check_js_internal(source: &str, with_libs: bool) -> Vec<Diag> {
@@ -77,55 +21,16 @@ fn check_js_internal(source: &str, with_libs: bool) -> Vec<Diag> {
         strict: true,
         ..CheckerOptions::default()
     };
-
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let lib_files = if with_libs {
-        load_lib_files_for_test()
+    let libs = if with_libs {
+        load_default_lib_files()
     } else {
         Vec::new()
     };
-
-    let mut binder = BinderState::new();
-    if lib_files.is_empty() {
-        binder.bind_source_file(parser.get_arena(), root);
-    } else {
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    }
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-
-    if lib_files.is_empty() {
-        checker.ctx.set_lib_contexts(Vec::new());
-    } else {
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d: &Diagnostic| Diag {
+    check_source_with_libs(source, "test.js", options, &libs)
+        .into_iter()
+        .map(|d| Diag {
             code: d.code,
-            message_text: d.message_text.clone(),
+            message_text: d.message_text,
         })
         .collect()
 }
@@ -169,30 +74,11 @@ fn check_js_with_exact_optional(source: &str) -> Vec<Diag> {
         exact_optional_property_types: true,
         ..CheckerOptions::default()
     };
-
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d: &Diagnostic| Diag {
+    check_source(source, "test.js", options)
+        .into_iter()
+        .map(|d| Diag {
             code: d.code,
-            message_text: d.message_text.clone(),
+            message_text: d.message_text,
         })
         .collect()
 }
@@ -852,37 +738,14 @@ const a = { value: undefined };
         exact_optional_property_types: true,
         ..CheckerOptions::default()
     };
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
+    let diagnostics = check_source(source, "test.js", options);
 
-    let ts2375: Vec<&Diagnostic> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2375)
-        .collect();
+    let ts2375: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2375).collect();
     assert_eq!(
         ts2375.len(),
         1,
         "Expected exactly one TS2375 for the typedef-aliased target, got: {:?}",
-        checker
-            .ctx
-            .diagnostics
-            .iter()
-            .map(|d| d.code)
-            .collect::<Vec<_>>()
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
     let msg = &ts2375[0].message_text;
     assert!(
@@ -915,37 +778,14 @@ const b = { flag: undefined };
         exact_optional_property_types: true,
         ..CheckerOptions::default()
     };
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
+    let diagnostics = check_source(source, "test.js", options);
 
-    let ts2375: Vec<&Diagnostic> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2375)
-        .collect();
+    let ts2375: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2375).collect();
     assert_eq!(
         ts2375.len(),
         1,
         "Expected exactly one TS2375 for the inline-typedef alias target, got: {:?}",
-        checker
-            .ctx
-            .diagnostics
-            .iter()
-            .map(|d| d.code)
-            .collect::<Vec<_>>()
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
     let msg = &ts2375[0].message_text;
     assert!(
