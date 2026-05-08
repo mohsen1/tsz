@@ -155,6 +155,13 @@ impl<'a> CheckerContext<'a> {
     /// Check if a symbol originates from an actual standard lib file, including
     /// driver paths where binding and checking use separately parsed lib arenas.
     pub fn symbol_is_from_actual_or_cloned_lib(&self, sym_id: SymbolId) -> bool {
+        // `merge_lib_contexts_into_binder` remaps standard-lib symbols into the
+        // file binder and records those new ids here. Arena-pointer checks below
+        // can miss those local clones.
+        if self.binder.lib_symbol_ids.contains(&sym_id) {
+            return true;
+        }
+
         if self.symbol_is_from_actual_lib(sym_id) {
             return true;
         }
