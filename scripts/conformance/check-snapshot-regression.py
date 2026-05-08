@@ -100,6 +100,19 @@ def _failure_signature(entry: dict[str, Any]) -> str:
     return json.dumps(relevant, sort_keys=True, separators=(",", ":"))
 
 
+def _normalize_failure_key(path: str) -> str:
+    normalized = path.replace("\\", "/")
+    marker = "TypeScript/tests/cases/"
+    marker_index = normalized.find(marker)
+    if marker_index >= 0:
+        return normalized[marker_index:]
+    return normalized
+
+
+def _normalize_failures(failures: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {_normalize_failure_key(path): entry for path, entry in failures.items()}
+
+
 def load_ref(ref: str) -> ConformanceSnapshot:
     snapshot = _read_ref_json(ref, SNAPSHOT_PATH)
     detail = _read_ref_json(ref, DETAIL_PATH)
@@ -110,7 +123,7 @@ def load_ref(ref: str) -> ConformanceSnapshot:
     return ConformanceSnapshot(
         passed=_summary_passed(snapshot),
         total=_summary_total(snapshot),
-        failures=failures,
+        failures=_normalize_failures(failures),
         categories=_categories(snapshot, detail),
     )
 
@@ -119,14 +132,16 @@ def compare_snapshots(
     base: ConformanceSnapshot,
     head: ConformanceSnapshot,
 ) -> SnapshotComparison:
-    base_failures = set(base.failures)
-    head_failures = set(head.failures)
+    base_by_path = _normalize_failures(base.failures)
+    head_by_path = _normalize_failures(head.failures)
+    base_failures = set(base_by_path)
+    head_failures = set(head_by_path)
     common_failures = base_failures & head_failures
 
     changed_failures = sorted(
         path
         for path in common_failures
-        if _failure_signature(base.failures[path]) != _failure_signature(head.failures[path])
+        if _failure_signature(base_by_path[path]) != _failure_signature(head_by_path[path])
     )
     category_delta = {
         key: head.categories.get(key, 0) - base.categories.get(key, 0)
