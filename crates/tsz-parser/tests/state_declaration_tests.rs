@@ -269,6 +269,49 @@ fn parse_empty_arrow_body_close_brace_terminates_namespace_block() {
 }
 
 #[test]
+fn stray_close_brace_recovery_preserves_following_namespace_declaration() {
+    let source = concat!(
+        "namespace outer {\n",
+        "  namespace inner {\n",
+        "    var a = () => };\n",
+        "    var b = () => }\n",
+        "  }\n",
+        "}\n",
+        "namespace next {\n",
+        "  var ok = ();\n",
+        "}\n",
+    );
+    let (parser, root) = parse_source(source);
+
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let module_count = sf
+        .statements
+        .nodes
+        .iter()
+        .filter(|idx| {
+            arena
+                .get(**idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::MODULE_DECLARATION)
+        })
+        .count();
+
+    assert_eq!(
+        module_count, 2,
+        "stray close-brace recovery should not resync past the following namespace"
+    );
+
+    let final_close = source.rfind('}').unwrap() as u32;
+    assert!(
+        !parser.get_diagnostics().iter().any(|d| {
+            d.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED && d.start == final_close
+        }),
+        "following namespace close should be consumed by its module block, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn parse_declare_using_as_single_variable_statement() {
     // `declare using y: null;` should parse as one VARIABLE_STATEMENT with declare modifier,
     // not as two statements (declare; + using y;)
