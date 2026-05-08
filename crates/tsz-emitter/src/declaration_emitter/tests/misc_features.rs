@@ -1031,6 +1031,41 @@ export var cProp = new xc();
 }
 
 #[test]
+fn test_js_named_export_function_emitted_at_unfold_position_not_hoisted() {
+    // Regression for nodeModulesAllowJsGeneratedNameCollisions: when a JS
+    // function declaration's name appears in a folded `export { foo }`
+    // statement, the unfold path emits `export function foo(): ...` at the
+    // export statement's source position. Hoisting the same function to the
+    // top of the file would emit it twice (once hoisted, once unfolded) and
+    // also reorder it before sibling inline-exported declarations like
+    // `export const __esModule = false`.
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function require() {}
+const exports = {};
+class Object {}
+export const __esModule = false;
+export {require, exports, Object};
+"#,
+    );
+    assert_eq!(
+        output.matches("export function require(): void;").count(),
+        1,
+        "Expected `export function require(): void;` to be emitted exactly once: {output}"
+    );
+    let esmodule_pos = output
+        .find("export const __esModule")
+        .expect("__esModule line missing");
+    let require_pos = output
+        .find("export function require")
+        .expect("require line missing");
+    assert!(
+        esmodule_pos < require_pos,
+        "Expected `__esModule` to be emitted before `require` (matching the source order of inline + folded exports): {output}"
+    );
+}
+
+#[test]
 fn test_export_assignment_keeps_uninitialized_value_declaration() {
     // Regression for privacyCheckExportAssignmentOnExportedGenericInterface1:
     // a `var X: T;` (no initializer, with type annotation) whose only public
