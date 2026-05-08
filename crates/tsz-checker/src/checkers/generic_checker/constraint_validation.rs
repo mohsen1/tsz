@@ -66,6 +66,26 @@ impl<'a> CheckerState<'a> {
                         && !query::contains_type_parameters(self.ctx.types, constraint_resolved)
                         && !self.type_arg_evaluates_to_infer_result_conditional(type_arg)
                     {
+                        // Generic-reference type args that mention a scoped type
+                        // parameter (e.g. `Box<Array<U>>`) cannot be skipped just
+                        // because the constraint is concrete: tsc still validates
+                        // the instantiation. Substitute scoped params with their
+                        // base constraints (or `unknown`) to obtain a concrete
+                        // shape, evaluate it, and check assignability against the
+                        // constraint. If the concrete shape is assignable, defer;
+                        // otherwise emit TS2344 with the original type_arg display
+                        // (matches tsc's "Type 'X[]' does not satisfy 'string'"). (#3063)
+                        let concrete_arg = self.scoped_type_param_substituted_form(type_arg);
+                        let concrete_arg = self.resolve_lazy_type(concrete_arg);
+                        let concrete_arg = self.evaluate_type_for_assignability(concrete_arg);
+                        if self.is_assignable_to(concrete_arg, constraint_resolved) {
+                            continue;
+                        }
+                        self.error_type_constraint_not_satisfied(
+                            type_arg,
+                            constraint_resolved,
+                            arg_idx,
+                        );
                         continue;
                     }
                 }
