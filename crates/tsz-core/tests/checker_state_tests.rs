@@ -9663,9 +9663,10 @@ async function f(): PromiseAlias<void> {
     );
 }
 
-/// Test that calling a never-returning function doesn't trigger TS2355
-/// This is a known limitation - calls to functions returning `never` should
-/// terminate control flow but aren't currently detected.
+/// Test that calling a never-returning function as a bare statement
+/// terminates control flow and suppresses TS2355, while a variable
+/// declaration whose initializer is a never-returning call does NOT
+/// terminate control flow (matching tsc — see issue #3662).
 #[test]
 fn test_never_returning_call_no_2355() {
     use crate::parser::ParserState;
@@ -9676,8 +9677,7 @@ function fail(message: string): never {
     throw new Error(message);
 }
 
-// Function that calls fail() should NOT get 2355
-// because fail() never returns
+// Bare `fail("boom");` statement terminates control flow → no TS2355.
 function usesFail(): number {
     fail("boom");
 }
@@ -9687,14 +9687,13 @@ function fallsThrough(): number {
     console.log("oops");
 }
 
-// Variable declarations with never-returning initializers SHOULD still
-// trigger TS2355 (regression: tsz used to treat `const x = fail()` as a
-// terminating statement, but tsc only terminates flow on bare expression
-// statements like `fail();`). See issue #3662.
+// `const value = fail("boom")` is a variable declaration; tsc treats the
+// statement as falling through, so TS2355 fires.
 function usesFailInInit(): number {
     const value = fail("boom");
 }
 
+// Same for a declaration list with a never-returning initializer.
 function usesFailInList(): number {
     const a = 1, b = fail("boom");
 }
@@ -9729,7 +9728,9 @@ function usesFailInList(): number {
     let actual_2355_count = count(2355);
     assert_eq!(
         actual_2355_count, 3,
-        "Expected fallsThrough(), usesFailInInit(), usesFailInList() to get TS2355, got: {codes:?}"
+        "Expected fallsThrough(), usesFailInInit(), and usesFailInList() to each emit TS2355 \
+         (bare `fail()` in usesFail() is the only never-returning call that suppresses it), \
+         got: {codes:?}"
     );
 }
 
