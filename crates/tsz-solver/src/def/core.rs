@@ -1147,25 +1147,6 @@ impl DefinitionStore {
         self.definitions.get(&id).map(|r| r.exports.clone())
     }
 
-    /// Find the namespace that exports `child_id`, returning the namespace DefId
-    /// and exported member name.
-    ///
-    /// This is intentionally a scan: it is used only while formatting colliding
-    /// diagnostic names, where clarity matters more than adding another hot-path
-    /// index to the definition store.
-    pub fn find_namespace_export_parent(&self, child_id: DefId) -> Option<(DefId, Atom)> {
-        self.definitions.iter().find_map(|entry| {
-            let parent_id = *entry.key();
-            let info = entry.value();
-            if info.kind != DefKind::Namespace {
-                return None;
-            }
-            info.exports
-                .iter()
-                .find_map(|(name, def_id)| (*def_id == child_id).then_some((parent_id, *name)))
-        })
-    }
-
     /// Get the name of a definition.
     pub fn get_name(&self, id: DefId) -> Option<Atom> {
         self.definitions.get(&id).map(|r| r.name)

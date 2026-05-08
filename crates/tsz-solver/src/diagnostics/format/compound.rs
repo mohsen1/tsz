@@ -2,7 +2,6 @@
 
 use super::TypeFormatter;
 use super::needs_property_name_quotes;
-use crate::def::DefId;
 use crate::types::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, LiteralValue, MappedModifier,
     MappedType, ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan, TupleElement,
@@ -1301,8 +1300,7 @@ impl<'a> TypeFormatter<'a> {
                 && let Some(sym_raw) = def.symbol_id
             {
                 let name = self.format_symbol_name(SymbolId(sym_raw))?;
-                let qualified = self.namespace_qualify_symbol_name(SymbolId(sym_raw), name);
-                return Some(self.namespace_qualified_name_for_def(def_id, qualified));
+                return Some(self.namespace_qualify_symbol_name(SymbolId(sym_raw), name));
             }
         }
         // Try Lazy(DefId)
@@ -1311,8 +1309,7 @@ impl<'a> TypeFormatter<'a> {
             let def = def_store.get(def_id)?;
             if let Some(sym_raw) = def.symbol_id {
                 let name = self.format_symbol_name(SymbolId(sym_raw))?;
-                let qualified = self.namespace_qualify_symbol_name(SymbolId(sym_raw), name);
-                return Some(self.namespace_qualified_name_for_def(def_id, qualified));
+                return Some(self.namespace_qualify_symbol_name(SymbolId(sym_raw), name));
             }
         }
         // Try Enum
@@ -1321,35 +1318,10 @@ impl<'a> TypeFormatter<'a> {
             let def = def_store.get(def_id)?;
             if let Some(sym_raw) = def.symbol_id {
                 let name = self.format_symbol_name(SymbolId(sym_raw))?;
-                let qualified = self.namespace_qualify_symbol_name(SymbolId(sym_raw), name);
-                return Some(self.namespace_qualified_name_for_def(def_id, qualified));
+                return Some(self.namespace_qualify_symbol_name(SymbolId(sym_raw), name));
             }
         }
         None
-    }
-
-    fn namespace_qualified_name_for_def(&mut self, def_id: DefId, fallback: String) -> String {
-        let Some(def_store) = self.def_store else {
-            return fallback;
-        };
-        let mut current = def_id;
-        let mut parts = vec![fallback];
-        for _ in 0..8 {
-            let Some((parent_id, export_name)) = def_store.find_namespace_export_parent(current)
-            else {
-                break;
-            };
-            if parts.len() == 1 {
-                parts[0] = self.atom(export_name).to_string();
-            }
-            let Some(parent_name) = def_store.get(parent_id).map(|info| info.name) else {
-                break;
-            };
-            parts.push(self.atom(parent_name).to_string());
-            current = parent_id;
-        }
-        parts.reverse();
-        parts.join(".")
     }
 
     /// Locate the primary declaring symbol for a `TypeId`, when one exists —
