@@ -83,6 +83,32 @@ class CheckSnapshotRegressionTests(unittest.TestCase):
 
         self.assertEqual(comparison.changed_failures, ["same.ts"])
 
+    def test_normalizes_absolute_and_repo_relative_failure_keys(self):
+        comparison = compare_snapshots(
+            snapshot(
+                98,
+                {
+                    "/Users/mohsen/code/tsz/TypeScript/tests/cases/compiler/same.ts": {
+                        "e": ["TS1"],
+                        "a": ["TS1"],
+                    }
+                },
+            ),
+            snapshot(
+                98,
+                {
+                    "TypeScript/tests/cases/compiler/same.ts": {
+                        "e": ["TS1"],
+                        "a": ["TS1"],
+                    }
+                },
+            ),
+        )
+
+        self.assertEqual(comparison.fixed_failures, [])
+        self.assertEqual(comparison.new_failures, [])
+        self.assertEqual(comparison.changed_failures, [])
+
     def test_computes_category_delta(self):
         comparison = compare_snapshots(
             snapshot(98, {}, {"wrong_code": 7, "fingerprint_only": 4}),
