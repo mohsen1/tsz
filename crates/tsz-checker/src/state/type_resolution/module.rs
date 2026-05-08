@@ -714,15 +714,21 @@ impl<'a> CheckerState<'a> {
         // where module_exports wasn't populated).
         //
         // IMPORTANT: Only use file_locals as a fallback when module_exports is
-        // empty or unavailable. When module_exports IS populated, it is the
-        // authoritative source — file_locals may contain namespace import
-        // members that leaked from type-only imports and should not be returned
-        // as value exports.
+        // empty or unavailable AND the target file is a script (not an external
+        // module). For real ES modules — files with `import`/`export` syntax or
+        // module file extensions like `.mts`/`.cts` — `file_locals` may hold
+        // imported aliases (`import x from "./other"`) that are NOT part of the
+        // module's public surface. Returning those here would let
+        // `import * as ns from "./self"` see the file's local imports through
+        // `ns.x`, which `tsc` rejects with TS2339 (issue #3585).
         let has_module_exports = self
             .ctx
             .module_exports_for_module(target_binder, &target_file_name)
             .is_some_and(|e| !e.is_empty());
-        if !has_module_exports && let Some(sym_id) = target_binder.file_locals.get(export_name) {
+        if !target_binder.is_external_module
+            && !has_module_exports
+            && let Some(sym_id) = target_binder.file_locals.get(export_name)
+        {
             return record_and_return(sym_id);
         }
 
@@ -924,15 +930,21 @@ impl<'a> CheckerState<'a> {
         // where module_exports wasn't populated).
         //
         // IMPORTANT: Only use file_locals as a fallback when module_exports is
-        // empty or unavailable. When module_exports IS populated, it is the
-        // authoritative source — file_locals may contain namespace import
-        // members that leaked from type-only imports (e.g., `import type * as X
-        // from 'mod'`) and should not be returned as value exports.
+        // empty or unavailable AND the target file is a script (not an external
+        // module). For real ES modules — files with `import`/`export` syntax or
+        // module file extensions like `.mts`/`.cts` — `file_locals` may hold
+        // imported aliases (`import x from "./other"`) that are NOT part of the
+        // module's public surface. Returning those here would let
+        // `import * as ns from "./self"` see the file's local imports through
+        // `ns.x`, which `tsc` rejects with TS2339 (issue #3585).
         let has_module_exports = self
             .ctx
             .module_exports_for_module(target_binder, &target_file_name)
             .is_some_and(|e| !e.is_empty());
         if has_module_exports {
+            return None;
+        }
+        if target_binder.is_external_module {
             return None;
         }
         // When looking for "default" and the module has `export =`, prefer the
@@ -1163,6 +1175,19 @@ impl<'a> CheckerState<'a> {
                 record_symbols(&combined);
             }
             return Some(combined);
+        }
+
+        // The target file is a real ES module (has top-level `import`/`export`
+        // statements or a module file extension) but its public surface is
+        // empty — e.g. `main.mts` only declares `import` aliases, no exports.
+        // tsc still types `import * as ns from "./main.mjs"` as the empty
+        // module namespace `{}`, so `ns.default` / `ns.imported` correctly
+        // report TS2339 instead of leaking the local imports as members.
+        // Returning an empty table here matches that behavior; falling
+        // through to `None` would let the caller widen the namespace to
+        // `any`, which silently accepts any property access.
+        if target_binder.is_external_module {
+            return Some(tsz_binder::SymbolTable::new());
         }
 
         None
