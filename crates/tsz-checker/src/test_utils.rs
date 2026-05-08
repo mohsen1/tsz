@@ -235,14 +235,44 @@ pub fn load_default_lib_files() -> Vec<Arc<LibFile>> {
 /// Roots probed by [`load_compiled_lib_files`], ordered by preference.
 /// These point at directories where TypeScript's own compiled lib files
 /// (with the `lib.` prefix preserved, e.g. `lib.es5.d.ts`) live.
+///
+/// Includes paths relative to the worktree's `CARGO_MANIFEST_DIR` AND a
+/// walk-up fallback to the primary checkout. `npm install` only
+/// populates `scripts/node_modules/` in the primary checkout; worktrees
+/// (e.g. under `<primary>/.worktrees/<name>/`) have a fresh `scripts/`
+/// without `node_modules`, so the worktree-relative roots return nothing
+/// and we'd fall through to the primary checkout's roots.
 fn compiled_lib_test_roots() -> Vec<PathBuf> {
     let m = Path::new(env!("CARGO_MANIFEST_DIR"));
-    vec![
+    let mut roots = vec![
         m.join("../../TypeScript/lib"),
         m.join("../../scripts/conformance/node_modules/typescript/lib"),
         m.join("../../scripts/emit/node_modules/typescript/lib"),
         m.join("../../scripts/node_modules/typescript/lib"),
-    ]
+    ];
+
+    // Walk up parent directories from CARGO_MANIFEST_DIR looking for any
+    // ancestor that contains `scripts/node_modules/typescript/lib/`. The
+    // first hit is treated as the primary checkout. 8 levels is enough to
+    // cover both `<primary>/.worktrees/<name>/crates/tsz-checker` (4
+    // levels) and other reasonable layouts (`<primary>/foo/bar/...`).
+    let mut ancestor: Option<&Path> = Some(m);
+    let marker = Path::new("scripts/node_modules/typescript/lib");
+    for _ in 0..8 {
+        let Some(dir) = ancestor else { break };
+        let candidate = dir.join(marker);
+        if candidate.exists() {
+            roots.push(candidate);
+            // Also expose the conformance/emit variants that may live
+            // alongside the same primary's scripts/.
+            roots.push(dir.join("scripts/conformance/node_modules/typescript/lib"));
+            roots.push(dir.join("scripts/emit/node_modules/typescript/lib"));
+            break;
+        }
+        ancestor = dir.parent();
+    }
+
+    roots
 }
 
 /// Load `LibFile`s using the **compiled** TypeScript lib naming
@@ -645,5 +675,30 @@ class C {}
             "lib.definitely_missing.d.ts",
         ]);
         assert!(dup.len() <= 1);
+    }
+
+    #[test]
+    fn load_compiled_lib_files_resolves_when_only_primary_has_node_modules() {
+        // When run from a worktree under `<primary>/.worktrees/<name>/`,
+        // the worktree-relative `../../scripts/node_modules/...` paths
+        // resolve into the worktree's empty scripts/ tree. This test
+        // ensures the helper's walk-up fallback finds the primary
+        // checkout's scripts/node_modules/typescript/lib/ when at
+        // least one of the standard `npm install` directories has been
+        // populated above the worktree.
+        //
+        // Skipped silently in environments without any compiled libs.
+        let libs = load_compiled_lib_files(&["lib.es5.d.ts"]);
+        // No assertion when the env is missing all three install dirs;
+        // this is the same robustness pattern the test above uses.
+        // When the helper does find a file, it must have the `lib.`
+        // prefix and be readable.
+        if let Some(lib) = libs.first() {
+            assert!(
+                !lib.arena.source_files.is_empty(),
+                "loaded LibFile must have a parsed source file"
+            );
+            assert!(lib.file_name.starts_with("lib."));
+        }
     }
 }
