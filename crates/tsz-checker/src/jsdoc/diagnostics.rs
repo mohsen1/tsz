@@ -1166,7 +1166,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(angle_idx) = Self::find_top_level_char(simple_expr, '<')
                         && simple_expr.ends_with('>')
                     {
-                        let base_name = simple_expr[..angle_idx].trim();
+                        let raw_base_name = simple_expr[..angle_idx].trim();
+                        let base_name = raw_base_name.strip_suffix('.').unwrap_or(raw_base_name);
                         let base_is_known = self
                             .jsdoc_generic_base_suppresses_full_name_error(base_name)
                             || Self::parse_jsdoc_typedefs(&source_text)

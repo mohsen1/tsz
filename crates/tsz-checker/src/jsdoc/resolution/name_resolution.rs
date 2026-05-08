@@ -755,7 +755,8 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 if let Some(angle_idx) = Self::find_top_level_char(type_expr, '<') {
-                    let base_name = type_expr[..angle_idx].trim();
+                    let raw_base_name = type_expr[..angle_idx].trim();
+                    let base_name = raw_base_name.strip_suffix('.').unwrap_or(raw_base_name);
                     if type_expr.ends_with('>') {
                         let args_str = &type_expr[angle_idx + 1..type_expr.len() - 1];
                         let arg_strs = Self::split_type_args_respecting_nesting(args_str);
