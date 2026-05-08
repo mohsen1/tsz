@@ -135,6 +135,21 @@ bar(1, "");
     );
 }
 
+#[test]
+fn implemented_unconstrained_type_param_widens_conflicting_literal_displays() {
+    let source = r#"
+function bar<T>(item1: T, item2: T) {}
+bar(1, "");
+"#;
+    let msgs = ts2345_messages(source);
+    assert_eq!(msgs.len(), 1, "expected one TS2345, got: {msgs:#?}");
+    assert!(
+        msgs[0].contains("Argument of type 'string'")
+            && msgs[0].contains("parameter of type 'number'"),
+        "implemented generic signature should widen conflicting primitive candidates, got: {msgs:#?}"
+    );
+}
+
 // `<T, U extends T>` (free function) where `T` has no primitive constraint:
 // the chain ends at `T` (no primitive), so literal displays are preserved.
 #[test]
