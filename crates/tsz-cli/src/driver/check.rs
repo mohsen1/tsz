@@ -2472,6 +2472,16 @@ pub(super) fn check_file_for_parallel<'a>(
 
         if !no_check {
             file_diagnostics.extend(checker_diagnostics);
+        } else if compiler_options.isolated_declarations {
+            // `--noCheck` suppresses type errors, but the
+            // `--isolatedDeclarations` family (TS9007–TS9039) gates
+            // declaration emission and tsc still surfaces those codes
+            // (#3709). Keep them, drop everything else.
+            file_diagnostics.extend(
+                checker_diagnostics
+                    .into_iter()
+                    .filter(|d| matches!(d.code, 9007..=9039)),
+            );
         }
     }
 
