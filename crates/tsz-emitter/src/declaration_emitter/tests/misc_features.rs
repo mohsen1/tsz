@@ -1031,6 +1031,41 @@ export var cProp = new xc();
 }
 
 #[test]
+fn test_js_named_export_function_emitted_at_unfold_position_not_hoisted() {
+    // Regression for nodeModulesAllowJsGeneratedNameCollisions: when a JS
+    // function declaration's name appears in a folded `export { foo }`
+    // statement, the unfold path emits `export function foo(): ...` at the
+    // export statement's source position. Hoisting the same function to the
+    // top of the file would emit it twice (once hoisted, once unfolded) and
+    // also reorder it before sibling inline-exported declarations like
+    // `export const __esModule = false`.
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function require() {}
+const exports = {};
+class Object {}
+export const __esModule = false;
+export {require, exports, Object};
+"#,
+    );
+    assert_eq!(
+        output.matches("export function require(): void;").count(),
+        1,
+        "Expected `export function require(): void;` to be emitted exactly once: {output}"
+    );
+    let esmodule_pos = output
+        .find("export const __esModule")
+        .expect("__esModule line missing");
+    let require_pos = output
+        .find("export function require")
+        .expect("require line missing");
+    assert!(
+        esmodule_pos < require_pos,
+        "Expected `__esModule` to be emitted before `require` (matching the source order of inline + folded exports): {output}"
+    );
+}
+
+#[test]
 fn test_export_assignment_keeps_uninitialized_value_declaration() {
     // Regression for privacyCheckExportAssignmentOnExportedGenericInterface1:
     // a `var X: T;` (no initializer, with type annotation) whose only public
@@ -1057,6 +1092,35 @@ export = Foo;
     assert!(
         output.contains("export = Foo;"),
         "Expected the export assignment to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_export_default_identifier_keeps_ambient_value_declaration() {
+    // Regression for uniqueSymbolPropertyDeclarationEmit: a `declare const X`
+    // (no initializer, with a value-side type annotation) whose only public
+    // API consumer is `export default X` was being filtered out by the
+    // initializer-only-dependency check. The check's name-export lookup
+    // only considered `EXPORT_SPECIFIER` and `EXPORT_ASSIGNMENT` nodes;
+    // tsz parses `export default X` as an `EXPORT_DECLARATION` with
+    // `is_default_export: true` and the identifier in `export_clause`,
+    // which neither path matched.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const Op: {
+  readonly or: unique symbol;
+};
+
+export default Op;
+"#,
+    );
+    assert!(
+        output.contains("declare const Op:"),
+        "Expected `declare const Op` to be emitted when `export default Op` is the consumer: {output}"
+    );
+    assert!(
+        output.contains("export default Op;"),
+        "Expected the default export to be preserved: {output}"
     );
 }
 
