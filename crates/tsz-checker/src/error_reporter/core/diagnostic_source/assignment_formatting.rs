@@ -744,8 +744,34 @@ impl<'a> CheckerState<'a> {
             if target_is_generic_callable {
                 return self.format_annotation_like_type(&display);
             }
-            if let Some(tuple_display) =
-                self.raw_tuple_assignment_target_display_without_alias(display_target, true)
+            let display_trimmed = display.trim_start();
+            if display_trimmed.starts_with('[') || display_trimmed.starts_with("readonly [") {
+                return self.format_annotation_like_type(&display);
+            }
+            if self.tuple_target_has_application_display_alias(display_target)
+                && let Some(tuple_display) =
+                    self.raw_tuple_assignment_target_display_without_alias(display_target, true)
+            {
+                return tuple_display;
+            }
+            if !display_trimmed.contains('<')
+                && assignability_display.contains('<')
+                && let Some(tuple_display) =
+                    self.raw_tuple_assignment_target_display_without_alias(display_target, true)
+            {
+                return tuple_display;
+            }
+            let preserve_tuple_alias_display = !display_trimmed.starts_with('{')
+                && !display_trimmed.starts_with('(')
+                && !display_trimmed.contains('[')
+                && !display_trimmed.contains("=>")
+                && !display_trimmed.contains(" | ")
+                && !display_trimmed.contains(" & ")
+                && !crate::query_boundaries::common::is_generic_application(self.ctx.types, target)
+                && !self.type_alias_body_is_generic_application(target);
+            if !preserve_tuple_alias_display
+                && let Some(tuple_display) =
+                    self.raw_tuple_assignment_target_display_without_alias(target, true)
             {
                 return tuple_display;
             }
@@ -853,6 +879,18 @@ impl<'a> CheckerState<'a> {
                 fallback
             }
         }
+    }
+
+    fn tuple_target_has_application_display_alias(&self, target: TypeId) -> bool {
+        crate::query_boundaries::common::is_tuple_type(self.ctx.types, target)
+            && self
+                .ctx
+                .types
+                .get_display_alias(target)
+                .is_some_and(|alias| {
+                    crate::query_boundaries::common::application_info(self.ctx.types, alias)
+                        .is_some()
+                })
     }
 
     fn raw_tuple_assignment_target_display_without_alias(

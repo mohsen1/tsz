@@ -94,3 +94,48 @@ const t2: readonly [number] = t1;
         "Source side must render `readonly [1, 2]` exactly once; got: {msg}"
     );
 }
+
+#[test]
+fn readonly_tuple_target_keeps_readonly_prefix_in_ts2322() {
+    let source = r#"
+const t1: readonly [1] = [1];
+const t2: readonly [] = t1;
+"#;
+    let diags = check_strict(source);
+    let ts2322 = diags
+        .iter()
+        .find(|(c, _)| *c == 2322)
+        .expect("Expected TS2322 for readonly tuple length mismatch");
+    assert!(
+        ts2322.1.contains("type 'readonly []'"),
+        "Target side must preserve the declared readonly tuple; got: {}",
+        ts2322.1
+    );
+}
+
+#[test]
+fn simple_tuple_alias_target_keeps_alias_name_in_ts2322() {
+    let source = r#"
+type T1 = [number, string, boolean];
+type T2 = [number, string, boolean?];
+
+let t1: T1;
+let t2: T2;
+t1 = t2;
+"#;
+    let diags = check_strict(source);
+    let ts2322 = diags
+        .iter()
+        .find(|(c, _)| *c == 2322)
+        .expect("Expected TS2322 for optional tuple assigned to required tuple");
+    assert!(
+        ts2322.1.contains("type 'T1'"),
+        "Target side must preserve the tuple alias name; got: {}",
+        ts2322.1
+    );
+    assert!(
+        !ts2322.1.contains("type '[number, string, boolean]'"),
+        "Target side must not expand a direct tuple alias; got: {}",
+        ts2322.1
+    );
+}
