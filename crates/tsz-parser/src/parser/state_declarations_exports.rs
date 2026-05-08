@@ -2297,6 +2297,7 @@ impl ParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::TryKeyword);
 
+        let diag_len_before_try_block = self.parse_diagnostics.len();
         let try_block = self.parse_block();
 
         // Parse catch clause
@@ -2352,9 +2353,16 @@ impl ParserState {
         };
 
         // Error recovery: try without catch or finally is invalid
+        let saw_orphan_catch_or_finally_recovery = self.parse_diagnostics
+            [diag_len_before_try_block..]
+            .iter()
+            .any(|diag| {
+                diag.code == diagnostic_codes::EXPECTED && diag.message == "'try' expected."
+            });
         if catch_clause.is_none()
             && finally_block.is_none()
             && self.token_pos() != self.last_error_pos
+            && !saw_orphan_catch_or_finally_recovery
         {
             self.parse_error_at_current_token(
                 "'catch' or 'finally' expected.",
