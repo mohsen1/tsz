@@ -34,7 +34,7 @@ def progress_bar(current, total, width=20):
 
 
 def load_conformance():
-    for name in ["conformance-detail.json", "conformance-snapshot.json"]:
+    for name in ["conformance-snapshot.json", "conformance-detail.json"]:
         p = ROOT / "scripts" / "conformance" / name
         if p.exists():
             with open(p) as f:
