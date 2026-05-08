@@ -35,6 +35,11 @@ target-*/
 .target-*
 
 # Tests
+# The TypeScript submodule is declared in .gitmodules but the gitlink is not
+# tracked in the tree (lazy-clone convention; the pinned SHA lives in
+# scripts/ci/typescript-submodule-ref). Ignore the working-tree directory so
+# `git status` stays clean after `git submodule update --init`.
+/TypeScript/
 TypeScript/tests/baselines/local/*
 TypeScript/tests/baselines/local.old/*
 TypeScript/tests/baselines/prototyping/local/*
