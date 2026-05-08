@@ -57,7 +57,15 @@ impl<'a> CheckerState<'a> {
                     ) {
                         continue;
                     }
+                    // The scoped-param substitution below is intentionally only
+                    // used for primitive constraints. For object, tuple, mapped,
+                    // and indexed constraints the substituted shape can lose the
+                    // relation that makes the original generic argument valid.
                     if self.type_node_is_generic_ref_with_scoped_type_param_arg(arg_idx)
+                        && query::is_primitive_type(
+                            self.ctx.types.as_type_database(),
+                            constraint_resolved,
+                        )
                         && !query::is_callable_type(
                             self.ctx.types.as_type_database(),
                             constraint_resolved,
