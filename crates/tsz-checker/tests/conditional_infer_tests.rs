@@ -30,6 +30,92 @@ const z: TestSynthetic = '3'; // Should error TS2322: string not assignable to n
     );
 }
 
+#[test]
+fn keyof_mapped_application_uses_instantiated_constraint() {
+    let source = r#"
+type MyPick<T, K extends keyof T> = { [P in K]: T[P] };
+type PickedKeys = keyof MyPick<{ a: string; b: number }, "a">;
+
+const accepted: PickedKeys = "a";
+const rejected: PickedKeys = "b";
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        1,
+        "expected only the non-picked key assignment to fail; all diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_props_equality_preserves_pick_alias_body() {
+    let source = r#"
+type MyExclude<T, U> = T extends U ? never : T;
+type MyPick<T, K extends keyof T> = { [P in K]: T[P] };
+type MyPartial<T> = { [P in keyof T]?: T[P] };
+type IsOptional<T> =
+    undefined | null extends T ? true :
+    undefined extends T ? true :
+    null extends T ? true :
+    false;
+
+interface Validator<T> {
+    __type: T;
+}
+
+type InferType<V> = V extends Validator<infer T> ? T : never;
+type RequiredKeys<V> = {
+    [K in keyof V]-?:
+        MyExclude<V[K], undefined> extends Validator<infer T>
+            ? IsOptional<T> extends true ? never : K
+            : never
+}[keyof V];
+type OptionalKeys<V> = MyExclude<keyof V, RequiredKeys<V>>;
+type InferPropsInner<V> = { [K in keyof V]-?: InferType<V[K]> };
+type InferProps<V> =
+    InferPropsInner<MyPick<V, RequiredKeys<V>>> &
+    MyPartial<InferPropsInner<MyPick<V, OptionalKeys<V>>>>;
+
+declare const stringValidator: Validator<string>;
+declare const maybeValidator: Validator<string | null | undefined>;
+
+const propTypes: {
+    name: Validator<string>;
+    maybe?: Validator<string | null | undefined>;
+} = {
+    name: stringValidator,
+    maybe: maybeValidator,
+};
+const propTypesWithoutAnnotation = {
+    name: stringValidator,
+    maybe: maybeValidator,
+};
+
+type ExtractedProps = InferProps<typeof propTypes>;
+type ExtractedPropsWithoutAnnotation = InferProps<typeof propTypesWithoutAnnotation>;
+type ExtractPropsMatch =
+    ExtractedProps extends ExtractedPropsWithoutAnnotation ? true : false;
+
+const matched: true = null as any as ExtractPropsMatch;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2322),
+        "expected InferProps equality to hold; all diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Test that conditional types with constrained type parameters don't emit false TS2322.
 ///
 /// `UnrollOnHover<S>` is `S extends object ? { [K in keyof S]: S[K] } : never`.

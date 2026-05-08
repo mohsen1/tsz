@@ -18,6 +18,13 @@ pub(crate) fn is_bare_named_type_parameter(db: &dyn TypeDatabase, type_id: TypeI
     tsz_solver::type_queries::is_bare_named_type_parameter(db, type_id)
 }
 
+pub(crate) fn named_type_param_info(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::TypeParamInfo> {
+    tsz_solver::type_queries::named_type_param_info(db, type_id)
+}
+
 /// Get the base constraint of a type for TS2344 checking.
 ///
 /// For `TypeParameter` with constraint: returns the constraint.
@@ -40,6 +47,13 @@ pub(crate) fn contains_index_access_with_type_parameter_object(
     type_id: TypeId,
 ) -> bool {
     tsz_solver::type_queries::contains_index_access_with_type_parameter_object(db, type_id)
+}
+
+pub(crate) fn contains_named_or_bound_type_parameter(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::contains_named_or_bound_type_parameters_db(db, type_id)
 }
 
 /// Get the operand of a `keyof T` type.

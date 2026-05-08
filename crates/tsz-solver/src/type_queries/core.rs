@@ -5,7 +5,7 @@
 
 use crate::evaluation::evaluate::evaluate_type;
 use crate::types::{IntrinsicKind, LiteralValue};
-use crate::{QueryDatabase, TypeData, TypeDatabase, TypeId};
+use crate::{QueryDatabase, TypeData, TypeDatabase, TypeId, TypeParamInfo};
 
 use super::classifiers::get_lazy_def_id;
 use super::traversal::collect_property_name_atoms_for_diagnostics;
@@ -318,6 +318,21 @@ pub fn is_bare_named_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> b
         return false;
     }
     matches!(db.lookup(type_id), Some(TypeData::TypeParameter(_)))
+}
+
+/// Return metadata for a bare named `TypeData::TypeParameter` only.
+///
+/// This deliberately excludes `Infer` and `BoundParameter`, matching
+/// [`is_bare_named_type_parameter`] for callers that need an enclosing
+/// declaration's finalized type parameter metadata.
+pub fn named_type_param_info(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeParamInfo> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::TypeParameter(info)) => Some(info),
+        _ => None,
+    }
 }
 
 /// Check if a type is a keyof type.
