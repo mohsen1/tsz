@@ -502,7 +502,7 @@ function f<T extends Dict, K extends keyof T>(
 fn test_keyof_self_write_on_generic_receiver_does_not_emit_ts2862() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
-class Test<T extends Record<string, number>> {
+class Test<T extends { [key: string]: number }> {
   testy: T;
 
   constructor(t: T) {
@@ -525,6 +525,12 @@ class Test<T extends Record<string, number>> {
     assert!(
         !has_error(&diagnostics, 2862),
         "Did not expect TS2862 for write through `keyof T` on generic receiver `T`.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message == "Type 'number' is not assignable to type 'T[keyof T]'."
+        }),
+        "Expected compound write through `keyof T` to emit TS2322 against `T[keyof T]`.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -554,6 +560,54 @@ function test1<T extends Record<string, any>, K extends keyof T>(t: T, k: K) {
     assert!(
         !has_error(&diagnostics, 2862),
         "Did not expect TS2862 for write through `K extends keyof T` on generic receiver `T`.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_keyof_index_write_preserves_deferred_target_display() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Item = { a: string, b: number };
+
+type Entity = { id: number | string };
+type IdOf<E extends Entity> = E["id"];
+
+function f10<T extends Item, K extends keyof T>(obj: T, k2: keyof Item, k3: keyof T, k4: K) {
+  obj[k2] = 123;
+  obj[k3] = 123;
+  obj[k4] = 123;
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message == "Type '123' is not assignable to type 'never'."
+        }),
+        "Expected write through `keyof` of the generic constraint to use the intersected write target `never`.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message == "Type 'number' is not assignable to type 'T[keyof T]'."
+        }),
+        "Expected TS2322 target display to preserve `T[keyof T]`, not unrelated alias IdOf.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message == "Type 'number' is not assignable to type 'T[K]'."
+        }),
+        "Expected TS2322 target display to preserve `T[K]`, not unrelated alias IdOf.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(_, message)| !message.contains("IdOf")),
+        "Deferred generic indexed-access writes must not be repainted as IdOf.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 

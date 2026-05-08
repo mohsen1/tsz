@@ -705,6 +705,15 @@ impl<'a> CheckerState<'a> {
                 .factory()
                 .index_access(pre_resolution_object_type, index_type);
         }
+        if skip_flow_narrowing
+            && is_generic_receiver
+            && let Some(write_target) = self.constraint_keyof_write_target_for_type_param(
+                index_type,
+                pre_resolution_object_type,
+            )
+        {
+            return write_target;
+        }
 
         // For non-receiver generic composites, keep the canonical indexed-access
         // shell in write position as well. Alias/application/intersection targets

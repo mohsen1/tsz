@@ -581,6 +581,14 @@ impl<'a> CheckerState<'a> {
         let display_target = self
             .strip_nullish_for_assignability_display(target, source)
             .unwrap_or(target);
+        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, display_target)
+            && crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                display_target,
+            )
+        {
+            return self.format_type_for_assignability_message(display_target);
+        }
         if let Some(display) = self.static_schema_array_structural_display(display_target, source) {
             return display;
         }
