@@ -12,48 +12,19 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    // Try to find the lib files in a few common locations relative to the crate
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
-        // Fallback paths trying to find node_modules in various places
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-    ];
-
-    let mut lib_files = Vec::new();
-
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
-            let lib_file = LibFile::from_source(file_name, content);
-            lib_files.push(Arc::new(lib_file));
-        }
-    }
-
-    lib_files
+    tsz_checker::test_utils::load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.d.ts",
+        "lib.dom.d.ts",
+    ])
 }
 
 fn load_symbol_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.es2015.symbol.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.es2015.symbol.wellknown.d.ts"),
-    ]
-    .into_iter()
-    .map(|lib_path| {
-        let content = std::fs::read_to_string(&lib_path)
-            .unwrap_or_else(|err| panic!("failed to read {}: {err}", lib_path.display()));
-        let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
-        Arc::new(LibFile::from_source(file_name, content))
-    })
-    .collect()
+    tsz_checker::test_utils::load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+    ])
 }
 
 fn get_line_and_col(source: &str, offset: u32) -> (u32, u32) {
