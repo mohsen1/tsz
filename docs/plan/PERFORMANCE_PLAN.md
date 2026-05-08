@@ -320,6 +320,18 @@ Wire from `crates/tsz-cli/src/driver/core.rs:130-147` (`PhaseTimings`)
 and `crates/tsz-common/src/perf_counters.rs:613-680` (`dump_string` →
 `dump_json`). Bench harness consumes the JSON via `jq`, not `awk`.
 
+The JSON must include enough non-timing metadata to reproduce and explain
+the run without scraping logs:
+
+- tsz commit, fixture commit, benchmark script commit, mode, command line.
+- phase timings from `PhaseTimings`.
+- resolver and I/O counters: `stat`/metadata probes, file opens, bytes read,
+  directory scans, `package.json` parses, tsconfig reads, module-resolution
+  cache hits/misses.
+- checker counters: child-checker construction count, cross-file query count,
+  type-interner inserts/lookups, relation-cache hits/misses.
+- diagnostics count and peak RSS.
+
 Two output modes for the bench harness:
 
 | Mode          | Counters | Hyperfine runs | Used for                         |
@@ -331,6 +343,11 @@ Critical: never compare an `attribution`-mode tsz number against a
 `timing`-mode tsgo number. Counters cost real cycles even when the
 disabled-path overhead is one branch — `Instant::now()` for lock-wait
 timing is the worst offender at ~20 ns macOS.
+
+Implementation rule: timing mode must not call counter code that can reach
+`Instant::now()`. Prefer a compile-time gate (`cfg(tsz_perf_counters)` or a
+Cargo feature) for attribution builds; a runtime branch is acceptable only
+for cheap integer counters that are proven absent from timing-mode profiles.
 
 ~200 LOC.
 
@@ -348,6 +365,10 @@ For each, emit a JSON with the contract specified in Amendment 1 §3:
 {
   "fixture": "large-ts-repo",
   "commit": "<sha>",
+  "tsz_commit": "<sha>",
+  "bench_script_commit": "<sha>",
+  "command_line": "...",
+  "mode": "attribution",
   "phases": {
     "source_discovery_ms": 0,
     "io_read_ms": 0,
@@ -359,7 +380,22 @@ For each, emit a JSON with the contract specified in Amendment 1 §3:
   "rss_peak_bytes": 0,
   "files": 0,
   "diagnostics": 0,
-  "counters": { "resolver": {}, "checker": {}, "cross_file": {}, "interner": {} }
+  "counters": {
+    "resolver": {
+      "metadata_probes": 0,
+      "file_opens": 0,
+      "dir_scans": 0,
+      "package_json_parses": 0,
+      "module_resolution_cache_hits": 0,
+      "module_resolution_cache_misses": 0
+    },
+    "checker": {
+      "child_checker_constructions": 0,
+      "cross_file_queries": 0
+    },
+    "interner": {},
+    "relations": {}
+  }
 }
 ```
 
@@ -381,10 +417,15 @@ first. Without it, the rest of this document is speculative.
 
 - `bench-vs-tsgo.sh` no longer falls back to `~/code/*` without explicit opt-in.
 - `tsz --diagnostics-json` works and is consumed by the bench harness.
+- `tsz --perf-counters-json` emits resolver/I/O/checker counters in
+  attribution mode, while timing mode has counters compiled out or otherwise
+  profile-proven absent.
 - Fresh phase-split JSON exists for `large-ts-repo` and all six scale-cliff
   fixtures, posted to GCS at the same path as the existing bench results.
-- A short writeup ("the 890 s claim is/isn't real") is appended to this
-  document at §1.2.
+- A short decision record ("the 890 s claim is/isn't real", source discovery
+  is/isn't >30%, lib construction is/isn't worth snapshotting) is appended to
+  this document at §1.2 with links to the JSON artifacts.
+- T2.0 and T2.1 do not start until the decision record exists.
 
 ---
 
@@ -666,67 +707,78 @@ We are roughly at "Global immutable + N per-file checkers". Target is
 "N per-program checkers + cross-checker DefId protocol". That is a 4-PR
 multi-week effort.
 
-### 5.1 PR T2.1 — Bounded checker pool, not per-file checkers
+### 5.1 PR T2.1 — Lifetime-split checker pool, not per-file checkers
 
-#### 5.1.1 Architecture choice — thread-pinned pool
+#### 5.1.1 Authoritative architecture — split by lifetime
 
-Three viable shapes:
+Amendment 1 replaces the original `PooledChecker` + "swap files inside one
+checker" sketch. That sketch correctly identified the scale cliff, but it
+kept too much state in one object and made every cache-reset omission a
+silent correctness bug. The implementation target is now three explicit
+lifetimes:
 
-**(a) Thread-pinned pool (Rayon `start_handler` + thread-local).** N=num_cpus
-checkers, each pinned to a worker. Files dispatched by `rayon::scope`, each
-worker pulls "its" checker from a thread-local. Zero coordination overhead.
-Limitation: imbalanced work cannot redistribute.
+**`ProgramContext`** — one per compile. Holds compiler options, lib state,
+the module graph, stable symbol tables, shared type interner, program-wide
+resolver/package caches, and other data keyed by `FileId`, `SymbolId`,
+`DefId`, `TypeId`, or stable strings. It must not hold `NodeIndex`-keyed
+per-file caches.
 
-**(b) Pull-from-pool with work-stealing (`crossbeam_deque`).** Lock-free
-queue; workers pop a checker, run a file, push it back. Adds ~1 µs per file.
-Better load balance.
+**`WorkerContext`** — one per scoped worker. Holds worker-local scratch,
+local relation/query caches, and checker machinery that can legally use
+`Rc`/`RefCell` because the worker does not migrate between OS threads. It may
+borrow `ProgramContext` through scoped threads, avoiding `'static` bounds and
+avoiding `unsafe impl Send` for non-thread-safe checker internals.
 
-**(c) Hybrid.** Pinned by default with a loaner path. High complexity.
+**`FileSession`** — one active file on one worker at a time. Holds the arena,
+binder state, diagnostics, deferred diagnostics, node types, flow state,
+recursion stacks, and every cache keyed by `NodeIndex` or raw node `u32`.
+Sessions are reset, dropped, or temporarily leased for cross-file queries;
+their `NodeIndex` keys must never escape into `ProgramContext` or
+`WorkerContext`.
 
-**Pick (a).** Justification:
+Scoped threads are preferred over Rayon thread-locals for T2.1. They let the
+pool borrow the program without forcing `'static` lifetimes, and they keep
+ownership of each `FileSession` visible in the type structure instead of
+hidden in TLS. Rayon can remain underneath if it can express the same scoped
+ownership model, but the architectural invariant is the lifetime split, not a
+specific executor.
 
-1. `CheckerContext` holds `Rc<EvaluationSession>` at `:913`, several
-   `RefCell` caches at `:367,377,381,396,461-464,474,478-487,492,501,588-617`,
-   and a `flow_worklist` at `:461`. None are `Send`/`Sync`. With pinning
-   they never leave the worker — no `unsafe impl Send`, no soundness
-   footnote.
-2. Existing rayon use at `tsz-core/src/parallel/core.rs:428` (parsing) and
-   `:5307` (function-body checking) is naturally pinned-compatible.
-3. (b) becomes a follow-up if T1.1 counters show worker imbalance after (a)
-   ships.
-
-Sketch:
+Cross-file queries become explicit leases:
 
 ```rust
-// crates/tsz-core/src/parallel/checker_pool.rs (new)
-thread_local! {
-    static WORKER_CHECKER: RefCell<Option<PooledChecker>> = const { RefCell::new(None) };
-}
-
-let pool = rayon::ThreadPoolBuilder::new()
-    .num_threads(num_cpus::get())
-    .stack_size(THREAD_STACK_SIZE_BYTES)
-    .start_handler(move |_idx| {
-        WORKER_CHECKER.with(|slot| {
-            *slot.borrow_mut() = Some(PooledChecker::new(/* shared program refs */));
-        });
-    })
-    .build()
-    .unwrap();
-
-pool.scope(|s| {
-    for (file_idx, file) in program.files.iter().enumerate() {
-        s.spawn(move |_| {
-            WORKER_CHECKER.with(|slot| {
-                let checker = slot.borrow_mut().as_mut().unwrap();
-                checker.check_file(file_idx, file);
-            });
-        });
-    }
-});
+fn with_file_session<T>(
+    worker: &mut WorkerContext<'_>,
+    target: FileId,
+    f: impl FnOnce(&mut WorkerContext<'_>, &mut FileSession<'_>) -> T,
+) -> T;
 ```
 
-#### 5.1.2 Per-file state hazard list (audit results)
+The lease protocol must save and restore the caller's active session, run the
+query against the target `FileSession`, and return only stable program values
+(`TypeId`, `SymbolId`, `DefId`, diagnostics copied into the caller, etc.).
+Returning borrowed AST nodes or `NodeIndex` values across the lease boundary
+is a bug.
+
+#### 5.1.2 Generated field-lifetime inventory gate
+
+The manual hazard list below is useful review context, not the source of
+truth. Before any pooling PR lands, add a generated inventory of
+`CheckerContext` fields and their lifetime class:
+
+- `program`: safe across files, keyed by stable program IDs or strings.
+- `worker`: safe for one worker, not shared across threads, not keyed by
+  `NodeIndex`.
+- `file`: tied to one file/session; must reset/drop/swap with `FileSession`.
+- `unknown`: CI failure.
+
+The generator can be a build script, proc macro, or small Rust tool over the
+source AST. It must fail CI when a new `CheckerContext` field lacks an
+explicit classification, and it should emit a markdown inventory in the PR so
+reviewers can see count changes (for example, 226 → 230 fields) instead of
+trusting a stale hand-maintained list. Debug builds should assert that no
+`NodeIndex`-keyed map survives a `FileSession` boundary.
+
+#### 5.1.3 Per-file state hazard list (audit results)
 
 `CheckerState<'a>` borrows `&'a NodeArena` and `&'a BinderState` from the
 *current* file (`crates/tsz-checker/src/state/state.rs:163-164`). Making it
@@ -805,7 +857,7 @@ impl CheckerContext<'_> {
 }
 ```
 
-#### 5.1.3 Cache-lifetime audit (`QueryCache`)
+#### 5.1.4 Cache-lifetime audit (`QueryCache`)
 
 `crates/tsz-solver/src/caches/query_cache.rs:329` has 11 RefCell-backed
 local caches plus an optional `&SharedQueryCache` (`:81-85`). Today the
@@ -826,37 +878,36 @@ and confirm no `DefId` ever gets two different parameter lists. If clean,
 shipping T2.1 lets us drop the `SharedQueryCache` `DashMap` layer entirely
 in T2.D (one less DashMap write per query).
 
-#### 5.1.4 Migration sequence — 4 PRs
+#### 5.1.5 Migration sequence — 4 PRs
 
-**PR T2.1.A — `PooledChecker` with N=1.** Introduce `PooledChecker` struct
-that wraps `CheckerState` plus the `reset_for_next_file()` method from
-§5.1.2. New entry point `check_files_with_pool` runs sequentially, reusing
-one checker. Existing `check_files_parallel` unchanged. Behind env flag
-`TSZ_CHECKER_POOL=1`. **Verification gate**: full conformance run with the
-flag set produces byte-identical diagnostic output to without. Bench:
-should be slightly slower on small fixtures (per-call save/restore
-overhead) but neutral on large because there's only ever one file in
-flight. *Risk unit*: every cache miss in §5.1.2 is a silent bug here.
-Required: a debug-assertion mode that re-runs each file with a fresh
-checker and diffs all outputs (gated behind `TSZ_CHECKER_POOL_PARANOID=1`).
+**PR T2.1.A — Field inventory + context skeleton.** Add the generated
+field-lifetime inventory, create `ProgramContext`, `WorkerContext`, and
+`FileSession` shells, and move only obviously classified fields. No behavior
+change. **Verification gate**: inventory checked into the PR, CI fails on
+unclassified fields, and debug assertions prove file-lifetime fields reset at
+session boundaries.
 
-**PR T2.1.B — Switch production parallel path to thread-pinned pool of
-N=num_cpus.** Replace `maybe_parallel_iter!(program.files).enumerate().map(check_one_file)`
-at `parallel/core.rs:5725` with the Rayon `start_handler` thread-local
-pattern in §5.1.1. Lib-file checking (`check_one_lib`,
-`check_one_lib_baseline` at `:5572,5659`) stays the same for now. **Risk
-unit**: thread-local lifetime issues; `'a` lifetime erasure on
-`arena`/`binder` pointers (the swap-files API converts `&'a NodeArena` into
-a per-call parameter or a `Cell<*const NodeArena>` with a scope guard).
-**Verification**: T1.3 scale-cliff CSV must show monotonic improvement on
-monorepo-001…006.
+**PR T2.1.B — Single-worker session reuse.** Add a sequential
+`check_files_with_sessions` path behind `TSZ_CHECKER_POOL=1`. It reuses one
+`WorkerContext` and creates/resets one `FileSession` per file, while the
+existing production parallel path remains unchanged. **Verification gate**:
+full conformance with the flag set must produce byte-identical diagnostics to
+the default path. A paranoid debug mode may re-run each file with a fresh
+session and diff outputs (`TSZ_CHECKER_POOL_PARANOID=1`).
 
-**PR T2.1.C — Route `delegate_cross_arena_symbol_resolution` through
-swap-files API instead of constructing child `CheckerState`.** Cross-file
-queries today (cause #2 in §2) build a child checker via
-`with_parent_cache_attributed` (`cross_file.rs:811-867`). After T2.1.C they
-swap the current checker's `arena`/`binder`/file-local-state to point at
-the target file, run the query, swap back. New helper module
+**PR T2.1.C — Scoped worker pool.** Replace the per-file checker construction
+path with scoped workers that borrow `ProgramContext`, each owning a
+`WorkerContext` and processing `FileSession`s. **Risk unit**: session
+ownership and cross-file lease boundaries. **Verification**: T1.3 scale-cliff
+CSV must show monotonic improvement on monorepo-001…006; attribution JSON
+must show child-checker construction count dropping.
+
+**PR T2.1.D — Route `delegate_cross_arena_symbol_resolution` through
+explicit `FileSession` leases instead of constructing child `CheckerState`.**
+Cross-file queries today (cause #2 in §2) build a child checker via
+`with_parent_cache_attributed` (`cross_file.rs:811-867`). After T2.1.D they
+temporarily lease the target file's session, run the query, return stable
+program values, and restore the caller session. New helper module
 `crates/tsz-checker/src/query_boundaries/cross_file.rs`:
 
 ```rust
@@ -872,20 +923,16 @@ pub struct CrossFileQueryResult {
     pub type_params: Vec<TypeParamInfo>,
 }
 
-impl PooledChecker {
+impl WorkerContext<'_> {
     fn resolve_cross_file(&mut self, target_file_idx: usize, q: CrossFileQuery)
         -> Option<CrossFileQueryResult>
     {
-        let saved = self.snapshot_file_local_state();
-        self.swap_to_file(target_file_idx);
-        let result = match q {
+        self.with_file_session(target_file_idx, |worker, session| match q {
             CrossFileQuery::SymbolType(s) => self.checker.get_type_of_symbol(s),
             CrossFileQuery::InterfaceType(s) => self.checker.get_interface_type(s),
             CrossFileQuery::ClassInstanceType(s) => self.checker.get_class_instance_type(s),
             CrossFileQuery::InterfaceMemberSimpleTypes(s) => self.checker.get_interface_member_simple_types(s),
-        };
-        self.restore_file_local_state(saved);
-        result
+        })
     }
 }
 ```
@@ -894,20 +941,20 @@ Save/restore cost: `node_types` is `Arc<FxHashMap<u32, TypeId>>` at
 `context/caches.rs:14` (already snapshot-cheap via `Arc::clone`).
 `cross_file_symbol_targets` is already designed for parent/child snapshot
 (`context/core.rs:161`). Other NodeIndex caches need cloning, but only on
-cross-file queries, not per-file. **Verification gate**: PR T2.1.C is the
-keystone; if conformance regresses, the swap-files protocol has a hole.
+cross-file queries, not per-file. **Verification gate**: PR T2.1.D is the
+keystone; if conformance regresses, the lease protocol has a hole.
 
 Architectural compliance: this fits CLAUDE.md §3, §4, §11, §12, §22 — type
 computation stays in `compute_type_of_symbol` (solver-orchestrated), checker
 stays thin orchestration. The query protocol is a `query_boundaries/`
 helper, not ad-hoc checker logic.
 
-**PR T2.1.D — Drop `SharedQueryCache` `DashMap` layer (optional).** Once N
+**Follow-up — Drop `SharedQueryCache` `DashMap` layer (optional).** Once N
 workers each have program-lifetime local caches, the cross-thread `DashMap`
-write at `query_cache.rs:81-85` is pure overhead. Drop the layer; verify
-each `QueryCache` is constructed without `new_with_shared` at the two sites
-in `parallel/core.rs:5501,5582`. **Risk unit**: low. Ship A/B/C first,
-measure, only land D if measured win.
+write at `query_cache.rs:81-85` may be pure overhead. Drop the layer only if
+T0/T2 attribution counters show a measured win; verify each `QueryCache` is
+constructed without `new_with_shared` at the two sites in
+`parallel/core.rs:5501,5582`.
 
 ### 5.2 PR T2.2 — Eliminate recursive child-checker construction
 
@@ -1270,6 +1317,14 @@ free.
 shouldn't be on the critical path; verify with T1.1 counters before
 optimizing.
 
+### 7.4 T4.4 — Allocator evaluation after structural fixes
+
+Do not swap allocators before T0/T2. After source discovery, checker pooling,
+and lib merge costs are measured and addressed, run the large fixtures under
+the current allocator, jemalloc, snmalloc, and mimalloc with identical timing
+mode builds. Ship an allocator change only with a clear wall-time or RSS win
+on large fixtures and no small-fixture regression.
+
 ---
 
 ## 8. Measurement protocol (mandatory for every perf PR)
@@ -1290,11 +1345,14 @@ small fixtures (±9% on `--quick` mode per the original investigation):
    "is this in the right zip code".
 4. **Quote both peak RSS and wall-time** for any large-repo PR. RSS regressions
    that don't move wall-time still cost users headroom.
-5. **`scripts/safe-run.sh` wraps any heavy run.** Default 75% physical
+5. **Keep timing and attribution separate.** Timing-mode runs are for speed
+   claims; attribution-mode runs are for phase/counter explanations. Do not
+   compare them directly.
+6. **`scripts/safe-run.sh` wraps any heavy run.** Default 75% physical
    footprint guard. CLAUDE.md §20.75 is non-negotiable.
-6. **`scripts/bench/perf-hotspots.sh --quick` before/after** for every
+7. **`scripts/bench/perf-hotspots.sh --quick` before/after** for every
    roadmap-relevant change. ROADMAP §1 makes this a top-priority gate.
-7. **Update the metric in the same PR.** When a PR moves a number quoted in
+8. **Update the metric in the same PR.** When a PR moves a number quoted in
    this document, the PR must update the number. No "we'll update the doc
    later".
 
