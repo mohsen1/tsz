@@ -21,6 +21,18 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{IndexSignature, ObjectShape, TypeId, TypePredicate};
+
+/// Strip a leading and matching trailing `"` or `'` from `s` if both are
+/// present. Returns the bare inner string when stripped, otherwise `None`.
+fn strip_quoted_string(s: &str) -> Option<&str> {
+    s.strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .or_else(|| {
+            s.strip_prefix('\'')
+                .and_then(|rest| rest.strip_suffix('\''))
+        })
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn enclosing_expression_statement(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
@@ -362,8 +374,67 @@ impl<'a> CheckerState<'a> {
             && type_expr.ends_with(']')
             && let Some((base_str, index_str)) = Self::parse_jsdoc_index_access_segments(type_expr)
         {
+            // tsc reports TS2339 when a JSDoc indexed-access type uses a
+            // string-literal key the imported module doesn't export
+            // (e.g. `import("./dep")["Foo"]`). For an `import(...)` base
+            // we resolve the member directly via the import resolver: the
+            // bare `import("./dep")` form does not round-trip through
+            // `resolve_jsdoc_type_str` for ESM-only modules (no
+            // commonjs-style module value type exists), so we cannot rely
+            // on the structural property lookup below. #3213.
+            if base_str.starts_with("import(")
+                && let Some(key) = strip_quoted_string(index_str)
+                && let Some((module_specifier, None)) = Self::parse_jsdoc_import_type(base_str)
+                && self
+                    .resolve_jsdoc_import_member(&module_specifier, key)
+                    .is_none()
+            {
+                let display = format!("typeof import(\"{module_specifier}\")");
+                let message = crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    &[key, &display],
+                );
+                let anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+                self.ctx.error(
+                    anchor,
+                    type_expr.len() as u32,
+                    message,
+                    crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                );
+                return Some(TypeId::ERROR);
+            }
             let base_type = self.resolve_jsdoc_type_str(base_str)?;
             let index_type = self.resolve_jsdoc_type_str(index_str)?;
+            // Same TS2339 rule for the structural case (e.g. when the base
+            // resolves to a real type with a string-literal index).
+            if let Some(key_atom) =
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+            {
+                let key = self.ctx.types.resolve_atom_ref(key_atom).to_string();
+                let lookup = crate::query_boundaries::property_access::resolve_property_access(
+                    self.ctx.types,
+                    base_type,
+                    &key,
+                );
+                if matches!(
+                    lookup,
+                    crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. }
+                ) {
+                    let display = self.format_type_diagnostic(base_type);
+                    let message = crate::diagnostics::format_message(
+                        crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        &[&key, &display],
+                    );
+                    let anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+                    self.ctx.error(
+                        anchor,
+                        type_expr.len() as u32,
+                        message,
+                        crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                    return Some(TypeId::ERROR);
+                }
+            }
             return Some(self.ctx.types.factory().index_access(base_type, index_type));
         }
         if type_expr.starts_with('[') && type_expr.ends_with(']') {
