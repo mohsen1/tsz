@@ -531,6 +531,40 @@ impl<'a> NarrowingContext<'a> {
             source_type.0
         );
 
+        // `instanceof Object` proves the value is non-primitive at
+        // runtime. When the source is a generic — `T extends {}`
+        // (constraint accepts primitives in TS's empty-object rule)
+        // or a bare `T` — pretending the narrowed shape is just
+        // `T & {}` (which `narrow_type_param` produces by default)
+        // leaks the "may represent primitive" verdict downstream and
+        // triggers a false TS2638 on `'k' in narrowedX` (see
+        // issue #3769). Surface the runtime guarantee by intersecting
+        // with `TypeId::OBJECT` (the `object` keyword), which
+        // `type_may_represent_primitive` recognises as non-primitive.
+        let resolved_target_for_object_check = self.resolve_type(instance_type);
+        if self.is_object_interface(resolved_target_for_object_check) {
+            let bare_type_param = matches!(
+                self.db.lookup(resolved_source),
+                Some(crate::types::TypeData::TypeParameter(_))
+            );
+            let intersection_with_type_param =
+                crate::visitor::intersection_list_id(self.db, resolved_source)
+                    .map(|list_id| self.db.type_list(list_id))
+                    .is_some_and(|members| {
+                        members.iter().any(|&member| {
+                            matches!(
+                                self.db.lookup(member),
+                                Some(crate::types::TypeData::TypeParameter(_))
+                            )
+                        })
+                    });
+            if bare_type_param || intersection_with_type_param {
+                return self
+                    .db
+                    .intersection2(source_type, crate::types::TypeId::OBJECT);
+            }
+        }
+
         // Try type parameter narrowing first (produces T & InstanceType)
         if let Some(narrowed) = self.narrow_type_param(resolved_source, instance_type) {
             return narrowed;

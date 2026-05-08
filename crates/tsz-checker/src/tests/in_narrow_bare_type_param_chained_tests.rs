@@ -97,6 +97,49 @@ function test<T extends object>(x: T) {
     );
 }
 
+/// Issue #3769: `instanceof Object && "a" in x` on a generic value
+/// must narrow strongly enough that the `in`-RHS doesn't trigger
+/// TS2638 ("may represent a primitive value"). tsc accepts both shapes
+/// in the issue's repro:
+///
+/// ```ts
+/// function f<T extends {}>(x: T)   { return x instanceof Object && "a" in x; }
+/// function g<T>(x: T & {})         { return x instanceof Object && "a" in x; }
+/// ```
+///
+/// The fix: when narrowing by `instanceof Object`, if the source is a
+/// type parameter (or an intersection containing one), produce
+/// `source & TypeId::OBJECT` so the `in`-operator validity check
+/// recognises the result as non-primitive.
+#[test]
+fn instanceof_object_narrowing_does_not_emit_ts2638_on_generic() {
+    let libs = crate::test_utils::load_default_lib_files();
+    let opts = tsz_common::options::checker::CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        ..tsz_common::options::checker::CheckerOptions::default()
+    };
+    let d = crate::test_utils::check_source_with_libs(
+        r#"
+function f<T extends {}>(x: T) {
+    return x instanceof Object && "a" in x;
+}
+
+function g<T>(x: T & {}) {
+    return x instanceof Object && "a" in x;
+}
+"#,
+        "test.ts",
+        opts,
+        &libs,
+    );
+    let ts2638_count = d.iter().filter(|d| d.code == 2638).count();
+    assert_eq!(
+        ts2638_count, 0,
+        "Expected no TS2638 after `instanceof Object` narrowing on a generic; got: {d:?}"
+    );
+}
+
 #[test]
 fn negated_in_against_bare_type_param_still_returns_source() {
     // Negative narrowing of a bare type parameter must NOT intersect with
