@@ -6,6 +6,7 @@ use crate::query_boundaries::assignability::{
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type, type_param_info};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -1022,6 +1023,11 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_partial_self_argument_mismatch(source, target) {
             return true;
         }
+        if self.should_suppress_self_referential_mapped_constraint_arg_mismatch(
+            source, target, arg_idx,
+        ) {
+            return true;
+        }
 
         // Build a CallArg relation request to collect the weak-union hint
         // without a separate solver call.
@@ -1121,6 +1127,203 @@ impl<'a> CheckerState<'a> {
         }
 
         self.partial_inner_alias_instantiates_to_source(inner, source)
+    }
+
+    pub(crate) fn should_suppress_self_referential_mapped_constraint_arg_mismatch(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        if self
+            .ctx
+            .arena
+            .get(arg_idx)
+            .is_none_or(|node| node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+        {
+            return false;
+        }
+        if !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, target)
+            || !self.type_contains_generic_mapped_constraint(target, &mut Default::default())
+        {
+            return false;
+        }
+
+        let mut substitution = TypeSubstitution::new();
+        let target_display = self.format_type_for_assignability_message(target);
+        for referenced in
+            crate::query_boundaries::common::collect_referenced_types(self.ctx.types, target)
+        {
+            let Some(info) = type_param_info(self.ctx.types, referenced) else {
+                continue;
+            };
+            let name = self.ctx.types.resolve_atom_ref(info.name);
+            let Some(constraint) = info.constraint else {
+                if target_display.contains(name.as_ref()) {
+                    substitution.insert(info.name, source);
+                }
+                continue;
+            };
+            if crate::query_boundaries::common::contains_type_parameter_named(
+                self.ctx.types,
+                constraint,
+                info.name,
+            ) || target_display.contains(name.as_ref())
+            {
+                substitution.insert(info.name, source);
+            }
+        }
+        if substitution.is_empty() {
+            return false;
+        }
+
+        let instantiated = instantiate_type(self.ctx.types, target, &substitution);
+        let env_evaluated = self.evaluate_type_with_env(instantiated);
+        let evaluated = self.evaluate_type_for_assignability(env_evaluated);
+        let contextual = self.evaluate_contextual_type(instantiated);
+        evaluated != target
+            && evaluated != TypeId::UNKNOWN
+            && evaluated != TypeId::ERROR
+            && (self.is_assignable_to_with_env(source, evaluated)
+                || self.is_assignable_to_with_env(source, contextual)
+                || self.self_referential_mapped_intersection_accepts_object_literal(
+                    source, evaluated, arg_idx,
+                ))
+    }
+
+    fn self_referential_mapped_intersection_accepts_object_literal(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, target)
+        else {
+            return false;
+        };
+
+        let mut skipped_generic_mapped = false;
+        let mut allowed_keys = rustc_hash::FxHashSet::default();
+        for member in members {
+            if self.type_contains_generic_mapped_constraint(member, &mut Default::default())
+                || crate::query_boundaries::common::mapped_type_info(self.ctx.types, member)
+                    .is_some()
+            {
+                skipped_generic_mapped = true;
+                continue;
+            }
+
+            let member = self.evaluate_type_with_env(member);
+            let Some(shape) =
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, member)
+            else {
+                if !self.is_assignable_to_with_env(source, member) {
+                    return false;
+                }
+                continue;
+            };
+
+            allowed_keys.extend(shape.properties.iter().map(|prop| prop.name));
+            if shape.string_index.is_some() || shape.number_index.is_some() {
+                return self.is_assignable_to_with_env(source, member);
+            }
+            if !self.is_assignable_to_with_env(source, member) {
+                return false;
+            }
+        }
+
+        skipped_generic_mapped
+            && self
+                .object_literal_property_names(arg_idx)
+                .is_some_and(|names| names.into_iter().all(|name| allowed_keys.contains(&name)))
+    }
+
+    fn object_literal_property_names(&self, arg_idx: NodeIndex) -> Option<Vec<tsz_common::Atom>> {
+        let node = self.ctx.arena.get(arg_idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.ctx.arena.get_literal_expr(node)?;
+        let mut names = Vec::new();
+        for &element_idx in &object.elements.nodes {
+            let Some(element) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            let name = if let Some(prop) = self.ctx.arena.get_property_assignment(element) {
+                self.get_property_name(prop.name)
+            } else if element.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                self.ctx
+                    .arena
+                    .get_shorthand_property(element)
+                    .and_then(|prop| self.ctx.arena.get_identifier_text(prop.name))
+                    .map(str::to_string)
+            } else if let Some(method) = self.ctx.arena.get_method_decl(element) {
+                self.property_name_for_error(method.name)
+            } else {
+                None
+            };
+            let name = name?;
+            names.push(self.ctx.types.intern_string(&name));
+        }
+        Some(names)
+    }
+
+    fn type_contains_generic_mapped_constraint(
+        &self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> bool {
+        if !visited.insert(type_id) {
+            return false;
+        }
+        if crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, type_id) {
+            return true;
+        }
+        if let Some(mapped) =
+            crate::query_boundaries::common::mapped_type_info(self.ctx.types, type_id)
+        {
+            return self.type_contains_generic_mapped_constraint(mapped.constraint, visited)
+                || mapped.name_type.is_some_and(|name_type| {
+                    self.type_contains_generic_mapped_constraint(name_type, visited)
+                });
+        }
+        if let Some((_, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+            && args
+                .iter()
+                .any(|&arg| self.type_contains_generic_mapped_constraint(arg, visited))
+        {
+            return true;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+            && members
+                .iter()
+                .any(|&member| self.type_contains_generic_mapped_constraint(member, visited))
+        {
+            return true;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+            && members
+                .iter()
+                .any(|&member| self.type_contains_generic_mapped_constraint(member, visited))
+        {
+            return true;
+        }
+        if let Some((object_type, index_type)) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, type_id)
+        {
+            return self.type_contains_generic_mapped_constraint(object_type, visited)
+                || self.type_contains_generic_mapped_constraint(index_type, visited);
+        }
+        if let Some(info) = type_param_info(self.ctx.types, type_id)
+            && let Some(constraint) = info.constraint
+        {
+            return self.type_contains_generic_mapped_constraint(constraint, visited);
+        }
+        false
     }
 
     fn partial_inner_alias_instantiates_to_source(&mut self, inner: &str, source: TypeId) -> bool {

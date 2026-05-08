@@ -42,6 +42,11 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_partial_self_argument_mismatch(arg_type, param_type) {
             return;
         }
+        if self.should_suppress_self_referential_mapped_constraint_arg_mismatch(
+            arg_type, param_type, idx,
+        ) {
+            return;
+        }
         if self.is_callback_like_argument(idx)
             && self.is_assignable_via_generator_never_yield_callback(arg_type, param_type)
         {
