@@ -864,7 +864,16 @@ pub(super) fn collect_diagnostics(
         }
     });
 
-    if options.no_check {
+    // The `--noCheck` short-circuit returns parse-only diagnostics and skips
+    // the regular checker pipeline. That's correct when no declaration files
+    // are being emitted, but `--noCheck --declaration` still needs the
+    // checker's inferred type information so the declaration emitter can
+    // print return types for unannotated functions, contextual types for
+    // `const x = { a: 1 }`, etc. (#3733). When `emit_declarations` is set
+    // we fall through to the regular pipeline (which still suppresses type
+    // errors via the `if !no_check` guard around `check_source_file`); the
+    // type_caches it produces feed declaration emit.
+    if options.no_check && !options.emit_declarations {
         use rayon::prelude::*;
 
         let mut diagnostics: Vec<Diagnostic> = program
@@ -2434,7 +2443,16 @@ pub(super) fn check_file_for_parallel<'a>(
     // Note: We always run checking for all files (JS and TS).
     // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
     // even for JS files without checkJs. Only type-level errors are gated by checkJs.
-    if !no_check {
+    //
+    // Under `--noCheck --declaration`, declaration emit still needs the
+    // checker's inferred types (return types, contextual property types,
+    // etc.) — tsc runs the checker for declaration emit even when
+    // `--noCheck` is set (#3733). Run the checker pass when either the
+    // user wants normal checking OR we need type information for
+    // declaration emit; in the latter case the produced diagnostics are
+    // discarded so `--noCheck` still suppresses type errors.
+    let run_checker_for_decl_emit = no_check && compiler_options.emit_declarations;
+    if !no_check || run_checker_for_decl_emit {
         tsz::checker::reset_stack_overflow_flag();
         checker.check_source_file(file.source_file);
         let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
@@ -2452,7 +2470,9 @@ pub(super) fn check_file_for_parallel<'a>(
             project_env.has_deprecation_diagnostics,
         );
 
-        file_diagnostics.extend(checker_diagnostics);
+        if !no_check {
+            file_diagnostics.extend(checker_diagnostics);
+        }
     }
 
     // Final JS-specific filter: remove any remaining grammar codes that
@@ -3767,6 +3787,32 @@ mod tests {
         assert!(
             !codes.contains(&9007),
             "TS9007 must not fire under --noCheck without --isolatedDeclarations, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn no_check_with_declaration_emit_still_suppresses_type_errors() {
+        // Issue #3733: under `--noCheck --declaration`, the regular checker
+        // pipeline must run so declaration emit can pick up inferred types
+        // (return types, contextual property types). But type-error
+        // diagnostics (TS2322 etc.) must still be suppressed — `--noCheck`
+        // means "don't surface type checking errors".
+        let options = ResolvedCompilerOptions {
+            no_check: true,
+            emit_declarations: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[("file.ts", "export const x: string = 1;\n")],
+            &options,
+            std::path::Path::new("/"),
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+        assert!(
+            !codes.contains(&2322),
+            "TS2322 must not fire under --noCheck --declaration, got: {diagnostics:?}"
         );
     }
 
