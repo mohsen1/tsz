@@ -3635,11 +3635,12 @@ fn test_prepare_call_hierarchy_marker_comment_before_interface_method() {
     assert_eq!(first["kind"].as_str().unwrap_or(""), "method");
 }
 
-/// Issue #3753: outgoing call to an imported function should point at the
-/// exported declaration in the imported module's source file, not at the
-/// local import binding in the importer.
+/// Issue #3753 (incoming half): asking for incoming calls on a function
+/// exported from /a.ts must include callers in /b.ts that reach it via
+/// `import { target } from "./a"`. Without the cross-file scan tsz only
+/// reported within-file callers, so the response was an empty array.
 #[test]
-fn test_call_hierarchy_outgoing_resolves_through_import() {
+fn test_call_hierarchy_incoming_includes_cross_file_caller() {
     let mut server = make_server();
     server.open_files.insert(
         "/a.ts".to_string(),
@@ -3651,42 +3652,103 @@ fn test_call_hierarchy_outgoing_resolves_through_import() {
     );
 
     let req = make_request(
-        "provideCallHierarchyOutgoingCalls",
+        "provideCallHierarchyIncomingCalls",
         serde_json::json!({
-            "file": "/b.ts",
-            "line": 2,
+            "file": "/a.ts",
+            "line": 1,
             "offset": 17
         }),
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
-    let body = resp.body.expect("outgoing calls should return a body");
+    let body = resp.body.expect("incoming calls should return a body");
     let calls = body
         .as_array()
-        .expect("provideCallHierarchyOutgoingCalls body should be an array");
+        .expect("provideCallHierarchyIncomingCalls body should be an array");
 
-    let target_call = calls
+    let caller = calls
         .iter()
-        .find(|call| call["to"]["name"] == "target")
-        .unwrap_or_else(|| panic!("expected outgoing target 'target', got: {calls:?}"));
+        .find(|call| call["from"]["name"] == "caller")
+        .unwrap_or_else(|| panic!("expected cross-file caller 'caller', got: {calls:?}"));
 
-    let to_file = target_call["to"]["file"].as_str().unwrap_or("");
+    let from_file = caller["from"]["file"].as_str().unwrap_or("");
     assert!(
-        to_file.ends_with("/a.ts"),
-        "Expected outgoing target to resolve to /a.ts (the imported module), got file={to_file:?} call={target_call:?}"
+        from_file.ends_with("/b.ts"),
+        "cross-file caller should live in /b.ts, got file={from_file:?} call={caller:?}"
     );
-    assert!(
-        !to_file.ends_with("/b.ts"),
-        "Outgoing target must not stay on the importer's local binding (/b.ts). Got file={to_file:?} call={target_call:?}"
+}
+
+/// Aliased imports — `import { target as t }` — must also be discovered as
+/// callers when the local binding `t` is invoked. The exported-name match
+/// is what counts, not the local name.
+#[test]
+fn test_call_hierarchy_incoming_handles_aliased_cross_file_import() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export function target() {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import { target as t } from \"./a\";\nexport function caller() { t(); }\n".to_string(),
     );
 
-    // The selectionSpan should anchor on the exported function in /a.ts —
-    // the identifier `target` lives at column 17 (1-based) of line 1.
-    let selection_start = &target_call["to"]["selectionSpan"]["start"];
-    assert_eq!(
-        selection_start["line"].as_u64(),
-        Some(1),
-        "expected selection at line 1 of a.ts, got: {target_call:?}"
+    let req = make_request(
+        "provideCallHierarchyIncomingCalls",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 1,
+            "offset": 17
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("incoming calls should return a body");
+    let calls = body
+        .as_array()
+        .expect("provideCallHierarchyIncomingCalls body should be an array");
+
+    assert!(
+        calls.iter().any(|c| c["from"]["name"] == "caller"
+            && c["from"]["file"]
+                .as_str()
+                .is_some_and(|f| f.ends_with("/b.ts"))),
+        "expected cross-file caller via aliased import, got: {calls:?}"
+    );
+}
+
+/// A different file that has its own `target` (not imported from /a.ts) must
+/// not pollute the incoming-calls answer for /a.ts's `target`.
+#[test]
+fn test_call_hierarchy_incoming_skips_unrelated_imports() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export function target() {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/c.ts".to_string(),
+        "function target() {}\nexport function localCaller() { target(); }\n".to_string(),
+    );
+
+    let req = make_request(
+        "provideCallHierarchyIncomingCalls",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 1,
+            "offset": 17
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("incoming calls should return a body");
+    let calls = body
+        .as_array()
+        .expect("provideCallHierarchyIncomingCalls body should be an array");
+
+    assert!(
+        !calls.iter().any(|c| c["from"]["name"] == "localCaller"),
+        "must not report localCaller from /c.ts (no import edge from /a.ts), got: {calls:?}"
     );
 }
 

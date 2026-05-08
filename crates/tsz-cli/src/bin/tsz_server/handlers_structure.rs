@@ -58,8 +58,7 @@ use tsz::lsp::editor_decorations::inlay_hints::{InlayHintKind, InlayHintsProvide
 use tsz::lsp::editor_ranges::folding::FoldingRangeProvider;
 use tsz::lsp::editor_ranges::selection_range::SelectionRangeProvider;
 use tsz::lsp::hierarchy::call_hierarchy::{
-    CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall, CallHierarchyProvider,
-    ImportResolutionRequest,
+    CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyProvider,
 };
 use tsz::lsp::highlighting::semantic_tokens::SemanticTokensProvider;
 use tsz::lsp::position::{LineMap, Position, Range};
@@ -2599,97 +2598,237 @@ impl Server {
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
-    /// Issue #3753: resolve an outgoing-call import-binding to the actual
-    /// exported declaration in the target module.
+    /// Issue #3753: scan the other open files for cross-file callers that
+    /// reach `target_item` via an `import` binding. tsc reports those as
+    /// incoming calls; without this scan tsz only saw within-file callers
+    /// because each `parse_and_bind_file` call only sees one file's
+    /// arena/binder.
     ///
-    /// Returns `None` when the module specifier can't be resolved (bare
-    /// package imports, missing files, parse failures, no matching export).
-    /// In that case the caller falls back to the local-import-binding item.
-    pub(crate) fn resolve_import_call_hierarchy_target(
+    /// For every other open file:
+    /// 1. Parse + bind it.
+    /// 2. Walk its `IMPORT_DECLARATION` nodes.
+    /// 3. For each import whose module specifier resolves to the target's
+    ///    file, find the local binding for `target_item.name` (matching by
+    ///    exported-name when the spec uses `import { foo as bar }`).
+    /// 4. Run that file's `incoming_calls` provider with the local-binding
+    ///    position so callers within that file get aggregated correctly.
+    pub(crate) fn collect_cross_file_incoming_calls(
         &mut self,
-        importer_file: &str,
-        request: &ImportResolutionRequest,
-    ) -> Option<CallHierarchyItem> {
-        // Only handle relative-path specifiers for now. Bare specifiers
-        // would need module-resolution machinery the LSP server doesn't
-        // wire up yet.
-        let spec = &request.module_specifier;
-        if !(spec.starts_with("./") || spec.starts_with("../")) {
-            return None;
-        }
+        target_file: &str,
+        target_item: &CallHierarchyItem,
+    ) -> Vec<CallHierarchyIncomingCall> {
+        let mut results: Vec<CallHierarchyIncomingCall> = Vec::new();
+        let target_file_canon = Self::canonicalize_path_str(target_file);
+        let target_name = target_item.name.clone();
+        // Snapshot the keys so we don't iterate while parse_and_bind_file
+        // potentially mutates `open_files`.
+        let other_files: Vec<String> = self
+            .open_files
+            .keys()
+            .filter(|k| Self::canonicalize_path_str(k) != target_file_canon)
+            .cloned()
+            .collect();
 
-        let importer_path = std::path::Path::new(importer_file);
-        let importer_dir = importer_path.parent()?;
-        let resolved_path = self.resolve_relative_module_specifier(importer_dir, spec)?;
-        let resolved_str = resolved_path.to_string_lossy().into_owned();
-
-        let (arena, binder, _root, source_text) = self.parse_and_bind_file(&resolved_str)?;
-        let line_map = LineMap::build(&source_text);
-        let provider = CallHierarchyProvider::new(
-            &arena,
-            &binder,
-            &line_map,
-            resolved_str.clone(),
-            &source_text,
-        );
-
-        // Find the exported binding by name. Default imports map to a
-        // declaration tagged as default; named imports map to the named
-        // export. Namespace imports are not resolved here (no specific
-        // export to point at).
-        let target_name = request.exported_name.as_deref()?;
-        let decl_idx = Self::find_exported_callable(&arena, &binder, target_name)?;
-
-        // Use the provider's prepare-by-position path: locate any identifier
-        // at the resolved declaration's position, then build a hierarchy
-        // item for it. Falls back to a synthesized item if prepare doesn't
-        // recognize the position.
-        let decl_node = arena.get(decl_idx)?;
-        let pos = line_map.offset_to_position(decl_node.pos, &source_text);
-        if let Some(item) = provider.prepare(_root, pos) {
-            return Some(CallHierarchyItem {
-                uri: resolved_str,
-                ..item
-            });
-        }
-        let span_pos = line_map.offset_to_position(decl_node.pos, &source_text);
-        let span_end = line_map.offset_to_position(decl_node.end, &source_text);
-        Some(CallHierarchyItem {
-            name: target_name.to_string(),
-            kind: tsz_lsp::SymbolKind::Function,
-            uri: resolved_str,
-            range: tsz_common::position::Range::new(span_pos, span_end),
-            selection_range: tsz_common::position::Range::new(span_pos, span_end),
-            container_name: None,
-        })
-    }
-
-    /// Locate an exported callable (function declaration / class declaration
-    /// / variable initializer) by exported name within the bound source
-    /// file. Searches `binder.symbols` for symbols tagged as exported with a
-    /// matching name and returns the first declaration `NodeIndex`.
-    fn find_exported_callable(
-        arena: &tsz_parser::parser::node::NodeArena,
-        binder: &tsz_binder::BinderState,
-        target_name: &str,
-    ) -> Option<tsz_parser::NodeIndex> {
-        if let Some(sym_id) = binder.file_locals.get(target_name)
-            && let Some(symbol) = binder.symbols.get(sym_id)
-            && let Some(&decl) = symbol.declarations.first()
-        {
-            // Skip the symbol if its first declaration is itself an import-binding.
-            let kind = arena.get(decl).map(|n| n.kind);
-            let is_import_binding = matches!(
-                kind,
-                Some(k) if k == tsz_parser::syntax_kind_ext::IMPORT_SPECIFIER
-                    || k == tsz_parser::syntax_kind_ext::IMPORT_CLAUSE
-                    || k == tsz_parser::syntax_kind_ext::NAMESPACE_IMPORT
+        for other_file in other_files {
+            let Some((arena, binder, root, source_text)) = self.parse_and_bind_file(&other_file)
+            else {
+                continue;
+            };
+            let line_map = LineMap::build(&source_text);
+            let provider = CallHierarchyProvider::new(
+                &arena,
+                &binder,
+                &line_map,
+                other_file.clone(),
+                &source_text,
             );
-            if !is_import_binding {
-                return Some(decl);
+
+            // Find IMPORT_DECLARATION nodes whose module specifier resolves
+            // to the target file, and collect the matching local-binding
+            // identifier positions.
+            // Collect (binding identifier NodeIndex, local name) for each
+            // matching import binding so we can ask the provider which
+            // callers reference that local within this file.
+            let mut local_bindings: Vec<(tsz_parser::NodeIndex, String)> = Vec::new();
+            for node in arena.nodes.iter() {
+                if node.kind != tsz_parser::syntax_kind_ext::IMPORT_DECLARATION {
+                    continue;
+                }
+                let Some(import_decl) = arena.get_import_decl(node) else {
+                    continue;
+                };
+                let Some(spec_node) = arena.get(import_decl.module_specifier) else {
+                    continue;
+                };
+                let Some(spec_lit) = arena.get_literal(spec_node) else {
+                    continue;
+                };
+                let spec_text = &spec_lit.text;
+                if !(spec_text.starts_with("./") || spec_text.starts_with("../")) {
+                    continue;
+                }
+                let importer_dir = std::path::Path::new(&other_file)
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new(""));
+                let Some(resolved_path) =
+                    self.resolve_relative_module_specifier(importer_dir, spec_text)
+                else {
+                    continue;
+                };
+                let resolved_canon = Self::canonicalize_path_str(&resolved_path.to_string_lossy());
+                if resolved_canon != target_file_canon {
+                    continue;
+                }
+
+                // Found an import from target_file. Walk its named-imports
+                // / default-import / namespace-import bindings to find the
+                // local-name identifier whose exported name matches
+                // `target_name`. Capture the identifier's position so we
+                // can re-run the provider's incoming_calls there.
+                if let Some(clause_node) = arena.get(import_decl.import_clause)
+                    && clause_node.kind == tsz_parser::syntax_kind_ext::IMPORT_CLAUSE
+                {
+                    let clause = arena.get_import_clause(clause_node);
+                    if let Some(clause) = clause {
+                        // Default binding (`import target from "./a"`):
+                        if !clause.name.is_none()
+                            && target_name == "default"
+                            && let Some(name_node) = arena.get(clause.name)
+                            && let Some(ident) = arena.get_identifier(name_node)
+                        {
+                            local_bindings.push((clause.name, ident.escaped_text.clone()));
+                        }
+                        // Named bindings — walk the named_bindings child for
+                        // either `NamedImports` or `NamespaceImport`.
+                        if !clause.named_bindings.is_none()
+                            && let Some(nb_node) = arena.get(clause.named_bindings)
+                            && nb_node.kind == tsz_parser::syntax_kind_ext::NAMED_IMPORTS
+                            && let Some(named) = arena.get_named_imports(nb_node)
+                        {
+                            {
+                                for &spec_idx in &named.elements.nodes {
+                                    let Some(specifier_node) = arena.get(spec_idx) else {
+                                        continue;
+                                    };
+                                    let Some(specifier) = arena.get_specifier(specifier_node)
+                                    else {
+                                        continue;
+                                    };
+                                    // Matched exported name (property_name when aliased,
+                                    // otherwise the binding name).
+                                    let exported = if !specifier.property_name.is_none()
+                                        && let Some(prop_node) = arena.get(specifier.property_name)
+                                        && let Some(ident) = arena.get_identifier(prop_node)
+                                    {
+                                        ident.escaped_text.clone()
+                                    } else if let Some(name_node) = arena.get(specifier.name)
+                                        && let Some(ident) = arena.get_identifier(name_node)
+                                    {
+                                        ident.escaped_text.clone()
+                                    } else {
+                                        continue;
+                                    };
+                                    if exported != target_name {
+                                        continue;
+                                    }
+                                    let Some(name_node) = arena.get(specifier.name) else {
+                                        continue;
+                                    };
+                                    let local = arena
+                                        .get_identifier(name_node)
+                                        .map(|i| i.escaped_text.clone())
+                                        .unwrap_or_else(|| target_name.clone());
+                                    local_bindings.push((specifier.name, local));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let _ = root;
+            for (decl_idx, local_name) in local_bindings {
+                let calls = provider.incoming_calls_for_decl_in_file(decl_idx, &local_name);
+                for call in calls {
+                    results.push(call);
+                }
             }
         }
-        None
+
+        results
+    }
+
+    /// Best-effort canonical form for path comparison: prefer
+    /// `std::fs::canonicalize`, fall back to the raw normalized string.
+    fn canonicalize_path_str(path: &str) -> String {
+        let p = std::path::Path::new(path);
+        if let Ok(canon) = std::fs::canonicalize(p) {
+            return canon.to_string_lossy().into_owned();
+        }
+        Self::normalize_path(p).to_string_lossy().into_owned()
+    }
+
+    /// Strip `.` segments and resolve `..` segments from a path while
+    /// preserving the root. Used to normalize the result of
+    /// `Path::join("/foo", "./bar")` (which yields `/foo/./bar`) into the
+    /// canonical `/foo/bar` so it matches `open_files` keys and `exists()`.
+    fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+        use std::path::Component;
+        let mut out = std::path::PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if !out.pop() {
+                        out.push("..");
+                    }
+                }
+                other => out.push(other.as_os_str()),
+            }
+        }
+        if out.as_os_str().is_empty() {
+            out.push(".");
+        }
+        out
+    }
+
+    /// Resolve a relative module specifier (e.g. `"./a"`, `"../foo/bar"`)
+    /// against the importing file's directory. Tries `.ts`, `.tsx`,
+    /// `.d.ts`, `.js`, `.jsx`, `.mts`, `.cts`, then bare path. Returns the
+    /// first candidate that exists on disk or matches a key in the
+    /// `open_files` map (so unsaved buffers count for resolution).
+    fn resolve_relative_module_specifier(
+        &self,
+        importer_dir: &std::path::Path,
+        specifier: &str,
+    ) -> Option<std::path::PathBuf> {
+        let base = Self::normalize_path(&importer_dir.join(specifier));
+        const EXTS: &[&str] = &["ts", "tsx", "d.ts", "js", "jsx", "mts", "cts", "mjs", "cjs"];
+        let exists_anywhere = |p: &std::path::Path| -> bool {
+            if p.exists() {
+                return true;
+            }
+            let key = p.to_string_lossy().into_owned();
+            self.open_files.contains_key(&key)
+        };
+        if base.extension().is_some() && exists_anywhere(&base) {
+            return Some(base);
+        }
+        for ext in EXTS {
+            let candidate = base.with_extension(ext);
+            if exists_anywhere(&candidate) {
+                return Some(candidate);
+            }
+        }
+        if base.is_dir() {
+            for ext in EXTS {
+                let candidate = base.join(format!("index.{ext}"));
+                if exists_anywhere(&candidate) {
+                    return Some(candidate);
+                }
+            }
+        }
+        Some(base)
     }
 
     /// Issue #3753: scan the other open files for cross-file callers that
