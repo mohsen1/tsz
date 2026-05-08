@@ -1872,6 +1872,35 @@ lit = tpl;
 }
 
 #[test]
+fn test_ts2322_template_union_source_covered_by_string_displays_string() {
+    let source = r#"
+function f(s: string, cond: boolean) {
+    const c1 = cond ? `foo${s}` : `bar${s}`;
+    const c2: `foo${string}` | `bar${string}` = c1;
+}
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let message = diagnostics
+        .iter()
+        .find_map(|d| {
+            (d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+                .then_some(d.message_text.as_str())
+        })
+        .expect("expected TS2322 for assigning widened template union source");
+
+    assert!(
+        message.contains("Type 'string' is not assignable"),
+        "expected widened string source display, got: {message}"
+    );
+    assert!(
+        !message.contains("string | `foo${string}`")
+            && !message.contains("string | `bar${string}`"),
+        "source display should not include template members covered by string: {message}"
+    );
+}
+
+#[test]
 fn test_ts2322_string_mapping_alias_displays_resolved_template_target() {
     let source = r#"
 type Source = `aA${string}`;

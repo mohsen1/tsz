@@ -110,6 +110,10 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        if let Some(display_type) = self.string_covered_template_union_source_display(source) {
+            return self.format_assignability_type_for_message(display_type, target);
+        }
+
         if let Some(display) = self.related_generic_indexed_access_source_display(source, target) {
             return display;
         }
@@ -561,6 +565,25 @@ impl<'a> CheckerState<'a> {
             node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
                 || node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
         })
+    }
+
+    fn string_covered_template_union_source_display(&self, source: TypeId) -> Option<TypeId> {
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, source)?;
+        if !members.contains(&TypeId::STRING) {
+            return None;
+        }
+        members
+            .iter()
+            .all(|&member| self.is_string_covered_template_union_member(member))
+            .then_some(TypeId::STRING)
+    }
+
+    fn is_string_covered_template_union_member(&self, type_id: TypeId) -> bool {
+        type_id == TypeId::STRING
+            || crate::query_boundaries::common::is_template_literal_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::is_string_intrinsic_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::literal_value(self.ctx.types, type_id)
+                .is_some_and(|value| value.primitive_type_id() == TypeId::STRING)
     }
 
     pub(in crate::error_reporter) fn format_assignment_target_type_for_diagnostic(
