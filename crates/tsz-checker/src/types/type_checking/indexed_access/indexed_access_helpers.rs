@@ -331,6 +331,40 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to(index_type, self.ctx.types.evaluate_keyof(values))
     }
 
+    pub(super) fn mapped_object_index_matches_own_key_constraint(
+        &mut self,
+        object_node_idx: NodeIndex,
+        index_type: TypeId,
+        index_type_for_check: TypeId,
+    ) -> bool {
+        let Some(object_node) = self.ctx.arena.get(object_node_idx) else {
+            return false;
+        };
+        let Some(mapped) = self.ctx.arena.get_mapped_type(object_node) else {
+            return false;
+        };
+        if mapped.name_type != NodeIndex::NONE {
+            return false;
+        }
+        let Some(tp_node) = self.ctx.arena.get(mapped.type_parameter) else {
+            return false;
+        };
+        let Some(tp) = self.ctx.arena.get_type_parameter(tp_node) else {
+            return false;
+        };
+        if tp.constraint == NodeIndex::NONE {
+            return false;
+        }
+
+        let constraint_type = self.get_type_from_type_node(tp.constraint);
+        let constraint_eval = self.evaluate_type_with_env(constraint_type);
+
+        index_type == constraint_type
+            || index_type_for_check == constraint_eval
+            || (self.is_assignable_to(index_type_for_check, constraint_eval)
+                && self.is_assignable_to(constraint_eval, index_type_for_check))
+    }
+
     pub(super) fn simple_type_reference_name(&self, node_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(node_idx)?;
         if node.kind == syntax_kind_ext::TYPE_REFERENCE {
