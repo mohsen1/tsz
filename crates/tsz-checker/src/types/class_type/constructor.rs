@@ -2242,11 +2242,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         class_idx: NodeIndex,
     ) -> Vec<(String, Option<TypeId>, bool)> {
-        // If type_parameter_scope already has entries, no need to push
-        if !self.ctx.type_parameter_scope.is_empty() {
-            return Vec::new();
-        }
-
         // Walk up the AST to find the enclosing function
         let mut current = class_idx;
         for _ in 0..20 {
@@ -2268,8 +2263,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(func) = self.ctx.arena.get_function(parent_node)
                     && func.type_parameters.is_some()
                 {
-                    let (_, updates) = self.push_type_parameters(&func.type_parameters);
-                    return updates;
+                    if self.enclosing_function_type_params_already_active(&func.type_parameters) {
+                        return Vec::new();
+                    }
+                    return self.push_enclosing_function_type_param_names(&func.type_parameters);
                 }
                 return Vec::new();
             }
@@ -2277,6 +2274,95 @@ impl<'a> CheckerState<'a> {
             current = parent;
         }
         Vec::new()
+    }
+
+    fn push_enclosing_function_type_param_names(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+    ) -> Vec<(String, Option<TypeId>, bool)> {
+        let Some(type_parameters) = type_parameters else {
+            return Vec::new();
+        };
+        let mut updates = Vec::new();
+        let factory = self.ctx.types.factory();
+
+        for &param_idx in &type_parameters.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+            let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+                continue;
+            };
+
+            let name = name_ident.escaped_text.clone();
+            let type_id = factory.type_param(tsz_solver::TypeParamInfo {
+                name: self.ctx.types.intern_string(&name),
+                constraint: None,
+                default: None,
+                is_const: false,
+            });
+            if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&param.name.0)
+                && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)
+            {
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(type_id, def_id);
+            }
+            let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+            updates.push((name, previous, false));
+        }
+
+        updates
+    }
+
+    fn enclosing_function_type_params_already_active(
+        &self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        let Some(type_parameters) = type_parameters else {
+            return true;
+        };
+        if type_parameters.nodes.is_empty() {
+            return true;
+        }
+
+        type_parameters.nodes.iter().all(|&param_idx| {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                return false;
+            };
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                return false;
+            };
+            let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+                return false;
+            };
+            let Some(&scoped_type) = self
+                .ctx
+                .type_parameter_scope
+                .get(name_ident.escaped_text.as_str())
+            else {
+                return false;
+            };
+            let Some(&sym_id) = self.ctx.binder.node_symbols.get(&param.name.0) else {
+                return false;
+            };
+            let Some(param_def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0) else {
+                return false;
+            };
+            self.ctx
+                .definition_store
+                .find_def_for_type(scoped_type)
+                .is_some_and(|scoped_def_id| scoped_def_id == param_def_id)
+        })
     }
 
     /// Resolve a parameter symbol's type annotation directly, bypassing
