@@ -6115,6 +6115,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         Self::expand_object_union_arms_from_sibling_properties(&mut distinct);
+        Self::drop_optional_param_function_subtypes(&mut distinct);
 
         // tsc orders union members by `TypeFlags` when printing: for the
         // primitive intrinsics the rank is Any < Unknown < String < Number
@@ -6164,6 +6165,160 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Some(format!("{elem_text}[]"))
         }
+    }
+
+    /// Drop function-type union arms whose only difference from another arm
+    /// is that one or more parameters were marked optional. tsc's array
+    /// element type formation applies UnionReduction.Subtype which removes
+    /// `(x?: T) => R` when `(x: T) => R` is also in the union, because the
+    /// optional-parameter form is a structural subtype of the required-
+    /// parameter form. Mirroring that here keeps inferred-array element
+    /// unions tidy without any solver-level subtype reduction work.
+    fn drop_optional_param_function_subtypes(types: &mut Vec<String>) {
+        if types.len() <= 1 {
+            return;
+        }
+        let normalized: Vec<Option<String>> = types
+            .iter()
+            .map(|ty| Self::function_text_required_param_form(ty))
+            .collect();
+        let mut to_drop = vec![false; types.len()];
+        for (i, normalized_i) in normalized.iter().enumerate() {
+            let Some(required_form) = normalized_i else {
+                continue;
+            };
+            // Already a required form (no `?`); leave it alone.
+            if required_form == &types[i] {
+                continue;
+            }
+            // Drop this optional-form arm if a sibling arm is the matching
+            // required form (either the unchanged text equals the
+            // normalized form, or another sibling's required form equals
+            // ours — handles two optional forms whose required-equivalents
+            // collapse together).
+            let has_required_sibling = types
+                .iter()
+                .enumerate()
+                .any(|(j, sibling)| j != i && sibling == required_form);
+            if has_required_sibling {
+                to_drop[i] = true;
+            }
+        }
+        let mut idx = 0;
+        types.retain(|_| {
+            let keep = !to_drop[idx];
+            idx += 1;
+            keep
+        });
+    }
+
+    /// Produce the "required-parameter" canonical form of a function-type
+    /// text by replacing every `param?: T` token with `param: T` at the top
+    /// level of the parameter list. Returns `None` if the input does not
+    /// look like a function or constructor type (no `=>` or no parameter
+    /// list). Only walks the FIRST parenthesized group at the start of the
+    /// text — the parameter list — so optional members of nested object
+    /// types in the return type are never touched.
+    fn function_text_required_param_form(type_text: &str) -> Option<String> {
+        if !type_text.contains("=>") {
+            return None;
+        }
+        let bytes = type_text.as_bytes();
+        // Skip optional `new ` prefix (constructor types).
+        let mut start = 0;
+        while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+            start += 1;
+        }
+        if type_text[start..].starts_with("new ") {
+            start += 4;
+            while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+                start += 1;
+            }
+        }
+        if start >= bytes.len() || bytes[start] != b'(' {
+            return None;
+        }
+        let mut depth = 0usize;
+        let mut end = start;
+        while end < bytes.len() {
+            match bytes[end] {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end += 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            end += 1;
+        }
+        if depth != 0 {
+            return None;
+        }
+        let prefix = &type_text[..start];
+        let params = &type_text[start..end];
+        let suffix = &type_text[end..];
+
+        // Strip `?` immediately preceding `:` at the top level of `params`.
+        // Skip over nested parens/brackets/braces/quotes.
+        let pb = params.as_bytes();
+        let mut out = String::with_capacity(params.len());
+        let mut i = 0;
+        let mut paren = 0i32;
+        let mut bracket = 0i32;
+        let mut brace = 0i32;
+        let mut angle = 0i32;
+        while i < pb.len() {
+            let ch = pb[i];
+            match ch {
+                b'(' => paren += 1,
+                b')' => paren -= 1,
+                b'[' => bracket += 1,
+                b']' => bracket -= 1,
+                b'{' => brace += 1,
+                b'}' => brace -= 1,
+                b'<' => angle += 1,
+                b'>' => angle -= 1,
+                b'"' | b'\'' => {
+                    let quote = ch;
+                    out.push(ch as char);
+                    i += 1;
+                    while i < pb.len() {
+                        let c = pb[i];
+                        out.push(c as char);
+                        i += 1;
+                        if c == b'\\' && i < pb.len() {
+                            out.push(pb[i] as char);
+                            i += 1;
+                            continue;
+                        }
+                        if c == quote {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+            // Detect `?:` at depth==1 (top level of param list — outer paren counts as 1).
+            if ch == b'?'
+                && paren == 1
+                && bracket == 0
+                && brace == 0
+                && angle == 0
+                && i + 1 < pb.len()
+                && pb[i + 1] == b':'
+            {
+                // Skip the `?`, keep the `:` next iteration.
+                i += 1;
+                continue;
+            }
+            out.push(ch as char);
+            i += 1;
+        }
+        Some(format!("{prefix}{out}{suffix}"))
     }
 
     fn expand_object_union_arms_from_sibling_properties(types: &mut [String]) {
