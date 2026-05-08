@@ -3865,10 +3865,14 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                     // User symbol - use remapped ID
                     remapped_file_locals.set(name.clone(), new_sym_id);
                     // Script-file top-levels are globally visible by default. For ordinary
-                    // external modules, keep pure type-only top-level declarations file-scoped so
-                    // unimported type aliases/interfaces do not leak across files. Value-bearing
-                    // exports still stay visible because CommonJS/export-assignment and declaration
-                    // emit paths rely on them being reachable cross-file.
+                    // external modules, top-level declarations stay file-scoped — both
+                    // type-only (interfaces, type aliases) and value-bearing
+                    // (const/let/var/function) declarations are only reachable via an
+                    // explicit `import`. Exposing module exports through `program.globals`
+                    // would cause every file's `file_locals` (assembled by
+                    // `build_merged_file_locals`) to see exported names from unrelated
+                    // modules, suppressing TS2304 ("Cannot find name") diagnostics for
+                    // references that should be unresolved (issue #3504).
                     let sym_info = global_symbols.get(new_sym_id);
                     let is_alias =
                         sym_info.is_some_and(|s| s.flags & crate::binder::symbol_flags::ALIAS != 0);
@@ -3878,15 +3882,6 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                         .source_files
                         .first()
                         .is_some_and(|sf| sf.is_declaration_file);
-                    // Only top-level VALUE declarations that are actually exported
-                    // from the module should remain globally visible. Otherwise a
-                    // module-private const/let/var/function leaks into other files'
-                    // scopes via `program.globals` seeding of `file_locals`,
-                    // causing missing TS2304 ("Cannot find name") diagnostics for
-                    // references that should be unresolved.
-                    let has_value = sym_info.is_some_and(|s| {
-                        s.flags & crate::binder::symbol_flags::VALUE != 0 && s.is_exported
-                    });
                     let is_module_decl = sym_info.is_some_and(|s| {
                         s.flags
                             & (crate::binder::symbol_flags::VALUE_MODULE
@@ -3895,10 +3890,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                     });
                     let is_global_augmentation = result.global_augmentations.contains_key(name);
                     let is_truly_global = (!is_alias
-                        && (!result.is_external_module
-                            || is_declaration_file
-                            || has_value
-                            || is_module_decl))
+                        && (!result.is_external_module || is_declaration_file || is_module_decl))
                         || is_umd
                         || is_global_augmentation;
                     if is_truly_global {

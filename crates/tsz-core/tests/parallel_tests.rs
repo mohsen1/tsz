@@ -430,6 +430,80 @@ fn test_build_merged_file_locals_empty_locals_returns_globals() {
 }
 
 #[test]
+fn test_external_module_exports_do_not_leak_to_globals() {
+    // Issue #3504: a value declared (and exported) inside an external module
+    // must remain reachable only through `import`. When the merge phase
+    // forwards it into `program.globals`, every file's `file_locals`
+    // (assembled by `build_merged_file_locals`) sees the export, suppressing
+    // TS2304 ("Cannot find name") for unimported references in unrelated
+    // files. This test pins the merge-phase contract: exported values from
+    // external-module source files must NOT appear in `program.globals`.
+    //
+    // Naming the regression after the issue keeps the structural intent
+    // visible — the rule is "exports of external modules are not globals",
+    // independent of whether the value happens to be `leaked`, `value`, etc.
+    let files = vec![
+        // Both files end up as external modules thanks to top-level `export`.
+        (
+            "a.ts".to_string(),
+            "export const leaked = 1;\nexport type Foo = number;\n".to_string(),
+        ),
+        ("b.ts".to_string(), "export {};\n".to_string()),
+    ];
+
+    let program = compile_files(files);
+
+    assert!(
+        !program.globals.has("leaked"),
+        "exported value `leaked` from an external module must not leak into program.globals"
+    );
+    assert!(
+        !program.globals.has("Foo"),
+        "exported type `Foo` from an external module must not leak into program.globals"
+    );
+
+    // And the merged per-file table for the unrelated module `b.ts` must
+    // not see the export either — that's the actual lookup channel used by
+    // the post-merge per-file binders during identifier resolution.
+    let b_idx = program
+        .files
+        .iter()
+        .position(|f| f.file_name == "b.ts")
+        .expect("b.ts in program");
+    let merged = program.build_merged_file_locals(b_idx);
+    assert!(
+        !merged.has("leaked"),
+        "b.ts merged file_locals must not include unimported export `leaked` from a.ts"
+    );
+    assert!(
+        !merged.has("Foo"),
+        "b.ts merged file_locals must not include unimported export `Foo` from a.ts"
+    );
+}
+
+#[test]
+fn test_script_file_top_levels_remain_global() {
+    // Counterpart to the regression test above: in script-mode files (no
+    // `import`/`export`, not declaration files), top-level declarations
+    // remain implicitly global, matching tsc. The merge phase must keep
+    // adding them to `program.globals` so cross-file refs resolve.
+    let files = vec![
+        ("a.ts".to_string(), "let alpha = 1;".to_string()),
+        ("b.ts".to_string(), "let beta = 2;".to_string()),
+    ];
+    let program = compile_files(files);
+
+    assert!(
+        program.globals.has("alpha"),
+        "script-file top-level `alpha` must remain in program.globals"
+    );
+    assert!(
+        program.globals.has("beta"),
+        "script-file top-level `beta` must remain in program.globals"
+    );
+}
+
+#[test]
 fn test_merge_symbol_id_remapping() {
     let files = vec![
         ("a.ts".to_string(), "let x = 1;".to_string()),
@@ -3238,7 +3312,9 @@ fn test_compile_large_program() {
 
 #[test]
 fn test_compile_with_exports() {
-    // Test that export function/class/const are properly bound
+    // Test that export function/class/const are properly bound and that
+    // they remain *file-scoped* — exports of external modules are only
+    // reachable via `import`, never as bare globals (issue #3504).
     let files = vec![
         (
             "a.ts".to_string(),
@@ -3254,18 +3330,44 @@ fn test_compile_with_exports() {
     let program = compile_files(files);
 
     assert_eq!(program.files.len(), 3);
-    // All exported declarations should be in globals
+    // Exported declarations of external modules MUST NOT appear in globals.
+    // tsc reports TS2304 ("Cannot find name") for unimported references to
+    // them; tsz must do the same. The export surface lives in
+    // `program.module_exports` keyed by file, not in the global table.
     assert!(
-        program.globals.has("add"),
-        "Exported function 'add' should be in globals"
+        !program.globals.has("add"),
+        "Exported function 'add' must not leak into program.globals"
     );
     assert!(
-        program.globals.has("Calculator"),
-        "Exported class 'Calculator' should be in globals"
+        !program.globals.has("Calculator"),
+        "Exported class 'Calculator' must not leak into program.globals"
     );
     assert!(
-        program.globals.has("PI"),
-        "Exported const 'PI' should be in globals"
+        !program.globals.has("PI"),
+        "Exported const 'PI' must not leak into program.globals"
+    );
+
+    // The exports themselves must still be retrievable through the
+    // module_exports table — that's the channel `import { add } from
+    // './a'` consults, and it must continue to find them.
+    let module_exports = program.module_exports.as_ref();
+    assert!(
+        module_exports
+            .get("a.ts")
+            .is_some_and(|exports| exports.has("add")),
+        "module_exports for a.ts should expose `add`"
+    );
+    assert!(
+        module_exports
+            .get("b.ts")
+            .is_some_and(|exports| exports.has("Calculator")),
+        "module_exports for b.ts should expose `Calculator`"
+    );
+    assert!(
+        module_exports
+            .get("c.ts")
+            .is_some_and(|exports| exports.has("PI")),
+        "module_exports for c.ts should expose `PI`"
     );
 }
 

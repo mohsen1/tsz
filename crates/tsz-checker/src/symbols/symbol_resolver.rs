@@ -617,16 +617,10 @@ impl<'a> CheckerState<'a> {
                     let is_private_external_module_type = identifier_is_type_position
                         && !symbol.has_any_flags(symbol_flags::VALUE)
                         && is_cross_module_private;
-                    // Reject cross-module values that the consuming file
-                    // never imports — exported or not. tsc emits TS2304
-                    // for `leaked.toFixed()` in `b.ts` when `b.ts` does
-                    // not import `leaked` from `a.ts`, regardless of
-                    // whether `a.ts` exports `leaked` (#3504). The class
-                    // member fallthrough below preserves the
-                    // class-instance-member detector path (TS2663
-                    // "Did you mean 'this.X'?") for inherited fields,
-                    // because that branch resolves through the class
-                    // hierarchy rather than this raw cross-file lookup.
+                    // A value declared in another external module is only
+                    // reachable via explicit import, even when it is exported
+                    // from that module. Without an import, the bare identifier
+                    // must remain unresolved so the checker can emit TS2304.
                     let is_private_external_module_value = !identifier_is_type_position
                         && symbol.has_any_flags(symbol_flags::VALUE)
                         && is_cross_module_private;
