@@ -377,7 +377,7 @@ impl<'a> CheckerState<'a> {
                 && !uses_system_namespace_default
                 && !has_default_binding
             {
-                self.emit_module_has_no_default_export_at(module_name, clause.name);
+                self.emit_no_default_export_error(module_name, clause.name, is_source_file);
             } else if self.ctx.resolved_modules.as_ref().is_some_and(|resolved| {
                 crate::module_resolution::module_specifier_candidates(module_name)
                     .iter()
