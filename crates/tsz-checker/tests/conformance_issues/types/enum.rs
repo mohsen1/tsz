@@ -171,6 +171,45 @@ function mixin<T extends { new (...args: any[]): {} }>(superclass: T) {
 }
 
 #[test]
+fn test_array_flat_lib_alias_return_does_not_emit_ts5088() {
+    let lib_files = tsz_checker::test_utils::load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2019.array.d.ts",
+    ]);
+    if lib_files.len() < 2 {
+        return;
+    }
+
+    let source = r#"
+function foo<T>(arr: T[], depth: number) {
+    return arr.flat(depth);
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            emit_declarations: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    );
+    let diagnostics: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.message_text))
+        .collect();
+
+    assert!(
+        !has_error(&diagnostics, 5088),
+        "Did not expect TS5088 for Array#flat's inferred declaration return type \
+         through the named lib FlatArray alias. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_explicit_return_annotation_suppresses_ts5088() {
     let source = r#"
 type BadFlatArray<Arr, Depth extends number> = {obj: {
