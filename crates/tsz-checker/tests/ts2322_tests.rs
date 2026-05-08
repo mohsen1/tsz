@@ -1072,6 +1072,34 @@ takesString(id);
 }
 
 #[test]
+fn template_literal_target_preserves_string_literal_source_display() {
+    let source = r#"
+type Foo1<T> = T extends `*${infer U}*` ? U : never;
+type T02 = Foo1<'*hello*'>;
+
+let x: `*${string}*`;
+x = 'hello';
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .expect("expected TS2322");
+
+    assert!(
+        ts2322
+            .message_text
+            .contains("Type '\"hello\"' is not assignable"),
+        "expected literal source display, got {ts2322:?}"
+    );
+    assert!(
+        !ts2322.message_text.contains("Foo1<"),
+        "literal source display should not leak conditional alias provenance: {ts2322:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_generator_yield_missing_value() {
     let source = r"
         interface IterableIterator<T> {}

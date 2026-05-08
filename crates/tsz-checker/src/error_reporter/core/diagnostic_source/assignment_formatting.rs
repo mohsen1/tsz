@@ -106,6 +106,12 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        let in_arith_compound = self.in_arithmetic_compound_assignment_context(anchor_idx);
+        if let Some(display) = self.literal_assignment_source_display_for_target(target, anchor_idx)
+        {
+            return display;
+        }
+
         if let Some(display) = self.preferred_evaluated_source_display(source, target) {
             return display;
         }
@@ -117,8 +123,6 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.related_generic_indexed_access_source_display(source, target) {
             return display;
         }
-
-        let in_arith_compound = self.in_arithmetic_compound_assignment_context(anchor_idx);
 
         if !in_arith_compound
             && self.array_literal_element_source_widening_required_for_display(
@@ -201,6 +205,20 @@ impl<'a> CheckerState<'a> {
             let node_type_matches_source =
                 expr_display_type != TypeId::ERROR && !node_is_target_not_source;
             if node_type_matches_source {
+                if !in_arith_compound
+                    && crate::query_boundaries::common::is_template_literal_type(
+                        self.ctx.types,
+                        target,
+                    )
+                    && let Some(display) = self.literal_expression_display(expr_idx)
+                    && literal_display_appropriate_for_undefined_null_target(
+                        self.ctx.types,
+                        target,
+                        &display,
+                    )
+                {
+                    return display;
+                }
                 let preserve_literal_surface = self.target_preserves_literal_surface(target);
                 if let Some(annotation_text) =
                     self.declared_diagnostic_source_annotation_text(expr_idx)
@@ -1429,6 +1447,24 @@ impl<'a> CheckerState<'a> {
             .parent_of(expr_idx)
             .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
             .is_some_and(|parent| parent.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+    }
+
+    pub(in crate::error_reporter) fn literal_assignment_source_display_for_target(
+        &mut self,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> Option<String> {
+        if self.in_arithmetic_compound_assignment_context(anchor_idx)
+            || !crate::query_boundaries::common::is_template_literal_type(self.ctx.types, target)
+        {
+            return None;
+        }
+        let expr_idx = self
+            .assignment_source_expression(anchor_idx)
+            .or_else(|| self.direct_diagnostic_source_expression(anchor_idx))?;
+        let display = self.literal_expression_display(expr_idx)?;
+        literal_display_appropriate_for_undefined_null_target(self.ctx.types, target, &display)
+            .then_some(display)
     }
 }
 

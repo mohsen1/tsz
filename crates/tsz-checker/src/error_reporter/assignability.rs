@@ -1064,9 +1064,7 @@ impl<'a> CheckerState<'a> {
         let mut target_str =
             self.rewrite_target_display_for_non_literal_assignability(target, target_str);
 
-        if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
-            source_str = self.format_type_diagnostic(unfolded);
-        }
+        source_str = self.apply_ts2739_nonliteral(source, source_str);
         if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
             target_str = self.format_type_diagnostic(unfolded);
         }
@@ -1123,9 +1121,7 @@ impl<'a> CheckerState<'a> {
         if let Some(rewritten) = rewrite_application_alias(self, target, &target_str) {
             target_str = rewritten;
         }
-        if let Some(display) = self.evaluated_literal_alias_source_display(source) {
-            source_str = display;
-        }
+        source_str = self.apply_eval_alias_nonliteral(source, source_str);
         if let Some(display) = self.evaluated_literal_alias_source_display(target) {
             target_str = display;
         }
@@ -1372,6 +1368,10 @@ impl<'a> CheckerState<'a> {
             let widened = self.widen_type_for_display(source);
             source_str = self.format_assignability_type_for_message(widened, target);
         }
+        if let Some(display) = self.literal_assignment_source_display_for_target(target, anchor_idx)
+        {
+            source_str = display;
+        }
         let target_str = self.format_type_for_diagnostic_role(
             target,
             DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
@@ -1379,9 +1379,7 @@ impl<'a> CheckerState<'a> {
         let (source_str, mut target_str) =
             self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
         let mut source_str = source_str;
-        if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
-            source_str = self.format_type_diagnostic(unfolded);
-        }
+        source_str = self.apply_ts2739_nonliteral(source, source_str);
         if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
             target_str = self.format_type_diagnostic(unfolded);
         }
