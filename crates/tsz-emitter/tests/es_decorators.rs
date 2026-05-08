@@ -168,6 +168,75 @@ fn test_class_descriptor_temp_unchanged_when_no_collision() {
     );
 }
 
+/// `_classExtraInitializers` collides with a user binding referenced inside
+/// the class body — the transform must rename its temp to `_1`. (#3091)
+#[test]
+fn test_class_extra_initializers_temp_renamed_when_user_binding_collides() {
+    let source = "\
+@dec
+class C {
+    static value = _classExtraInitializers;
+}";
+    let output = emit_decorator(source);
+    assert!(
+        output.contains("let _classExtraInitializers_1 = [];"),
+        "Expected _classExtraInitializers temp to be renamed. Output:\n{output}"
+    );
+    assert!(
+        !output.contains("let _classExtraInitializers = [];"),
+        "Generated temp must not keep the colliding name. Output:\n{output}"
+    );
+    assert!(
+        output.contains("static value = _classExtraInitializers;"),
+        "User binding reference must be preserved unchanged. Output:\n{output}"
+    );
+}
+
+/// `_classThis` collides with a user binding — rename. (#3091)
+#[test]
+fn test_class_this_temp_renamed_when_user_binding_collides() {
+    let source = "\
+@dec
+class C {
+    static value = _classThis;
+}";
+    let output = emit_decorator(source);
+    assert!(
+        output.contains("let _classThis_1;"),
+        "Expected _classThis temp to be renamed. Output:\n{output}"
+    );
+    assert!(
+        output.contains("static value = _classThis;"),
+        "User binding reference must be preserved unchanged. Output:\n{output}"
+    );
+}
+
+/// All three of the issue's listed colliding helpers (#3091) must be renamed
+/// together when the class body references each one.
+#[test]
+fn test_all_three_decorator_temps_renamed_together() {
+    let source = "\
+@dec
+class C {
+    static a = _classDescriptor;
+    static b = _classExtraInitializers;
+    static c = _classThis;
+}";
+    let output = emit_decorator(source);
+    assert!(
+        output.contains("let _classDescriptor_1;"),
+        "Expected _classDescriptor renamed.\n{output}"
+    );
+    assert!(
+        output.contains("let _classExtraInitializers_1 = [];"),
+        "Expected _classExtraInitializers renamed.\n{output}"
+    );
+    assert!(
+        output.contains("let _classThis_1;"),
+        "Expected _classThis renamed.\n{output}"
+    );
+}
+
 // =============================================================================
 // Method Decorator
 // =============================================================================
