@@ -2745,8 +2745,17 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return Some("void".to_string());
         }
-        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
-        self.js_parameter_type_text(params, returned_identifier)
+        if let Some(returned_identifier) = self.function_body_unique_return_identifier(body_idx)
+            && let Some(type_text) = self.js_parameter_type_text(params, returned_identifier)
+        {
+            return Some(type_text);
+        }
+
+        self.function_body_single_return_expression(body_idx)
+            .and_then(|expr_idx| {
+                self.js_constructor_assignment_expression_type_text(expr_idx, params, 0)
+            })
+            .filter(|type_text| !type_text.is_empty() && type_text != "any")
     }
 
     pub(in crate::declaration_emitter) fn emit_js_function_like_class_if_needed(

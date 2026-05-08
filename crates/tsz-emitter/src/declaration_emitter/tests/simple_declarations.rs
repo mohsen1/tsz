@@ -1731,6 +1731,27 @@ exports.foo = foo;
 }
 
 #[test]
+fn test_js_commonjs_object_export_function_infers_binary_return_from_jsdoc_param() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {string} a
+ */
+function bar(a) {
+    return a + a;
+}
+
+module.exports = { bar };
+"#,
+    );
+
+    assert!(
+        output.contains("export function bar(a: string): string;"),
+        "Expected JSDoc parameter type to infer the CommonJS function return: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_default_function_export_is_renamed_to_default_alias() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
