@@ -1096,6 +1096,30 @@ export = Foo;
 }
 
 #[test]
+fn test_inferred_const_initializer_call_preserves_local_alias() {
+    // Regression for #3755: declaration emit was dropping a local type alias
+    // that an `export const` *only* references through the inferred type of
+    // its call-expression initializer. The emitted .d.ts referenced the
+    // alias but never declared it, producing invalid output.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Box = { value: number };
+function make(): Box { return { value: 1 }; }
+export const item = make();
+"#,
+    );
+    assert!(
+        output.contains("type Box ="),
+        "Expected the local `type Box` to be retained when `export const item = make()` \
+         depends on it through the callee's declared return-type annotation: {output}"
+    );
+    assert!(
+        output.contains("export declare const item: Box"),
+        "Expected the inferred const to keep its alias-named annotation: {output}"
+    );
+}
+
+#[test]
 fn test_export_default_identifier_keeps_ambient_value_declaration() {
     // Regression for uniqueSymbolPropertyDeclarationEmit: a `declare const X`
     // (no initializer, with a value-side type annotation) whose only public
