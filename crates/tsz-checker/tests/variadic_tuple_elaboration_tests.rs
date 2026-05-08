@@ -175,6 +175,33 @@ v03 = [0, "abc", 1, "def"];
 }
 
 #[test]
+fn normalized_variadic_tuple_alias_target_uses_structural_display() {
+    let diags = check_source_diagnostics(
+        r#"
+type Tup3<T extends unknown[], U extends unknown[], V extends unknown[]> = [...T, ...U, ...V];
+type V20 = Tup3<[number], string[], [number]>;
+declare let v20: V20;
+v20 = [0];
+"#,
+    );
+
+    let ts2322 = diags
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+    assert!(
+        ts2322
+            .message_text
+            .contains("type '[number, ...string[], number]'"),
+        "expected normalized tuple target display, got {ts2322:?}"
+    );
+    assert!(
+        !ts2322.message_text.contains("Tup3<"),
+        "normalized tuple targets should not expose the helper alias application: {ts2322:?}"
+    );
+}
+
+#[test]
 fn variadic_rest_tuple_call_trailing_mismatch_uses_tuple_level_error() {
     let diags = check_source_diagnostics(
         r#"

@@ -721,9 +721,8 @@ impl<'a> CheckerState<'a> {
             if target_is_generic_callable {
                 return self.format_annotation_like_type(&display);
             }
-            if display.trim_start().starts_with('[')
-                && let Some(tuple_display) =
-                    self.raw_tuple_assignment_target_display_without_alias(display_target)
+            if let Some(tuple_display) =
+                self.raw_tuple_assignment_target_display_without_alias(display_target, true)
             {
                 return tuple_display;
             }
@@ -784,7 +783,7 @@ impl<'a> CheckerState<'a> {
             return self.format_assignability_type_for_message(display_target, source);
         }
         if let Some(tuple_display) =
-            self.raw_tuple_assignment_target_display_without_alias(display_target)
+            self.raw_tuple_assignment_target_display_without_alias(display_target, true)
         {
             return tuple_display;
         }
@@ -836,21 +835,126 @@ impl<'a> CheckerState<'a> {
     fn raw_tuple_assignment_target_display_without_alias(
         &mut self,
         target: TypeId,
+        allow_direct_tuple: bool,
     ) -> Option<String> {
-        if !crate::query_boundaries::common::is_tuple_type(self.ctx.types, target) {
+        let mut current = target;
+        let mut saw_generic_application = false;
+        let display_target = 'resolved: {
+            for _ in 0..4 {
+                if crate::query_boundaries::common::is_tuple_type(self.ctx.types, current) {
+                    if !allow_direct_tuple
+                        && (crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            current,
+                        ) || self.type_alias_body_is_generic_application(current))
+                    {
+                        saw_generic_application = true;
+                        if crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            current,
+                        ) {
+                            let evaluated = self.evaluate_tuple_display_candidate(current);
+                            if evaluated != current && evaluated != TypeId::ERROR {
+                                current = evaluated;
+                                continue;
+                            }
+                        }
+                    }
+                    break 'resolved current;
+                }
+                if current == TypeId::ERROR {
+                    return None;
+                }
+                saw_generic_application |= crate::query_boundaries::common::is_generic_application(
+                    self.ctx.types,
+                    current,
+                ) || self
+                    .type_alias_body_is_generic_application(current);
+                let evaluated = self.evaluate_tuple_display_candidate(current);
+                if evaluated == current {
+                    return None;
+                }
+                current = evaluated;
+            }
+            if crate::query_boundaries::common::is_tuple_type(self.ctx.types, current) {
+                current
+            } else {
+                return None;
+            }
+        };
+        if !allow_direct_tuple && !saw_generic_application {
             return None;
         }
-        if crate::query_boundaries::common::lazy_def_id(self.ctx.types, target).is_some() {
+        if crate::query_boundaries::common::lazy_def_id(self.ctx.types, display_target).is_some() {
             return None;
         }
-        let def_id = self.ctx.definition_store.find_def_for_type(target)?;
+        self.format_raw_tuple_assignment_target(display_target)
+    }
+
+    fn evaluate_tuple_display_candidate(&mut self, type_id: TypeId) -> TypeId {
+        let evaluated = self.evaluate_application_type(type_id);
+        if evaluated != type_id && evaluated != TypeId::ERROR {
+            return evaluated;
+        }
+        let evaluated = self.evaluate_type_for_assignability(type_id);
+        if evaluated != type_id && evaluated != TypeId::ERROR {
+            return evaluated;
+        }
+        let evaluated = self.evaluate_type_with_env(type_id);
+        if evaluated != type_id && evaluated != TypeId::ERROR {
+            return evaluated;
+        }
+        type_id
+    }
+
+    fn format_raw_tuple_assignment_target(&mut self, type_id: TypeId) -> Option<String> {
+        let elements = crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)?;
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()
             .with_display_properties()
-            .with_skip_type_alias_def_id(def_id)
+            .with_skip_application_alias_names()
             .with_preserve_optional_parameter_surface_syntax(true);
-        Some(formatter.format(target).into_owned())
+        let mut formatted = Vec::with_capacity(elements.len());
+        for element in elements {
+            let type_id = if element.optional && !element.rest {
+                crate::query_boundaries::common::remove_undefined(self.ctx.types, element.type_id)
+            } else {
+                element.type_id
+            };
+            let ty = formatter.format(type_id).into_owned();
+            let rest = if element.rest { "..." } else { "" };
+            let optional = if element.optional && !element.rest {
+                "?"
+            } else {
+                ""
+            };
+            if let Some(name) = element.name {
+                formatted.push(format!(
+                    "{rest}{}{optional}: {ty}",
+                    self.ctx.types.resolve_atom(name)
+                ));
+            } else {
+                formatted.push(format!("{rest}{ty}{optional}"));
+            }
+        }
+        let display = format!("[{}]", formatted.join(", "));
+        Some(display)
+    }
+
+    fn type_alias_body_is_generic_application(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(type_id))
+            .and_then(|def_id| self.ctx.definition_store.get(def_id))
+            .is_some_and(|def| {
+                def.kind == tsz_solver::def::DefKind::TypeAlias
+                    && def.body.is_some_and(|body| {
+                        crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            body,
+                        )
+                    })
+            })
     }
 
     fn should_evaluate_indexed_access_annotation_for_assignment(display: &str) -> bool {

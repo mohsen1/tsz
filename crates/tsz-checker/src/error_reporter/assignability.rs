@@ -1067,7 +1067,7 @@ impl<'a> CheckerState<'a> {
         if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
             source_str = self.format_type_diagnostic(unfolded);
         }
-        if let Some(unfolded) = self.ts2739_alias_of_application_source_display(target) {
+        if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
             target_str = self.format_type_diagnostic(unfolded);
         }
 
@@ -1382,7 +1382,7 @@ impl<'a> CheckerState<'a> {
         if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
             source_str = self.format_type_diagnostic(unfolded);
         }
-        if let Some(unfolded) = self.ts2739_alias_of_application_source_display(target) {
+        if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
             target_str = self.format_type_diagnostic(unfolded);
         }
         if let Some(display) = self.static_schema_array_structural_display(source, target) {
@@ -1897,7 +1897,7 @@ impl<'a> CheckerState<'a> {
             if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
                 src_str = self.format_type_diagnostic(unfolded);
             }
-            if let Some(unfolded) = self.ts2739_alias_of_application_source_display(target) {
+            if let Some(unfolded) = self.ts2739_alias_target_display(target, &tgt_str) {
                 tgt_str = self.format_type_diagnostic(unfolded);
             }
             if let Some(display) = self.static_schema_array_structural_display(source, target) {
