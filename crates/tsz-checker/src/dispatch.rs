@@ -1436,11 +1436,24 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == syntax_kind_ext::UNION_TYPE
                 || k == syntax_kind_ext::INTERSECTION_TYPE
                 || k == syntax_kind_ext::ARRAY_TYPE
+                || k == syntax_kind_ext::TUPLE_TYPE
+                || k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE
                 || k == syntax_kind_ext::FUNCTION_TYPE
                 || k == syntax_kind_ext::CONSTRUCTOR_TYPE
                 || k == syntax_kind_ext::TYPE_LITERAL
                 || k == syntax_kind_ext::TYPE_QUERY
-                || k == syntax_kind_ext::TYPE_OPERATOR =>
+                || k == syntax_kind_ext::TYPE_OPERATOR
+                || k == syntax_kind_ext::CONDITIONAL_TYPE
+                || k == syntax_kind_ext::INFER_TYPE
+                || k == syntax_kind_ext::PARENTHESIZED_TYPE
+                || k == syntax_kind_ext::THIS_TYPE
+                || k == syntax_kind_ext::INDEXED_ACCESS_TYPE
+                || k == syntax_kind_ext::MAPPED_TYPE
+                || k == syntax_kind_ext::LITERAL_TYPE
+                || k == syntax_kind_ext::NAMED_TUPLE_MEMBER
+                || k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE
+                || k == syntax_kind_ext::IMPORT_TYPE =>
             {
                 let mut checker = crate::TypeNodeChecker::new(&mut self.checker.ctx);
                 checker.check(idx)
@@ -1921,10 +1934,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     _ => TypeId::ANY,
                 }
             }
-            // Structural statement/export nodes can be reached by broad
+            // Structural statement/import/export nodes can be reached by broad
             // expression walks in real projects. They do not have a value type,
             // but they also should not poison checking with TypeId::ERROR.
-            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::NAMED_EXPORTS => TypeId::VOID,
+            k if k == syntax_kind_ext::BLOCK
+                || k == syntax_kind_ext::NAMED_IMPORTS
+                || k == syntax_kind_ext::NAMED_EXPORTS =>
+            {
+                TypeId::VOID
+            }
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(
