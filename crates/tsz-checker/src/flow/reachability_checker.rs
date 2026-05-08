@@ -635,6 +635,10 @@ impl<'a> CheckerState<'a> {
                 };
                 !self.call_expression_terminates_control_flow(expr_stmt.expression)
             }
+            // VARIABLE_STATEMENT falls through (handled by the wildcard arm
+            // below). TypeScript only treats expression-statement-level never
+            // calls as terminators of control flow; `const x = fail()` still
+            // leaves the function falling off the end and must surface TS2355.
             syntax_kind_ext::IF_STATEMENT => {
                 let Some(if_data) = self.ctx.arena.get_if_statement(node) else {
                     return true;
