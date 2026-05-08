@@ -1092,11 +1092,36 @@ impl<'a> CheckerState<'a> {
                 && let Some(jsdoc) = self.try_leading_jsdoc(comments, parent_node.pos, source_text)
                 && Self::jsdoc_contains_tag(&jsdoc, "type")
             {
+                // Issue #3956: `/** @type {*} */(expr)` (and the related
+                // broad casts `any`, `unknown`, `Object`, `Function`) do
+                // NOT provide a contextual parameter type for nested
+                // closures. tsc still reports TS7006 for closure params
+                // in those cases. Only suppress when the cast type
+                // could plausibly contribute a contextual signature.
+                if let Some(type_expr) = Self::extract_jsdoc_type_expression(&jsdoc)
+                    && Self::jsdoc_type_cast_is_broad(type_expr.trim())
+                {
+                    return false;
+                }
                 return true;
             }
             current = parent;
         }
         false
+    }
+
+    /// Whether a JSDoc `@type` cast type expression is "broad" — i.e.
+    /// it does not constrain nested closure parameters and so cannot
+    /// suppress TS7006 implicit-any diagnostics on them.
+    ///
+    /// Mirrors tsc's handling of `*`, `any`, `unknown`, `Object`,
+    /// and `Function` as cast types whose contextual contribution to
+    /// nested closure parameters is empty.
+    fn jsdoc_type_cast_is_broad(type_expr: &str) -> bool {
+        matches!(
+            type_expr,
+            "*" | "?" | "any" | "unknown" | "Object" | "object" | "Function"
+        )
     }
 
     /// Check if a node has a `/** @override */` JSDoc annotation.
