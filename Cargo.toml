@@ -51,7 +51,7 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 json5 = "0.4"
 serde-wasm-bindgen = "0.6"
-smallvec = "1.13"
+smallvec = { version = "1.13", features = ["serde"] }
 tempfile = "3"
 tracing = { version = "0.1", features = ["release_max_level_warn"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

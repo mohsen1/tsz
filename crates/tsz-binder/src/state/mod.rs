@@ -83,7 +83,7 @@ type IdentifierCacheStorage = CloneableRwLock<IdentifierCache>;
 /// Populated by the binder during its AST walk (zero-cost at check time).
 /// The checker queries these to decide whether to emit TS2318 diagnostics
 /// for missing global types like `IterableIterator`, `TypedPropertyDescriptor`, etc.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct FileFeatures(u8);
 
 impl FileFeatures {
@@ -112,7 +112,7 @@ impl FileFeatures {
 }
 
 /// Configuration options for the binder.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BinderOptions {
     /// ECMAScript target version.
     /// This affects language-specific behaviors like block-scoped function hoisting.
@@ -593,7 +593,7 @@ pub struct BinderState {
 /// Mirrors `tsz_solver::def::DefKind` but lives in the binder crate to avoid
 /// a circular dependency (solver depends on binder). The checker converts these
 /// to solver `DefKind` during `DefId` pre-population.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SemanticDefKind {
     /// Type alias: `type Foo = number`
     TypeAlias,
