@@ -23,6 +23,20 @@ if [ ! -f "$VERSIONS_FILE" ]; then
     exit 1
 fi
 
+# Symlink fast-path: in a worktree the TypeScript path is often a symlink to
+# the primary checkout's TypeScript (see scripts/setup/link-ts-submodule.sh).
+# Don't mutate the shared checkout from a worktree — verify and exit.
+if [ -L "$SUBMODULE_PATH" ]; then
+    LINKED_SHA=$(git -C "$SUBMODULE_PATH" rev-parse HEAD 2>/dev/null || echo "")
+    PINNED_SHA=$(grep '"current"' "$VERSIONS_FILE" | head -1 | sed 's/.*: *"\([a-f0-9]*\)".*/\1/')
+    if [ -n "$LINKED_SHA" ] && [ "$LINKED_SHA" = "$PINNED_SHA" ]; then
+        exit 0
+    fi
+    echo "WARN: TypeScript symlink target is at ${LINKED_SHA:0:12}, expected ${PINNED_SHA:0:12}." >&2
+    echo "      Run scripts/setup/reset-ts-submodule.sh in the primary checkout." >&2
+    exit 0
+fi
+
 # Extract the "current" SHA (portable: no jq dependency)
 PINNED_SHA=$(grep '"current"' "$VERSIONS_FILE" | head -1 | sed 's/.*: *"\([a-f0-9]*\)".*/\1/')
 
