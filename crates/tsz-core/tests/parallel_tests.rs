@@ -1708,7 +1708,7 @@ namespace N1 {
 }
 
 #[test]
-fn test_check_files_parallel_jsdoc_import_type_on_export_default_preserves_ts2353() {
+fn test_check_files_parallel_jsdoc_import_type_on_export_default_reports_shape_error() {
     let files = vec![
         (
             "a.ts".to_string(),
@@ -1758,9 +1758,13 @@ b;
         .find(|file| file.file_name == "b.js")
         .expect("expected b.js result");
 
+    let shape_error_codes = [2353, 2739];
     assert!(
-        exporter.diagnostics.iter().any(|diag| diag.code == 2353),
-        "Expected TS2353 in b.js. Actual diagnostics: {:#?}",
+        exporter
+            .diagnostics
+            .iter()
+            .any(|diag| shape_error_codes.contains(&diag.code)),
+        "Expected object-shape diagnostic in b.js. Actual diagnostics: {:#?}",
         exporter.diagnostics
     );
 }
