@@ -13,7 +13,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 #[inline]
-const fn should_cache_base_expr_result(
+pub(super) const fn should_cache_base_expr_result(
     type_argument_count: usize,
     has_active_type_parameter_scope: bool,
 ) -> bool {
@@ -1126,6 +1126,23 @@ impl<'a> CheckerState<'a> {
                 }
                 return resolved;
             }
+
+            if self.symbol_has_js_constructor_evidence(base_sym_id) {
+                let ctor_type = self
+                    .base_constructor_type_from_expression(expr_idx, type_arguments)
+                    .unwrap_or_else(|| self.get_type_of_symbol(base_sym_id));
+                if let Some(instance_type) =
+                    self.cross_file_js_constructor_instance_type(base_sym_id, ctor_type)
+                {
+                    if should_cache {
+                        self.ctx
+                            .base_instance_expr_cache
+                            .borrow_mut()
+                            .insert(expr_idx, Some(instance_type));
+                    }
+                    return Some(instance_type);
+                }
+            }
         }
 
         let ctor_type = self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
@@ -1978,18 +1995,5 @@ impl<'a> CheckerState<'a> {
 
         // Class is transparent - return the type parameter
         Some(base_type_param)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::should_cache_base_expr_result;
-
-    #[test]
-    fn base_expr_cache_predicate_only_caches_non_generic_paths() {
-        assert!(should_cache_base_expr_result(0, false));
-        assert!(!should_cache_base_expr_result(0, true));
-        assert!(!should_cache_base_expr_result(1, false));
-        assert!(!should_cache_base_expr_result(3, false));
     }
 }
