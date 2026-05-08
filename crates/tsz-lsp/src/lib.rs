@@ -134,6 +134,7 @@ pub use navigation::implementation::GoToImplementationProvider;
 // Call Hierarchy
 pub use hierarchy::call_hierarchy::{
     CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall, CallHierarchyProvider,
+    ImportResolutionRequest,
 };
 
 // Type Hierarchy
