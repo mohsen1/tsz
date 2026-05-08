@@ -46,6 +46,35 @@ impl<'a> CheckerState<'a> {
             .any(|child_idx| self.type_node_contains_scoped_type_parameter(child_idx))
     }
 
+    /// Substitute every in-scope type parameter in `type_id` with its declared
+    /// constraint (or `unknown` when the parameter is unconstrained). The
+    /// result is used to give a concrete instantiation of a generic-reference
+    /// type argument so that `is_assignable_to(concrete, target_constraint)`
+    /// can be evaluated without ambiguity. (#3063)
+    pub(super) fn scoped_type_param_substituted_form(&self, type_id: TypeId) -> TypeId {
+        if self.ctx.type_parameter_scope.is_empty() {
+            return type_id;
+        }
+        let db = self.ctx.types.as_type_database();
+        let mut subst = tsz_solver::TypeSubstitution::new();
+        for (name, &scope_type_id) in &self.ctx.type_parameter_scope {
+            let bound =
+                crate::query_boundaries::common::type_parameter_constraint(db, scope_type_id)
+                    .unwrap_or(TypeId::UNKNOWN);
+            let bound = if bound == scope_type_id {
+                TypeId::UNKNOWN
+            } else {
+                bound
+            };
+            let atom = self.ctx.types.intern_string(name);
+            subst.insert(atom, bound);
+        }
+        if subst.is_empty() {
+            return type_id;
+        }
+        crate::query_boundaries::common::instantiate_type(self.ctx.types, type_id, &subst)
+    }
+
     pub(super) fn required_mapped_constraint_source_is_required_and_arg_satisfies(
         &mut self,
         type_arg: TypeId,
