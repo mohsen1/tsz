@@ -359,6 +359,7 @@ impl<'a> CheckerState<'a> {
         );
 
         // First try the binder's resolver which checks scope chain and file_locals
+        let identifier_is_type_position_for_first = self.is_identifier_in_type_position(idx);
         let result = self.ctx.binder.resolve_identifier_with_filter(
             self.ctx.arena,
             idx,
@@ -377,6 +378,39 @@ impl<'a> CheckerState<'a> {
                             decl_idx != owner_idx
                                 && self.node_is_within_decorator_owner(decl_idx, owner_idx)
                         })
+                    {
+                        return false;
+                    }
+                    // Reject cross-module values that the consuming file
+                    // never imports — bare-identifier resolution must not
+                    // pick up another module's exports as if they were
+                    // globals (#3504). Class-member symbols continue to
+                    // be filtered by the dedicated class-member branch
+                    // below; type-position references are handled by the
+                    // post-resolution filter further down.
+                    let is_cross_module_private = !self.ctx.symbol_is_from_lib(sym_id)
+                        && !symbol.is_umd_export
+                        && symbol.decl_file_idx != u32::MAX
+                        && symbol.decl_file_idx != self.ctx.current_file_idx as u32
+                        && self
+                            .ctx
+                            .get_binder_for_file(symbol.decl_file_idx as usize)
+                            .is_some_and(|binder| {
+                                binder.is_external_module()
+                                    && !binder
+                                        .global_augmentations
+                                        .contains_key(symbol.escaped_name.as_str())
+                            })
+                        && !self
+                            .ctx
+                            .get_arena_for_file(symbol.decl_file_idx)
+                            .source_files
+                            .first()
+                            .is_some_and(|sf| sf.is_declaration_file);
+                    if !identifier_is_type_position_for_first
+                        && symbol.has_any_flags(symbol_flags::VALUE)
+                        && is_cross_module_private
+                        && !Self::is_class_member_symbol(symbol.flags)
                     {
                         return false;
                     }
@@ -583,14 +617,18 @@ impl<'a> CheckerState<'a> {
                     let is_private_external_module_type = identifier_is_type_position
                         && !symbol.has_any_flags(symbol_flags::VALUE)
                         && is_cross_module_private;
-                    // For value position, downstream diagnostic paths (e.g. the
-                    // class initializer TS2663 detector) rely on resolving
-                    // exported cross-module values here so they can emit a
-                    // more specific diagnostic. Only reject truly private
-                    // (non-exported) cross-module values.
+                    // Reject cross-module values that the consuming file
+                    // never imports — exported or not. tsc emits TS2304
+                    // for `leaked.toFixed()` in `b.ts` when `b.ts` does
+                    // not import `leaked` from `a.ts`, regardless of
+                    // whether `a.ts` exports `leaked` (#3504). The class
+                    // member fallthrough below preserves the
+                    // class-instance-member detector path (TS2663
+                    // "Did you mean 'this.X'?") for inherited fields,
+                    // because that branch resolves through the class
+                    // hierarchy rather than this raw cross-file lookup.
                     let is_private_external_module_value = !identifier_is_type_position
                         && symbol.has_any_flags(symbol_flags::VALUE)
-                        && !symbol.is_exported
                         && is_cross_module_private;
                     if is_private_external_module_type || is_private_external_module_value {
                         return false;
