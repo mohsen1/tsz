@@ -232,6 +232,56 @@ pub fn load_default_lib_files() -> Vec<Arc<LibFile>> {
     load_lib_files(DEFAULT_LIB_NAMES)
 }
 
+/// Roots probed by [`load_compiled_lib_files`], ordered by preference.
+/// These point at directories where TypeScript's own compiled lib files
+/// (with the `lib.` prefix preserved, e.g. `lib.es5.d.ts`) live.
+fn compiled_lib_test_roots() -> Vec<PathBuf> {
+    let m = Path::new(env!("CARGO_MANIFEST_DIR"));
+    vec![
+        m.join("../../TypeScript/lib"),
+        m.join("../../scripts/conformance/node_modules/typescript/lib"),
+        m.join("../../scripts/emit/node_modules/typescript/lib"),
+        m.join("../../scripts/node_modules/typescript/lib"),
+    ]
+}
+
+/// Load `LibFile`s using the **compiled** TypeScript lib naming
+/// (`lib.<name>.d.ts`). Pass names with the `lib.` prefix already
+/// included, e.g. `&["lib.es5.d.ts", "lib.es2015.symbol.d.ts"]`.
+///
+/// Use this helper when a test depends on the diagnostic output anchoring
+/// to the compiled lib filenames — e.g. tests that assert on
+/// `Diagnostic.file == "lib.es5.d.ts"` or that exercise the
+/// `source.file_name.starts_with("lib.")` gate in
+/// `crates/tsz-checker/src/types/queries/lib_resolution.rs`. Most tests
+/// don't need this and should use [`load_lib_files`] /
+/// [`load_default_lib_files`] instead — those produce smaller `LibFile`s
+/// from the bundled stripped assets.
+///
+/// Names not found in any root are silently skipped; duplicates are
+/// deduped. The resulting `LibFile.file_name` matches the input name
+/// verbatim, preserving the `lib.` prefix.
+pub fn load_compiled_lib_files(names: &[&str]) -> Vec<Arc<LibFile>> {
+    let roots = compiled_lib_test_roots();
+    let mut out = Vec::new();
+    let mut seen: FxHashSet<&str> = FxHashSet::default();
+    for &name in names {
+        if !seen.insert(name) {
+            continue;
+        }
+        for root in &roots {
+            let p = root.join(name);
+            if p.exists()
+                && let Ok(content) = std::fs::read_to_string(&p)
+            {
+                out.push(Arc::new(LibFile::from_source(name.to_string(), content)));
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// Parse, bind, and type-check `source` with the given `lib_files` wired
 /// into the binder and checker.
 ///
@@ -569,5 +619,31 @@ class C {}
         let lhs_codes: Vec<u32> = lhs.iter().map(|d| d.code).collect();
         let rhs_codes: Vec<u32> = rhs.iter().map(|d| d.code).collect();
         assert_eq!(lhs_codes, rhs_codes);
+    }
+
+    #[test]
+    fn load_compiled_lib_files_preserves_lib_prefix_naming() {
+        // Tests that depend on the `source.file_name.starts_with("lib.")`
+        // gate at lib_resolution.rs:983 (or assert against
+        // `Diagnostic.file == "lib.es5.d.ts"`) require the LibFile name
+        // to retain the `lib.` prefix — load_compiled_lib_files must
+        // store names verbatim. We can't assume the compiled lib roots
+        // are populated in every dev environment (npm install ts under
+        // scripts/, or `git submodule update` for TypeScript/lib), so
+        // only assert on the *naming* if at least one file resolved.
+        let libs = load_compiled_lib_files(&["lib.es5.d.ts"]);
+        if let Some(lib) = libs.first() {
+            assert_eq!(
+                lib.file_name, "lib.es5.d.ts",
+                "load_compiled_lib_files must store names with the `lib.` prefix verbatim"
+            );
+        }
+        // Dedup contract holds even when nothing resolves.
+        let dup = load_compiled_lib_files(&[
+            "lib.es5.d.ts",
+            "lib.es5.d.ts",
+            "lib.definitely_missing.d.ts",
+        ]);
+        assert!(dup.len() <= 1);
     }
 }
