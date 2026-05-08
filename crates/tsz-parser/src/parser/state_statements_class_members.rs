@@ -628,10 +628,13 @@ impl ParserState {
 
         // Recovery: Handle return type annotation on constructor (invalid but users write it)
         if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_error_at_current_token(
-                "Type annotation cannot appear on a constructor declaration.",
-                diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
-            );
+            let missing_type = !self.can_token_start_type() && self.is_type_terminator_token();
+            if !missing_type {
+                self.parse_error_at_current_token(
+                    "Type annotation cannot appear on a constructor declaration.",
+                    diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+                );
+            }
             // Consume the type annotation for recovery (use parse_return_type to match tsc,
             // which parses type predicates even in invalid constructor return types)
             let _ = self.parse_return_type();
@@ -1070,6 +1073,23 @@ impl ParserState {
         if self.is_token(SyntaxKind::Unknown) {
             self.recover_invalid_character_class_member();
             return NodeIndex::NONE;
+        }
+
+        // `case` and `default` are valid property names by themselves, but when
+        // followed by another property name on the same line they are usually a
+        // misplaced switch clause in a class body. Match tsc's class-member list
+        // recovery by reporting TS1068 at the clause keyword and retrying from
+        // the following token.
+        if matches!(
+            self.token(),
+            SyntaxKind::CaseKeyword | SyntaxKind::DefaultKeyword
+        ) && self.look_ahead_is_property_name_same_line()
+        {
+            self.parse_error_at_current_token(
+                "Unexpected token. A constructor, method, accessor, or property was expected.",
+                diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+            );
+            self.next_token();
         }
 
         // Handle bare `#` that can't become a PrivateIdentifier.
@@ -2013,6 +2033,18 @@ impl ParserState {
         let current = self.current_token;
         self.next_token();
         let is_match = self.is_identifier_or_keyword() && !self.scanner.has_preceding_line_break();
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_match
+    }
+
+    fn look_ahead_is_property_name_same_line(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token();
+        let is_match = self.is_property_name() && !self.scanner.has_preceding_line_break();
+
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_match

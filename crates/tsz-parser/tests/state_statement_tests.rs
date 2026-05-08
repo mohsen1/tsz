@@ -1347,6 +1347,51 @@ fn invalid_var_like_class_member_does_not_emit_keyword_suggestion_cascade() {
 }
 
 #[test]
+fn switch_clause_keyword_in_class_body_prefers_class_member_recovery() {
+    let source = "class C {\n    case d = () => { yield 0; };\n}";
+    let case_pos = source.find("case").expect("case") as u32;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+                && diag.start == case_pos
+        }),
+        "expected TS1068 at misplaced `case`, got {diags:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::UNKNOWN_KEYWORD_OR_IDENTIFIER_DID_YOU_MEAN),
+        "should not emit TS1435 suggestion after class-member recovery, got {diags:?}"
+    );
+}
+
+#[test]
+fn incomplete_constructor_return_type_reports_type_expected() {
+    let source = "class C {\n    constructor(): }\n}";
+    let close_brace_pos = source.find('}').expect("constructor close brace") as u32;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::TYPE_EXPECTED && diag.start == close_brace_pos
+        }),
+        "expected TS1110 at missing constructor return type, got {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION
+                && diag.start == close_brace_pos
+        }),
+        "constructor return-type recovery should not suppress TS1110 with TS1093 at the same position, got {diags:?}"
+    );
+}
+
+#[test]
 fn modifier_led_nested_class_member_recovery_prefers_ts1068_and_ts1128() {
     for source in [
         "class C {\n  public class D {\n}\n}",
@@ -1390,6 +1435,48 @@ fn modifier_led_try_block_in_class_body_prefers_ts1068() {
     assert!(
         !codes.contains(&diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
         "should not emit TS1434 for modifier-led try recovery, got {diags:?}"
+    );
+}
+
+#[test]
+fn orphan_catch_recovery_inside_malformed_try_suppresses_lost_try_cascade() {
+    let source = r#"
+class Program {
+    static Main() {
+        try {
+            var retValue: number = 0;
+            if (retValue != 0 ^=  {
+                return 1;
+            }
+             case  = call();
+            if (retValue != 0) {
+                return 1;
+             ^
+            retValue = call();
+            if (retValue != 0) {
+                return 1 &&
+            }
+            retValue = call ' );
+            if (retValue != 0) {
+                return 1;
+            }
+        }
+        catch (e) {
+        }
+    }
+}
+"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected orphan catch recovery to report TS1005, got {diags:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::CATCH_OR_FINALLY_EXPECTED),
+        "should not emit TS1472 after orphan catch recovery inside malformed try block, got {diags:?}"
     );
 }
 
