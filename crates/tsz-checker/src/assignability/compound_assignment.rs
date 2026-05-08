@@ -387,8 +387,21 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let result_type =
+        let mut result_type =
             self.compound_assignment_result_type(left_read_type, right_type, operator);
+        if result_type == TypeId::ANY
+            && !emitted_operator_error
+            && !crate::query_boundaries::common::is_logical_compound_assignment_operator(operator)
+            && crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                left_read_type,
+            )
+        {
+            let evaluated_left = self.evaluate_type_for_binary_ops(left_read_type);
+            let evaluated_right = self.evaluate_type_for_binary_ops(right_type);
+            result_type =
+                self.compound_assignment_result_type(evaluated_left, evaluated_right, operator);
+        }
         let is_logical_assignment =
             crate::query_boundaries::common::is_logical_compound_assignment_operator(operator);
         let assigned_type = if is_logical_assignment {

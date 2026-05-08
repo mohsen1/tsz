@@ -1733,12 +1733,24 @@ impl<'a> CheckerState<'a> {
         if let Some(generic_target) =
             self.deferred_generic_element_write_target(left_idx, source_type)
         {
-            let _ = self.check_assignable_or_report_at(
-                source_type,
-                generic_target,
-                right_idx,
-                left_idx,
-            );
+            if (source_type != generic_target
+                && !self.is_assignable_to(source_type, generic_target))
+                || (source_type != generic_target
+                    && !crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        source_type,
+                    )
+                    && crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        generic_target,
+                    ))
+            {
+                self.error_type_not_assignable_at_with_display_types(
+                    source_type,
+                    generic_target,
+                    left_idx,
+                );
+            }
             return;
         }
 
@@ -1812,6 +1824,12 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = true;
         let index_type = self.get_type_of_node(access.name_or_argument);
         self.ctx.preserve_literal_types = prev_preserve;
+
+        if let Some(write_target) =
+            self.constraint_keyof_write_target_for_type_param(index_type, object_type)
+        {
+            return Some(write_target);
+        }
 
         if !self.is_valid_index_for_type_param(index_type, object_type) {
             return None;

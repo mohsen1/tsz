@@ -434,6 +434,53 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn constraint_keyof_write_target_for_type_param(
+        &mut self,
+        index_type: TypeId,
+        type_param: TypeId,
+    ) -> Option<TypeId> {
+        let constraint =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, type_param)?
+                .constraint?;
+        let keyof_inner =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, index_type)?;
+        let evaluated_constraint = self.evaluate_type_with_env(constraint);
+        if self.evaluate_type_with_env(keyof_inner) != evaluated_constraint {
+            return None;
+        }
+
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, constraint)
+                .or_else(|| {
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        evaluated_constraint,
+                    )
+                })?;
+        let evaluated_index = self.evaluate_type_with_env(index_type);
+        let members =
+            crate::query_boundaries::common::union_members(self.ctx.types, evaluated_index)
+                .map(|members| members.to_vec())
+                .unwrap_or_else(|| vec![evaluated_index]);
+
+        let mut write_targets = Vec::new();
+        for member in members {
+            let name =
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, member)?;
+            let prop = shape.properties.iter().find(|prop| prop.name == name)?;
+            write_targets.push(prop.write_type);
+        }
+
+        match write_targets.as_slice() {
+            [] => None,
+            [only] => Some(*only),
+            _ => {
+                let intersection = self.ctx.types.factory().intersection(write_targets);
+                Some(self.evaluate_type_with_env(intersection))
+            }
+        }
+    }
+
     fn same_type_param_identity(&self, left: TypeId, right: TypeId) -> bool {
         left == right
             || crate::query_boundaries::common::type_param_info(self.ctx.types, left)
