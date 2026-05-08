@@ -170,6 +170,7 @@ impl<'a> CheckerContext<'a> {
             max_symbol_resolution_depth: super::MAX_SYMBOL_RESOLUTION_DEPTH,
             class_instance_resolution_set: FxHashSet::default(),
             class_constructor_resolution_set: FxHashSet::default(),
+            jsdoc_enum_resolution_set: FxHashSet::default(),
             circular_class_symbols: FxHashSet::default(),
             pending_implicit_any_vars: FxHashMap::default(),
             pending_circular_return_sites: FxHashMap::default(),
