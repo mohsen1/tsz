@@ -1000,6 +1000,37 @@ const fn: fn = a => a;
 }
 
 #[test]
+fn test_top_level_export_import_alias_preferred_over_qualified_target() {
+    // Regression for internalAliasClassInsideTopLevelModuleWithExport:
+    // when `export import xc = x.c;` is at the file root, references to the
+    // class instance type should be emitted using the alias `xc`, not the
+    // canonical target `x.c`. The alias-target rewrite previously kicked in
+    // unconditionally for every exported import alias, so the printer's
+    // correct `xc` output was being clobbered into `x.c`. Top-level aliases
+    // are always in scope wherever the d.ts is consumed, so the rewrite
+    // should only canonicalize aliases declared inside a namespace where
+    // the local short name might not be reachable from an outer reference.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export namespace x {
+    export class c {
+        foo(a: number) {
+            return a;
+        }
+    }
+}
+
+export import xc = x.c;
+export var cProp = new xc();
+"#,
+    );
+    assert!(
+        output.contains("export declare var cProp: xc;"),
+        "Expected top-level export import alias to be preferred over its qualified target: {output}"
+    );
+}
+
+#[test]
 fn test_export_assignment_keeps_uninitialized_value_declaration() {
     // Regression for privacyCheckExportAssignmentOnExportedGenericInterface1:
     // a `var X: T;` (no initializer, with type annotation) whose only public
