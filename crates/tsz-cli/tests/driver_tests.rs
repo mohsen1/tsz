@@ -15686,6 +15686,78 @@ export const b = (null as any as import("pkg", { with: {"resolution-mode": "impo
 }
 
 #[test]
+fn export_type_resolution_mode_declaration_emit_does_not_emit_alias_ts2305() {
+    for root_package_json in [
+        None,
+        Some(
+            r#"{
+          "private": true,
+          "type": "module"
+        }"#,
+        ),
+    ] {
+        let tmp = TempDir::new().unwrap();
+        let base = &tmp.path;
+
+        write_file(
+            &base.join("node_modules/pkg/package.json"),
+            r#"{
+          "name": "pkg",
+          "version": "0.0.1",
+          "exports": {
+            "import": "./import.js",
+            "require": "./require.js"
+          }
+        }"#,
+        );
+        write_file(
+            &base.join("node_modules/pkg/import.d.ts"),
+            "export interface ImportInterface {}\n",
+        );
+        write_file(
+            &base.join("node_modules/pkg/require.d.ts"),
+            "export interface RequireInterface {}\n",
+        );
+        if let Some(package_json) = root_package_json {
+            write_file(&base.join("package.json"), package_json);
+        }
+        write_file(
+            &base.join("tsconfig.json"),
+            r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "module": "node16",
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "outDir": "out"
+          },
+          "files": ["index.ts"]
+        }"#,
+        );
+        write_file(
+            &base.join("index.ts"),
+            r#"export type { RequireInterface } from "pkg" with { "resolution-mode": "require" };
+export type { ImportInterface } from "pkg" with { "resolution-mode": "import" };
+"#,
+        );
+
+        let args = default_args();
+        let result = compile(&args, base).expect("compile should succeed");
+
+        let ts2305_diags: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER)
+            .collect();
+        assert!(
+            ts2305_diags.is_empty(),
+            "Did not expect generic alias TS2305 for export type resolution-mode declaration emit, got: {ts2305_diags:?}\nall diagnostics: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn import_non_exported_member_alias_reports_ts2460() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;

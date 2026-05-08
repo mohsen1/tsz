@@ -25,6 +25,13 @@ impl<'a> CheckerContext<'a> {
         ) {
             return Some(error);
         }
+        if let Some(error) = self.get_resolution_error_for_request(
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::EsmReExport,
+        ) {
+            return Some(error);
+        }
         if matches!(
             resolution_mode_override,
             Some(ResolutionModeOverride::Require)
@@ -77,6 +84,14 @@ impl<'a> CheckerContext<'a> {
             specifier,
             resolution_mode_override,
             ResolutionRequestKind::EsmImport,
+        ) {
+            return Some(target_idx);
+        }
+        if let Some(target_idx) = self.resolve_import_target_from_file_for_request(
+            source_file_idx,
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::EsmReExport,
         ) {
             return Some(target_idx);
         }
