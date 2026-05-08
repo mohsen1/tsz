@@ -15,37 +15,42 @@ use tsz_common::interner::Atom;
 
 // Import TypeDatabase trait
 use crate::caches::db::TypeDatabase;
-use std::cell::Cell;
+use std::cell::RefCell;
 
 thread_local! {
-    static COLLECT_PROPERTIES_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static COLLECT_PROPERTIES_STACK: RefCell<Vec<TypeId>> = const { RefCell::new(Vec::new()) };
 }
 
-// Nested public collect_properties calls can reset TypeEvaluator-local guards
-// while resolving recursive mapped/indexed-access aliases. Cap the whole call
-// chain so apparent-property collection can safely defer instead of expanding
-// indefinitely.
-const MAX_COLLECT_PROPERTIES_DEPTH: u32 = 64;
+// Nested public collect_properties calls can reset TypeEvaluator-local guards while
+// resolving recursive mapped/indexed-access aliases. Track the active type stack
+// across collectors so recursive members are skipped the same way the collector's
+// local `seen` set skips them inside a single public call.
+const MAX_COLLECT_PROPERTIES_DEPTH: usize = 16_384;
 
-struct CollectPropertiesDepthGuard;
+struct CollectPropertiesDepthGuard {
+    type_id: TypeId,
+}
 
 impl CollectPropertiesDepthGuard {
-    fn enter() -> Option<Self> {
-        COLLECT_PROPERTIES_DEPTH.with(|depth| {
-            let current = depth.get();
-            if current >= MAX_COLLECT_PROPERTIES_DEPTH {
+    fn enter(type_id: TypeId) -> Option<Self> {
+        COLLECT_PROPERTIES_STACK.with_borrow_mut(|stack| {
+            if stack.len() >= MAX_COLLECT_PROPERTIES_DEPTH || stack.contains(&type_id) {
                 return None;
             }
-            depth.set(current + 1);
-            Some(Self)
+            stack.push(type_id);
+            Some(Self { type_id })
         })
     }
 }
 
 impl Drop for CollectPropertiesDepthGuard {
     fn drop(&mut self) {
-        COLLECT_PROPERTIES_DEPTH.with(|depth| {
-            depth.set(depth.get().saturating_sub(1));
+        COLLECT_PROPERTIES_STACK.with_borrow_mut(|stack| {
+            if stack.last().copied() == Some(self.type_id) {
+                stack.pop();
+            } else if let Some(pos) = stack.iter().rposition(|&active| active == self.type_id) {
+                stack.remove(pos);
+            }
         });
     }
 }
@@ -105,10 +110,6 @@ pub fn collect_properties<R>(
 where
     R: TypeResolver,
 {
-    let Some(_depth_guard) = CollectPropertiesDepthGuard::enter() else {
-        return PropertyCollectionResult::NonObject;
-    };
-
     let mut collector = PropertyCollector {
         interner,
         resolver,
@@ -182,6 +183,9 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         if !self.seen.insert(type_id) {
             return;
         }
+        let Some(_depth_guard) = CollectPropertiesDepthGuard::enter(type_id) else {
+            return;
+        };
 
         // 1. Resolve Lazy/Ref
         let resolved = resolve_type(type_id, self.interner, self.resolver);
