@@ -51,6 +51,122 @@ impl ParserState {
         }
     }
 
+    fn report_definite_assignment_parameter_tail_recovery(&mut self) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if !self.is_token(SyntaxKind::CloseParenToken) {
+            return;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let saved_token = self.current_token;
+        let saved_scanner_diagnostics_high_water_mark = self.scanner_diagnostics_high_water_mark;
+        let close_start = self.token_pos();
+        let close_length = self.token_end().saturating_sub(close_start);
+
+        self.next_token();
+        if !self.is_token(SyntaxKind::ColonToken) {
+            self.scanner.restore_state(snapshot);
+            self.current_token = saved_token;
+            self.scanner_diagnostics_high_water_mark = saved_scanner_diagnostics_high_water_mark;
+            return;
+        }
+
+        self.parse_error_at(
+            close_start,
+            close_length,
+            "Expression expected.",
+            diagnostic_codes::EXPRESSION_EXPECTED,
+        );
+        self.parse_error_at_current_token(
+            "Declaration or statement expected.",
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+        );
+        self.next_token();
+
+        let mut reported_empty_element_access = false;
+        let mut saw_for_keyword = false;
+        let mut saw_for_await = false;
+        let mut pending_for_await_header = false;
+        let mut for_header_paren_depth = 0u32;
+        let mut reported_for_await_expression = false;
+        let mut reported_for_body_property = false;
+
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
+            if saw_for_keyword {
+                if self.is_token(SyntaxKind::AwaitKeyword) {
+                    saw_for_keyword = false;
+                    saw_for_await = true;
+                    self.next_token();
+                    continue;
+                }
+                saw_for_keyword = false;
+            }
+
+            if saw_for_await {
+                if self.is_token(SyntaxKind::OpenParenToken) {
+                    if !reported_for_await_expression {
+                        self.parse_error_at(
+                            self.token_end(),
+                            0,
+                            "Expression expected.",
+                            diagnostic_codes::EXPRESSION_EXPECTED,
+                        );
+                        reported_for_await_expression = true;
+                    }
+                    saw_for_await = false;
+                    pending_for_await_header = true;
+                    for_header_paren_depth = 1;
+                    self.next_token();
+                    continue;
+                }
+                saw_for_await = false;
+            }
+
+            if pending_for_await_header {
+                match self.token() {
+                    SyntaxKind::OpenParenToken => {
+                        for_header_paren_depth += 1;
+                    }
+                    SyntaxKind::CloseParenToken => {
+                        for_header_paren_depth = for_header_paren_depth.saturating_sub(1);
+                    }
+                    SyntaxKind::OpenBraceToken
+                        if for_header_paren_depth == 0 && !reported_for_body_property =>
+                    {
+                        self.parse_error_at_current_token(
+                            "Property assignment expected.",
+                            diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+                        );
+                        reported_for_body_property = true;
+                        pending_for_await_header = false;
+                    }
+                    _ => {}
+                }
+            }
+
+            match self.token() {
+                SyntaxKind::CloseBracketToken if !reported_empty_element_access => {
+                    self.parse_error_at_current_token(
+                        diagnostic_messages::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+                        diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+                    );
+                    reported_empty_element_access = true;
+                }
+                SyntaxKind::ForKeyword => {
+                    saw_for_keyword = true;
+                }
+                _ => {}
+            }
+
+            self.next_token();
+        }
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = saved_token;
+        self.scanner_diagnostics_high_water_mark = self.scanner.get_scanner_diagnostics().len();
+    }
+
     /// Parse class expression: class {} or class Name {}
     ///
     /// Unlike class declarations, class expressions can be anonymous.
@@ -125,6 +241,7 @@ impl ParserState {
         let mut rest_param_start: u32 = 0;
         let mut rest_param_length: u32 = 0;
         let mut recover_tail_from_stray_colon = false;
+        let mut recover_tail_from_definite_assignment_colon = false;
 
         while !self.is_token(SyntaxKind::CloseParenToken) {
             // If we see `=>` before any parameters were parsed, this is likely a
@@ -252,13 +369,27 @@ impl ParserState {
                 if !self.is_token(SyntaxKind::CloseParenToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
-                    self.error_comma_expected();
+                    if recover_tail_from_definite_assignment_colon
+                        && matches!(
+                            self.token(),
+                            SyntaxKind::LessThanToken | SyntaxKind::GreaterThanToken
+                        )
+                    {
+                        self.parse_companion_error_at_current_token(
+                            "',' expected.",
+                            tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                        );
+                    } else {
+                        self.error_comma_expected();
+                    }
                     // Definite-assignment marker (`!`) is invalid on a
                     // parameter. tsc anchors TS1005 at the `!` (emitted just
-                    // above) and TS1138 at the following `:`, then consumes
-                    // the malformed `!: <type>` tail. Without this branch the
-                    // broad recovery loop below swallows the `!:` tail and
-                    // the TS1138 diagnostic is lost.
+                    // above) and TS1138 at the following `:`, then keeps
+                    // recovering the tail as parameter-list elements. That is
+                    // observable for generic tails like `x!: A<T>`, where the
+                    // `<T>` and return type produce further recovery
+                    // diagnostics instead of being consumed as a clean type
+                    // annotation.
                     if self.is_token(SyntaxKind::ExclamationToken) {
                         let snapshot = self.scanner.save_state();
                         let saved_token = self.current_token;
@@ -270,24 +401,17 @@ impl ParserState {
                                 diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
                             );
                             self.next_token();
-                            if self.can_token_start_type() {
-                                self.parse_type();
-                            } else if !matches!(
-                                self.token(),
-                                SyntaxKind::CommaToken
-                                    | SyntaxKind::CloseParenToken
-                                    | SyntaxKind::OpenBraceToken
-                                    | SyntaxKind::EndOfFileToken
-                            ) {
-                                self.next_token();
-                            }
-                            if self.is_parameter_start() {
-                                continue;
-                            }
-                            break;
+                            recover_tail_from_definite_assignment_colon = true;
+                            continue;
                         }
                         self.scanner.restore_state(snapshot);
                         self.current_token = saved_token;
+                    }
+                    if recover_tail_from_definite_assignment_colon
+                        && self.is_token(SyntaxKind::LessThanToken)
+                    {
+                        self.next_token();
+                        continue;
                     }
                     if self.is_token(SyntaxKind::ColonToken) {
                         self.next_token();
@@ -365,6 +489,9 @@ impl ParserState {
                             self.next_token();
                         }
                     }
+                }
+                if recover_tail_from_definite_assignment_colon {
+                    self.report_definite_assignment_parameter_tail_recovery();
                 }
                 break;
             }

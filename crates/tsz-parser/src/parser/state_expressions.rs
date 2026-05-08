@@ -2276,12 +2276,19 @@ impl ParserState {
                         } else {
                             self.token_pos()
                         };
-                        self.parse_error_at(
-                            missing_pos,
-                            0,
-                            "Identifier expected.",
-                            tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
-                        );
+                        if self.is_token(SyntaxKind::Unknown) {
+                            self.parse_error_at_current_token(
+                                tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                                tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+                            );
+                        } else {
+                            self.parse_error_at(
+                                missing_pos,
+                                0,
+                                "Identifier expected.",
+                                tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+                            );
+                        }
                         NodeIndex::NONE
                     };
                     if is_optional_chain_continuation && let Some(name_node) = self.arena.get(name)

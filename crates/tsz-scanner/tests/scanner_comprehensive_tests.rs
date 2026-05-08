@@ -907,6 +907,14 @@ mod identifier_scanning {
     }
 
     #[test]
+    fn unicode_escape_braced_astral_identifier_start_recovers_as_debris() {
+        let mut scanner = ScannerState::new("\\u{102A7}".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::Unknown);
+        assert_eq!(scanner.get_token_text(), "\\");
+    }
+
+    #[test]
     fn unicode_escape_combining_mark_not_identifier_start() {
         let mut scanner = ScannerState::new("\\u0345 = 1;".to_string(), true);
         let token = scanner.scan();
