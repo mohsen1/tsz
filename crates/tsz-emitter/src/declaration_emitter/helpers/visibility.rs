@@ -705,6 +705,19 @@ impl<'a> DeclarationEmitter<'a> {
                 };
                 match stmt_node.kind {
                     k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                        // `export default <expr>` is also represented as an
+                        // EXPORT_DECLARATION (with `is_default_export: true`
+                        // and the expression placed in `export_clause`).
+                        // When the default-exported expression is the
+                        // identifier `name`, that's the value-side export
+                        // we need to keep the local declaration alive for.
+                        if let Some(export) = self.arena.get_export_decl(stmt_node)
+                            && export.is_default_export
+                            && export.export_clause.is_some()
+                            && self.entity_name_contains_identifier(export.export_clause, name)
+                        {
+                            return true;
+                        }
                         self.node_subtree_contains_export_specifier_name(stmt_idx, name)
                     }
                     // `export = X` (commonjs) exports the value-side of `X`
