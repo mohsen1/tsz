@@ -7213,7 +7213,10 @@ declare module \"virtual:env\" {
     let original_promise = binder.file_locals.get("Promise");
     let original_greeting = binder.file_locals.get("greeting");
     let original_cache = binder.file_locals.get("Cache");
-    assert!(original_file_locals_len > 0, "fixture must declare file locals");
+    assert!(
+        original_file_locals_len > 0,
+        "fixture must declare file locals"
+    );
     assert!(original_promise.is_some(), "Promise must be bound");
     assert!(original_greeting.is_some(), "greeting must be bound");
     assert!(original_cache.is_some(), "Cache must be bound");
@@ -7226,7 +7229,10 @@ declare module \"virtual:env\" {
     // Top-level lengths preserved.
     assert_eq!(restored.file_locals.len(), original_file_locals_len);
     assert_eq!(restored.symbols.len(), original_symbols_len);
-    assert_eq!(restored.declared_modules.len(), original_declared_modules_len);
+    assert_eq!(
+        restored.declared_modules.len(),
+        original_declared_modules_len
+    );
 
     // Symbol IDs for the same names match (proves SymbolArena round-trips).
     assert_eq!(restored.file_locals.get("Promise"), original_promise);

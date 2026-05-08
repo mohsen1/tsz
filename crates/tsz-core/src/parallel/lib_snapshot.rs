@@ -99,7 +99,11 @@ fn cache_dir() -> Option<PathBuf> {
     let base = std::env::var("XDG_CACHE_HOME")
         .ok()
         .map(PathBuf::from)
-        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".cache")))?;
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".cache"))
+        })?;
     Some(base.join("tsz").join("lib-cache"))
 }
 
@@ -111,10 +115,7 @@ fn is_enabled() -> bool {
         return CACHED.load(Ordering::Relaxed);
     }
     let enabled = match std::env::var(ENV_VAR) {
-        Ok(v) => matches!(
-            v.to_ascii_lowercase().as_str(),
-            "1" | "on" | "true" | "yes"
-        ),
+        Ok(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "on" | "true" | "yes"),
         Err(_) => false,
     };
     CACHED.store(enabled, Ordering::Relaxed);
@@ -152,11 +153,7 @@ pub(super) fn try_load(file_name: &str, source_text: &str) -> Option<Arc<LibFile
 /// Persist a parsed + bound lib file. Errors are logged at `debug!`
 /// level but never propagated — write failures must not affect
 /// compilation correctness.
-pub(super) fn try_store(
-    file_name: &str,
-    source_text: &str,
-    lib: &Arc<LibFile>,
-) -> Result<()> {
+pub(super) fn try_store(file_name: &str, source_text: &str, lib: &Arc<LibFile>) -> Result<()> {
     if !is_enabled() {
         return Ok(());
     }
@@ -203,9 +200,7 @@ fn encode_snapshot(snapshot: &LibSnapshot) -> Result<Vec<u8>> {
 }
 
 fn decode_snapshot(bytes: &[u8]) -> Result<LibSnapshot> {
-    if bytes.len() < SNAPSHOT_MAGIC.len()
-        || &bytes[..SNAPSHOT_MAGIC.len()] != SNAPSHOT_MAGIC
-    {
+    if bytes.len() < SNAPSHOT_MAGIC.len() || &bytes[..SNAPSHOT_MAGIC.len()] != SNAPSHOT_MAGIC {
         return Err(anyhow!("snapshot magic mismatch"));
     }
     let payload = &bytes[SNAPSHOT_MAGIC.len()..];
@@ -300,9 +295,18 @@ mod tests {
         let restored = try_load(file_name, source).expect("cache should hit");
 
         // Symbols match.
-        assert_eq!(restored.binder.file_locals.get("Promise"), original_promise_id);
-        assert_eq!(restored.binder.file_locals.get("greeting"), original_greeting_id);
-        assert_eq!(restored.binder.declared_modules.len(), original_module_count);
+        assert_eq!(
+            restored.binder.file_locals.get("Promise"),
+            original_promise_id
+        );
+        assert_eq!(
+            restored.binder.file_locals.get("greeting"),
+            original_greeting_id
+        );
+        assert_eq!(
+            restored.binder.declared_modules.len(),
+            original_module_count
+        );
         assert!(restored.binder.declared_modules.contains("virtual:env"));
 
         // Identifier text resolves through the restored arena.
@@ -310,11 +314,15 @@ mod tests {
         let mut found_greeting = false;
         for raw in 0..restored.arena.len() {
             let idx = tsz_parser::NodeIndex(u32::try_from(raw).expect("index fits"));
-            let Some(node) = restored.arena.get(idx) else { continue };
+            let Some(node) = restored.arena.get(idx) else {
+                continue;
+            };
             if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
                 continue;
             }
-            let Some(data) = restored.arena.get_identifier(node) else { continue };
+            let Some(data) = restored.arena.get_identifier(node) else {
+                continue;
+            };
             let text = restored.arena.interner.resolve(data.atom);
             if text == "Promise" {
                 found_promise = true;
