@@ -626,6 +626,10 @@ name = "ts2451_plain_js_lib_anchor_tests"
 path = "tests/ts2451_plain_js_lib_anchor_tests.rs"
 
 [[test]]
+name = "generic_ref_scoped_tparam_constraint_tests"
+path = "tests/generic_ref_scoped_tparam_constraint_tests.rs"
+
+[[test]]
 name = "lib_type_spelling_suggestions_tests"
 path = "tests/lib_type_spelling_suggestions_tests.rs"
 

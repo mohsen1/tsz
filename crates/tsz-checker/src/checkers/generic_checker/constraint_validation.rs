@@ -57,7 +57,9 @@ impl<'a> CheckerState<'a> {
                     ) {
                         continue;
                     }
-                    if self.type_node_is_generic_ref_with_scoped_type_param_arg(arg_idx)
+                    let arg_is_scoped_generic_ref =
+                        self.type_node_is_generic_ref_with_scoped_type_param_arg(arg_idx);
+                    if arg_is_scoped_generic_ref
                         && !query::is_callable_type(
                             self.ctx.types.as_type_database(),
                             constraint_resolved,
@@ -66,6 +68,27 @@ impl<'a> CheckerState<'a> {
                         && !query::contains_type_parameters(self.ctx.types, constraint_resolved)
                         && !self.type_arg_evaluates_to_infer_result_conditional(type_arg)
                     {
+                        // Issue #3063: a concrete *primitive* constraint
+                        // (string, number, boolean, bigint, symbol) can
+                        // never be satisfied by a generic application like
+                        // `Array<U>`, `Promise<U>`, `Record<string, U>` —
+                        // the application's apparent type after any
+                        // instantiation is an object, which is not
+                        // assignable to a primitive. tsc reports TS2344
+                        // for these; emit it eagerly here so we don't
+                        // defer the check to instantiation time (which
+                        // never happens for unused aliases).
+                        if crate::query_boundaries::common::is_primitive_type(
+                            self.ctx.types.as_type_database(),
+                            constraint_resolved,
+                        ) {
+                            self.error_type_constraint_not_satisfied(
+                                type_arg,
+                                constraint_resolved,
+                                arg_idx,
+                            );
+                            continue;
+                        }
                         continue;
                     }
                 }
