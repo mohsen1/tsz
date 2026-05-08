@@ -652,8 +652,39 @@ impl<'a> DeclarationEmitter<'a> {
                 let is_public_surface = self.stmt_has_export_modifier(stmt_node)
                     || stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                     || stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT;
-                is_public_surface && self.node_subtree_contains_type_query_name(stmt_idx, name)
+                is_public_surface
+                    && (self.node_subtree_contains_type_query_name(stmt_idx, name)
+                        || self.node_subtree_contains_computed_property_name(stmt_idx, name))
             })
+    }
+
+    /// Walk a node subtree looking for a `[<expr>]` computed property name
+    /// where `<expr>` (after stripping parens / `as` / non-null) is the
+    /// identifier we are tracking. tsc keeps the supporting
+    /// `declare const a: symbol;` declaration alive whenever an exported
+    /// class member is declared with `[a]() {…}` because the d.ts
+    /// emission renders the same identifier in member position.
+    fn node_subtree_contains_computed_property_name(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(node)
+        {
+            let expr_idx = self.skip_parenthesized_non_null_and_comma(computed.expression);
+            if self.entity_name_contains_identifier(expr_idx, name) {
+                return true;
+            }
+        }
+        self.arena
+            .get_children(node_idx)
+            .iter()
+            .copied()
+            .any(|child_idx| self.node_subtree_contains_computed_property_name(child_idx, name))
     }
 
     fn node_subtree_contains_type_query_name(&self, node_idx: NodeIndex, name: &str) -> bool {
