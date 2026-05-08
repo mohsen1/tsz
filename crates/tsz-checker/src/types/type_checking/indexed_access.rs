@@ -1026,6 +1026,13 @@ impl<'a> CheckerState<'a> {
         ) {
             return;
         }
+        if self.mapped_object_index_matches_own_key_constraint(
+            data.object_type,
+            index_type,
+            index_type_for_check,
+        ) {
+            return;
+        }
         // When the constraint was resolved from AST, also check if it represents
         // a keyof for the current object type (catches deferred keyof patterns that
         // aren't directly assignable to the computed keyof).

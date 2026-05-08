@@ -1036,6 +1036,25 @@ function test<T>(obj: { [K in keyof T]: T[K] }) {
     }
 
     #[test]
+    fn mapped_type_indexed_by_own_keyof_constraint_no_ts2536() {
+        let source = r#"
+type ObjectValueDiff<TValue, TShape> = {
+  [TKey in keyof TValue]: Exclude<TValue[TKey], TShape[TKey & keyof TShape]>;
+}[keyof TValue];
+        "#;
+
+        let ts2536 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2536)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2536.len(),
+            0,
+            "Expected no TS2536 when indexing a mapped type by its own keyof constraint: {ts2536:?}"
+        );
+    }
+
+    #[test]
     fn mapped_type_preserves_keyof_constraint_validity_after_evaluation() {
         let source = r#"
 type CreateTypeOptions<
