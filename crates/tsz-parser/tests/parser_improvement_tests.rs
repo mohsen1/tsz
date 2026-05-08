@@ -2978,6 +2978,22 @@ fn test_escaped_combining_mark_as_variable_name_reports_ts1127() {
 }
 
 #[test]
+fn invalid_escaped_private_use_identifier_part_reports_ts1127() {
+    let source = r"var _\uD4A5\u7204\uC316\uE59F = local;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let invalid_escape = source.find(r"\uE59F").expect("invalid escape") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 1127 && d.start == invalid_escape),
+        "Expected TS1127 at escaped private-use identifier part, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn invalid_surrogate_unicode_escapes_in_class_member_emit_ts1127() {
     let source = r"class C { \uD800\uDEA7: string; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
