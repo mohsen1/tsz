@@ -1587,6 +1587,13 @@ ensure_kysely_fixture() {
         fi
     fi
     local flat_tsconfig="$KYSELY_DIR/tsconfig.flat.json"
+    local bench_globals="$KYSELY_DIR/tsz-bench-globals.d.ts"
+    cat > "$bench_globals" << 'GLOBALSEOF'
+declare const Buffer: {
+  isBuffer(value: unknown): boolean;
+  compare(left: unknown, right: unknown): number;
+};
+GLOBALSEOF
     if [ ! -f "$flat_tsconfig" ]; then
         cat > "$flat_tsconfig" << 'FLATEOF'
 {
@@ -1602,7 +1609,7 @@ ensure_kysely_fixture() {
     "moduleResolution": "node",
     "ignoreDeprecations": "6.0"
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "tsz-bench-globals.d.ts"],
   "exclude": [
     "**/*.test.ts",
     "test/**/*",
