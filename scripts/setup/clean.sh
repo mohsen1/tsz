@@ -5,6 +5,10 @@
 # By default, preserves Rust build caches (.target/, .target-bench/) so
 # incremental compilation still works. Use --full to nuke everything.
 #
+# Light cargo prune: also removes target/<profile>/incremental/<crate>-<hash>
+# dirs untouched for 7+ days. Built .rlib/.rmeta artifacts under deps/ are
+# kept, so subsequent builds stay fast.
+#
 # Usage:
 #   ./scripts/setup/clean.sh [OPTIONS]
 #
@@ -197,8 +201,29 @@ rm -f "$REPO_ROOT"/tsc-cache*.json 2>/dev/null || true
 # Keep the committed tsc-cache-full.json
 git -C "$REPO_ROOT" checkout -- scripts/conformance/tsc-cache-full.json 2>/dev/null || true
 
-# Phase 11: Reset TypeScript submodule to clean state
-git -C "$REPO_ROOT" submodule update --force 2>/dev/null || true
+# Phase 11: Reset TypeScript submodule to clean state.
+# Skip when TypeScript is a symlink — it points at the primary checkout's
+# submodule, which a worktree must not mutate (see link-ts-submodule.sh).
+if [ ! -L "$REPO_ROOT/TypeScript" ]; then
+  git -C "$REPO_ROOT" submodule update --force 2>/dev/null || true
+fi
+
+# Phase 12: Light cargo cache prune.
+# Cargo's incremental compilation cache (target/<profile>/incremental/<crate>-<hash>)
+# accumulates per-crate dirs over time. Pruning ones not touched in 7 days
+# reclaims the bulk of stale build state without invalidating built .rlib /
+# .rmeta artifacts under deps/ — subsequent builds rebuild incremental
+# tracking only, not the artifacts themselves.
+if [[ "$FULL" == false ]]; then
+  for tdir in "$REPO_ROOT/target" "$REPO_ROOT/.target" "$REPO_ROOT/.target-bench"; do
+    [ -d "$tdir" ] || continue
+    find "$tdir" -type d -name incremental -mindepth 2 -maxdepth 4 2>/dev/null \
+      | while IFS= read -r inc; do
+          find "$inc" -mindepth 1 -maxdepth 1 -type d -mtime +7 \
+            -exec rm -rf {} + 2>/dev/null || true
+        done
+  done
+fi
 
 # ── Report ──────────────────────────────────────────────────────────────────
 

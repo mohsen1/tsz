@@ -102,7 +102,30 @@ fi
 # ── 2. TypeScript submodule ─────────────────────────────────────────────────
 step "TypeScript submodule"
 
-# Fast-path: submodule is checked out and has a HEAD
+# Worktree fast-path: share the primary checkout's TypeScript via symlink to
+# avoid materialising a duplicate ~250–500 MB checkout per worktree. No-op in
+# the primary checkout, when already symlinked, or when the primary is
+# uninitialised (we fall through to the normal init below in that case).
+COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || true)
+GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || true)
+IS_WORKTREE=false
+if [ -n "$COMMON_DIR" ] && [ -n "$GIT_DIR" ] \
+   && [ "$(cd "$COMMON_DIR" && pwd -P)" != "$(cd "$GIT_DIR" && pwd -P)" ]; then
+  IS_WORKTREE=true
+fi
+
+if [ "$IS_WORKTREE" = true ] && [ -L "$ROOT_DIR/TypeScript" ]; then
+  skip "Already linked to primary checkout's TypeScript."
+elif [ "$IS_WORKTREE" = true ] \
+     && [ -f "$SCRIPT_DIR/link-ts-submodule.sh" ] \
+     && [ -e "$(cd "$COMMON_DIR/.." && pwd -P)/TypeScript/.git" ]; then
+  bash "$SCRIPT_DIR/link-ts-submodule.sh" --quiet || true
+  if [ -L "$ROOT_DIR/TypeScript" ]; then
+    echo "  $(green "Linked TypeScript/ to primary checkout (saves ~250–500 MB).")"
+  fi
+fi
+
+# Fast-path: submodule is checked out (or symlinked) and has a HEAD
 TS_SHA=$(cd TypeScript 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || true)
 if [ "$FORCE" = false ] && [ -n "$TS_SHA" ]; then
   skip "Already initialised (TypeScript@$TS_SHA)."
