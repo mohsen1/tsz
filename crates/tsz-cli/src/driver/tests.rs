@@ -5,6 +5,7 @@ use super::check_module_resolution_compatibility_mut;
 use super::compilation_cache_to_build_info;
 use super::compile;
 use super::find_tsconfig;
+use super::is_declaration_emit_blocking_diagnostic_code;
 use super::no_input_diagnostics_for_config;
 use super::read_source_file;
 use crate::args::CliArgs;
@@ -1964,4 +1965,30 @@ fn module_preserve_checked_js_resolved_require_does_not_emit_missing_node_global
         "module preserve require forms should not emit TS2591 when the package resolves; got: {node_global_diags:?}; all diagnostics: {:?}",
         result.diagnostics,
     );
+}
+
+#[test]
+fn isolated_declaration_codes_block_declaration_emit() {
+    // Issue #3709 follow-up: TS9007/TS9011/etc. must suppress `.d.ts`
+    // emission for the affected source file. tsc refuses to write a
+    // declaration file when isolated-declaration constraints are violated.
+    for code in [9007, 9008, 9010, 9011, 9012, 9013, 9015, 9019, 9039] {
+        assert!(
+            is_declaration_emit_blocking_diagnostic_code(code),
+            "TS{code} (isolated-declarations family) should block declaration emit"
+        );
+    }
+}
+
+#[test]
+fn non_isolated_declaration_codes_do_not_block_declaration_emit() {
+    // Codes outside the 9007–9039 range and TS4020 must not be flagged as
+    // declaration-emit blockers — they're either pure type errors or
+    // syntactic diagnostics that don't gate `.d.ts` writing.
+    for code in [2322, 2339, 2345, 2741, 7006, 9006, 9040] {
+        assert!(
+            !is_declaration_emit_blocking_diagnostic_code(code),
+            "TS{code} should not block declaration emit"
+        );
+    }
 }
