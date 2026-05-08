@@ -2604,3 +2604,72 @@ const callbackNumber: number = out.onreadystatechange;
         "Only the nullable callback assignment should fail, proving it stayed `unknown` rather than `any`. Got: {diags:#?}"
     );
 }
+
+// ─── Higher-order function inference (HOFI) — tracks compiler/genericFunctionInference1.ts ─
+
+/// Locks in the existing correct behavior: a generic source function with a
+/// non-self-referential type-parameter constraint is accepted as the argument
+/// of `pipe<A extends any[], B>(ab: (...args: A) => B)`. Inference should not
+/// collapse the source's type parameter to `unknown` and reject the call.
+///
+/// `tsc` accepts each of the calls below; tsz currently does too. This test
+/// exists to catch regressions if the inference path that handles non-recursive
+/// constraints is reworked while addressing the recursive-constraint gap
+/// captured by the `pipe_accepts_*_self_referential_*` ignored test below.
+#[test]
+fn pipe_accepts_generic_argument_with_simple_constraint() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function fooStr<T extends string>(x: T): T;
+declare function fooNum<T extends number>(x: T): T;
+declare function fooObj<T extends { other: number }>(x: T): T;
+declare function fooBare<T>(x: T): T;
+
+const a = pipe(fooStr);
+const b = pipe(fooNum);
+const c = pipe(fooObj);
+const d = pipe(fooBare);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2345),
+        "pipe(<T extends C>(x: T) => T) with non-self-referential C must not raise TS2345. Got: {diags:#?}"
+    );
+}
+
+/// HOFI gap: a generic source function whose type-parameter constraint refers
+/// back to the type parameter itself (`T extends { value: T }`) is rejected
+/// when passed to `pipe<A extends any[], B>(ab: (...args: A) => B)`. tsc
+/// accepts it and propagates the constraint into the result type
+/// (`<T extends { value: T; }>(x: T) => T`).
+///
+/// Root cause: when `constrain_types_impl`'s Function/Function branch
+/// (`crates/tsz-solver/src/operations/constraints/walker.rs:1262`) instantiates
+/// the source's type parameter with a fresh inference variable, the
+/// self-referential constraint contains the fresh placeholder and is dropped at
+/// `walker.rs:1306`. The fresh variable becomes the only candidate for the
+/// outer call's `A`/`B` placeholders; when no other candidates arrive, both
+/// placeholders fall back to `unknown`
+/// (`crates/tsz-solver/src/inference/infer_resolve.rs:553`), and the original
+/// generic source is no longer assignable against the materialized
+/// `(...args: [x: unknown]) => unknown` target.
+///
+/// This test is `#[ignore]`d until proper higher-order function inference
+/// (TS 3.4 PR microsoft/TypeScript#30215) is implemented. Conformance test:
+/// `compiler/genericFunctionInference1.ts` (lines 20, 21, 33, 34 — the
+/// recursive-constraint subset of the eight extra TS2345 diagnostics).
+#[test]
+#[ignore = "Requires higher-order function inference for self-referential type-parameter constraints; tracks compiler/genericFunctionInference1.ts."]
+fn pipe_accepts_generic_argument_with_self_referential_constraint() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function fooSelf<T extends { value: T }>(x: T): T;
+
+const f = pipe(fooSelf);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2345),
+        "pipe(<T extends {{ value: T }}>(x: T) => T) must not raise TS2345 once HOFI is implemented. Got: {diags:#?}"
+    );
+}
