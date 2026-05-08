@@ -1992,3 +1992,67 @@ fn non_isolated_declaration_codes_do_not_block_declaration_emit() {
         );
     }
 }
+
+// =============================================================================
+// FileInclusionReason display (issue #3901)
+// =============================================================================
+
+#[test]
+fn file_inclusion_reason_displays_root_file() {
+    use super::FileInclusionReason;
+    assert_eq!(
+        format!("{}", FileInclusionReason::RootFile),
+        "Root file specified for compilation"
+    );
+}
+
+#[test]
+fn file_inclusion_reason_displays_files_list() {
+    use super::FileInclusionReason;
+    let reason = FileInclusionReason::FilesListInConfig {
+        config_path: "tsconfig.json".to_string(),
+    };
+    assert_eq!(
+        format!("{reason}"),
+        "Part of 'files' list in tsconfig.json"
+    );
+}
+
+#[test]
+fn file_inclusion_reason_displays_files_list_nested_path() {
+    use super::FileInclusionReason;
+    let reason = FileInclusionReason::FilesListInConfig {
+        config_path: "packages/foo/tsconfig.json".to_string(),
+    };
+    assert_eq!(
+        format!("{reason}"),
+        "Part of 'files' list in packages/foo/tsconfig.json"
+    );
+}
+
+#[test]
+fn file_inclusion_reason_displays_lib_file_with_target() {
+    use super::FileInclusionReason;
+    let reason = FileInclusionReason::LibFile {
+        target: Some("es2018".to_string()),
+    };
+    assert_eq!(format!("{reason}"), "Default library for target 'es2018'");
+}
+
+#[test]
+fn file_inclusion_reason_displays_lib_file_without_target() {
+    use super::FileInclusionReason;
+    assert_eq!(
+        format!("{}", FileInclusionReason::LibFile { target: None }),
+        "Default library"
+    );
+}
+
+#[test]
+fn file_inclusion_reason_displays_include_pattern() {
+    use super::FileInclusionReason;
+    assert_eq!(
+        format!("{}", FileInclusionReason::IncludePattern("**/*".to_string())),
+        "Matched by include pattern '**/*'"
+    );
+}

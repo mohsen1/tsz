@@ -80,27 +80,38 @@ fn diagnostic_source_line<'a>(
 /// Reason why a file was included in compilation
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileInclusionReason {
-    /// File specified as a root file (CLI argument or files list)
+    /// File specified as a root file via CLI argument.
     RootFile,
-    /// File matched by include pattern in tsconfig
+    /// File listed in tsconfig.json's `"files"` array. Carries the
+    /// path tsc would print (typically `tsconfig.json`).
+    FilesListInConfig { config_path: String },
+    /// File matched by an `"include"` pattern in tsconfig.json.
     IncludePattern(String),
-    /// File imported from another file
+    /// File imported from another file.
     ImportedFrom(PathBuf),
-    /// File is a lib file (e.g., lib.es2020.d.ts)
-    LibFile,
+    /// File is a lib file (e.g., lib.es2020.d.ts). Carries the target
+    /// it was loaded for so the message matches tsc's
+    /// `Default library for target '<target>'`.
+    LibFile { target: Option<String> },
 }
 
 impl std::fmt::Display for FileInclusionReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::RootFile => write!(f, "Root file specified"),
+            Self::RootFile => write!(f, "Root file specified for compilation"),
+            Self::FilesListInConfig { config_path } => {
+                write!(f, "Part of 'files' list in {config_path}")
+            }
             Self::IncludePattern(pattern) => {
                 write!(f, "Matched by include pattern '{pattern}'")
             }
             Self::ImportedFrom(path) => {
                 write!(f, "Imported from '{}'", path.display())
             }
-            Self::LibFile => write!(f, "Library file"),
+            Self::LibFile { target: Some(t) } => {
+                write!(f, "Default library for target '{t}'")
+            }
+            Self::LibFile { target: None } => write!(f, "Default library"),
         }
     }
 }
@@ -1458,7 +1469,15 @@ fn compile_inner(
     user_files_read.sort();
 
     // Build file info with inclusion reasons
-    let file_infos = build_file_infos(&sources, &file_paths, args, config.as_ref(), &base_dir);
+    let file_infos = build_file_infos(
+        &sources,
+        &file_paths,
+        args,
+        config.as_ref(),
+        tsconfig_path.as_deref(),
+        resolved.checker.target,
+        &base_dir,
+    );
 
     if resolved.no_check && resolved.no_emit && !resolved.emit_declarations {
         let parse_start = Instant::now();
@@ -2264,9 +2283,46 @@ fn build_file_infos(
     root_file_paths: &[PathBuf],
     args: &CliArgs,
     config: Option<&crate::config::TsConfig>,
-    _base_dir: &Path,
+    tsconfig_path: Option<&Path>,
+    target: ScriptTarget,
+    base_dir: &Path,
 ) -> Vec<FileInfo> {
     let root_set: FxHashSet<_> = root_file_paths.iter().collect();
+    let target_name: String = target.as_ts_str().to_string();
+    let config_display = tsconfig_path
+        .and_then(|p| {
+            // tsc reports the file relative to cwd as just `tsconfig.json` when
+            // the config sits next to the project root, otherwise it prints
+            // the full path. Mirror that.
+            std::env::current_dir().ok().and_then(|cwd| {
+                p.strip_prefix(&cwd)
+                    .ok()
+                    .map(|rel| rel.display().to_string())
+            })
+        })
+        .or_else(|| tsconfig_path.map(|p| p.display().to_string()))
+        .unwrap_or_else(|| "tsconfig.json".to_string());
+
+    // Files explicitly listed in tsconfig's `"files"` array, normalized
+    // against the config's base directory so they match the canonical
+    // source paths. Empty when there is no config or no `files` array.
+    let files_list: FxHashSet<PathBuf> = config
+        .and_then(|c| c.files.as_ref())
+        .map(|files| {
+            files
+                .iter()
+                .map(|f| {
+                    let candidate = Path::new(f);
+                    if candidate.is_absolute() {
+                        candidate.to_path_buf()
+                    } else {
+                        base_dir.join(candidate)
+                    }
+                })
+                .map(|p| canonicalize_or_owned(&p))
+                .collect()
+        })
+        .unwrap_or_default();
     let cli_files: FxHashSet<_> = args.files.iter().collect();
 
     // Get include patterns if available
@@ -2278,22 +2334,36 @@ fn build_file_infos(
         .iter()
         .map(|source| {
             let mut reasons = Vec::new();
+            let canonical_source = canonicalize_or_owned(&source.path);
 
-            // Check if it's a CLI-specified file
-            if cli_files.iter().any(|f| source.path.ends_with(f)) {
+            // Lib file: takes precedence — even files that match a CLI arg
+            // shape (like a manual lib path) should report as the library.
+            if is_lib_file(&source.path) {
+                reasons.push(FileInclusionReason::LibFile {
+                    target: Some(target_name.clone()),
+                });
+            }
+            // tsconfig "files" list: matches when the source's canonical path
+            // is in the resolved files-list set. tsc prints "Part of 'files'
+            // list in tsconfig.json".
+            else if !files_list.is_empty() && files_list.contains(&canonical_source) {
+                reasons.push(FileInclusionReason::FilesListInConfig {
+                    config_path: config_display.clone(),
+                });
+            }
+            // CLI argument (e.g. `tsz a.ts b.ts`): tsc prints "Root file
+            // specified for compilation".
+            else if cli_files.iter().any(|f| source.path.ends_with(f)) {
                 reasons.push(FileInclusionReason::RootFile);
             }
-            // Check if it's a lib file (based on filename pattern)
-            else if is_lib_file(&source.path) {
-                reasons.push(FileInclusionReason::LibFile);
-            }
-            // Check if it's a root file from discovery
+            // Discovered via include patterns
             else if root_set.contains(&source.path) {
                 reasons.push(FileInclusionReason::IncludePattern(
                     include_patterns.clone(),
                 ));
             }
-            // Otherwise it was likely imported (we don't track precise imports yet)
+            // Otherwise it was likely imported (we don't track the precise
+            // edge yet — TODO: wire importer/specifier through the resolver).
             else {
                 reasons.push(FileInclusionReason::ImportedFrom(PathBuf::from("<import>")));
             }
