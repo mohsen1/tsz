@@ -844,6 +844,19 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(type_text) = self.js_accessor_backing_field_type_text(accessor_idx)
         {
             self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
+        } else if !is_getter
+            && !is_private
+            && let Some(type_text) =
+                self.paired_getter_type_predicate_text(accessor_idx, &accessor.parameters)
+        {
+            // When a setter has no annotation and the paired getter is
+            // declared with a type-predicate return (`get isFile(): this is File`),
+            // tsc emits the setter parameter using the same predicate
+            // (`set isFile(param: this is File);`). Without this, the
+            // contextual-from-getter inference resolves the predicate down
+            // to its runtime `boolean` type, producing a structurally
+            // different (and lossy) declaration.
+            self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
         } else {
             self.emit_parameters_without_types(&accessor.parameters, is_private);
         }
@@ -1125,6 +1138,81 @@ impl<'a> DeclarationEmitter<'a> {
         let key_node = self.arena.get(key_idx)?;
         self.get_source_slice(key_node.pos, key_node.end)
             .map(|text| text.trim().to_string())
+    }
+
+    /// Recover the type-predicate annotation text of a paired getter for a
+    /// setter that has no annotation of its own. tsc symmetrises the pair
+    /// by writing the same predicate (`x is File`) on both accessors in
+    /// the emitted .d.ts, even though the runtime type of the setter
+    /// parameter is `boolean`.
+    fn paired_getter_type_predicate_text(
+        &self,
+        accessor_idx: NodeIndex,
+        setter_params: &tsz_parser::parser::NodeList,
+    ) -> Option<String> {
+        let first_param_idx = *setter_params.nodes.first()?;
+        let param_node = self.arena.get(first_param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        if param.type_annotation.is_some() {
+            return None;
+        }
+
+        let parent_idx = self.arena.get_extended(accessor_idx)?.parent;
+        let parent_node = self.arena.get(parent_idx)?;
+        let member_nodes = if let Some(class_decl) = self.arena.get_class(parent_node) {
+            class_decl.members.nodes.clone()
+        } else if let Some(interface) = self.arena.get_interface(parent_node) {
+            interface.members.nodes.clone()
+        } else if let Some(literal) = self.arena.get_literal_expr(parent_node) {
+            literal.elements.nodes.clone()
+        } else {
+            return None;
+        };
+
+        let setter_node = self.arena.get(accessor_idx)?;
+        let setter_accessor = self.arena.get_accessor(setter_node)?;
+        let setter_name_text = self
+            .arena
+            .get(setter_accessor.name)
+            .and_then(|name_node| self.get_source_slice(name_node.pos, name_node.end))?;
+
+        for member_idx in member_nodes {
+            if member_idx == accessor_idx {
+                continue;
+            }
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::GET_ACCESSOR {
+                continue;
+            }
+            let Some(getter) = self.arena.get_accessor(member_node) else {
+                continue;
+            };
+            let getter_name_text = self
+                .arena
+                .get(getter.name)
+                .and_then(|name_node| self.get_source_slice(name_node.pos, name_node.end));
+            if getter_name_text.as_deref() != Some(setter_name_text.as_str()) {
+                continue;
+            }
+            let annotation_node = self.arena.get(getter.type_annotation)?;
+            if annotation_node.kind != syntax_kind_ext::TYPE_PREDICATE {
+                return None;
+            }
+            // The annotation node's end span may include the `{` that
+            // opens the body of the getter; trim trailing whitespace and
+            // any leftover open brace so the emitted setter parameter
+            // type matches the predicate alone.
+            return self
+                .get_source_slice(annotation_node.pos, annotation_node.end)
+                .map(|s| {
+                    s.trim_end_matches(|c: char| c.is_whitespace() || c == '{')
+                        .to_string()
+                });
+        }
+
+        None
     }
 
     fn emit_setter_parameters_with_type_text(
