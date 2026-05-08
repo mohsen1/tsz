@@ -55,6 +55,20 @@ pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     })
 }
 
+/// Check if a type contains named type parameters or canonical bound
+/// parameters, excluding in-flight `infer` placeholders and polymorphic `this`.
+pub fn contains_named_or_bound_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    contains_type_matching(db, type_id, |key| {
+        matches!(
+            key,
+            TypeData::TypeParameter(_) | TypeData::BoundParameter(_)
+        )
+    })
+}
+
 /// Like `contains_type_parameters_db`, but ignores references to a known
 /// locally-bound mapped key parameter.
 pub fn contains_type_parameters_except_name_db(

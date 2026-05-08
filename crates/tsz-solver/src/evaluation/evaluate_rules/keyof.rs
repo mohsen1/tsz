@@ -3,6 +3,7 @@
 //! Handles TypeScript's keyof operator: `keyof T`
 
 use crate::TypeDatabase;
+use crate::instantiation::instantiate::instantiate_generic;
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
@@ -250,6 +251,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 };
             }
             _ => {}
+        }
+
+        if let Some(keys) = self.try_keyof_mapped_application_constraint(operand) {
+            return keys;
         }
 
         {
@@ -536,6 +541,48 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 _ => self.interner().keyof(operand),
             }
         }
+    }
+
+    fn try_keyof_mapped_application_constraint(&mut self, operand: TypeId) -> Option<TypeId> {
+        let TypeData::Application(app_id) = self.interner().lookup(operand)? else {
+            return None;
+        };
+        let app = self.interner().type_application(app_id);
+        let def_id = match self.interner().lookup(app.base)? {
+            TypeData::Lazy(def_id) => Some(def_id),
+            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref),
+            TypeData::UnresolvedTypeName(atom) => {
+                let name = self.interner().resolve_atom(atom);
+                self.resolver().resolve_unresolved_type_name(&name)
+            }
+            _ => None,
+        }?;
+        let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
+        let TypeData::Mapped(mapped_id) = self.interner().lookup(resolved)? else {
+            return None;
+        };
+        let mapped = self.interner().get_mapped(mapped_id);
+        if mapped.name_type.is_some() {
+            return None;
+        }
+
+        let type_params = self
+            .resolver()
+            .get_lazy_type_params(def_id)
+            .filter(|params| params.len() == app.args.len())
+            .unwrap_or_else(|| self.extract_type_params_from_type(resolved));
+        if type_params.len() != app.args.len() {
+            return None;
+        }
+
+        let instantiated =
+            instantiate_generic(self.interner(), mapped.constraint, &type_params, &app.args);
+        let evaluated = self.evaluate(instantiated);
+        Some(if evaluated == TypeId::ERROR {
+            instantiated
+        } else {
+            evaluated
+        })
     }
 
     /// Compute keyof for an intersection type: keyof (A & B) = keyof A | keyof B

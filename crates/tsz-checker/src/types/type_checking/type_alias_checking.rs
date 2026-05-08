@@ -199,6 +199,29 @@ impl<'a> CheckerState<'a> {
         let body_construction_too_complex = self.ctx.types.take_union_too_complex();
         let _ = self.evaluate_type_with_env_uncached(body_type);
         let body_evaluation_too_complex = self.ctx.types.take_union_too_complex();
+        if body_type != TypeId::ERROR
+            && let Some(alias_sid) = alias_sym_id
+        {
+            let type_params = self.current_alias_type_params(alias.type_parameters.as_ref());
+            let can_register_non_generic_conditional = type_params.is_empty()
+                && crate::query_boundaries::common::is_conditional_type(self.ctx.types, body_type)
+                && !crate::query_boundaries::checkers::generic::contains_named_or_bound_type_parameter(
+                    self.ctx.types,
+                    body_type,
+                );
+            if !type_params.is_empty() || can_register_non_generic_conditional {
+                self.ctx.get_or_create_def_id(alias_sid);
+                let registered_type = if can_register_non_generic_conditional {
+                    self.evaluate_type_with_env_uncached(body_type)
+                } else {
+                    body_type
+                };
+                self.ctx.symbol_types.insert(alias_sid, registered_type);
+                self.ctx
+                    .register_resolved_type(alias_sid, registered_type, type_params);
+                self.ctx.env_eval_cache.borrow_mut().clear();
+            }
+        }
         if self.type_node_produces_too_large_tuple(alias.type_node) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
@@ -1241,6 +1264,31 @@ impl<'a> CheckerState<'a> {
                 == num_type_args;
         }
         false
+    }
+
+    fn current_alias_type_params(
+        &self,
+        type_parameters: Option<&NodeList>,
+    ) -> Vec<tsz_solver::TypeParamInfo> {
+        let Some(type_parameters) = type_parameters else {
+            return Vec::new();
+        };
+
+        type_parameters
+            .nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                let param_node = self.ctx.arena.get(param_idx)?;
+                let param = self.ctx.arena.get_type_parameter(param_node)?;
+                let name_node = self.ctx.arena.get(param.name)?;
+                let ident = self.ctx.arena.get_identifier(name_node)?;
+                let type_id = self.ctx.type_parameter_scope.get(&ident.escaped_text)?;
+                crate::query_boundaries::checkers::generic::named_type_param_info(
+                    self.ctx.types,
+                    *type_id,
+                )
+            })
+            .collect()
     }
 
     /// Walk a type node AST subtree to find `TYPE_QUERY` nodes (`typeof expr`)
