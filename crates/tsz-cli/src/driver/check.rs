@@ -236,10 +236,13 @@ fn post_process_checker_diagnostics(
     // Only keep TS1xxx codes that tsc is known to emit for JS files.
     if is_js {
         checker_diagnostics.retain(|diag| {
-            // TS1361/TS1362 are semantic type-only value-use diagnostics, not
-            // parser grammar errors. Keep them for checked JS files even
-            // though their codes live in the TS1xxx range.
-            if !should_filter_type_errors && matches!(diag.code, 1361 | 1362) {
+            // Some semantic checker diagnostics live in the TS1xxx range. Keep
+            // them for checked JS files even though the coarse parser-grammar
+            // classifier also covers TS1xxx.
+            if !should_filter_type_errors
+                && (matches!(diag.code, 1361 | 1362)
+                    || is_semantic_ts1xxx_suppressed_in_unchecked_js(diag.code))
+            {
                 return true;
             }
             if tsz::checker::diagnostics::is_parser_grammar_diagnostic(diag.code) {
@@ -868,7 +871,27 @@ pub(super) fn collect_diagnostics(
             .files
             .par_iter()
             .map(|file| {
-                collect_no_check_file_diagnostics(file, options, program_has_real_syntax_errors)
+                let mut file_diags = collect_no_check_file_diagnostics(
+                    file,
+                    options,
+                    program_has_real_syntax_errors,
+                );
+                // tsc still reports the `--isolatedDeclarations` grammar
+                // diagnostics (TS9007/TS9011/TS9012/etc.) under `--noCheck`
+                // because they gate declaration emission, not type checking
+                // (#3709). Run only the isolated-declaration grammar pass.
+                if options.checker.isolated_declarations {
+                    let mut binder = tsz_binder::state::BinderState::new();
+                    binder.bind_source_file(&file.arena, file.source_file);
+                    file_diags.extend(tsz::checker::run_isolated_declarations_pass(
+                        &file.arena,
+                        &binder,
+                        file.source_file,
+                        file.file_name.clone(),
+                        options.checker.clone(),
+                    ));
+                }
+                file_diags
             })
             .flatten()
             .collect();
@@ -3698,6 +3721,52 @@ mod tests {
         assert!(
             !codes.contains(&2322),
             "expected --noCheck diagnostics to skip TS2322 type error, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn no_check_path_emits_isolated_declarations_ts9007() {
+        // Issue #3709: `--noCheck --isolatedDeclarations` previously dropped
+        // TS9007/TS9011/etc. tsc still reports these because they gate
+        // declaration emission, not type checking.
+        let mut options = ResolvedCompilerOptions {
+            no_check: true,
+            ..ResolvedCompilerOptions::default()
+        };
+        options.checker.isolated_declarations = true;
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[("file.ts", "export function f(x) { return x; }\n")],
+            &options,
+            std::path::Path::new("/"),
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+        assert!(
+            codes.contains(&9007),
+            "expected --noCheck --isolatedDeclarations to surface TS9007, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn no_check_without_isolated_declarations_does_not_run_isolated_decl_pass() {
+        // Without --isolatedDeclarations, the isolated-decl pass must not
+        // fire and produce TS9007.
+        let options = ResolvedCompilerOptions {
+            no_check: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[("file.ts", "export function f(x) { return x; }\n")],
+            &options,
+            std::path::Path::new("/"),
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+        assert!(
+            !codes.contains(&9007),
+            "TS9007 must not fire under --noCheck without --isolatedDeclarations, got: {diagnostics:?}"
         );
     }
 

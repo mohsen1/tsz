@@ -703,10 +703,23 @@ impl<'a> DeclarationEmitter<'a> {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
                     return false;
                 };
-                if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                    return false;
+                match stmt_node.kind {
+                    k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                        self.node_subtree_contains_export_specifier_name(stmt_idx, name)
+                    }
+                    // `export = X` (commonjs) exports the value-side of `X`
+                    // as the entire module. Without this branch a non-exported
+                    // declaration whose only public-API consumer is an
+                    // `export = X` assignment would be filtered out by the
+                    // initializer-only-dependency check.
+                    k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => self
+                        .arena
+                        .get_export_assignment(stmt_node)
+                        .is_some_and(|assignment| {
+                            self.entity_name_contains_identifier(assignment.expression, name)
+                        }),
+                    _ => false,
                 }
-                self.node_subtree_contains_export_specifier_name(stmt_idx, name)
             })
     }
 

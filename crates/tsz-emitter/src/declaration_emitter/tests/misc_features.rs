@@ -117,6 +117,28 @@ interface Foo extends Array<string> {}
     );
 }
 
+#[test]
+fn test_array_literal_of_function_expressions_paren_wraps_each_arm() {
+    // Regression for narrowingUnionToUnion: when an array literal contains
+    // multiple function expressions that don't all share an identical type,
+    // each function-typed union arm must be parenthesized so the trailing
+    // `=>` does not bind across the `|`. Without parens around each arm,
+    // `(a: A) => void | (a: B) => void` parses as
+    // `(a: A) => (void | (a: B) => void)`.
+    let output = emit_dts(
+        r#"
+const TEST_CASES = [
+    (value: string) => {},
+    (value: number) => {},
+];
+"#,
+    );
+    assert!(
+        output.contains("(((value: string) => void) | ((value: number) => void))[]"),
+        "Expected each function-typed union arm to be parenthesized: {output}"
+    );
+}
+
 // =============================================================================
 // 17. Call / Construct Signatures in Interfaces
 // =============================================================================
@@ -1005,6 +1027,36 @@ export var cProp = new xc();
     assert!(
         output.contains("export declare var cProp: xc;"),
         "Expected top-level export import alias to be preferred over its qualified target: {output}"
+    );
+}
+
+#[test]
+fn test_export_assignment_keeps_uninitialized_value_declaration() {
+    // Regression for privacyCheckExportAssignmentOnExportedGenericInterface1:
+    // a `var X: T;` (no initializer, with type annotation) whose only public
+    // API consumer is `export = X` was being filtered out by the
+    // initializer-only-dependency check, because that check only looked at
+    // `export { X }` specifiers and did not recognize commonjs
+    // `export = X` as an exporter of the value-side name.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace Foo {
+    export interface A<T> {
+    }
+}
+interface Foo<T> {
+}
+var Foo: new () => Foo.A<Foo<string>>;
+export = Foo;
+"#,
+    );
+    assert!(
+        output.contains("declare var Foo:"),
+        "Expected `declare var Foo` to be emitted when `export = Foo` is the consumer: {output}"
+    );
+    assert!(
+        output.contains("export = Foo;"),
+        "Expected the export assignment to be preserved: {output}"
     );
 }
 

@@ -5965,7 +5965,16 @@ impl<'a> DeclarationEmitter<'a> {
         let elem_text = if distinct.len() == 1 {
             distinct.pop()?
         } else {
-            distinct.join(" | ")
+            // Each union member that is itself a function/constructor type
+            // must be parenthesized so the trailing `=>` does not bind the
+            // following `|` into the return type:
+            //   `(x: A) => void | (x: B) => void` parses as
+            //   `(x: A) => (void | (x: B) => void)`.
+            distinct
+                .iter()
+                .map(|t| Self::parenthesize_type_text_in_union_position(t))
+                .collect::<Vec<_>>()
+                .join(" | ")
         };
         let needs_parens =
             elem_text.contains("=>") || elem_text.contains('|') || elem_text.contains('&');

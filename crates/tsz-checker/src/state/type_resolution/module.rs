@@ -855,7 +855,7 @@ impl<'a> CheckerState<'a> {
             n.ends_with(".mjs") || n.ends_with(".mts")
         };
         let default_skips_export_equals = export_name == "default"
-            && target_is_explicit_esm
+            && (target_is_explicit_esm || self.source_file_idx_is_js_with_esm_syntax(file_idx))
             && self.ctx.compiler_options.module != tsz_common::common::ModuleKind::Preserve;
 
         // Check direct exports (module_exports)
@@ -2021,7 +2021,13 @@ impl<'a> CheckerState<'a> {
         // When only allowSyntheticDefaultImports is true (without esModuleInterop),
         // suppression applies to CJS-shaped modules. ESM .d.ts files (from packages
         // with "type": "module") still require an explicit default export.
-        if self.ctx.allow_synthetic_default_imports() && !is_source_file_import {
+        let target_is_js_with_esm_syntax = resolved_import_target
+            .is_some_and(|idx| self.source_file_idx_is_js_with_esm_syntax(idx));
+
+        if self.ctx.allow_synthetic_default_imports()
+            && !is_source_file_import
+            && !target_is_js_with_esm_syntax
+        {
             // esModuleInterop: suppress TS1192 for non-source-file imports unless
             // the module is from a genuine ESM package (e.g., node_modules with
             // package.json "type": "module"). The file_is_esm_map marks all files
@@ -2063,9 +2069,6 @@ impl<'a> CheckerState<'a> {
         };
 
         use crate::diagnostics::{diagnostic_messages, format_message};
-
-        let target_is_js_with_esm_syntax = resolved_import_target
-            .is_some_and(|idx| self.source_file_idx_is_js_with_esm_syntax(idx));
 
         let has_export_equals = self.module_has_export_equals(module_specifier)
             || self.module_has_export_assignment_declaration(module_specifier);
@@ -2146,6 +2149,11 @@ impl<'a> CheckerState<'a> {
             .ctx
             .resolve_import_target_from_file(self.ctx.current_file_idx, module_specifier)
             .or_else(|| self.ctx.resolve_import_target(module_specifier));
+        if let Some(target_idx) = target_idx
+            && self.source_file_idx_is_js_with_esm_syntax(target_idx)
+        {
+            return false;
+        }
         if self
             .resolve_js_export_surface_for_module(module_specifier, Some(self.ctx.current_file_idx))
             .is_some_and(|surface| surface.has_commonjs_exports)
@@ -2168,10 +2176,6 @@ impl<'a> CheckerState<'a> {
         if file_name.ends_with(".mjs") || file_name.ends_with(".mts") {
             return false;
         }
-        if self.source_file_idx_is_js_with_esm_syntax(target_idx) {
-            return false;
-        }
-
         self.ctx
             .file_is_esm_map
             .as_ref()

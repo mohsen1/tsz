@@ -89,12 +89,19 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .filter(|decl| decl.file_idx == current_file_idx)
             {
-                let has_conflict = type_values_by_name.get(&decl.name).is_some_and(|others| {
+                let local_conflict = type_values_by_name.get(&decl.name).is_some_and(|others| {
                     others.iter().any(|other| {
                         other.file_idx == current_file_idx
                             || (decl.is_global_script_decl && other.is_global_script_decl)
                     })
                 });
+                // Issue #3133: a JSDoc `@typedef` in a global-script JS file
+                // collides with lib globals like `Object`, `Array`, `Promise`.
+                // tsc surfaces TS2300 for those collisions; tsz historically
+                // only checked local class/CommonJS value declarations.
+                let lib_conflict =
+                    decl.is_global_script_decl && self.ctx.has_name_in_lib(&decl.name);
+                let has_conflict = local_conflict || lib_conflict;
                 if !has_conflict {
                     continue;
                 }
