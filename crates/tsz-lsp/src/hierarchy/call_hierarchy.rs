@@ -308,6 +308,97 @@ impl<'a> CallHierarchyProvider<'a> {
         results
     }
 
+    /// Issue #3753: find callers in this file that invoke `target_name` and
+    /// whose binding resolves to `target_decl_idx` (typically the local
+    /// import binding for a cross-file target). Mirrors the within-file
+    /// scan that `incoming_calls` performs but is parameterized by the
+    /// declaration node directly so callers don't need to be a function-
+    /// like node — `import { x } from "./a"` is a valid input here even
+    /// though the import binding is not itself callable in this file.
+    pub fn incoming_calls_for_decl_in_file(
+        &self,
+        target_decl_idx: NodeIndex,
+        target_name: &str,
+    ) -> Vec<CallHierarchyIncomingCall> {
+        let mut results = Vec::new();
+
+        let target_symbol_id = self
+            .binder
+            .get_node_symbol(target_decl_idx)
+            .or_else(|| self.binder.file_locals.get(target_name));
+
+        let mut callers: FxHashMap<u32, Vec<Range>> = FxHashMap::default();
+        let mut script_from_ranges = Vec::new();
+
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            if node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let idx = NodeIndex(i as u32);
+            if idx == target_decl_idx {
+                continue;
+            }
+            let ident_data = match self.arena.get_identifier(node) {
+                Some(d) => d,
+                None => continue,
+            };
+            if ident_data.escaped_text != target_name {
+                continue;
+            }
+            if !self.is_inside_call_or_decorator_reference(idx) {
+                continue;
+            }
+            if self.is_property_access_name(idx) {
+                continue;
+            }
+            // Symbol cross-check: when the binder agrees on a target symbol,
+            // require the call site to resolve to the same one. This rejects
+            // local same-name shadowing that doesn't go through the import.
+            if let Some(target_symbol) = target_symbol_id {
+                let reference_symbol = self
+                    .binder
+                    .node_symbols
+                    .get(&idx.0)
+                    .copied()
+                    .or_else(|| self.resolve_callee_symbol(idx).map(|(sym, _, _)| sym));
+                if let Some(reference_symbol) = reference_symbol
+                    && reference_symbol != target_symbol
+                {
+                    continue;
+                }
+            }
+
+            let range = node_range(self.arena, self.line_map, self.source_text, idx);
+            if let Some(containing_func) = self.find_containing_function(idx) {
+                let caller_idx = self
+                    .class_parent_for_constructor(containing_func)
+                    .unwrap_or(containing_func);
+                callers.entry(caller_idx.0).or_default().push(range);
+            } else if let Some(caller_idx) = self.decorated_declaration_caller(idx) {
+                callers.entry(caller_idx.0).or_default().push(range);
+            } else {
+                script_from_ranges.push(range);
+            }
+        }
+
+        for (caller_idx_raw, ranges) in callers {
+            let caller_idx = NodeIndex(caller_idx_raw);
+            if let Some(item) = self.make_call_hierarchy_item_for_caller(caller_idx) {
+                results.push(CallHierarchyIncomingCall {
+                    from: item,
+                    from_ranges: ranges,
+                });
+            }
+        }
+        if !script_from_ranges.is_empty() {
+            results.push(CallHierarchyIncomingCall {
+                from: self.script_call_hierarchy_item(),
+                from_ranges: script_from_ranges,
+            });
+        }
+        results
+    }
+
     /// Find all outgoing calls from the function at the given position.
     ///
     /// Walks the function's body AST looking for `CallExpression` nodes,
