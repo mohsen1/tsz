@@ -166,6 +166,7 @@ pub(crate) mod type_construction;
     clippy::manual_map
 )]
 pub(crate) mod type_defaults;
+pub(crate) mod type_parameter_identity;
 #[allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms)]
 pub(crate) mod type_rewrite;
 #[allow(

@@ -478,6 +478,50 @@ function foo<S extends Foo<S>>() {}
 }
 
 #[test]
+fn test_ts2313_no_false_positive_for_double_mixin_conditional_base_class() {
+    let source = r#"
+// @target: es2015
+type Constructor = new (...args: any[]) => {};
+
+const Mixin1 = <C extends Constructor>(Base: C) => class extends Base { private _fooPrivate: {}; }
+
+type FooConstructor = typeof Mixin1 extends (a: Constructor) => infer Cls ? Cls : never;
+const Mixin2 = <C extends FooConstructor>(Base: C) => class extends Base {};
+
+class C extends Mixin2(Mixin1(Object)) {}
+"#;
+    let libs = crate::test_utils::load_lib_files(&["es5.d.ts", "es2015.d.ts"]);
+    let diags = crate::test_utils::check_source_with_libs(
+        source,
+        "doubleMixinConditionalTypeBaseClassWorks.ts",
+        tsz_checker::context::CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+        &libs,
+    );
+
+    let ts2313_count = diags.iter().filter(|d| d.code == 2313).count();
+    assert_eq!(
+        ts2313_count,
+        0,
+        "Expected no TS2313 for conditional mixin base class, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2564),
+        "Expected the conformance baseline TS2564 to remain, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_ts2313_no_false_positive_for_applied_generic_class_with_output_default() {
     let source = r"
 export interface TypeDef {}
