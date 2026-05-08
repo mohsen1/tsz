@@ -823,6 +823,44 @@ impl<'a> TypePrinter<'a> {
             return "unknown".to_string(); // Intersection of 0 types is unknown
         }
 
+        // Recover `NonNullable<T>` from a 2-member intersection of a type
+        // parameter and `{}`. tsc's narrowing of a type-parameter-typed
+        // value through truthy guards produces `T & {}` but tags it with
+        // the `NonNullable<T>` alias so users see the meaningful name.
+        // tsz's narrower constructs the intersection without storing the
+        // alias on every code path, so apply the same shape detection at
+        // print time (the diagnostic compound formatter already does
+        // this for TS2322 messages).
+        if types.len() == 2 {
+            let is_type_param_like = |type_id: tsz_solver::types::TypeId| {
+                visitor::type_param_info(self.interner, type_id).is_some()
+            };
+            let is_empty_object = |type_id: tsz_solver::types::TypeId| {
+                if type_id.is_intrinsic() {
+                    return false;
+                }
+                visitor::object_shape_id(self.interner, type_id)
+                    .map(|shape_id| self.interner.object_shape(shape_id))
+                    .is_some_and(|shape| {
+                        shape.properties.is_empty()
+                            && shape.string_index.is_none()
+                            && shape.number_index.is_none()
+                            && shape.symbol.is_none()
+                    })
+            };
+            let (a, b) = (types[0], types[1]);
+            let pair = if is_type_param_like(a) && is_empty_object(b) {
+                Some(a)
+            } else if is_type_param_like(b) && is_empty_object(a) {
+                Some(b)
+            } else {
+                None
+            };
+            if let Some(t) = pair {
+                return format!("NonNullable<{}>", self.print_type(t));
+            }
+        }
+
         let mut members: Vec<(u8, String)> = Vec::with_capacity(types.len());
         for &type_id in types.iter() {
             let s = self.composition_member_text(type_id);
@@ -2380,6 +2418,35 @@ mod tests {
             TypePrinter::replace_type_param_name_with_any("S[]", "S"),
             "any[]"
         );
+    }
+
+    #[test]
+    fn type_param_intersection_with_empty_object_prints_as_non_nullable() {
+        // Regression: tsc's truthy-narrowing of a type-parameter-typed
+        // value yields `T & {}` structurally and renders it as the
+        // alias `NonNullable<T>`. tsz constructs the same intersection
+        // in narrowing without storing the alias on every code path,
+        // so the printer must recover the spelling from the structural
+        // shape (mirroring the diagnostic compound formatter).
+        let interner = TypeInterner::new();
+        let t_atom = interner.intern_string("T");
+        let t = interner.type_param(TypeParamInfo {
+            name: t_atom,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let empty = interner.object(Vec::new());
+
+        // Mark `T` as visible in the printer scope so it renders as `T`
+        // rather than its `unknown` fallback for unscoped type parameters.
+        let printer = TypePrinter::new(&interner).with_outer_type_params(vec![t_atom]);
+        let intersection = interner.intersection2(t, empty);
+        assert_eq!(printer.print_type(intersection), "NonNullable<T>");
+
+        let printer = TypePrinter::new(&interner).with_outer_type_params(vec![t_atom]);
+        let intersection_swapped = interner.intersection2(empty, t);
+        assert_eq!(printer.print_type(intersection_swapped), "NonNullable<T>");
     }
 
     #[test]
