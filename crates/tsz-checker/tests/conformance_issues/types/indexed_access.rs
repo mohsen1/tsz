@@ -1082,6 +1082,33 @@ type _DeepReadonlyObject<T> = {
 }
 
 #[test]
+fn test_recursive_partial_array_index_assignment_does_not_runaway() {
+    let started = std::time::Instant::now();
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type RecursivePartial<T> = {
+  [P in keyof T]?: T[P] extends any[] ? { [index: number]: RecursivePartial<T[P][0]> } :
+    T[P] extends object ? RecursivePartial<T[P]> : T[P];
+};
+
+declare function assign<T>(o: T, a: RecursivePartial<T>): void;
+
+var a = { o: 1, b: 2, c: [{ a: 1, c: '213' }] };
+assign(a, { o: 2, c: { 0: { a: 2, c: '213123' } } });
+        ",
+    );
+
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "Recursive mapped/indexed access property collection should complete quickly. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2589),
+        "Recursive mapped/indexed access property collection should not report TS2589. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_homomorphic_mapped_type_union_constraint_with_readonly_member() {
     let options = CheckerOptions {
         strict: true,
