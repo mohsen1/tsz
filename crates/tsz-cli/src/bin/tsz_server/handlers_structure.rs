@@ -2744,6 +2744,11 @@ impl Server {
             // matching import binding so we can ask the provider which
             // callers reference that local within this file.
             let mut local_bindings: Vec<(tsz_parser::NodeIndex, String)> = Vec::new();
+            // Issue #3753 follow-up: collect namespace-import bindings
+            // (`import * as ns from "./a"`). For these the import
+            // doesn't bind `target_name` directly; we scan for
+            // `<ns>.<target_name>(…)` member calls instead.
+            let mut namespace_bindings: Vec<tsz_parser::NodeIndex> = Vec::new();
             for node in arena.nodes.iter() {
                 if node.kind != tsz_parser::syntax_kind_ext::IMPORT_DECLARATION {
                     continue;
@@ -2792,8 +2797,24 @@ impl Server {
                         {
                             local_bindings.push((clause.name, ident.escaped_text.clone()));
                         }
+                        // Namespace import (`import * as ns from "./a"`):
+                        // record the local namespace identifier so the
+                        // caller scan can match `<ns>.<target_name>()`
+                        // member calls. NamespaceImport reuses
+                        // `NamedImportsData` storage with the local name
+                        // in the `name` field and an empty elements list.
+                        if !clause.named_bindings.is_none()
+                            && let Some(nb_node) = arena.get(clause.named_bindings)
+                            && nb_node.kind == tsz_parser::syntax_kind_ext::NAMESPACE_IMPORT
+                            && let Some(ns_import) = arena.get_named_imports(nb_node)
+                            && !ns_import.name.is_none()
+                            && let Some(name_node) = arena.get(ns_import.name)
+                            && arena.get_identifier(name_node).is_some()
+                        {
+                            namespace_bindings.push(ns_import.name);
+                        }
                         // Named bindings — walk the named_bindings child for
-                        // either `NamedImports` or `NamespaceImport`.
+                        // `NamedImports` (`import { foo } from "./a"`).
                         if !clause.named_bindings.is_none()
                             && let Some(nb_node) = arena.get(clause.named_bindings)
                             && nb_node.kind == tsz_parser::syntax_kind_ext::NAMED_IMPORTS
@@ -2843,6 +2864,12 @@ impl Server {
             let _ = root;
             for (decl_idx, local_name) in local_bindings {
                 let calls = provider.incoming_calls_for_decl_in_file(decl_idx, &local_name);
+                for call in calls {
+                    results.push(call);
+                }
+            }
+            for ns_decl_idx in namespace_bindings {
+                let calls = provider.incoming_calls_for_namespace_member(ns_decl_idx, &target_name);
                 for call in calls {
                     results.push(call);
                 }

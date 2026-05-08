@@ -3772,6 +3772,81 @@ fn test_call_hierarchy_incoming_handles_aliased_cross_file_import() {
     );
 }
 
+/// Issue #3753 follow-up: namespace imports — `import * as ns from "./a"`
+/// followed by `ns.target()` must register as a cross-file caller of the
+/// exported `target` in /a.ts.
+#[test]
+fn test_call_hierarchy_incoming_handles_namespace_import_member_call() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export function target() {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import * as ns from \"./a\";\nexport function caller() { ns.target(); }\n".to_string(),
+    );
+
+    let req = make_request(
+        "provideCallHierarchyIncomingCalls",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 1,
+            "offset": 17
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("incoming calls should return a body");
+    let calls = body
+        .as_array()
+        .expect("provideCallHierarchyIncomingCalls body should be an array");
+
+    assert!(
+        calls.iter().any(|c| c["from"]["name"] == "caller"
+            && c["from"]["file"]
+                .as_str()
+                .is_some_and(|f| f.ends_with("/b.ts"))),
+        "expected cross-file caller via `ns.target()` namespace import, got: {calls:?}"
+    );
+}
+
+/// Namespace import where the user calls a *different* member of the
+/// imported namespace must NOT register as a caller of `target` (no false
+/// positives from same-namespace, different-member calls).
+#[test]
+fn test_call_hierarchy_incoming_namespace_skips_other_members() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export function target() {}\nexport function other() {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import * as ns from \"./a\";\nexport function caller() { ns.other(); }\n".to_string(),
+    );
+
+    let req = make_request(
+        "provideCallHierarchyIncomingCalls",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 1,
+            "offset": 17
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("incoming calls should return a body");
+    let calls = body
+        .as_array()
+        .expect("provideCallHierarchyIncomingCalls body should be an array");
+
+    assert!(
+        !calls.iter().any(|c| c["from"]["name"] == "caller"),
+        "must not list caller — it calls ns.other(), not ns.target(). got: {calls:?}"
+    );
+}
+
 /// A different file that has its own `target` (not imported from /a.ts) must
 /// not pollute the incoming-calls answer for /a.ts's `target`.
 #[test]
