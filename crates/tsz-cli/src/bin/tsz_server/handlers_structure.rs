@@ -57,7 +57,9 @@ use tsz::lsp::code_actions::CodeActionProvider;
 use tsz::lsp::editor_decorations::inlay_hints::{InlayHintKind, InlayHintsProvider};
 use tsz::lsp::editor_ranges::folding::FoldingRangeProvider;
 use tsz::lsp::editor_ranges::selection_range::SelectionRangeProvider;
-use tsz::lsp::hierarchy::call_hierarchy::CallHierarchyProvider;
+use tsz::lsp::hierarchy::call_hierarchy::{
+    CallHierarchyItem, CallHierarchyOutgoingCall, CallHierarchyProvider, ImportResolutionRequest,
+};
 use tsz::lsp::highlighting::semantic_tokens::SemanticTokensProvider;
 use tsz::lsp::position::{LineMap, Position, Range};
 use tsz::lsp::rename::file_rename::FileRenameProvider;
@@ -2596,6 +2598,169 @@ impl Server {
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
+    /// Issue #3753: resolve an outgoing-call import-binding to the actual
+    /// exported declaration in the target module.
+    ///
+    /// Returns `None` when the module specifier can't be resolved (bare
+    /// package imports, missing files, parse failures, no matching export).
+    /// In that case the caller falls back to the local-import-binding item.
+    pub(crate) fn resolve_import_call_hierarchy_target(
+        &mut self,
+        importer_file: &str,
+        request: &ImportResolutionRequest,
+    ) -> Option<CallHierarchyItem> {
+        // Only handle relative-path specifiers for now. Bare specifiers
+        // would need module-resolution machinery the LSP server doesn't
+        // wire up yet.
+        let spec = &request.module_specifier;
+        if !(spec.starts_with("./") || spec.starts_with("../")) {
+            return None;
+        }
+
+        let importer_path = std::path::Path::new(importer_file);
+        let importer_dir = importer_path.parent()?;
+        let resolved_path = self.resolve_relative_module_specifier(importer_dir, spec)?;
+        let resolved_str = resolved_path.to_string_lossy().into_owned();
+
+        let (arena, binder, _root, source_text) = self.parse_and_bind_file(&resolved_str)?;
+        let line_map = LineMap::build(&source_text);
+        let provider = CallHierarchyProvider::new(
+            &arena,
+            &binder,
+            &line_map,
+            resolved_str.clone(),
+            &source_text,
+        );
+
+        // Find the exported binding by name. Default imports map to a
+        // declaration tagged as default; named imports map to the named
+        // export. Namespace imports are not resolved here (no specific
+        // export to point at).
+        let target_name = request.exported_name.as_deref()?;
+        let decl_idx = Self::find_exported_callable(&arena, &binder, target_name)?;
+
+        // Use the provider's prepare-by-position path: locate any identifier
+        // at the resolved declaration's position, then build a hierarchy
+        // item for it. Falls back to a synthesized item if prepare doesn't
+        // recognize the position.
+        let decl_node = arena.get(decl_idx)?;
+        let pos = line_map.offset_to_position(decl_node.pos, &source_text);
+        if let Some(item) = provider.prepare(_root, pos) {
+            return Some(CallHierarchyItem {
+                uri: resolved_str,
+                ..item
+            });
+        }
+        let span_pos = line_map.offset_to_position(decl_node.pos, &source_text);
+        let span_end = line_map.offset_to_position(decl_node.end, &source_text);
+        Some(CallHierarchyItem {
+            name: target_name.to_string(),
+            kind: tsz_lsp::SymbolKind::Function,
+            uri: resolved_str,
+            range: tsz_common::position::Range::new(span_pos, span_end),
+            selection_range: tsz_common::position::Range::new(span_pos, span_end),
+            container_name: None,
+        })
+    }
+
+    /// Resolve a relative module specifier (e.g. `"./a"`, `"../foo/bar"`)
+    /// against the importing file's directory. Tries `.ts`, `.tsx`,
+    /// `.d.ts`, `.js`, `.jsx`, `.mts`, `.cts`, then bare path. Returns the
+    /// first candidate that exists on disk or matches a key in the
+    /// `open_files` map.
+    fn resolve_relative_module_specifier(
+        &self,
+        importer_dir: &std::path::Path,
+        specifier: &str,
+    ) -> Option<std::path::PathBuf> {
+        // Normalize the join — `Path::join` leaves `./a` segments in place,
+        // which produces `/./a.ts` and breaks both `exists()` and
+        // open_files key lookup. Collapse `.` and `..` components manually.
+        let base = Self::normalize_path(&importer_dir.join(specifier));
+        const EXTS: &[&str] = &["ts", "tsx", "d.ts", "js", "jsx", "mts", "cts", "mjs", "cjs"];
+        let exists_anywhere = |p: &std::path::Path| -> bool {
+            if p.exists() {
+                return true;
+            }
+            let key = p.to_string_lossy().into_owned();
+            self.open_files.contains_key(&key)
+        };
+        // Already has an extension? Use it directly when it resolves.
+        if base.extension().is_some() && exists_anywhere(&base) {
+            return Some(base);
+        }
+        for ext in EXTS {
+            let candidate = base.with_extension(ext);
+            if exists_anywhere(&candidate) {
+                return Some(candidate);
+            }
+        }
+        // index.<ext>
+        if base.is_dir() {
+            for ext in EXTS {
+                let candidate = base.join(format!("index.{ext}"));
+                if exists_anywhere(&candidate) {
+                    return Some(candidate);
+                }
+            }
+        }
+        // Last attempt — return the bare base path (the caller will fall
+        // back via parse_and_bind_file's read_to_string failure path).
+        Some(base)
+    }
+
+    /// Strip `.` segments and resolve `..` segments from a path while
+    /// preserving the root. Used to normalize the result of
+    /// `Path::join("/foo", "./bar")` (which yields `/foo/./bar`) into the
+    /// canonical `/foo/bar` so it matches `open_files` keys and `exists()`.
+    fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+        use std::path::Component;
+        let mut out = std::path::PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if !out.pop() {
+                        out.push("..");
+                    }
+                }
+                other => out.push(other.as_os_str()),
+            }
+        }
+        if out.as_os_str().is_empty() {
+            out.push(".");
+        }
+        out
+    }
+
+    /// Locate an exported callable (function declaration / class declaration
+    /// / variable initializer) by exported name within the bound source
+    /// file. Searches `binder.symbols` for symbols tagged as exported with a
+    /// matching name and returns the first declaration `NodeIndex`.
+    fn find_exported_callable(
+        arena: &tsz_parser::parser::node::NodeArena,
+        binder: &tsz_binder::BinderState,
+        target_name: &str,
+    ) -> Option<tsz_parser::NodeIndex> {
+        if let Some(sym_id) = binder.file_locals.get(target_name)
+            && let Some(symbol) = binder.symbols.get(sym_id)
+            && let Some(&decl) = symbol.declarations.first()
+        {
+            // Skip the symbol if its first declaration is itself an import-binding.
+            let kind = arena.get(decl).map(|n| n.kind);
+            let is_import_binding = matches!(
+                kind,
+                Some(k) if k == tsz_parser::syntax_kind_ext::IMPORT_SPECIFIER
+                    || k == tsz_parser::syntax_kind_ext::IMPORT_CLAUSE
+                    || k == tsz_parser::syntax_kind_ext::NAMESPACE_IMPORT
+            );
+            if !is_import_binding {
+                return Some(decl);
+            }
+        }
+        None
+    }
+
     pub(crate) fn handle_call_hierarchy(
         &mut self,
         seq: u64,
@@ -2607,7 +2772,7 @@ impl Server {
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
-                CallHierarchyProvider::new(&arena, &binder, &line_map, file, &source_text);
+                CallHierarchyProvider::new(&arena, &binder, &line_map, file.clone(), &source_text);
 
             let is_incoming = request.command == "provideCallHierarchyIncomingCalls";
             // TypeScript treats absolute position 0 as a source-file call hierarchy query.
@@ -2686,6 +2851,28 @@ impl Server {
                         }
                     }
                 }
+                // Issue #3753: when an outgoing callee resolves to an `import`
+                // binding, follow it across to the imported module's source
+                // file and replace `to` with the actual export's location.
+                // tsc points at the exported declaration, not at the
+                // local import binding.
+                let mut resolved_calls: Vec<tsz_lsp::CallHierarchyOutgoingCall> =
+                    Vec::with_capacity(calls.len());
+                for call in calls {
+                    if let Some(import_req) = call.import_resolution.clone()
+                        && let Some(resolved_to) =
+                            self.resolve_import_call_hierarchy_target(&file, &import_req)
+                    {
+                        resolved_calls.push(CallHierarchyOutgoingCall {
+                            to: resolved_to,
+                            from_ranges: call.from_ranges,
+                            import_resolution: None,
+                        });
+                    } else {
+                        resolved_calls.push(call);
+                    }
+                }
+                let calls = resolved_calls;
                 let body: Vec<serde_json::Value> = calls
                     .iter()
                     .map(|call| {
