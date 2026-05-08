@@ -173,8 +173,14 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            // Return type must be an intersection of bare type-parameter
-            // references that exactly matches the type-parameter list.
+            // Return type must be an intersection — either of bare
+            // type-parameter references (covered by the simple
+            // `<T1, …, Tn>(p1, …, pn): T1 & … & Tn` mixin shape) or
+            // of a mix of type-parameter references and other type
+            // expressions (covered by `<T>(t: T): T & (abstract new …)`,
+            // a common abstract-mixin shape). For each member we either
+            // substitute a type-parameter reference with `typeof argi`,
+            // or emit the member's source text verbatim.
             let Some(return_node) = self.arena.get(return_type) else {
                 continue;
             };
@@ -184,62 +190,80 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(inter) = self.arena.get_composite_type(return_node) else {
                 continue;
             };
-            if inter.types.nodes.len() != type_param_names.len() {
-                continue;
-            }
-            let mut return_uses: Vec<usize> = Vec::with_capacity(inter.types.nodes.len());
-            let mut return_ok = true;
-            for &member_idx in &inter.types.nodes {
-                let Some(member_node) = self.arena.get(member_idx) else {
-                    return_ok = false;
-                    break;
-                };
-                if member_node.kind != syntax_kind_ext::TYPE_REFERENCE {
-                    return_ok = false;
-                    break;
-                }
-                let Some(type_ref) = self.arena.get_type_ref(member_node) else {
-                    return_ok = false;
-                    break;
-                };
-                if type_ref
-                    .type_arguments
-                    .as_ref()
-                    .is_some_and(|ta| !ta.nodes.is_empty())
-                {
-                    return_ok = false;
-                    break;
-                }
-                let Some(name) = self.get_identifier_text(type_ref.type_name) else {
-                    return_ok = false;
-                    break;
-                };
-                let Some(idx) = type_param_names.iter().position(|n| *n == name) else {
-                    return_ok = false;
-                    break;
-                };
-                return_uses.push(idx);
-            }
-            if !return_ok {
-                continue;
-            }
-            // Each type parameter must appear in the return exactly once and
-            // in the same order — otherwise the inferred intersection uses
-            // a different shape than `T1 & T2 & …`.
-            let mut sorted = return_uses.clone();
-            sorted.sort_unstable();
-            sorted.dedup();
-            if sorted.len() != type_param_names.len() {
+            if inter.types.nodes.is_empty() {
                 continue;
             }
 
-            // Build `typeof arg_for_T1 & typeof arg_for_T2 & …`.
-            let mut parts: Vec<String> = Vec::with_capacity(return_uses.len());
-            for tp_idx in &return_uses {
-                let arg_position = param_to_type_param.iter().position(|&i| i == *tp_idx)?;
-                let arg_idx = arg_idxs[arg_position];
-                let arg_text = self.direct_value_reference_typeof_text(arg_idx)?;
-                parts.push(arg_text);
+            enum ReturnPart {
+                TypeParam(usize),
+                Verbatim(NodeIndex),
+            }
+            let mut parts_plan: Vec<ReturnPart> = Vec::with_capacity(inter.types.nodes.len());
+            let mut used_type_params: Vec<usize> = Vec::new();
+            for &member_idx in &inter.types.nodes {
+                let bare_param_idx = (|| {
+                    let member_node = self.arena.get(member_idx)?;
+                    if member_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                        return None;
+                    }
+                    let type_ref = self.arena.get_type_ref(member_node)?;
+                    if type_ref
+                        .type_arguments
+                        .as_ref()
+                        .is_some_and(|ta| !ta.nodes.is_empty())
+                    {
+                        return None;
+                    }
+                    let name = self.get_identifier_text(type_ref.type_name)?;
+                    type_param_names.iter().position(|n| *n == name)
+                })();
+                if let Some(idx) = bare_param_idx {
+                    if used_type_params.contains(&idx) {
+                        // Same type parameter referenced twice — give up.
+                        used_type_params.clear();
+                        parts_plan.clear();
+                        break;
+                    }
+                    used_type_params.push(idx);
+                    parts_plan.push(ReturnPart::TypeParam(idx));
+                } else {
+                    parts_plan.push(ReturnPart::Verbatim(member_idx));
+                }
+            }
+            if parts_plan.is_empty() {
+                continue;
+            }
+            // At least one arm must reference a type parameter; otherwise
+            // tsz's existing inference is fine and our text-side rewrite
+            // shouldn't override it.
+            if used_type_params.is_empty() {
+                continue;
+            }
+
+            let mut parts: Vec<String> = Vec::with_capacity(parts_plan.len());
+            for part in &parts_plan {
+                match part {
+                    ReturnPart::TypeParam(tp_idx) => {
+                        let arg_position =
+                            param_to_type_param.iter().position(|&i| i == *tp_idx)?;
+                        let arg_idx = arg_idxs[arg_position];
+                        parts.push(self.direct_value_reference_typeof_text(arg_idx)?);
+                    }
+                    ReturnPart::Verbatim(member_idx) => {
+                        let member_node = self.arena.get(*member_idx)?;
+                        let raw = self.get_source_slice(member_node.pos, member_node.end)?;
+                        // The parser's `end` can extend past the closing
+                        // delimiter into the next significant token (e.g.
+                        // the function body's `{`). Trim trailing
+                        // whitespace and any leftover open brace so the
+                        // source-side text matches the type expression
+                        // alone.
+                        let trimmed = raw
+                            .trim_end_matches(|c: char| c.is_whitespace() || c == '{')
+                            .trim();
+                        parts.push(trimmed.to_string());
+                    }
+                }
             }
             if parts.is_empty() {
                 continue;
@@ -2263,6 +2287,16 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 if let Some(type_text) = self.flat_map_array_subclass_return_type_text(expr_idx) {
                     return Some(type_text);
+                }
+                // Synthesise the source-side intersection text for a
+                // generic mixin call like `Mix(A, B)` whose declared
+                // return is `T1 & … & Tn` or `T & X`. tsz's inference
+                // path can lose one of the type-parameter arms (or
+                // expand it structurally), so reading the AST and
+                // substituting `typeof argi` in the recognised shape
+                // produces the same intersection tsc emits.
+                if let Some(text) = self.mixin_call_intersection_source_text(expr_idx) {
+                    return Some(text);
                 }
                 let reused_type_text = self.call_expression_reused_type_text(expr_idx);
                 let reused_type_uses_function_local_alias =
