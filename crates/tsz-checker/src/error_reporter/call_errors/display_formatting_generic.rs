@@ -346,6 +346,13 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 if display == ident.escaped_text {
+                    if let Some(return_annotation) = func.type_annotation.into_option()
+                        && let Some(return_display) =
+                            self.sanitized_type_node_display(return_annotation)
+                        && return_display.contains(ident.escaped_text.as_str())
+                    {
+                        continue;
+                    }
                     return Some(self.ctx.types.intern_string(display));
                 }
             }
