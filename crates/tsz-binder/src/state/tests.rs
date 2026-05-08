@@ -7172,3 +7172,103 @@ class Qux {}
         );
     }
 }
+
+// =============================================================================
+// BinderState round-trip (lib snapshot campaign)
+// =============================================================================
+
+/// Phase 1.5 (perf-lib-snapshot-design.md): `BinderState` must round-trip
+/// through serde with diagnostic-identical behaviour, otherwise the
+/// disk-backed lib cache would silently corrupt symbol resolution. The
+/// resolution caches (`resolved_export_cache`, `resolved_identifier_cache`)
+/// are `#[serde(skip)]` because they're regenerable; this test verifies
+/// the *non-cache* state — symbols, scopes, flow, declared modules —
+/// survives serialise → deserialise.
+///
+/// Uses `serde_json` for debuggability (the production lib snapshot
+/// pipeline will use a binary format, but JSON exercises the same serde
+/// derives).
+#[test]
+fn binder_state_round_trips_via_serde_json_preserves_symbols() {
+    let source = "
+interface Promise<T> {
+    then(): Promise<T>;
+}
+const greeting = \"hello world\";
+type Cache = { storedValue: number };
+declare module \"virtual:env\" {
+    export const VAL: string;
+}
+";
+    let mut parser = ParserState::new("snapshot_round_trip.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Capture pre-serialize state.
+    let original_file_locals_len = binder.file_locals.len();
+    let original_symbols_len = binder.symbols.len();
+    let original_declared_modules_len = binder.declared_modules.len();
+    let original_promise = binder.file_locals.get("Promise");
+    let original_greeting = binder.file_locals.get("greeting");
+    let original_cache = binder.file_locals.get("Cache");
+    assert!(original_file_locals_len > 0, "fixture must declare file locals");
+    assert!(original_promise.is_some(), "Promise must be bound");
+    assert!(original_greeting.is_some(), "greeting must be bound");
+    assert!(original_cache.is_some(), "Cache must be bound");
+
+    // Round-trip via JSON (binary format will be a separate PR).
+    let json = serde_json::to_string(&binder).expect("BinderState should serialize");
+    let restored: BinderState =
+        serde_json::from_str(&json).expect("BinderState should deserialize");
+
+    // Top-level lengths preserved.
+    assert_eq!(restored.file_locals.len(), original_file_locals_len);
+    assert_eq!(restored.symbols.len(), original_symbols_len);
+    assert_eq!(restored.declared_modules.len(), original_declared_modules_len);
+
+    // Symbol IDs for the same names match (proves SymbolArena round-trips).
+    assert_eq!(restored.file_locals.get("Promise"), original_promise);
+    assert_eq!(restored.file_locals.get("greeting"), original_greeting);
+    assert_eq!(restored.file_locals.get("Cache"), original_cache);
+
+    // Declared modules survive (proves Arc<FxHashSet<String>> round-trips).
+    assert!(restored.declared_modules.contains("virtual:env"));
+
+    // Resolution caches start empty (they're #[serde(skip)] — confirms the
+    // cache invariant: lazy-rebuild from the binder's sources is safe).
+    assert!(
+        restored
+            .resolved_export_cache
+            .read()
+            .expect("RwLock should not be poisoned")
+            .is_empty(),
+        "resolved_export_cache must be empty after deserialize (regenerated lazily)"
+    );
+    assert!(
+        restored
+            .resolved_identifier_cache
+            .read()
+            .expect("RwLock should not be poisoned")
+            .is_empty(),
+        "resolved_identifier_cache must be empty after deserialize"
+    );
+}
+
+#[test]
+fn binder_state_round_trips_empty_program() {
+    let source = ";";
+    let mut parser = ParserState::new("empty.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let json = serde_json::to_string(&binder).expect("empty BinderState serializes");
+    let restored: BinderState =
+        serde_json::from_str(&json).expect("empty BinderState deserializes");
+
+    assert_eq!(restored.symbols.len(), binder.symbols.len());
+    assert_eq!(restored.file_locals.len(), binder.file_locals.len());
+}

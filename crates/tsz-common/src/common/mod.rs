@@ -30,7 +30,7 @@ fn normalize_ts_option(value: &str) -> String {
 /// ECMAScript target version.
 ///
 /// This determines which language features are available during compilation.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
 pub enum ScriptTarget {
     /// ECMAScript 3 (1999)

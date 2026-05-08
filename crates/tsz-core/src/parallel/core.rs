@@ -1134,11 +1134,22 @@ pub fn clone_lib_files_for_checker(
 }
 
 /// Parse and bind a single lib file, returning a `LibFile` or error.
+///
+/// When `TSZ_LIB_CACHE=1` is set, this consults the disk-backed snapshot
+/// cache before parsing. On a hit the parsed arena and bound state are
+/// loaded from disk (skipping both parse and bind). On a miss the
+/// parse + bind result is written back. See
+/// `crates/tsz-core/src/parallel/lib_snapshot.rs` and
+/// `docs/plan/perf-lib-snapshot-design.md`.
 fn parse_and_bind_lib_file(
     file_name: String,
     source_text: String,
 ) -> Result<Arc<lib_loader::LibFile>> {
-    let mut lib_parser = ParserState::new(file_name.clone(), source_text);
+    if let Some(cached) = super::lib_snapshot::try_load(&file_name, &source_text) {
+        return Ok(cached);
+    }
+
+    let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
     let source_file_idx = lib_parser.parse_source_file();
     let diagnostics = lib_parser.get_diagnostics();
     if !diagnostics.is_empty() {
@@ -1157,12 +1168,23 @@ fn parse_and_bind_lib_file(
 
     let arena = Arc::new(lib_parser.into_arena());
     let binder = Arc::new(lib_binder);
-    Ok(Arc::new(lib_loader::LibFile::new(
-        file_name,
+    let lib = Arc::new(lib_loader::LibFile::new(
+        file_name.clone(),
         arena,
         binder,
         source_file_idx,
-    )))
+    ));
+
+    if let Err(err) = super::lib_snapshot::try_store(&file_name, &source_text, &lib) {
+        tracing::debug!(
+            target: "wasm::lib_snapshot",
+            file = %file_name,
+            error = %err,
+            "lib snapshot write failed (compilation continues normally)",
+        );
+    }
+
+    Ok(lib)
 }
 
 /// Phase 1 helper with pre-loaded file cache. Uses embedded lib contents
