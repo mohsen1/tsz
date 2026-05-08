@@ -177,8 +177,43 @@ impl<'a> DeclarationEmitter<'a> {
             // Intersection type
             k if k == syntax_kind_ext::INTERSECTION_TYPE => {
                 if let Some(inter) = self.arena.get_composite_type(type_node) {
+                    // Drop intersection arms whose source slice contains an
+                    // import-attribute object literal that the parser
+                    // recovered with non-property entries (e.g.
+                    // `{ with: {1234, "resolution-mode": "import"} }` —
+                    // the bare numeric literal as a "key"). tsc treats
+                    // those import-types as unrecoverable and elides the
+                    // entire arm. Scan the AST source slice for the
+                    // recognised broken pattern, since the arm's
+                    // ObjectLiteral node has been emptied during parse
+                    // recovery and the broken text only survives in the
+                    // raw source span.
+                    let usable: Vec<NodeIndex> = inter
+                        .types
+                        .nodes
+                        .iter()
+                        .copied()
+                        .filter(|&type_idx| {
+                            !self.intersection_arm_source_has_broken_import_attrs(type_idx)
+                        })
+                        .collect();
+                    let arms: Vec<NodeIndex> = if usable.is_empty() {
+                        // Every arm is unrecoverable — tsc emits just the
+                        // first arm (which the parser already cleaned up
+                        // attribute-side) and drops the rest. Mirror that
+                        // by keeping only the first arm.
+                        inter
+                            .types
+                            .nodes
+                            .first()
+                            .copied()
+                            .map(|first_arm| vec![first_arm])
+                            .unwrap_or_default()
+                    } else {
+                        usable
+                    };
                     let mut first = true;
-                    for &type_idx in &inter.types.nodes {
+                    for type_idx in arms {
                         if !first {
                             self.write(" & ");
                         }
@@ -853,6 +888,51 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => {}
         }
+    }
+
+    /// Detect whether an intersection arm's source slice contains an
+    /// import-attribute object literal where the parser recovered with
+    /// non-property entries (e.g. a bare numeric literal as a "key" like
+    /// `{1234, "resolution-mode": "import"}`). The broken object's AST
+    /// elements list is emptied during parse recovery, so the only
+    /// surviving evidence is in the raw source span. Scan the slice for
+    /// `with:` followed by `{` followed by a numeric literal at the
+    /// recovered key position — that is the recognised parser-recovery
+    /// shape.
+    fn intersection_arm_source_has_broken_import_attrs(&self, type_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(type_idx) else {
+            return false;
+        };
+        let Some(slice) = self.get_source_slice(node.pos, node.end) else {
+            return false;
+        };
+        if !slice.contains("import(") || !slice.contains("with") {
+            return false;
+        }
+        let bytes = slice.as_bytes();
+        let mut i = 0;
+        while i + 5 < bytes.len() {
+            if &bytes[i..i + 5] == b"with:" || &bytes[i..i + 5] == b"with " {
+                // Skip the `with` keyword and its colon, plus surrounding
+                // whitespace.
+                let mut j = i + 4;
+                while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b':') {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'{' {
+                    // First non-whitespace inside the attribute object.
+                    let mut k = j + 1;
+                    while k < bytes.len() && (bytes[k] as char).is_ascii_whitespace() {
+                        k += 1;
+                    }
+                    if k < bytes.len() && (bytes[k] as char).is_ascii_digit() {
+                        return true;
+                    }
+                }
+            }
+            i += 1;
+        }
+        false
     }
 
     fn entity_name_contains_import_call(&self, node_idx: NodeIndex) -> bool {
