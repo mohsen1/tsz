@@ -424,6 +424,30 @@ impl<'a> InferenceContext<'a> {
                 }
             }
 
+            // Extract Inference Improvement (TypeScript issue #25065): when the
+            // target is a distributive conditional `T extends U ? T : Y` whose
+            // check_type and true_type are the same naked type parameter we are
+            // currently inferring, infer the source against that type parameter
+            // directly. This mirrors tsc's behaviour for `Extract<T, U>` and
+            // similar Extract-like aliases used in parameter positions.
+            //
+            // Without this rule the conditional target falls through with no
+            // candidate, so K is left to its constraint default and the
+            // diagnostic surface ends up reporting the constraint instead of
+            // the instantiated `Extract<K, U>` (e.g. `keyof T` instead of
+            // `never`).
+            (_, Some(TypeData::Conditional(cond_id))) => {
+                let cond = self.interner.get_conditional(cond_id);
+                if cond.is_distributive
+                    && cond.check_type == cond.true_type
+                    && let Some(TypeData::TypeParameter(ref param_info)) =
+                        self.interner.lookup(cond.check_type)
+                    && self.find_type_param(param_info.name).is_some()
+                {
+                    self.infer_from_types(source, cond.check_type, priority)?;
+                }
+            }
+
             // If we can't match structurally, that's okay - it might mean the types are incompatible
             // The Checker will handle this with proper error reporting
             _ => {
