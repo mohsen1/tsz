@@ -107,12 +107,7 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            let module_specifier = if binder.declared_modules.contains(module_path) {
-                // Ambient module declaration `declare module "url" {}` — the
-                // module specifier is the declared name itself, which is
-                // valid wherever the declaration is reachable in scope.
-                module_path.clone()
-            } else if let Some(package_specifier) =
+            let module_specifier = if let Some(package_specifier) =
                 self.package_specifier_for_node_modules_path(current_path, module_path)
             {
                 package_specifier
@@ -120,6 +115,15 @@ impl<'a> DeclarationEmitter<'a> {
                 self.package_specifier_for_package_json_path(current_path, module_path)
             {
                 package_specifier
+            } else if binder.declared_modules.contains(module_path) {
+                // Ambient module declaration `declare module "url" {}` — the
+                // module specifier is the declared name itself, which is
+                // valid wherever the declaration is reachable in scope.
+                // Only kicked in when none of the path-based resolvers above
+                // produced a package specifier, so we don't override existing
+                // emitter behavior for declared modules that also have a
+                // node_modules path (e.g. lib.* declarations).
+                module_path.clone()
             } else {
                 let rel_path = self.calculate_relative_path(current_path, module_path);
                 self.strip_ts_extensions(&rel_path)
