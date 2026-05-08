@@ -296,6 +296,13 @@ pub struct Symbol {
     /// UMD exports are ALIAS symbols that should be globally visible across files,
     /// unlike regular import aliases which are file-local.
     pub is_umd_export: bool,
+    /// When this symbol was created by shadowing a lib global, this points to
+    /// the original lib `SymbolId`. Used by the checker to fall back to lib's
+    /// type/value declarations when the local declaration only supplies one
+    /// namespace (e.g. `const Array = 1` shadows lib's `Array` value but the
+    /// lib `interface Array<T>` is still reachable through this back-pointer).
+    /// `SymbolId::NONE` when this symbol is not a lib shadow.
+    pub lib_shadow_origin: SymbolId,
 }
 
 impl Symbol {
@@ -321,6 +328,7 @@ impl Symbol {
             import_module: None,
             import_name: None,
             is_umd_export: false,
+            lib_shadow_origin: SymbolId::NONE,
         }
     }
 

@@ -121,3 +121,115 @@ const s: Symbol = {} as Symbol;
         "no name/typing errors expected for local interface usage as type; got: {codes:?}"
     );
 }
+
+/// Regression test for #4687: a module-local `unique symbol` const that
+/// shadows a lib type alias must not entangle two unrelated user types
+/// whose computed property keys reference the shadow symbol.
+///
+/// Before the fix in this PR, the lib's `type Readonly<T>` declaration was
+/// copied onto the user's shadow symbol's `declarations` vec. Subsequent
+/// type-alias evaluations whose computed property keys resolved the user's
+/// `Readonly` value walked those polluted declarations and conflated
+/// independent types `Input` and `Output`. The structural fix is to record
+/// the lib origin via `lib_shadow_origin` instead of polluting the user
+/// symbol's declarations vec; the checker falls back to the lib symbol's
+/// declarations only when the user's own declarations don't supply the
+/// required namespace.
+#[test]
+fn unique_symbol_shadow_does_not_conflate_independent_types() {
+    // tsc emits TS2322 at the `return ors;` line because `Input[]` (with
+    // only `foo`) is not assignable to `Output[]` (with `foo` and `bar`).
+    // Pre-fix tsz failed to detect this assignability error: evaluation of
+    // `type Input` wound up reusing `type Output`'s shape due to the
+    // polluted shadow symbol.
+    let codes = diagnostic_codes(
+        r#"
+export declare const Readonly: unique symbol;
+export declare const Kind: unique symbol;
+
+export interface TKind { [Kind]: string }
+export interface TSchema extends TKind {
+    [Readonly]?: string
+    params: unknown[]
+    static: unknown
+}
+
+export type Evaluate<T> = T extends infer O ? { [K in keyof O]: O[K] } : never
+
+export type ReadonlyKeys<T extends TProperties> =
+    { [K in keyof T]: T[K] extends TReadonly<TSchema> ? K : never }[keyof T]
+export type RequiredKeys<T extends TProperties> =
+    keyof Omit<T, ReadonlyKeys<T>>
+export type TReadonly<T extends TSchema> = T & { [Readonly]: 'Readonly' }
+
+export type PropertiesReducer<T extends TProperties, R extends Record<keyof any, unknown>> =
+    Evaluate<(
+        Readonly<Pick<R, ReadonlyKeys<T>>> &
+        Required<Pick<R, RequiredKeys<T>>>
+    )>
+export type PropertiesReduce<T extends TProperties, P extends unknown[]> =
+    PropertiesReducer<T, { [K in keyof T]: Static<T[K], P> }>
+export type TPropertyKey = string | number
+export type TProperties = Record<TPropertyKey, TSchema>
+export interface TObject<T extends TProperties = TProperties> extends TSchema {
+    [Kind]: 'Object'
+    static: PropertiesReduce<T, this['params']>
+    type: 'object'
+    properties: T
+}
+export interface TString extends TSchema {
+    [Kind]: 'String'
+    static: string
+    type: 'string'
+}
+export type Static<T extends TSchema, P extends unknown[] = []> =
+    (T & { params: P; })['static']
+
+declare namespace Type {
+    function Object<T extends TProperties>(object: T): TObject<T>
+    function String(): TString
+}
+
+export type Input = Static<typeof Input>
+export const Input = Type.Object({ foo: Type.String() })
+
+export type Output = Static<typeof Output>
+export const Output = Type.Object({ foo: Type.String(), bar: Type.String() })
+
+function problematicFunction1(ors: Input[]): Output[] {
+    return ors;
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "TS2322 must fire when returning Input[] (smaller shape) where Output[] is expected; \
+         pre-fix bug: shadow lib `type Readonly<T>` polluted user's `declarations`, \
+         conflating Input and Output evaluations. Got: {codes:?}"
+    );
+}
+
+/// Regression test for #4687: shadowing with `interface T {}` (TYPE-only)
+/// must keep using the lib's INTERFACE methods reachable through
+/// `lib_shadow_origin`, even with the declarations-vec pollution removed.
+///
+/// The "T" iteration variable name is intentionally chosen here to verify
+/// the fix doesn't depend on a specific user-chosen name (anti-hardcoding
+/// directive §25).
+#[test]
+fn type_only_local_interface_array_does_not_strip_lib_array_value() {
+    let codes = diagnostic_codes(
+        r#"
+export {};
+interface Array<T> { extra: T }
+const xs = [1, 2, 3];
+const len: number = xs.length;
+"#,
+    );
+    // `xs.length` must resolve through the lib's `Array.length` value/property.
+    // No TS2339 should fire on `length`.
+    assert!(
+        !codes.contains(&2339),
+        "TS2339 must not fire on Array.length when local `interface Array<T>` shadows only TYPE; got: {codes:?}"
+    );
+}

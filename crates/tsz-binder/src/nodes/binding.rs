@@ -1616,9 +1616,7 @@ impl BinderState {
                     }
                     if let Some(preserved) = preserved.as_ref() {
                         sym.flags |= preserved.flags;
-                        for &(d, span) in &preserved.declarations {
-                            sym.add_declaration(d, span);
-                        }
+                        sym.lib_shadow_origin = existing_id;
                         if let Some((vd, vd_span)) = preserved.value_declaration
                             && sym.value_declaration == NodeIndex::NONE
                         {
@@ -1626,14 +1624,29 @@ impl BinderState {
                         }
                     }
                 }
+                // We deliberately do NOT copy the lib's declarations into the
+                // shadow's `declarations` vec — doing so entangled memoization
+                // of unrelated user types whose computed property keys
+                // reference the user's value (regression #4687). Lib type
+                // declarations remain on the original `existing_id` symbol,
+                // and the checker resolves them via `lib_shadow_origin`.
+                //
+                // We DO mirror the `declaration_arenas` entry for the
+                // preserved `value_declaration` only, so that arena lookups
+                // keyed on `(user_sym_id, lib_value_decl)` resolve correctly
+                // when the local declaration didn't supply a VALUE meaning
+                // (e.g. `interface Symbol {}` shadowing lib's `var Symbol`).
                 if let Some(preserved) = preserved
-                    && !preserved.declarations.is_empty()
+                    && let Some((vd, _)) = preserved.value_declaration
                 {
-                    let arenas_map = Arc::make_mut(&mut self.declaration_arenas);
-                    for (d, _, lib_arenas) in &preserved.declaration_arenas {
-                        arenas_map
-                            .entry((sym_id, *d))
-                            .or_insert_with(|| lib_arenas.clone());
+                    let lib_arenas = preserved
+                        .declaration_arenas
+                        .iter()
+                        .find(|(d, _, _)| *d == vd)
+                        .map(|(_, _, arenas)| arenas.clone());
+                    if let Some(arenas) = lib_arenas {
+                        let arenas_map = Arc::make_mut(&mut self.declaration_arenas);
+                        arenas_map.entry((sym_id, vd)).or_insert(arenas);
                     }
                 }
                 self.current_scope.set(owned_name.clone(), sym_id);
