@@ -781,11 +781,12 @@ impl<'a> CheckerState<'a> {
                                 .iter()
                                 .map(|(name, _)| name.as_str())
                                 .collect();
-                            if let Some(suggestion) =
-                                tsz_parser::parser::spelling::get_spelling_suggestion(
-                                    import_name,
-                                    &export_names,
-                                )
+                            if !has_module_exports_binding
+                                && let Some(suggestion) =
+                                    tsz_parser::parser::spelling::get_spelling_suggestion(
+                                        import_name,
+                                        &export_names,
+                                    )
                             {
                                 let message = format_message(
                                     diagnostic_messages::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
