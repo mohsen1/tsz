@@ -2374,17 +2374,26 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        if source.is_intrinsic()
-            || target.is_intrinsic()
-            || !crate::query_boundaries::common::contains_this_type(self.ctx.types, target)
-        {
+        if source.is_intrinsic() || target.is_intrinsic() {
             return false;
         }
 
         // In a target interface, polymorphic `this` stands for the concrete
         // subtype being assigned to that interface, not the interface itself.
         let rebound_target =
-            crate::query_boundaries::common::substitute_this_type(self.ctx.types, target, source);
+            if crate::query_boundaries::common::contains_this_type(self.ctx.types, target) {
+                crate::query_boundaries::common::substitute_this_type(
+                    self.ctx.types,
+                    target,
+                    source,
+                )
+            } else if let Some(rebound) =
+                self.instantiate_application_target_this_bound_to_source(target, source)
+            {
+                rebound
+            } else {
+                return false;
+            };
         if rebound_target == target {
             return false;
         }
@@ -2403,6 +2412,45 @@ impl<'a> CheckerState<'a> {
         };
 
         self.check_assignability_cached(source, target, 0, "target_this_bound_to_source")
+    }
+
+    fn instantiate_application_target_this_bound_to_source(
+        &mut self,
+        target: TypeId,
+        source: TypeId,
+    ) -> Option<TypeId> {
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, target)?;
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)?;
+        let (body_type, type_params) = {
+            let env = self.ctx.type_env.borrow();
+            let body_type = tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)?;
+            let type_params =
+                tsz_solver::TypeResolver::get_lazy_type_params(&*env, def_id).unwrap_or_default();
+            (body_type, type_params)
+        };
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &type_params,
+            &app.args,
+        );
+        let (mut instantiated, depth_exceeded) =
+            crate::query_boundaries::common::instantiate_type_with_depth_status(
+                self.ctx.types,
+                body_type,
+                &substitution,
+            );
+        if depth_exceeded {
+            self.ctx.depth_exceeded.set(true);
+        }
+        if !crate::query_boundaries::common::contains_this_type(self.ctx.types, instantiated) {
+            return None;
+        }
+        instantiated = crate::query_boundaries::common::substitute_this_type(
+            self.ctx.types,
+            instantiated,
+            source,
+        );
+        Some(self.evaluate_type_for_assignability(instantiated))
     }
 
     fn same_type_alias_application_args_reject(&mut self, source: TypeId, target: TypeId) -> bool {
