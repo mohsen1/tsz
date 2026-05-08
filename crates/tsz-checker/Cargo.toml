@@ -893,5 +893,9 @@ path = "tests/window_indexed_access_callback_contextual_typing_tests.rs"
 name = "generic_call_primitive_widening_display_tests"
 path = "tests/generic_call_primitive_widening_display_tests.rs"
 
+[[test]]
+name = "class_implements_predicate_inference_tests"
+path = "tests/class_implements_predicate_inference_tests.rs"
+
 [lints]
 workspace = true
