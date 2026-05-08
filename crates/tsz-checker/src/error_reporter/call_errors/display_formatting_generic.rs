@@ -388,7 +388,10 @@ impl<'a> CheckerState<'a> {
                     if let Some(return_annotation) = func.type_annotation.into_option()
                         && let Some(return_display) =
                             self.sanitized_type_node_display(return_annotation)
-                        && return_display.contains(ident.escaped_text.as_str())
+                        && Self::type_display_mentions_name(
+                            &return_display,
+                            ident.escaped_text.as_str(),
+                        )
                     {
                         continue;
                     }
@@ -429,12 +432,40 @@ impl<'a> CheckerState<'a> {
             };
             if self
                 .sanitized_type_node_display(return_annotation)
-                .is_some_and(|display| display.contains(type_param_name.as_str()))
+                .is_some_and(|display| {
+                    Self::type_display_mentions_name(&display, type_param_name.as_str())
+                })
             {
                 return true;
             }
         }
 
         false
+    }
+
+    fn type_display_mentions_name(display: &str, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+
+        let mut search_from = 0;
+        while let Some(relative_start) = display[search_from..].find(name) {
+            let start = search_from + relative_start;
+            let end = start + name.len();
+            let before = display[..start].chars().next_back();
+            let after = display[end..].chars().next();
+            if !Self::is_type_identifier_continue(before)
+                && !Self::is_type_identifier_continue(after)
+            {
+                return true;
+            }
+            search_from = end;
+        }
+
+        false
+    }
+
+    fn is_type_identifier_continue(ch: Option<char>) -> bool {
+        ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
     }
 }
