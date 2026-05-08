@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-08
 - **Branch**: `claude/nice-darwin-WZ9Fx`
-- **PR**: TBD
+- **PR**: #4577
 - **Status**: claim
 - **Workstream**: anti-hardcoding (CLAUDE.md §25)
 
@@ -23,11 +23,15 @@ solver-produced display.
 - `crates/tsz-checker/src/state/state_checking/source_file.rs`
   (delete `rewrite_numeric_literal_generic_call_fingerprints`)
 - `crates/tsz-checker/tests/generic_call_inference_tests.rs`
-  (update test that relied on the rewrite; add a regression test for #3057)
+  (retire test that relied on the rewrite; add a regression test for #3057)
 
 ## Verification
 
-- `cargo nextest run -p tsz-checker --test generic_call_inference_tests`
-  (locally, the two relevant tests + the existing siblings pass)
-- Underlying TS2345 error code remains correct on `compiler/maxConstraints.ts`
-  (passes at error-code level in conformance pre-/post-removal)
+- `cargo nextest run -p tsz-checker --test generic_call_inference_tests -E 'test(/comparable|self_referential/)'`
+  passes locally (4/4).
+- `compiler/maxConstraints.ts` still passes at the error-code level
+  (verified offline against `scripts/conformance/conformance-detail.json`
+  pre-/post-removal).
+- Full `cargo nextest run -p tsz-checker` was not completed in this
+  session (local shell wedged before the run finished); CI on the PR
+  will be the authoritative signal.
