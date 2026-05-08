@@ -359,9 +359,45 @@ impl<'a> Printer<'a> {
             })
             .unwrap_or(false);
 
+        // Issue #3759: Emit `super` capture before entering the generator. tsc
+        // pre-binds each referenced `super.<name>` via an `Object.create` block so
+        // the generator body can reach them through `_super.<name>.call(this, …)`
+        // — `super` is not lexically valid inside a nested generator function.
+        let super_property_names = if body_is_empty_single_line {
+            Vec::new()
+        } else {
+            crate::transforms::emit_utils::collect_async_method_super_property_names(
+                self.arena, body,
+            )
+        };
+        let super_alias = if super_property_names.is_empty() {
+            None
+        } else {
+            Some(std::sync::Arc::<str>::from("_super"))
+        };
+
         self.write(" {");
         self.write_line();
         self.increase_indent();
+
+        if !super_property_names.is_empty() {
+            self.write("const _super = Object.create(null, {");
+            self.write_line();
+            self.increase_indent();
+            for (i, name) in super_property_names.iter().enumerate() {
+                self.write(name);
+                self.write(": { get: () => super.");
+                self.write(name);
+                self.write(" }");
+                if i + 1 < super_property_names.len() {
+                    self.write(",");
+                }
+                self.write_line();
+            }
+            self.decrease_indent();
+            self.write("});");
+            self.write_line();
+        }
 
         self.write("return ");
         self.write_helper("__awaiter");
@@ -393,8 +429,15 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        // Emit function body with await→yield substitution
+        // Emit function body with await→yield substitution and (issue #3759)
+        // an active `_super` capture alias when the body references super.
         self.ctx.emit_await_as_yield = true;
+        let prev_super_alias = self.scoped_static_super_base_alias.take();
+        let prev_super_direct = self.scoped_static_super_direct_access;
+        if let Some(alias) = super_alias {
+            self.scoped_static_super_base_alias = Some(alias);
+            self.scoped_static_super_direct_access = true;
+        }
         if let Some(body_node) = self.arena.get(body)
             && let Some(block) = self.arena.get_block(body_node)
         {
@@ -407,6 +450,8 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
+        self.scoped_static_super_base_alias = prev_super_alias;
+        self.scoped_static_super_direct_access = prev_super_direct;
         self.ctx.emit_await_as_yield = false;
 
         self.decrease_indent();
