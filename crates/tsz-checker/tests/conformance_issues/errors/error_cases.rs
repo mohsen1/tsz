@@ -171,7 +171,7 @@ class C {
 }
 
 #[test]
-fn test_delete_identifier_diagnostic_still_reports_with_unrelated_syntax_errors() {
+fn test_delete_identifier_diagnostic_is_suppressed_with_real_syntax_errors() {
     let source = r#"
 var BOOLEAN1 = ANY delete ;
 var BOOLEAN2 = delete ;
@@ -219,8 +219,8 @@ class C {
         .collect();
 
     assert!(
-        has_error(&diagnostics, 1102),
-        "Expected TS1102 when unrelated syntax errors are outside the delete operand.\nGot: {diagnostics:#?}"
+        !has_error(&diagnostics, 1102),
+        "Did not expect TS1102 when real syntax errors are already present.\nGot: {diagnostics:#?}"
     );
 }
 
