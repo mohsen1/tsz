@@ -5718,3 +5718,73 @@ const literalFromType: AType = "A";
         "arrayToEnum shortcut should not fabricate literal member values; got: {diags:#?}"
     );
 }
+
+// =============================================================================
+// Type alias instantiation with template-literal interpolation (TS2322)
+// =============================================================================
+//
+// When a type alias parameter only appears inside a template-literal
+// interpolation, variance is structurally unreliable: stringification can make
+// `\`a${number}\`` a subtype of `\`a${string}\`` even though `number` is not a
+// subtype of `string`. The structural assignability check (which compares the
+// expanded property types) is the authoritative signal; the same-base
+// type-alias rejection guard must defer to it instead of forcing strict
+// covariance on the unreliable type argument.
+
+#[test]
+fn ts2322_template_literal_alias_arg_does_not_force_covariant_rejection() {
+    let source = r#"
+        type AGen<T extends string | number> = { field: `a${T}` };
+        const ok1: AGen<string> = null as any as AGen<"yes">;
+        const ok2: AGen<string> = null as any as AGen<number>;
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "AGen<number>/AGen<\"yes\"> should be assignable to AGen<string> via template-literal stringification, got: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn ts2322_template_literal_alias_alt_param_name_still_passes() {
+    // Same structural rule, different parameter name — proves the fix is not
+    // keyed on user-chosen identifiers.
+    let source = r#"
+        type Wrap<K extends string | number> = { field: `a${K}` };
+        const ok: Wrap<string> = null as any as Wrap<number>;
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "Wrap<number> should be assignable to Wrap<string> regardless of param name, got: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn ts2322_non_template_alias_still_rejects_covariant_mismatch() {
+    // Sanity check: when the type parameter does NOT live inside a template
+    // literal, variance IS reliable and the rejection guard should still bite
+    // for genuinely incompatible covariant arguments.
+    let source = r#"
+        type Box<T> = { value: T };
+        const bad: Box<string> = null as any as Box<number>;
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Box<number> should NOT be assignable to Box<string>, got: {diagnostics:#?}"
+    );
+}

@@ -375,8 +375,7 @@ impl Server {
                 utf16_prefix[idx]
             };
 
-            let mut scanner =
-                tsz_scanner::scanner_impl::ScannerState::new(source_text.clone(), false);
+            let mut scanner = tsz_scanner::scanner_impl::ScannerState::new(source_text, false);
             let mut spans: Vec<u32> = Vec::new();
 
             loop {
@@ -459,13 +458,14 @@ impl Server {
         // Literals.
         match token {
             SyntaxKind::NumericLiteral | SyntaxKind::BigIntLiteral => return Some(4),
-            SyntaxKind::StringLiteral | SyntaxKind::NoSubstitutionTemplateLiteral => {
+            SyntaxKind::StringLiteral
+            | SyntaxKind::NoSubstitutionTemplateLiteral
+            | SyntaxKind::TemplateHead
+            | SyntaxKind::TemplateMiddle
+            | SyntaxKind::TemplateTail => {
                 return Some(6);
             }
             SyntaxKind::RegularExpressionLiteral => return Some(7),
-            SyntaxKind::TemplateHead | SyntaxKind::TemplateMiddle | SyntaxKind::TemplateTail => {
-                return Some(6);
-            }
             _ => {}
         }
         // Punctuation/operators. tsc folds `=`, `+`, `-`, etc. into class 5
