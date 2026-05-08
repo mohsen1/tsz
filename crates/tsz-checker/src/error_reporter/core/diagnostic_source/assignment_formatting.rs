@@ -938,31 +938,7 @@ impl<'a> CheckerState<'a> {
             .with_display_properties()
             .with_skip_application_alias_names()
             .with_preserve_optional_parameter_surface_syntax(true);
-        let mut formatted = Vec::with_capacity(elements.len());
-        for element in elements {
-            let type_id = if element.optional && !element.rest {
-                crate::query_boundaries::common::remove_undefined(self.ctx.types, element.type_id)
-            } else {
-                element.type_id
-            };
-            let ty = formatter.format(type_id).into_owned();
-            let rest = if element.rest { "..." } else { "" };
-            let optional = if element.optional && !element.rest {
-                "?"
-            } else {
-                ""
-            };
-            if let Some(name) = element.name {
-                formatted.push(format!(
-                    "{rest}{}{optional}: {ty}",
-                    self.ctx.types.resolve_atom(name)
-                ));
-            } else {
-                formatted.push(format!("{rest}{ty}{optional}"));
-            }
-        }
-        let display = format!("[{}]", formatted.join(", "));
-        Some(display)
+        Some(formatter.format_tuple_elements_for_diagnostic(&elements))
     }
 
     fn type_alias_body_is_generic_application(&self, type_id: TypeId) -> bool {

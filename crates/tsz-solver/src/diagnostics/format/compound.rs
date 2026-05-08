@@ -1590,6 +1590,10 @@ impl<'a> TypeFormatter<'a> {
         format!("[{}]", formatted.join(", "))
     }
 
+    pub fn format_tuple_elements_for_diagnostic(&mut self, elements: &[TupleElement]) -> String {
+        self.format_tuple(elements)
+    }
+
     pub(super) fn format_function(&mut self, shape: &FunctionShape) -> String {
         self.format_signature_with_predicate(
             &shape.type_params,
