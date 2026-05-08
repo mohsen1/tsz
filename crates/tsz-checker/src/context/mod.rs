@@ -769,6 +769,11 @@ pub struct CheckerContext<'a> {
     pub class_instance_resolution_set: FxHashSet<SymbolId>,
     /// O(1) lookup set for class constructor type resolution to avoid recursion.
     pub class_constructor_resolution_set: FxHashSet<SymbolId>,
+    /// O(1) lookup set for JSDoc `@enum` annotation resolution. Without this
+    /// guard, `/** @enum {E} */ const E = { ... }` recurses through name
+    /// resolution → `resolve_jsdoc_symbol_type(E)` → `@enum` annotation lookup
+    /// → name resolution again, overflowing the stack (#3767).
+    pub jsdoc_enum_resolution_set: FxHashSet<SymbolId>,
     /// Classes/interfaces with circular inheritance (TS2506/TS2310). Used to
     /// fix the return type of `new` on circular generic classes: tsc returns
     /// `C<unknown>` instead of the raw `C<T>`.

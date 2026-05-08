@@ -27,6 +27,25 @@ impl<'a> CheckerState<'a> {
         sym_id: tsz_binder::SymbolId,
         decl: NodeIndex,
     ) -> Option<TypeId> {
+        // `/** @enum {E} */ const E = ...` recurses through name resolution
+        // back into this function for the same symbol. Without this guard the
+        // resolver overflows the stack instead of bottoming out (#3767). The
+        // cycle is broken by returning `None` on re-entry; `name_resolution`
+        // then falls through to the variable's intrinsic value type and the
+        // surrounding type-alias self-reference check emits TS2456.
+        if !self.ctx.jsdoc_enum_resolution_set.insert(sym_id) {
+            return None;
+        }
+        let result = self.jsdoc_enum_annotation_type_for_symbol_decl_inner(sym_id, decl);
+        self.ctx.jsdoc_enum_resolution_set.remove(&sym_id);
+        result
+    }
+
+    fn jsdoc_enum_annotation_type_for_symbol_decl_inner(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        decl: NodeIndex,
+    ) -> Option<TypeId> {
         let file_idx = self
             .ctx
             .resolve_symbol_file_index(sym_id)
