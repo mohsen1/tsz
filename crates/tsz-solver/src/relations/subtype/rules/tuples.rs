@@ -237,12 +237,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if an array type is a subtype of a tuple type.
     ///
-    /// TypeScript semantics: Arrays (T[]) are generally NOT assignable to tuple types,
-    /// even variadic tuples like [...T[]], because tuples have specific structural
-    /// constraints that arrays don't satisfy.
+    /// TypeScript semantics: Arrays (T[]) are generally NOT assignable to fixed
+    /// tuple types because tuples have positional structural constraints that
+    /// arrays don't satisfy.
     ///
-    /// The ONLY exception is `never[]` which represents an empty array and can be
-    /// assigned to any tuple that allows empty (has no required elements).
+    /// Two exceptions apply:
+    ///
+    /// 1. **`never[]`** represents an empty array and can be assigned to any
+    ///    tuple that allows empty (has no required elements).
+    ///
+    /// 2. **Single-rest variadic tuples** `[...X]` are structurally equivalent
+    ///    to `X` (when `X` is array-typed). So `S[] <: [...X]` reduces to
+    ///    `S[] <: X`. This handles `number[] <: [...T]` where `T extends
+    ///    unknown[]`, and `string[] <: [...string[]]`. Symmetric to the
+    ///    `[...T] <: T` case in `visit_tuple`.
     ///
     /// Note: `any[]` is generally NOT assignable to tuples — only `any` itself
     /// bypasses structural checks. The narrow exception is an all-unknown/all-any
@@ -250,13 +258,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// such as `new Map(Object.keys(obj).map(...))`.
     ///
     /// ## Cases:
-    /// - `any[]` -> `[string, number]` : No (array, not tuple)
+    /// - `any[]` -> `[string, number]` : No (array, not fixed tuple)
     /// - `never[]` -> `[]` : Yes (empty array to empty tuple)
     /// - `never[]` -> `[string?]` : Yes (empty array to optional-only tuple)
     /// - `never[]` -> `[...string[]]` : Yes (empty array to variadic tuple)
     /// - `never[]` -> `[string]` : No (empty array cannot satisfy required element)
-    /// - `string[]` -> `[...string[]]` : No (arrays are not assignable to tuples)
-    /// - `string[]` -> `[string?]` : No (arrays are not assignable to tuples)
+    /// - `string[]` -> `[...string[]]` : Yes (variadic spread normalizes to array)
+    /// - `string[]` -> `[...T]` where T extends unknown[] : Yes (via T's apparent type)
+    /// - `string[]` -> `[string?]` : No (fixed tuple even if optional)
     pub(crate) fn check_array_to_tuple_subtype(
         &mut self,
         source_elem: TypeId,
@@ -264,6 +273,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         if source_elem == TypeId::ANY && Self::tuple_is_fixed_all_top_types(target) {
             return SubtypeResult::True;
+        }
+
+        // Single-rest variadic tuple `[...X]` is structurally equivalent to its
+        // rest element's array form. Reduces `S[] <: [...X]` to `S[] <: X`.
+        // tsc treats the variadic spread as transparent for assignability when
+        // it is the only element of the tuple. This is the symmetric case of
+        // `[...T] <: T` handled in `visit_tuple`.
+        if target.len() == 1 && target[0].rest {
+            let source_array = self.interner.array(source_elem);
+            return self.check_subtype(source_array, target[0].type_id);
         }
 
         // Only never[] can otherwise be assigned to tuples (represents empty array).
