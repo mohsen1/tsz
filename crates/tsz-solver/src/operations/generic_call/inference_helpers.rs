@@ -1308,6 +1308,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return source_ty;
         }
 
+        // Keep generic callbacks intact for `(...args: I)` targets so the
+        // constraint walker can infer `I` as a tuple from the source parameters.
+        // Contextual instantiation would ask for an element type of unresolved
+        // `I` and collapse to its array constraint.
+        let target_rest_is_outer_inference_placeholder =
+            target_fn.params.last().is_some_and(|param| {
+                if !param.rest {
+                    return false;
+                }
+                matches!(
+                    self.interner.lookup(param.type_id),
+                    Some(TypeData::TypeParameter(info))
+                        if self
+                            .interner
+                            .resolve_atom(info.name)
+                            .as_str()
+                            .starts_with("__infer_")
+                )
+            });
+        if !source_fn.type_params.is_empty() && target_rest_is_outer_inference_placeholder {
+            return source_ty;
+        }
+
         // TypeScript does not use generic construct-signature arguments to infer
         // type parameters for the outer constructor-typed parameter. Leave the
         // callable intact so the shared constraint walker erases the source
