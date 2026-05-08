@@ -104,7 +104,9 @@ fn assert_within_ceiling(key: &str, actual: usize, descriptor: &str, oversized: 
     }
     if ratchet_update_enabled() {
         write_baseline(key, actual);
-        eprintln!("ratchet: {key} bumped from {ceiling} to {actual}");
+        // The baseline file diff is the user-visible signal that the bump
+        // happened; no extra logging needed (and clippy::print-stderr is
+        // denied workspace-wide).
         return;
     }
     panic!(
