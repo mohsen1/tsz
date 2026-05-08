@@ -87,9 +87,16 @@ impl<'a> CheckerState<'a> {
                 .resolve_type_parameter_primitive_constraint_base(info)
                 .is_some_and(|base| base == param_base);
             if !constraint_matches_param_base {
-                return None;
+                let implemented_signature_param = self
+                    .ast_generic_implementation_param_name_for_call_arg(call.expression, arg_index)
+                    == Some(info.name);
+                if !implemented_signature_param {
+                    return None;
+                }
+                (info.name, true)
+            } else {
+                (info.name, false)
             }
-            (info.name, false)
         } else {
             let name = self.ast_rest_generic_param_name_for_call_arg(call.expression, arg_index)?;
             (name, true)
@@ -105,10 +112,15 @@ impl<'a> CheckerState<'a> {
                     let prev_type_param_name = raw_sig
                         .as_ref()
                         .and_then(|sig| Self::raw_param_for_call_arg(&sig.params, prev_index))
-                        .filter(|param| param.rest)
-                        .and_then(|param| self.rest_generic_param_name_for_call_arg(param))
+                        .and_then(|param| self.raw_generic_param_name_for_call_arg(param))
                         .or_else(|| {
                             self.ast_rest_generic_param_name_for_call_arg(
+                                call.expression,
+                                prev_index,
+                            )
+                        })
+                        .or_else(|| {
+                            self.ast_generic_implementation_param_name_for_call_arg(
                                 call.expression,
                                 prev_index,
                             )
@@ -189,6 +201,20 @@ impl<'a> CheckerState<'a> {
         Some(info.name)
     }
 
+    fn raw_generic_param_name_for_call_arg(
+        &self,
+        raw_param: &tsz_solver::ParamInfo,
+    ) -> Option<tsz_common::interner::Atom> {
+        let raw_type = if raw_param.rest {
+            query_common::array_element_type(self.ctx.types, raw_param.type_id)
+                .unwrap_or(raw_param.type_id)
+        } else {
+            raw_param.type_id
+        };
+        query_common::type_param_info(self.ctx.types.as_type_database(), raw_type)
+            .map(|info| info.name)
+    }
+
     fn ast_rest_generic_param_name_for_call_arg(
         &mut self,
         callee_expr: NodeIndex,
@@ -256,6 +282,79 @@ impl<'a> CheckerState<'a> {
             })?;
             if type_param_names.iter().any(|name| name == candidate) {
                 return Some(self.ctx.types.intern_string(candidate));
+            }
+        }
+
+        None
+    }
+
+    fn ast_generic_implementation_param_name_for_call_arg(
+        &mut self,
+        callee_expr: NodeIndex,
+        arg_index: usize,
+    ) -> Option<tsz_common::interner::Atom> {
+        let callee_sym = self
+            .resolve_identifier_symbol(callee_expr)
+            .or_else(|| self.resolve_qualified_symbol(callee_expr))?;
+        let declarations = self.ctx.binder.get_symbol(callee_sym)?.declarations.clone();
+
+        for decl_idx in declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(func) = self.ctx.arena.get_function(node) else {
+                continue;
+            };
+            if self
+                .ctx
+                .arena
+                .get(func.body)
+                .is_none_or(|body| body.kind != tsz_parser::parser::syntax_kind_ext::BLOCK)
+            {
+                continue;
+            }
+            let Some(type_params) = func.type_parameters.as_ref() else {
+                continue;
+            };
+            let Some(param_idx) = func.parameters.nodes.get(arg_index).copied() else {
+                continue;
+            };
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.dot_dot_dot_token {
+                continue;
+            }
+            let Some(annotation) = param.type_annotation.into_option() else {
+                continue;
+            };
+            let Some(display) = self.sanitized_type_node_display(annotation) else {
+                continue;
+            };
+            let display = display.trim();
+            for &type_param_idx in &type_params.nodes {
+                let Some(type_param) = self.ctx.arena.get_type_parameter_at(type_param_idx) else {
+                    continue;
+                };
+                let Some(name_node) = self.ctx.arena.get(type_param.name) else {
+                    continue;
+                };
+                let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                    continue;
+                };
+                if display == ident.escaped_text {
+                    if let Some(return_annotation) = func.type_annotation.into_option()
+                        && let Some(return_display) =
+                            self.sanitized_type_node_display(return_annotation)
+                        && return_display.contains(ident.escaped_text.as_str())
+                    {
+                        continue;
+                    }
+                    return Some(self.ctx.types.intern_string(display));
+                }
             }
         }
 
