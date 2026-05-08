@@ -526,7 +526,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.get_identifier_text(access.expression).as_deref() == Some("Symbol")
     }
 
-    fn computed_method_name_can_preserve_method_syntax(&self, name_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn computed_method_name_can_preserve_method_syntax(
+        &self,
+        name_idx: NodeIndex,
+    ) -> bool {
         let Some(name_node) = self.arena.get(name_idx) else {
             return false;
         };
@@ -1676,17 +1679,6 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(sig.name);
         }
         None
-    }
-
-    pub(in crate::declaration_emitter) fn class_members_have_computed_names(
-        &self,
-        members: &tsz_parser::parser::NodeList,
-    ) -> bool {
-        members.nodes.iter().copied().any(|member_idx| {
-            self.get_member_name_idx(member_idx)
-                .and_then(|name_idx| self.arena.get(name_idx))
-                .is_some_and(|name_node| name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-        })
     }
 
     /// Check if a member has a computed property name that should NOT be emitted in `.d.ts`.

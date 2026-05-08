@@ -8,7 +8,38 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         members: &NodeList,
     ) -> Vec<NodeIndex> {
-        if !self.source_is_js_file && !self.class_members_have_computed_names(members) {
+        // tsc preserves source order for TS classes whose members are
+        // already declaration-shaped (`[s]: any;`, `[s](): void;`,
+        // `accessor a: any`, etc.).  It only re-orders (statics
+        // first) when at least one method body forces a *conversion*
+        // to `[name]: () => T;` property-arrow form — that happens
+        // when the method's computed name *cannot* preserve method
+        // syntax in d.ts.  Methods with `unique symbol`-typed
+        // computed keys keep the method shape and source order,
+        // matching `uniqueSymbolsDeclarationsErrors` /
+        // `autoAccessor8`; methods with regular-typed keys (e.g.
+        // `[const fieldName: string]() { … }`) get rewritten to
+        // property-arrow form and emitted statics-first, matching
+        // `declarationEmitSimpleComputedNames1`.
+        let has_method_converted_to_property_arrow = members.nodes.iter().any(|&member_idx| {
+            let Some(node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                return false;
+            }
+            let Some(method) = self.arena.get_method_decl(node) else {
+                return false;
+            };
+            if method.body.is_none() {
+                return false;
+            }
+            self.arena
+                .get(method.name)
+                .is_some_and(|name_node| name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                && !self.computed_method_name_can_preserve_method_syntax(method.name)
+        });
+        if !self.source_is_js_file && !has_method_converted_to_property_arrow {
             return members.nodes.clone();
         }
 
