@@ -817,6 +817,72 @@ pub fn contains_type_parameter_named_shallow(
     false
 }
 
+fn type_parameter_identity_matches(
+    def_store: &crate::def::DefinitionStore,
+    candidate: TypeId,
+    target: TypeId,
+) -> bool {
+    candidate == target
+        || def_store
+            .find_def_for_type(candidate)
+            .zip(def_store.find_def_for_type(target))
+            .is_some_and(|(candidate_def, target_def)| candidate_def == target_def)
+}
+
+/// Check if a type contains the target type parameter identity, without walking
+/// into other type parameters' constraints/defaults.
+pub fn contains_type_parameter_identity_shallow(
+    types: &dyn TypeDatabase,
+    def_store: &crate::def::DefinitionStore,
+    type_id: TypeId,
+    target: TypeId,
+) -> bool {
+    use rustc_hash::FxHashSet;
+
+    let mut visited = FxHashSet::default();
+    let mut stack = vec![type_id];
+
+    while let Some(current) = stack.pop() {
+        if current.is_intrinsic() || !visited.insert(current) {
+            continue;
+        }
+
+        if type_parameter_identity_matches(def_store, current, target) {
+            return true;
+        }
+
+        let Some(data) = types.lookup(current) else {
+            continue;
+        };
+
+        if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
+            continue;
+        }
+        if matches!(
+            &data,
+            TypeData::Literal(_)
+                | TypeData::Error
+                | TypeData::ThisType
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+        ) {
+            continue;
+        }
+        super::visitor::for_each_child_by_id(types, current, |child| {
+            if !visited.contains(&child) {
+                stack.push(child);
+            }
+        });
+    }
+
+    false
+}
+
 /// Check if a type transitively references any type parameter whose name
 /// is in the given set.
 ///
@@ -907,6 +973,49 @@ pub fn constraint_references_type_param_in_resolution_path(
             _ => {}
         }
     }
+    false
+}
+
+/// Identity-based variant of `constraint_references_type_param_in_resolution_path`.
+pub fn constraint_references_type_param_identity_in_resolution_path(
+    types: &dyn TypeDatabase,
+    def_store: &crate::def::DefinitionStore,
+    type_id: TypeId,
+    target: TypeId,
+) -> bool {
+    use rustc_hash::FxHashSet;
+
+    let mut visited = FxHashSet::default();
+    let mut stack = vec![type_id];
+
+    while let Some(current) = stack.pop() {
+        if current.is_intrinsic() || !visited.insert(current) {
+            continue;
+        }
+
+        if type_parameter_identity_matches(def_store, current, target) {
+            return true;
+        }
+
+        let Some(data) = types.lookup(current) else {
+            continue;
+        };
+
+        match &data {
+            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+                stack.extend(types.type_list(*list_id).iter().copied());
+            }
+            TypeData::Mapped(mapped_id) => {
+                stack.push(types.get_mapped(*mapped_id).constraint);
+            }
+            TypeData::IndexAccess(obj, idx) => {
+                stack.push(*obj);
+                stack.push(*idx);
+            }
+            _ => {}
+        }
+    }
+
     false
 }
 

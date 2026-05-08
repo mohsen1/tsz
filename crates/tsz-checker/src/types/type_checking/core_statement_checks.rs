@@ -819,6 +819,8 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::type_param_info(self.ctx.types, constraint_type)
                 .is_some_and(|info| {
                     self.ctx.types.resolve_atom(info.name).as_str() == name.as_str()
+                        && self
+                            .type_parameter_identity_matches(constraint_type, provisional_type_id)
                 })
         };
         // Also check if the constraint is a type parameter whose own constraint is
@@ -946,11 +948,7 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::is_mapped_type(self.ctx.types, constraint_type)
                 || crate::query_boundaries::common::is_mapped_type(self.ctx.types, evaluated);
         if !constraint_is_mapped
-            && crate::query_boundaries::common::contains_type_parameter_named_shallow(
-                self.ctx.types,
-                constraint_type,
-                atom,
-            )
+            && self.contains_type_parameter_identity_shallow(constraint_type, provisional_type_id)
         {
             let message = format!("Type parameter '{name}' has a circular constraint.");
             self.ctx.error(
