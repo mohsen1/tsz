@@ -80,13 +80,21 @@ fn diagnostic_source_line<'a>(
 /// Reason why a file was included in compilation
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileInclusionReason {
-    /// File specified as a root file (CLI argument or files list)
+    /// File specified as a CLI argument (`tsz a.ts`)
     RootFile,
+    /// File listed in tsconfig's `files` array. tsc spells this out
+    /// distinctly from `include`-pattern matches.
+    FilesListEntry,
     /// File matched by include pattern in tsconfig
     IncludePattern(String),
     /// File imported from another file
     ImportedFrom(PathBuf),
-    /// File is a lib file (e.g., lib.es2020.d.ts)
+    /// File is a default library for the configured target (e.g.
+    /// `lib.es2020.d.ts`). The target string matches tsc's display
+    /// (`es2018`, `esnext`, ...).
+    DefaultLibrary(String),
+    /// File is a lib file with no specific target attribution (e.g.
+    /// pulled in via `/// <reference lib="..." />` or `--lib`).
     LibFile,
 }
 
@@ -94,12 +102,14 @@ impl std::fmt::Display for FileInclusionReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::RootFile => write!(f, "Root file specified"),
+            Self::FilesListEntry => write!(f, "Part of 'files' list in tsconfig.json"),
             Self::IncludePattern(pattern) => {
                 write!(f, "Matched by include pattern '{pattern}'")
             }
             Self::ImportedFrom(path) => {
                 write!(f, "Imported from '{}'", path.display())
             }
+            Self::DefaultLibrary(target) => write!(f, "Default library for target '{target}'"),
             Self::LibFile => write!(f, "Library file"),
         }
     }
@@ -1458,7 +1468,14 @@ fn compile_inner(
     user_files_read.sort();
 
     // Build file info with inclusion reasons
-    let file_infos = build_file_infos(&sources, &file_paths, args, config.as_ref(), &base_dir);
+    let file_infos = build_file_infos(
+        &sources,
+        &file_paths,
+        args,
+        config.as_ref(),
+        &base_dir,
+        resolved.printer.target,
+    );
 
     if resolved.no_check && resolved.no_emit && !resolved.emit_declarations {
         let parse_start = Instant::now();
@@ -2264,15 +2281,35 @@ fn build_file_infos(
     root_file_paths: &[PathBuf],
     args: &CliArgs,
     config: Option<&crate::config::TsConfig>,
-    _base_dir: &Path,
+    base_dir: &Path,
+    target: ScriptTarget,
 ) -> Vec<FileInfo> {
     let root_set: FxHashSet<_> = root_file_paths.iter().collect();
     let cli_files: FxHashSet<_> = args.files.iter().collect();
+
+    // Resolve `tsconfig.files` entries to absolute paths so we can attribute
+    // each compiled source back to a specific entry. tsc renders these as
+    // `Part of 'files' list in tsconfig.json`, distinct from `include`-pattern
+    // matches (#3901).
+    let tsconfig_files_set: FxHashSet<PathBuf> = config
+        .and_then(|c| c.files.as_ref())
+        .map(|files| {
+            files
+                .iter()
+                .map(|f| {
+                    let p = PathBuf::from(f);
+                    if p.is_absolute() { p } else { base_dir.join(p) }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Get include patterns if available
     let include_patterns = config
         .and_then(|c| c.include.as_ref())
         .map_or_else(|| "**/*".to_string(), |patterns| patterns.join(", "));
+
+    let target_display = script_target_display_for_explain_files(target).to_string();
 
     sources
         .iter()
@@ -2283,9 +2320,20 @@ fn build_file_infos(
             if cli_files.iter().any(|f| source.path.ends_with(f)) {
                 reasons.push(FileInclusionReason::RootFile);
             }
-            // Check if it's a lib file (based on filename pattern)
+            // tsc surfaces lib files with the configured target, not just
+            // `Library file`. Default-target libs (`lib.es2018.full.d.ts`)
+            // get the precise reason; explicit `--lib`/reference-pulled libs
+            // fall through to the generic LibFile.
             else if is_lib_file(&source.path) {
-                reasons.push(FileInclusionReason::LibFile);
+                if is_default_lib_for_target(&source.path, target) {
+                    reasons.push(FileInclusionReason::DefaultLibrary(target_display.clone()));
+                } else {
+                    reasons.push(FileInclusionReason::LibFile);
+                }
+            }
+            // tsconfig `files` list — distinct from `include` matches.
+            else if tsconfig_files_set.contains(&source.path) {
+                reasons.push(FileInclusionReason::FilesListEntry);
             }
             // Check if it's a root file from discovery
             else if root_set.contains(&source.path) {
@@ -2304,6 +2352,43 @@ fn build_file_infos(
             }
         })
         .collect()
+}
+
+/// Format a `ScriptTarget` the way tsc does in `--explainFiles` reasons:
+/// lowercase ECMAScript revision names (`es2018`, `esnext`).
+const fn script_target_display_for_explain_files(target: ScriptTarget) -> &'static str {
+    match target {
+        ScriptTarget::ES3 => "es3",
+        ScriptTarget::ES5 => "es5",
+        ScriptTarget::ES2015 => "es2015",
+        ScriptTarget::ES2016 => "es2016",
+        ScriptTarget::ES2017 => "es2017",
+        ScriptTarget::ES2018 => "es2018",
+        ScriptTarget::ES2019 => "es2019",
+        ScriptTarget::ES2020 => "es2020",
+        ScriptTarget::ES2021 => "es2021",
+        ScriptTarget::ES2022 => "es2022",
+        ScriptTarget::ES2023 => "es2023",
+        ScriptTarget::ES2024 => "es2024",
+        ScriptTarget::ES2025 => "es2025",
+        ScriptTarget::ESNext => "esnext",
+    }
+}
+
+/// Identify whether a lib file is the *default* lib for the configured
+/// target (e.g. `lib.es2018.full.d.ts` when `target` is `es2018`). tsc
+/// distinguishes the target-driven default libs from libs pulled in via
+/// `--lib` or triple-slash references.
+fn is_default_lib_for_target(path: &Path, target: ScriptTarget) -> bool {
+    let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let target_name = script_target_display_for_explain_files(target);
+    matches!(
+        file_name,
+        f if f == format!("lib.{target_name}.full.d.ts")
+            || f == format!("lib.{target_name}.d.ts")
+    )
 }
 
 /// Check if a file is a TypeScript library file
@@ -3925,5 +4010,66 @@ fn display_relative_to_dir(path: &Path, dir: &Path) -> String {
             }
         }
         Err(_) => path.to_string_lossy().replace('\\', "/"),
+    }
+}
+
+#[cfg(test)]
+mod explain_files_reason_tests {
+    use super::*;
+
+    /// Issue #3901: tsc surfaces tsconfig `files` entries with a distinct
+    /// reason from `include` matches.
+    #[test]
+    fn files_list_entry_renders_tsc_phrasing() {
+        assert_eq!(
+            FileInclusionReason::FilesListEntry.to_string(),
+            "Part of 'files' list in tsconfig.json"
+        );
+    }
+
+    /// Default-lib reasons must mention the configured target so users
+    /// can attribute the lib pull. tsc renders the lowercase ECMAScript
+    /// revision name.
+    #[test]
+    fn default_library_reason_includes_target() {
+        assert_eq!(
+            FileInclusionReason::DefaultLibrary("es2018".to_string()).to_string(),
+            "Default library for target 'es2018'"
+        );
+    }
+
+    /// `is_default_lib_for_target` matches both the `lib.<target>.full.d.ts`
+    /// and `lib.<target>.d.ts` shapes that the lib resolver produces.
+    #[test]
+    fn default_lib_matches_full_and_bare_for_target() {
+        let full = PathBuf::from("/usr/typescript/lib.es2018.full.d.ts");
+        let bare = PathBuf::from("/usr/typescript/lib.es2018.d.ts");
+        let other_target = PathBuf::from("/usr/typescript/lib.es2020.full.d.ts");
+        let unrelated = PathBuf::from("/usr/typescript/lib.dom.d.ts");
+
+        assert!(is_default_lib_for_target(&full, ScriptTarget::ES2018));
+        assert!(is_default_lib_for_target(&bare, ScriptTarget::ES2018));
+        assert!(!is_default_lib_for_target(
+            &other_target,
+            ScriptTarget::ES2018
+        ));
+        assert!(!is_default_lib_for_target(&unrelated, ScriptTarget::ES2018));
+    }
+
+    /// Locks the lowercase target spelling for the explainFiles surface.
+    #[test]
+    fn target_display_for_explain_files_lowercase() {
+        assert_eq!(
+            script_target_display_for_explain_files(ScriptTarget::ES5),
+            "es5"
+        );
+        assert_eq!(
+            script_target_display_for_explain_files(ScriptTarget::ES2018),
+            "es2018"
+        );
+        assert_eq!(
+            script_target_display_for_explain_files(ScriptTarget::ESNext),
+            "esnext"
+        );
     }
 }
