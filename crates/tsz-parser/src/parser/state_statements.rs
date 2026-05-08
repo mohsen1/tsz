@@ -264,13 +264,21 @@ impl ParserState {
                         diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
                     );
                 }
+                if self.deferred_module_close_braces > 0 {
+                    self.deferred_module_close_braces -= 1;
+                }
                 self.next_token();
                 previous_statement_was_block = false;
-                // If the token after a stray top-level `}` already starts an expression,
-                // keep parsing there instead of resyncing past it. This preserves
-                // follow-up recovery like `from "./foo"` -> TS1434 in malformed
-                // import/export specifiers.
-                if !self.is_expression_start() && !self.is_token(SyntaxKind::CloseBraceToken) {
+                // If the token after a stray top-level `}` already starts a
+                // statement or expression, keep parsing there instead of
+                // resyncing past it. This preserves follow-up recovery like
+                // `from "./foo"` -> TS1434 in malformed import/export
+                // specifiers, and avoids skipping valid declarations after a
+                // brace recovered from a malformed arrow body.
+                if !self.is_statement_start()
+                    && !self.is_expression_start()
+                    && !self.is_token(SyntaxKind::CloseBraceToken)
+                {
                     self.resync_after_error();
                 }
                 continue;
