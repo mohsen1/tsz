@@ -565,6 +565,23 @@ impl<'a> Printer<'a> {
         })
     }
 
+    /// Issue #3758: any parameter with a default initializer means tsc
+    /// moves the entire parameter list into the generator function and
+    /// forwards via `(...args_<n>) => __awaiter(..., [...args_<n>], ..., function* (<orig>) {})`
+    /// so the default-initializer expression is evaluated lazily inside
+    /// the generator (synchronous throws turn into rejected promises).
+    fn async_arrow_has_default_param(&self, params: &[NodeIndex]) -> bool {
+        params.iter().copied().any(|param_idx| {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                return false;
+            };
+            param.initializer.is_some()
+        })
+    }
+
     fn async_arrow_forwarded_parameter_names(&mut self, params: &[NodeIndex]) -> Vec<String> {
         params
             .iter()
@@ -621,6 +638,18 @@ impl<'a> Printer<'a> {
         let has_object_rest_param = self.ctx.needs_es2018_lowering
             && !self.ctx.target_es5
             && self.any_param_has_object_rest(&func.parameters.nodes);
+        // Issue #3758: when any parameter has a default initializer, tsc
+        // shifts the entire parameter list into the generator and forwards
+        // arguments via `(...args_<n>) => __awaiter(..., [...args_<n>], ...,
+        // function* (<orig params>) { ... })`. This makes default-initializer
+        // expressions evaluate inside the generator, so synchronous throws
+        // turn into rejected promises instead of escaping the call site.
+        let needs_default_param_forwarding =
+            !has_object_rest_param && self.async_arrow_has_default_param(&func.parameters.nodes);
+        if needs_default_param_forwarding {
+            self.emit_async_arrow_default_param_forwarding(func, this_arg);
+            return;
+        }
         let forward_parameter_names = (!has_object_rest_param
             && self.async_arrow_needs_parameter_forwarding(&func.parameters.nodes))
         .then(|| self.async_arrow_forwarded_parameter_names(&func.parameters.nodes));
@@ -919,6 +948,78 @@ impl<'a> Printer<'a> {
             self.write(";");
             self.write_line();
         }
+    }
+
+    /// Issue #3758: lower `async (x = init()) => body` so the default
+    /// initializer evaluates inside the generator function rather than at
+    /// outer call time. tsc emits:
+    ///
+    /// ```js
+    /// (...args_1) => __awaiter(this, [...args_1], void 0, function* (x = init()) { return x; })
+    /// ```
+    ///
+    /// — synchronous throws from `init()` reject the returned promise
+    /// instead of escaping the call site.
+    fn emit_async_arrow_default_param_forwarding(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+        this_arg: &str,
+    ) {
+        let args_name = self.make_unique_name_from_base("args");
+
+        self.write("(...");
+        self.write(&args_name);
+        self.write(") => ");
+        self.write_helper("__awaiter");
+        self.write("(");
+        self.write(this_arg);
+        self.write(", [...");
+        self.write(&args_name);
+        self.write("], void 0, function* (");
+        self.emit_function_parameters_js(&func.parameters.nodes);
+        self.write(") {");
+
+        let body_node = self.arena.get(func.body);
+        let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
+        let body_is_single_line = is_block
+            && self
+                .arena
+                .get(func.body)
+                .map(|n| self.is_single_line(n))
+                .unwrap_or(false);
+
+        let saved_yield = self.ctx.emit_await_as_yield;
+        self.ctx.emit_await_as_yield = true;
+        if is_block {
+            if body_is_single_line {
+                if let Some(body_node) = self.arena.get(func.body)
+                    && let Some(block) = self.arena.get_block(body_node)
+                {
+                    for &stmt in &block.statements.nodes {
+                        self.write(" ");
+                        self.emit(stmt);
+                    }
+                }
+            } else {
+                self.write_line();
+                self.increase_indent();
+                if let Some(body_node) = self.arena.get(func.body)
+                    && let Some(block) = self.arena.get_block(body_node)
+                {
+                    for &stmt in &block.statements.nodes {
+                        self.emit(stmt);
+                        self.write_line();
+                    }
+                }
+                self.decrease_indent();
+            }
+        } else {
+            self.write(" return ");
+            self.emit_expression(func.body);
+            self.write(";");
+        }
+        self.ctx.emit_await_as_yield = saved_yield;
+        self.write(" })");
     }
 
     fn emit_async_arrow_await_param_recovery(

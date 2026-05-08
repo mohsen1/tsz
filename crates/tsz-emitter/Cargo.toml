@@ -135,8 +135,8 @@ name = "jsx_cjs_runtime_collision_tests"
 path = "tests/jsx_cjs_runtime_collision_tests.rs"
 
 [[test]]
-name = "async_method_super_capture_3759_tests"
-path = "tests/async_method_super_capture_3759_tests.rs"
+name = "async_arrow_default_param_3758_tests"
+path = "tests/async_arrow_default_param_3758_tests.rs"
 
 [lints]
 workspace = true
