@@ -161,9 +161,11 @@ impl<'a> CheckerState<'a> {
                         };
 
                         sym_id.is_some_and(|sym_id| {
-                            self.get_type_params_for_symbol(sym_id)
-                                .iter()
-                                .any(|param| param.default.is_some())
+                            !self.ctx.symbol_resolution_set.contains(&sym_id)
+                                && self
+                                    .get_type_params_for_symbol(sym_id)
+                                    .iter()
+                                    .any(|param| param.default.is_some())
                         })
                     });
                 // Recovery path: a type reference can appear where an expression statement is expected

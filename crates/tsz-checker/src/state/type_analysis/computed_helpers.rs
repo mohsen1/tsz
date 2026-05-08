@@ -620,7 +620,26 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::collect_type_queries(self.ctx.types, resolved_type)
                 .iter()
                 .any(|sym_ref| sym_ref.0 == sym_id.0);
-        let evaluated = if has_typeof_self {
+        let has_deferred_resolution_chain_ref =
+            common::is_structurally_deferred_type(self.ctx.types, resolved_type)
+                && common::collect_lazy_def_ids(self.ctx.types, resolved_type)
+                    .into_iter()
+                    .any(|def_id| {
+                        self.ctx
+                            .def_to_symbol
+                            .borrow()
+                            .get(&def_id)
+                            .copied()
+                            .is_some_and(|target_sym_id| {
+                                self.ctx.symbol_resolution_set.contains(&target_sym_id)
+                                    && self.ctx.binder.get_symbol(target_sym_id).is_some_and(
+                                        |symbol| {
+                                            symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                                        },
+                                    )
+                            })
+                    });
+        let evaluated = if has_typeof_self || has_deferred_resolution_chain_ref {
             resolved_type
         } else {
             match classify_for_traversal(self.ctx.types, resolved_type) {
