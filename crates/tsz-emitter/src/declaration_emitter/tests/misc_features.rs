@@ -1000,6 +1000,36 @@ const fn: fn = a => a;
 }
 
 #[test]
+fn test_export_assignment_keeps_uninitialized_value_declaration() {
+    // Regression for privacyCheckExportAssignmentOnExportedGenericInterface1:
+    // a `var X: T;` (no initializer, with type annotation) whose only public
+    // API consumer is `export = X` was being filtered out by the
+    // initializer-only-dependency check, because that check only looked at
+    // `export { X }` specifiers and did not recognize commonjs
+    // `export = X` as an exporter of the value-side name.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace Foo {
+    export interface A<T> {
+    }
+}
+interface Foo<T> {
+}
+var Foo: new () => Foo.A<Foo<string>>;
+export = Foo;
+"#,
+    );
+    assert!(
+        output.contains("declare var Foo:"),
+        "Expected `declare var Foo` to be emitted when `export = Foo` is the consumer: {output}"
+    );
+    assert!(
+        output.contains("export = Foo;"),
+        "Expected the export assignment to be preserved: {output}"
+    );
+}
+
+#[test]
 fn test_destructuring_variable_declaration_groups_typed_bindings() {
     let source = r#"var [x, y] = [1, "hello"];"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
