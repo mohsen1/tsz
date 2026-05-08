@@ -230,6 +230,31 @@ tagCounts["x"] = 1;
 }
 
 #[test]
+fn test_jsdoc_dot_generic_array_resolves_base_name() {
+    let source = r#"
+/**
+ * @param {Array.<string>} files
+ */
+function load(files) {
+    files.push(1);
+}
+"#;
+    let diagnostics = check_js_with_libs(source);
+    let unresolved_array: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && d.message_text.contains("Array.<string>"))
+        .collect();
+    assert!(
+        unresolved_array.is_empty(),
+        "JSDoc Array.<T> should resolve through Array, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2345),
+        "Expected Array.<string> to type the parameter and reject push(1), got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_object_record_preserves_nested_value_type() {
     let source = r#"
 // @ts-check

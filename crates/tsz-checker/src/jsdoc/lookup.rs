@@ -896,7 +896,8 @@ impl<'a> CheckerState<'a> {
                 if !type_expr.ends_with('>') {
                     return;
                 }
-                let base = type_expr[..angle_idx].trim();
+                let raw_base = type_expr[..angle_idx].trim();
+                let base = raw_base.strip_suffix('.').unwrap_or(raw_base);
                 let args_str = &type_expr[angle_idx + 1..type_expr.len() - 1];
                 let args = Self::split_type_args_respecting_nesting(args_str);
                 if args.is_empty() {
