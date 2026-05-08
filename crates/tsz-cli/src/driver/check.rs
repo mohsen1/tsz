@@ -3971,6 +3971,26 @@ const result: Next<number> = map.values().next();
     }
 
     #[test]
+    fn es2015_local_interface_t_shadows_lib_heritage_type_parameters() {
+        let diagnostics = collect_es2015_default_lib_diagnostics(
+            r#"
+interface T { f(x: number): void }
+declare var t: T;
+t.f("s");
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2345),
+            "expected TS2345 for T.f argument type, got: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics.iter().all(|diag| diag.code != 2339),
+            "did not expect TS2339 from a stale local T shape, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn es2015_destructuring_reduce_concat_reports_overload_and_iterability() {
         let diagnostics = collect_es2015_default_lib_diagnostics(
             r#"

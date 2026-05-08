@@ -1294,8 +1294,33 @@ impl<'a> CheckerState<'a> {
                 if self.ctx.symbol_types.contains_key(&sym_id) {
                     continue;
                 }
-                // Look up existing DefId in the shared store.
-                let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0) else {
+                // Look up the file-aware DefId for this symbol. Raw SymbolId values are
+                // reused across binders, so the shared store's symbol-only lookup can
+                // seed a local declaration from an unrelated lib definition with the
+                // same raw id. This loop already holds the local DefId cache borrows,
+                // so avoid `get_existing_def_id` and query the shared store directly.
+                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                    continue;
+                };
+                let file_idx = self
+                    .ctx
+                    .resolve_symbol_file_index(sym_id)
+                    .map(|idx| idx as u32)
+                    .unwrap_or_else(|| {
+                        if symbol.decl_file_idx == u32::MAX
+                            && !self.ctx.symbol_is_from_actual_lib(sym_id)
+                            && self.ctx.current_file_idx != usize::MAX
+                        {
+                            self.ctx.current_file_idx as u32
+                        } else {
+                            symbol.decl_file_idx
+                        }
+                    });
+                let Some(def_id) = self
+                    .ctx
+                    .definition_store
+                    .lookup_by_symbol(sym_id.0, file_idx)
+                else {
                     continue;
                 };
                 // Check if the body has been resolved (set_body was called by

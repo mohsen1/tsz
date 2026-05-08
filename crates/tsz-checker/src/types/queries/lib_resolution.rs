@@ -674,7 +674,9 @@ impl<'a> CheckerState<'a> {
         if let Some(&type_id) = self.ctx.type_parameter_scope.get(name) {
             return type_id;
         }
-        if let Some(ty) = self.resolve_lib_type_by_name(name) {
+        if !self.ctx.file_local_type_shadow_for_lib_name(name)
+            && let Some(ty) = self.resolve_lib_type_by_name(name)
+        {
             return ty;
         }
         // Preserve unresolved lib heritage args as symbolic type params
@@ -771,7 +773,12 @@ impl<'a> CheckerState<'a> {
         // Using lib_ctx.binder's SymbolIds with self.ctx.get_or_create_def_id causes
         // SymbolId collisions and wrong type resolution.
         let lib_binders = self.get_lib_binders();
-        let sym_id = self.ctx.binder.file_locals.get(name).or_else(|| {
+        let sym_id = if self.ctx.file_local_type_shadow_for_lib_name(name) {
+            None
+        } else {
+            self.ctx.binder.file_locals.get(name)
+        }
+        .or_else(|| {
             self.ctx
                 .binder
                 .get_global_type_with_libs(name, &lib_binders)
