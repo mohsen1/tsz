@@ -2912,6 +2912,71 @@ declare const f: ns.Foo;
 }
 
 #[test]
+fn test_check_files_parallel_module_augmentation_reexported_namespace_enum_merge_no_overflow() {
+    let files = vec![
+        (
+            "file.ts".to_string(),
+            r#"
+export namespace Root {
+    export interface Foo {
+        x: number;
+    }
+}
+"#
+            .to_string(),
+        ),
+        (
+            "reexport.ts".to_string(),
+            r#"
+export * from "./file";
+"#
+            .to_string(),
+        ),
+        (
+            "augment.ts".to_string(),
+            r#"
+import * as ns from "./reexport";
+
+declare module "./reexport" {
+    export enum Root {
+        A, B, C
+    }
+}
+
+declare const f: ns.Root.Foo;
+const g: ns.Root = ns.Root.A;
+
+f.x;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let diagnostics: Vec<_> = result
+        .file_results
+        .iter()
+        .flat_map(|entry| entry.diagnostics.iter())
+        .collect();
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected re-exported namespace/enum module augmentation to check cleanly. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_check_files_parallel_var_and_duplicate_functions_keep_ts2300() {
     let files = vec![(
         "test.ts".to_string(),

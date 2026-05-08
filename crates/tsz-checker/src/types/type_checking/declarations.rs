@@ -642,6 +642,10 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn is_constructor_type(&self, type_id: TypeId) -> bool {
+        self.is_constructor_type_inner(type_id, &[])
+    }
+
+    fn is_constructor_type_inner(&self, type_id: TypeId, seen: &[TypeId]) -> bool {
         // Any type is always considered a constructor type (TypeScript compatibility)
         if type_id == TypeId::ANY {
             return true;
@@ -662,6 +666,13 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if seen.contains(&type_id) {
+            return false;
+        }
+        let mut next_seen = Vec::with_capacity(seen.len() + 1);
+        next_seen.extend_from_slice(seen);
+        next_seen.push(type_id);
+
         let kind = query::classify_for_constructor_check(self.ctx.types, type_id);
         // For type parameters, check if the constraint is a constructor type
         // For intersection types, check if any member is a constructor type
@@ -669,19 +680,22 @@ impl<'a> CheckerState<'a> {
         match kind {
             query::ConstructorCheckKind::TypeParameter { constraint } => {
                 if let Some(constraint) = constraint {
-                    self.is_constructor_type(constraint)
+                    self.is_constructor_type_inner(constraint, &next_seen)
                 } else {
                     false
                 }
             }
-            query::ConstructorCheckKind::Intersection(members) => {
-                members.iter().any(|&m| self.is_constructor_type(m))
-            }
+            query::ConstructorCheckKind::Intersection(members) => members
+                .iter()
+                .any(|&m| self.is_constructor_type_inner(m, &next_seen)),
             query::ConstructorCheckKind::Union(members) => {
                 // Union types are constructable if ALL members are constructable
                 // This matches TypeScript's behavior where `type A | B` used in extends
                 // requires both A and B to be constructors
-                !members.is_empty() && members.iter().all(|&m| self.is_constructor_type(m))
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|&m| self.is_constructor_type_inner(m, &next_seen))
             }
             query::ConstructorCheckKind::Application { base } => {
                 // For type applications like Ctor<{}>, check if the base type is a constructor
@@ -709,7 +723,7 @@ impl<'a> CheckerState<'a> {
                 // - Interfaces with construct signatures (e.g., Constructor<T>)
                 // - Other Application types
                 // - Type aliases that resolve to constructors via intersections
-                self.is_constructor_type(base)
+                self.is_constructor_type_inner(base, &next_seen)
             }
             // Lazy reference (DefId) - check if it's a class or interface
             // This handles cases like:
@@ -782,7 +796,7 @@ impl<'a> CheckerState<'a> {
                         // Recursively check if the resolved type is a constructor
                         // Avoid infinite recursion by checking if cached_type == type_id
                         if cached_type != type_id {
-                            return self.is_constructor_type(cached_type);
+                            return self.is_constructor_type_inner(cached_type, &next_seen);
                         }
                     }
 
@@ -844,11 +858,11 @@ impl<'a> CheckerState<'a> {
                             // Try evaluating it through the solver to get the concrete result.
                             let evaluated = self.ctx.types.evaluate_type(alias_type);
                             if evaluated != type_id && evaluated != TypeId::ERROR {
-                                return self.is_constructor_type(evaluated);
+                                return self.is_constructor_type_inner(evaluated, &next_seen);
                             }
                             // Also check the unevaluated type (might have construct signatures directly)
                             if alias_type != type_id && alias_type != evaluated {
-                                return self.is_constructor_type(alias_type);
+                                return self.is_constructor_type_inner(alias_type, &next_seen);
                             }
                         }
                     }
@@ -876,7 +890,7 @@ impl<'a> CheckerState<'a> {
                         // Recursively check if the resolved type is a constructor
                         // Avoid infinite recursion by checking if cached_type == type_id
                         if cached_type != type_id {
-                            return self.is_constructor_type(cached_type);
+                            return self.is_constructor_type_inner(cached_type, &next_seen);
                         }
                     }
                 }
@@ -891,7 +905,7 @@ impl<'a> CheckerState<'a> {
                 let evaluated = self.ctx.types.evaluate_type(type_id);
                 if evaluated != type_id && evaluated != TypeId::ERROR && evaluated != TypeId::NEVER
                 {
-                    self.is_constructor_type(evaluated)
+                    self.is_constructor_type_inner(evaluated, &next_seen)
                 } else {
                     // Deferred conditional type — assume constructable to match tsc
                     true
@@ -901,7 +915,7 @@ impl<'a> CheckerState<'a> {
                 // For other deferred types, try evaluating to get the resolved type.
                 let evaluated = self.ctx.types.evaluate_type(type_id);
                 if evaluated != type_id && evaluated != TypeId::ERROR {
-                    self.is_constructor_type(evaluated)
+                    self.is_constructor_type_inner(evaluated, &next_seen)
                 } else {
                     false
                 }
