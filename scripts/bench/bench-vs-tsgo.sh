@@ -109,6 +109,9 @@ else
     LARGE_TS_DIR="$EXTERNAL_BENCH_DIR/large-ts-repo"
 fi
 LARGE_TS_NODE_OPTIONS="${LARGE_TS_NODE_OPTIONS:---max-old-space-size=8192}"
+# Deep project fixtures can exhaust Rust's default worker-thread stack before
+# producing a benchmark result. Keep the default overrideable for local runs.
+TSZ_RUST_MIN_STACK="${TSZ_RUST_MIN_STACK:-536870912}"
 
 # Parse arguments
 QUICK_MODE=false
@@ -794,6 +797,9 @@ run_project_benchmark() {
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
         tsz_prefix+=(env "TSZ_LIB_DIR=$TSZ_LIB_DIR")
     fi
+    if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
+        tsz_prefix+=(env "RUST_MIN_STACK=$TSZ_RUST_MIN_STACK")
+    fi
 
     # For project fixtures (except nextjs and large-ts-repo), require
     # a clean tsc pass before benchmarking. large-ts-repo is too expensive
@@ -943,6 +949,9 @@ run_project_benchmark() {
     fi
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
         tsz_cmd_prefix="${tsz_cmd_prefix}env TSZ_LIB_DIR=$TSZ_LIB_DIR "
+    fi
+    if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
+        tsz_cmd_prefix="${tsz_cmd_prefix}env RUST_MIN_STACK=$TSZ_RUST_MIN_STACK "
     fi
     local -a hyperfine_prepare_args=()
     if [[ "${BENCH_COLD:-0}" == "1" ]]; then
