@@ -299,6 +299,15 @@ impl<'a> DeclarationEmitter<'a> {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
                     continue;
                 };
+                // Function declarations whose JS-named-export is folded into
+                // an `export { foo }` statement are emitted at the export
+                // statement's source position via the unfold path. Hoisting
+                // them to the top would put them before sibling inline-
+                // exported declarations (`export const __esModule = false`)
+                // and produce an order that disagrees with tsc.
+                if self.js_deferred_named_export_statements.contains(&stmt_idx) {
+                    continue;
+                }
                 let should_hoist = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
                     self.arena.get_function(stmt_node).is_some_and(|func| {
                         self.arena
