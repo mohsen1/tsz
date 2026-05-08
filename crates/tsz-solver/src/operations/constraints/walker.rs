@@ -1292,12 +1292,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         source_subst.insert(tp.name, placeholder_id);
                         source_var_map.insert(placeholder_id, var);
 
-                        // Add constraint as upper bound if it's concrete
+                        // Add constraint as an upper bound when it can be checked
+                        // without resolving the source placeholder from its own
+                        // self-referential bound. Source-only self constraints
+                        // are handled by the diagnostic compatibility path.
                         if let Some(constraint) = tp.constraint {
                             let inst_constraint =
                                 instantiate_type(self.interner, constraint, &source_subst);
                             src_placeholder_visited.clear();
-                            // Create combined var_map for type_contains_placeholder check
                             let combined_for_check: FxHashMap<_, _> = var_map
                                 .iter()
                                 .chain(source_var_map.iter())
