@@ -239,6 +239,77 @@ function f() {
     );
 }
 
+/// Regression for issue #3662: a variable declaration whose initializer is a
+/// never-returning call still falls through, so a function with a non-void
+/// declared return type must emit TS2355. tsc only treats bare expression
+/// statements like `fail();` as terminating control flow — `const x = fail();`
+/// completes the statement normally.
+#[test]
+fn var_decl_with_never_initializer_does_not_terminate_function() {
+    let source = r#"
+declare function fail(): never;
+function f(): number {
+    const value = fail();
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        codes.contains(&2355),
+        "Expected TS2355 for `const value = fail()` falling through; got: {codes:?}"
+    );
+}
+
+/// Same shape as above but with `let` and a different binding name to ensure
+/// the rule is structural and not specific to `const value`.
+#[test]
+fn let_decl_with_never_initializer_does_not_terminate_function() {
+    let source = r#"
+declare function fail(): never;
+function g(): number {
+    let result = fail();
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        codes.contains(&2355),
+        "Expected TS2355 for `let result = fail()` falling through; got: {codes:?}"
+    );
+}
+
+/// Multiple declarators with one never-typed initializer also fall through.
+/// Different name choices (`a`/`b` vs. `x`/`y`) should not change the rule.
+#[test]
+fn var_decl_list_with_never_initializer_does_not_terminate_function() {
+    let source = r#"
+declare function fail(): never;
+function h(): number {
+    const a = 1, b = fail();
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        codes.contains(&2355),
+        "Expected TS2355 for `const a = 1, b = fail()` falling through; got: {codes:?}"
+    );
+}
+
+/// Control: a bare `fail();` expression statement still terminates control
+/// flow, so the function must not get TS2355. This pins the scope of the fix.
+#[test]
+fn bare_never_call_still_terminates_function() {
+    let source = r#"
+declare function fail(): never;
+function k(): number {
+    fail();
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&2355),
+        "Expected no TS2355 for bare `fail();` call; got: {codes:?}"
+    );
+}
+
 /// Without `@returns {never}`, a JS function declaration whose body throws
 /// should NOT (currently) be treated as never-returning by the symbol-resolved
 /// path — body analysis only runs for direct IIFE callees. This pins the

@@ -9687,7 +9687,10 @@ function fallsThrough(): number {
     console.log("oops");
 }
 
-// Never-returning initializer should also avoid 2355
+// Variable declarations with never-returning initializers SHOULD still
+// trigger TS2355 (regression: tsz used to treat `const x = fail()` as a
+// terminating statement, but tsc only terminates flow on bare expression
+// statements like `fail();`). See issue #3662.
 function usesFailInInit(): number {
     const value = fail("boom");
 }
@@ -9725,8 +9728,8 @@ function usesFailInList(): number {
 
     let actual_2355_count = count(2355);
     assert_eq!(
-        actual_2355_count, 1,
-        "Expected only fallsThrough() to get TS2355, got: {codes:?}"
+        actual_2355_count, 3,
+        "Expected fallsThrough(), usesFailInInit(), usesFailInList() to get TS2355, got: {codes:?}"
     );
 }
 

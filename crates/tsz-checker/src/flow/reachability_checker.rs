@@ -635,38 +635,6 @@ impl<'a> CheckerState<'a> {
                 };
                 !self.call_expression_terminates_control_flow(expr_stmt.expression)
             }
-            syntax_kind_ext::VARIABLE_STATEMENT => {
-                let Some(var_stmt) = self.ctx.arena.get_variable(node) else {
-                    return true;
-                };
-                for &decl_idx in &var_stmt.declarations.nodes {
-                    let Some(list_node) = self.ctx.arena.get(decl_idx) else {
-                        continue;
-                    };
-                    let Some(var_list) = self.ctx.arena.get_variable(list_node) else {
-                        continue;
-                    };
-                    for &list_decl_idx in &var_list.declarations.nodes {
-                        let Some(list_decl_node) = self.ctx.arena.get(list_decl_idx) else {
-                            continue;
-                        };
-                        let Some(decl) = self.ctx.arena.get_variable_declaration(list_decl_node)
-                        else {
-                            continue;
-                        };
-                        if decl.initializer.is_none() {
-                            continue;
-                        }
-                        // Only treat call/new expressions as non-falling-through when
-                        // they return never. Type assertions like `null as never` still
-                        // complete normally at runtime.
-                        if self.call_expression_terminates_control_flow(decl.initializer) {
-                            return false;
-                        }
-                    }
-                }
-                true
-            }
             syntax_kind_ext::IF_STATEMENT => {
                 let Some(if_data) = self.ctx.arena.get_if_statement(node) else {
                     return true;
