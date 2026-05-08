@@ -191,6 +191,34 @@ type Paths = CreateTypeOptions<PathsOptions, BadDefaultPathsOptions>;
 }
 
 #[test]
+fn test_user_defined_required_with_unrelated_shape_does_not_skip_constraint() {
+    // Issue #3061: a user-defined `type Required<T> = { marker: string }`
+    // must NOT trigger the lib-`Required<T>` mapped-utility shortcut. With
+    // the shortcut, `T extends Required<Source>` was satisfied by `Source`
+    // itself even though the user's `Required` requires a `marker`
+    // property. Gating the shortcut on the symbol coming from a lib file
+    // makes the user redeclaration fall through to the regular constraint
+    // check, which correctly emits TS2344.
+    let source = r#"
+type Required<T> = { marker: string };
+
+interface Source {
+  a: number;
+}
+
+type Box<T extends Required<Source>> = T;
+
+type Bad = Box<Source>;
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+
+    assert!(
+        codes.contains(&2344),
+        "Expected TS2344 for `Box<Source>` against unrelated user-defined `Required<Source>`, got {codes:?}"
+    );
+}
+
+#[test]
 fn test_type_alias_type_parameter_constraint_used_for_nested_type_arguments() {
     let source = r#"
 type Partial<T> = { [K in keyof T]?: T[K] };
