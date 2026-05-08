@@ -18,6 +18,90 @@
 
 ---
 
+## Amendment 1 (post-review corrections, 2026-05-08)
+
+The first-pass plan correctly separated small-fixture polish from the
+large-project scale cliff and correctly required instrumentation before
+architecture, but it had three priority/evidence flaws caught in review.
+Until the body of this document is rewritten, the items below override it:
+
+1. **The 890 s "source discovery alone" number is unverified** at current
+   `main`. It was carried over from the deleted
+   `PERF_ARCHITECTURAL_PLAN.md` (2026-04-29 measurement, pre most
+   Arc-share work). Until a fresh phase split confirms it, treat it as
+   a hypothesis, not a baseline. The "headline target" claim in §0
+   ("≤ 90 s by Q2-end via Tier 2") is suspended pending T0.
+2. **Source discovery / resolver moves out of Tier 4 into a conditional
+   T2.0 slot** ahead of the checker pool. If T0 shows discovery is the
+   dominant remaining wall-time, resolver caching ships first because
+   it is lower semantic risk than the checker-pool migration and may
+   alone close most of the gap.
+3. **The lib-snapshot Phase 2/3 work (T3.1) is demoted** to "ship if T0
+   shows lib-construction is a non-trivial fraction of release-mode
+   wall-time on large fixtures." Phase 1 already shipped; Phase 2/3 is
+   not the headline.
+
+Three additional technical corrections:
+
+4. **`bench-vs-tsgo.sh` has a reproducibility landmine**:
+   `scripts/bench/bench-vs-tsgo.sh:103-110` falls back to
+   `${HOME}/code/large-ts-repo` when that directory exists, *before* the
+   pinned external clone. A `TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1` flag
+   should gate the fallback (default off for any number that goes into
+   a PR description). Add this as part of T0.
+5. **Phase timings should be a first-class binary output**, not a
+   shell-script scrape of `--extendedDiagnostics` text. Implement
+   `tsz --diagnostics-json <path>` and `tsz --perf-counters-json <path>`.
+   T1.2 is rewritten accordingly.
+6. **Postcard is not self-describing**. The original §6.1 claim
+   ("Postcard is field-tag-driven for enums, resilient to optional
+   fields") was overstated. Postcard tags enum variants by index;
+   sender and receiver must share the schema. T3.1 (if revived) must
+   use **explicit versioned snapshot structs** with manual encode/decode,
+   not serde-derive over live `TypeData` / shape structs.
+
+Two architecture corrections:
+
+7. **The hazard list in §5.1.2 will rot.** `CheckerContext` field-count
+   bumps appear repeatedly in `Active Implementation Claims` (cap 226 →
+   230 by 2026-05-06) and the audit caught at least 15 hazards while the
+   summary said 13. T2 PRs must be gated on a **generated field-lifetime
+   inventory** (classify every field as `ProgramStable` /
+   `WorkerReusable` / `FileLocalReset` / `SpeculationScoped` /
+   `DiagnosticsOnly` / `LspPersistent` / `Unknown`) with `Unknown`
+   failing the architecture guard.
+8. **T2.1 should split CheckerContext by lifetime before pooling.**
+   Replace the original "PooledChecker wraps CheckerState plus
+   swap-files protocol" with three structs:
+   `ProgramContext` (immutable, shared across all workers),
+   `WorkerContext` (worker-lifetime, holds reusable buffers and
+   long-lived caches),
+   `FileSession<'p>` (cheap, file-scoped).
+   Use scoped worker threads with explicit borrows, not Rayon
+   `start_handler` + thread-local. This avoids `unsafe impl Send` games
+   and turns the lifetime split into the migration's primary unit of
+   risk, not a side effect.
+
+The body of this document below is preserved as written for reviewer
+diffability. A follow-up PR will fold these corrections into the body
+once T0 results are in.
+
+### Amended workplan order
+
+| Tier | Headline                                                                          | Gate                                              |
+| ---- | --------------------------------------------------------------------------------- | ------------------------------------------------- |
+| T0   | Reproduce + measure (LARGE_TS_DIR landmine fix, `--diagnostics-json`, scale-cliff phase split) | Hard gate. Nothing else proceeds.                 |
+| T1   | Counters (subset that answers go/no-go questions; histogram tail to ms not just µs) | After T0.                                          |
+| T2.0 | Resolver/source-discovery fast path (conditional)                                 | Land if T0 shows discovery > 30% of wall-time.    |
+| T2.1 | Lifetime split: `ProgramContext` / `WorkerContext` / `FileSession`                | After generated field-lifetime inventory.         |
+| T2.2 | Per-reason child-checker → typed cross-file query migration                       | One reason per PR; counter-gated.                 |
+| T2.3 | One lib-symbol merge per program                                                  | After T2.1.                                        |
+| T2.4 | Interner: instrument first; redesign only if shard contention measurable          | Counter-gated.                                    |
+| T3   | Small-fixture polish (snapshot + micro-opts), conditional                          | Ship if T0 shows lib construction is non-trivial. |
+| T4   | Long-tail / experimental                                                          | Open-ended.                                       |
+
+---
+
 ## 0. Executive summary
 
 The user-facing goal is *"improve performance measured by `bench-vs-tsgo` on
@@ -60,6 +144,13 @@ this document; original was `perf-vite-small-fixture-investigation.md`).
 
 ### 1.2 Large-project baseline (large-ts-repo, 6086 files, 39 MB, 1.29 M LOC)
 
+> **⚠ Amendment 1 (2026-05-08)**: the 890 s "source discovery alone" number
+> in this section is **unverified** at current `main`. It came from a
+> 2026-04-29 measurement carried over from the deleted
+> `PERF_ARCHITECTURAL_PLAN.md`, predates the Arc-share work, and may not
+> reflect the current pipeline. Tier 0 (§3.5) re-measures before any
+> architectural commitment.
+
 Source: ROADMAP `### 5. Stable Identity, Skeletons, And Large-Repo Residency`,
 status snapshots dated 2026-05-01 and 2026-05-02.
 
@@ -92,6 +183,15 @@ moved large-project numbers because none addressed the per-file checker
 world.
 
 ### 1.4 Bench harness (where the numbers come from)
+
+> **⚠ Amendment 1**: `scripts/bench/bench-vs-tsgo.sh:103-110` silently
+> uses `${HOME}/code/large-ts-repo` if the directory exists, before the
+> pinned external clone. Any number from a developer machine that
+> happens to have a local checkout is potentially contaminated. T0.1
+> introduces `TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1` to gate the fallback.
+> Until T0.1 lands, treat per-developer large-ts-repo numbers with
+> suspicion.
+
 
 - Driver: `scripts/bench/bench-vs-tsgo.sh` (3735 lines).
 - Tool: `hyperfine` — wall-clock only. Quick mode = 1 warmup + 3 measured;
@@ -174,6 +274,117 @@ sequence of independently-shippable PRs.
 | T4   | Long-tail / experimental                              | After T2 plateau.                             | Open-ended  | Variable   |
 
 The work this plan does NOT cover (and why) is in §9.
+
+---
+
+## 3.5 Tier 0 — Measurement and fixture correctness (added in Amendment 1)
+
+Hard gate. No other tier proceeds until T0 lands. The 890 s figure quoted
+in §1.2 is unverified at current `main`; the fixture script has a local
+override that contaminates PR-quality numbers; phase timings are not in
+the bench JSON. Until those are fixed, every priority decision is built
+on sand.
+
+### 3.5.1 PR T0.1 — Fixture correctness
+
+`scripts/bench/bench-vs-tsgo.sh:103-110` silently uses
+`${HOME}/code/large-ts-repo` if that directory exists, instead of the
+pinned external clone. Change to opt-in:
+
+```sh
+LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
+if [ -n "${LARGE_TS_DIR:-}" ]; then
+    : # explicit override
+elif [ "${TSZ_BENCH_ALLOW_LOCAL_FIXTURE:-0}" = "1" ] \
+     && [ -d "$LARGE_TS_LOCAL_DIR/.git" ]; then
+    LARGE_TS_DIR="$LARGE_TS_LOCAL_DIR"
+else
+    LARGE_TS_DIR="$EXTERNAL_BENCH_DIR/large-ts-repo"
+fi
+```
+
+Same treatment for any other `*_LOCAL_DIR` fallback (audit the script).
+~50 LOC.
+
+### 3.5.2 PR T0.2 — First-class diagnostics JSON
+
+Replace `--extendedDiagnostics` text scraping (planned originally as
+T1.2) with binary-emitted JSON:
+
+```sh
+tsz --diagnostics-json <path>      # PhaseTimings + counters
+tsz --perf-counters-json <path>    # standalone counter dump
+```
+
+Wire from `crates/tsz-cli/src/driver/core.rs:130-147` (`PhaseTimings`)
+and `crates/tsz-common/src/perf_counters.rs:613-680` (`dump_string` →
+`dump_json`). Bench harness consumes the JSON via `jq`, not `awk`.
+
+Two output modes for the bench harness:
+
+| Mode          | Counters | Hyperfine runs | Used for                         |
+| ------------- | -------- | -------------- | -------------------------------- |
+| `timing`      | off      | full (3+10)    | wall-time / RSS speed claims     |
+| `attribution` | on       | one (no warmup) | "where did the wall-time go?"   |
+
+Critical: never compare an `attribution`-mode tsz number against a
+`timing`-mode tsgo number. Counters cost real cycles even when the
+disabled-path overhead is one branch — `Instant::now()` for lock-wait
+timing is the worst offender at ~20 ns macOS.
+
+~200 LOC.
+
+### 3.5.3 PR T0.3 — Phase split for large-ts-repo and scale-cliff
+
+Run `bench-vs-tsgo.sh --mode attribution` against:
+
+- `large-ts-repo` (cleaned fixture #6, with the new fixture-correctness
+  fix from T0.1)
+- monorepo-001 through monorepo-006
+
+For each, emit a JSON with the contract specified in Amendment 1 §3:
+
+```json
+{
+  "fixture": "large-ts-repo",
+  "commit": "<sha>",
+  "phases": {
+    "source_discovery_ms": 0,
+    "io_read_ms": 0,
+    "parse_bind_ms": 0,
+    "check_ms": 0,
+    "emit_ms": 0,
+    "total_ms": 0
+  },
+  "rss_peak_bytes": 0,
+  "files": 0,
+  "diagnostics": 0,
+  "counters": { "resolver": {}, "checker": {}, "cross_file": {}, "interner": {} }
+}
+```
+
+Decision tree based on the result:
+
+```text
+if source_discovery_ms / total_ms > 0.30:
+    promote T2.0 (resolver fast path) above T2.1 (checker pool)
+elif check_ms / total_ms > 0.50 and child_checker_construction_count > 1000:
+    proceed with T2.1 (checker pool) as planned
+else:
+    re-evaluate before committing to T2 architecture
+```
+
+T0.3 is the keystone — its output dictates whether T2.0 or T2.1 ships
+first. Without it, the rest of this document is speculative.
+
+### 3.5.4 Tier 0 exit criteria
+
+- `bench-vs-tsgo.sh` no longer falls back to `~/code/*` without explicit opt-in.
+- `tsz --diagnostics-json` works and is consumed by the bench harness.
+- Fresh phase-split JSON exists for `large-ts-repo` and all six scale-cliff
+  fixtures, posted to GCS at the same path as the existing bench results.
+- A short writeup ("the 890 s claim is/isn't real") is appended to this
+  document at §1.2.
 
 ---
 
@@ -814,10 +1025,17 @@ Lesson: **binary format mandatory**.
    varint codec encodes IDs ≤ 127 in 1 byte and ≤ 16383 in 2 bytes —
    nearly every ID in a lib snapshot fits in 2 bytes. Bincode 1 fixint
    always uses 4 bytes. Just from this: ~2× size win.
-2. Postcard is field-tag-driven for enums, resilient to optional fields —
-   the bincode 1 desync hazard (`lib_snapshot.rs:18-23`) doesn't recur.
-   `TypeData` is a 26-variant enum (`types.rs:738-923`) and Phases 2+3
-   will add variants over time.
+2. Postcard tags enum variants by index (varint-encoded). It is **not
+   self-describing**: sender and receiver must share the schema. This
+   does not protect against the bincode 1 desync hazard
+   (`lib_snapshot.rs:18-23`) automatically — Amendment 1 §6 mandates
+   **explicit versioned snapshot structs with manual encode/decode**,
+   *not* serde-derive over live `TypeData`/shape structs. A schema
+   version + a CI test that decodes a fixed-bytes "golden" snapshot
+   catches accidental layout drift; the version number must be bumped
+   in lockstep with any field add/remove/reorder. (The original "field-
+   tag-driven for enums, resilient to optional fields" claim was an
+   overstatement and is retracted.)
 3. No `unsafe`, no alignment, no mmap. Phase 1 ships under 200 ms per cold
    start; saving 5 ms by going zero-copy isn't worth the rkyv operational
    risk (alignment-fault crashes, ABI freeze on the on-disk schema).
