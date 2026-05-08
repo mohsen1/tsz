@@ -21,7 +21,16 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
-            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+            // For TS classes with computed names, tsc keeps the
+            // constructor in its source position among the non-static
+            // members (so `[a]: number; constructor();` round-trips).
+            // The JS path still treats constructors specially because
+            // the JS member shape is synthesised from `this.x = …`
+            // assignments and prototype writes whose source positions
+            // we can't trust the same way.
+            let is_constructor_special =
+                self.source_is_js_file && member_node.kind == syntax_kind_ext::CONSTRUCTOR;
+            if is_constructor_special {
                 constructors.push(member_idx);
                 continue;
             }
