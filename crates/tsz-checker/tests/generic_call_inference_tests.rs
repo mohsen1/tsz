@@ -2393,6 +2393,47 @@ const g12: <T extends { value: T }>(x: T) => T = pipe(foo, foo);
     );
 }
 
+#[test]
+fn contextual_parameter_self_referential_no_excess_constraint_no_false_ts2345() {
+    let source = r#"
+type NoExcessProperties<T, U> = T & {
+  readonly [K in Exclude<keyof U, keyof T>]: never;
+};
+
+interface Effect<out A> {
+  readonly EffectTypeId: {
+    readonly _A: (_: never) => A;
+  };
+}
+
+declare function pipe<A, B>(a: A, ab: (a: A) => B): B;
+
+interface RepeatOptions<A> {
+  until?: (_: A) => boolean;
+}
+
+declare const repeat: {
+  <O extends NoExcessProperties<RepeatOptions<A>, O>, A>(
+    options: O,
+  ): (self: Effect<A>) => Effect<A>;
+};
+
+pipe(
+  {} as Effect<boolean>,
+  repeat({
+    until: (x) => {
+      return x;
+    },
+  }),
+);
+"#;
+    let diags = relevant_lib_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "self-referential NoExcessProperties constraint should not raise false TS2345. Got: {diags:#?}"
+    );
+}
+
 // ─── Const type parameter inference ─────────────────────────────────
 
 #[test]

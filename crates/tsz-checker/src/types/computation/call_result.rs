@@ -203,6 +203,12 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_idx: NodeIndex,
     ) {
+        if self.should_suppress_self_referential_mapped_constraint_arg_mismatch(
+            arg_type, param_type, arg_idx,
+        ) {
+            return;
+        }
+
         let display_arg_type = common::widen_argument_type_for_display(self.ctx.types, arg_type);
         let mut actual_display = self.format_type_diagnostic(display_arg_type);
         if matches!(actual_display.as_str(), "true[]" | "false[]") {
