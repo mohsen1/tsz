@@ -224,11 +224,10 @@ fn test_emitter_file_size_ceiling() {
         oversized.join("\n")
     );
 
-    // declaration_emitter/helpers/type_inference.rs is currently the largest at 8792 lines.
-    // Main grew the file via #4615 / follow-ons; this PR adds ~155 lines for optional-param
-    // arm collapse. Bump ceiling to 8800 with headroom; type_inference.rs split is tracked
-    // separately as a refactor follow-up.
-    const MAX_LOC_CEILING: usize = 8800;
+    // declaration_emitter/helpers/type_inference.rs is currently the largest at 8671 lines
+    // (this PR adds ~34 lines for mixin call source-text fallback). Bump from 8637 to 8700
+    // with headroom; type_inference.rs split tracked separately.
+    const MAX_LOC_CEILING: usize = 8700;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest emitter source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
