@@ -625,3 +625,37 @@ pub fn run_js_grammar_pass(
     checker.check_js_grammar_statements(&statements);
     checker.ctx.diagnostics
 }
+
+/// Run only the `--isolatedDeclarations` grammar pass on a parsed source file
+/// and return any TS9007/TS9011/TS9012/etc. diagnostics it emits. The CLI's
+/// `--noCheck` shortcut otherwise skips the regular checker entirely; tsc
+/// still emits these declaration-emit-prerequisite diagnostics in that mode
+/// because they gate `.d.ts` emission, not type checking.
+///
+/// Returns an empty vector when `isolated_declarations` is false in `options`
+/// or the file is a `.d.ts` (the underlying pass no-ops in those cases).
+#[must_use]
+pub fn run_isolated_declarations_pass(
+    arena: &tsz_parser::NodeArena,
+    binder: &tsz_binder::BinderState,
+    source_file: tsz_parser::NodeIndex,
+    file_name: String,
+    options: context::CheckerOptions,
+) -> Vec<diagnostics::Diagnostic> {
+    if !options.isolated_declarations {
+        return Vec::new();
+    }
+    let Some(source) = arena.get_source_file_at(source_file) else {
+        return Vec::new();
+    };
+    let statements: Vec<tsz_parser::NodeIndex> = source.statements.nodes.to_vec();
+    if statements.is_empty() {
+        return Vec::new();
+    }
+    let interner = tsz_solver::TypeInterner::new();
+    let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
+    checker.check_isolated_declarations(&statements);
+    checker.check_isolated_decl_class_expressions(&statements);
+    checker.check_isolated_decl_augmentations(&statements);
+    checker.ctx.diagnostics
+}
