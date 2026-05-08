@@ -96,7 +96,17 @@ impl<'a> CheckerState<'a> {
         }
         let sym_id = self.ctx.def_to_symbol_id(base_def)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        (symbol.escaped_name == "Required").then_some(args[0])
+        // The shortcut treats `Required<Source>` as the lib's mapped utility
+        // and skips the constraint check by comparing the type argument
+        // against the source itself. A *user-defined* `type Required<T> = …`
+        // with a different shape must NOT trigger the shortcut, otherwise
+        // the constraint check is silently skipped (#3061). Gate on the
+        // symbol coming from a lib file so user redeclarations fall through
+        // to the regular constraint check.
+        if symbol.escaped_name != "Required" || !self.ctx.symbol_is_from_lib(sym_id) {
+            return None;
+        }
+        Some(args[0])
     }
 
     fn substitute_required_mapped_source(
