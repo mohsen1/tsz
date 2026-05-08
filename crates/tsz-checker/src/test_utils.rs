@@ -3,11 +3,15 @@
 //! Provides common parse→bind→check pipeline helpers to eliminate
 //! duplicated test setup boilerplate across checker test modules.
 
-use crate::context::CheckerOptions;
+use crate::context::{CheckerOptions, LibContext};
 use crate::diagnostics::Diagnostic;
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_binder::lib_loader::LibFile;
 use tsz_parser::parser::ParserState;
 
 /// Parse, bind, and type-check a TypeScript source string, returning all diagnostics.
@@ -161,6 +165,127 @@ pub fn check_source_strict_messages(source: &str) -> Vec<(u32, String)> {
         .into_iter()
         .map(|d| (d.code, d.message_text))
         .collect()
+}
+
+/// Standard `lib.d.ts` source roots probed by checker tests, ordered by
+/// preference: bundled stripped assets first (smallest, fastest to parse),
+/// then the full bundled assets, then the TypeScript submodule's
+/// `src/lib/` directory as a final fallback.
+fn lib_test_roots() -> Vec<PathBuf> {
+    let m = Path::new(env!("CARGO_MANIFEST_DIR"));
+    vec![
+        m.join("../tsz-core/src/lib-assets-stripped"),
+        m.join("../tsz-core/src/lib-assets"),
+        m.join("../../TypeScript/src/lib"),
+    ]
+}
+
+/// Lib basenames that broadly cover `Promise` / `Iterable` / `Symbol` /
+/// DOM / esnext typings used by checker tests. Tests that need a smaller
+/// or differently-shaped set should call [`load_lib_files`] with an
+/// explicit slice.
+pub const DEFAULT_LIB_NAMES: &[&str] = &[
+    "es5.d.ts",
+    "es2015.d.ts",
+    "es2015.core.d.ts",
+    "es2015.collection.d.ts",
+    "es2015.iterable.d.ts",
+    "es2015.generator.d.ts",
+    "es2015.promise.d.ts",
+    "es2015.proxy.d.ts",
+    "es2015.reflect.d.ts",
+    "es2015.symbol.d.ts",
+    "es2015.symbol.wellknown.d.ts",
+    "dom.d.ts",
+    "dom.generated.d.ts",
+    "dom.iterable.d.ts",
+    "esnext.d.ts",
+];
+
+/// Load `LibFile`s for the given basenames by probing [`lib_test_roots`]
+/// in order. Names not found in any root are silently skipped — callers
+/// that strictly require a particular lib should assert presence
+/// themselves. Duplicates in `names` are deduped.
+pub fn load_lib_files(names: &[&str]) -> Vec<Arc<LibFile>> {
+    let roots = lib_test_roots();
+    let mut out = Vec::new();
+    let mut seen: FxHashSet<&str> = FxHashSet::default();
+    for &name in names {
+        if !seen.insert(name) {
+            continue;
+        }
+        for root in &roots {
+            let p = root.join(name);
+            if p.exists()
+                && let Ok(content) = std::fs::read_to_string(&p)
+            {
+                out.push(Arc::new(LibFile::from_source(name.to_string(), content)));
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Convenience: load the [`DEFAULT_LIB_NAMES`] bundle.
+pub fn load_default_lib_files() -> Vec<Arc<LibFile>> {
+    load_lib_files(DEFAULT_LIB_NAMES)
+}
+
+/// Parse, bind, and type-check `source` with the given `lib_files` wired
+/// into the binder and checker.
+///
+/// Mirrors [`check_source`] but routes through
+/// [`tsz_binder::BinderState::bind_source_file_with_libs`] and
+/// `Context::set_lib_contexts` / `set_actual_lib_file_count`. Use this
+/// when tests rely on built-in types (`Promise`, `Array`, `Symbol`,
+/// DOM, …); for tests that don't need libs, prefer [`check_source`]
+/// which is faster.
+///
+/// Like [`check_source`], calls `enable_source_file_test_pragmas()` so
+/// `// @ts-expect-error`-style pragmas are honored.
+pub fn check_source_with_libs(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+) -> Vec<Diagnostic> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let source_file = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    if lib_files.is_empty() {
+        binder.bind_source_file(parser.get_arena(), source_file);
+    } else {
+        binder.bind_source_file_with_libs(parser.get_arena(), source_file, lib_files);
+    }
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+    checker.enable_source_file_test_pragmas();
+
+    if lib_files.is_empty() {
+        checker.ctx.set_lib_contexts(Vec::new());
+    } else {
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+
+    checker.check_source_file(source_file);
+    checker.ctx.diagnostics.clone()
 }
 
 #[cfg(test)]
@@ -381,5 +506,68 @@ class C {}
             !codes.contains(&2318),
             "set_lib_contexts(empty) must prevent TS2318 for Promise, got: {codes:?}"
         );
+    }
+
+    #[test]
+    fn load_default_lib_files_finds_es5_and_es2015_promise() {
+        // The DEFAULT_LIB_NAMES bundle must resolve at least the core
+        // typings every checker test relies on. If the bundled
+        // `lib-assets-stripped/` ever loses one of these the checker
+        // tests that use Promise/Array will silently lose lib coverage.
+        let libs = load_default_lib_files();
+        let names: Vec<&str> = libs.iter().map(|l| l.file_name.as_str()).collect();
+        assert!(
+            names.contains(&"es5.d.ts"),
+            "DEFAULT_LIB_NAMES must resolve es5.d.ts in some root, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"es2015.promise.d.ts"),
+            "DEFAULT_LIB_NAMES must resolve es2015.promise.d.ts, got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn load_lib_files_dedupes_and_skips_missing() {
+        // Duplicates in the input must not produce duplicate LibFiles.
+        // Names that don't exist in any root must be silently dropped.
+        let libs = load_lib_files(&["es5.d.ts", "es5.d.ts", "definitely_missing_lib.d.ts"]);
+        let names: Vec<&str> = libs.iter().map(|l| l.file_name.as_str()).collect();
+        assert_eq!(names.iter().filter(|n| **n == "es5.d.ts").count(), 1);
+        assert!(!names.contains(&"definitely_missing_lib.d.ts"));
+    }
+
+    #[test]
+    fn check_source_with_libs_resolves_promise_no_ts2318() {
+        // With libs loaded, `Promise<number>` is a known global type, so
+        // checking this source must not emit TS2318. (Without libs, the
+        // empty-lib wrapper avoids TS2318 by suppressing global lookups
+        // entirely; with libs, the global lookup must succeed.)
+        let libs = load_default_lib_files();
+        assert!(!libs.is_empty(), "expected default libs to load");
+        let diags = check_source_with_libs(
+            "let p: Promise<number>;",
+            "test.ts",
+            CheckerOptions::default(),
+            &libs,
+        );
+        let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&2318),
+            "Promise must resolve via loaded libs, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn check_source_with_libs_empty_matches_check_source() {
+        // Calling `check_source_with_libs` with an empty slice must
+        // produce the exact same diagnostics as `check_source`. This
+        // pins the no-lib code path as a strict superset of the lib
+        // path and guards against drift between the two helpers.
+        let source = "interface I {} const x = new I();";
+        let lhs = check_source_with_libs(source, "test.ts", CheckerOptions::default(), &[]);
+        let rhs = check_source(source, "test.ts", CheckerOptions::default());
+        let lhs_codes: Vec<u32> = lhs.iter().map(|d| d.code).collect();
+        let rhs_codes: Vec<u32> = rhs.iter().map(|d| d.code).collect();
+        assert_eq!(lhs_codes, rhs_codes);
     }
 }

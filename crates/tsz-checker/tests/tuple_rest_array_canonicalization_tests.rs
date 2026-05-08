@@ -9,82 +9,14 @@
 //! TS2339 on destructured rest elements
 //! (`Property 'm' does not exist on type 'Array<U> | undefined'`).
 
-use std::path::Path;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::context::LibContext;
-use tsz_checker::diagnostics::Diagnostic;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::{check_source_with_libs, load_lib_files};
 
-fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-    let lib_names = ["es5.d.ts", "es2015.d.ts", "es2015.core.d.ts"];
-
-    let mut lib_files = Vec::new();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                lib_files.push(Arc::new(LibFile::from_source(
-                    file_name.to_string(),
-                    content,
-                )));
-                break;
-            }
-        }
-    }
-    lib_files
-}
-
-fn check_with_libs(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let lib_files = load_lib_files_for_test();
-
-    let mut binder = BinderState::new();
-    if lib_files.is_empty() {
-        binder.bind_source_file(parser.get_arena(), root);
-    } else {
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    }
-
-    let types = TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
-}
+const LIB_NAMES: &[&str] = &["es5.d.ts", "es2015.d.ts", "es2015.core.d.ts"];
 
 fn check_codes(source: &str) -> Vec<u32> {
-    check_with_libs(source, CheckerOptions::default())
+    let libs = load_lib_files(LIB_NAMES);
+    check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs)
         .into_iter()
         .map(|d| d.code)
         .collect()
