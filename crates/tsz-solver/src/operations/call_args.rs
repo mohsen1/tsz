@@ -1856,10 +1856,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 shape
                     .flags
                     .contains(crate::types::ObjectFlags::FRESH_LITERAL)
-                    && shape
-                        .properties
-                        .iter()
-                        .any(|prop| self.is_contextually_sensitive(prop.type_id))
+                    && (shape.all_properties_context_sensitive()
+                        || shape
+                            .properties
+                            .iter()
+                            .any(|prop| self.is_contextually_sensitive(prop.type_id)))
             }
 
             // Array types: check element type

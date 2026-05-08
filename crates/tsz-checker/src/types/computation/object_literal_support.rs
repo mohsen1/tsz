@@ -301,6 +301,7 @@ impl<'a> CheckerState<'a> {
         has_union_spread: bool,
         union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>>,
         generic_spread_types: Vec<TypeId>,
+        all_properties_context_sensitive: bool,
     ) -> TypeId {
         if has_any_spread {
             return TypeId::ANY;
@@ -329,7 +330,14 @@ impl<'a> CheckerState<'a> {
                 if has_spread {
                     self.ctx.types.factory().object(properties)
                 } else {
-                    let type_id = self.ctx.types.factory().object_fresh(properties.clone());
+                    let type_id = if all_properties_context_sensitive {
+                        self.ctx
+                            .types
+                            .factory()
+                            .object_fresh_all_properties_context_sensitive(properties.clone())
+                    } else {
+                        self.ctx.types.factory().object_fresh(properties.clone())
+                    };
                     if !display_type_overrides.is_empty() {
                         let mut display_props: Vec<PropertyInfo> = properties
                             .iter()
@@ -406,6 +414,9 @@ impl<'a> CheckerState<'a> {
                 };
                 if !has_spread {
                     shape.mark_fresh_literal();
+                    if all_properties_context_sensitive {
+                        shape.mark_all_properties_context_sensitive();
+                    }
                 }
 
                 self.ctx.types.factory().object_with_index(shape)

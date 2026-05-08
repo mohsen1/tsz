@@ -179,7 +179,6 @@ f([c1, c2], (value1, value2) => {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn proxy_handler_contextual_return_union_does_not_report_outer_ts2322() {
     let source = r#"
 declare function deprecate<T extends Function>(

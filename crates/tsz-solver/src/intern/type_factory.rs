@@ -113,6 +113,18 @@ impl<'db> TypeFactory<'db> {
         self.db.object_fresh(properties)
     }
 
+    #[inline]
+    pub fn object_fresh_all_properties_context_sensitive(
+        &self,
+        properties: Vec<PropertyInfo>,
+    ) -> TypeId {
+        self.db.object_with_flags_and_symbol(
+            properties,
+            ObjectFlags::FRESH_LITERAL | ObjectFlags::ALL_PROPERTIES_CONTEXT_SENSITIVE,
+            None,
+        )
+    }
+
     /// Create a fresh object type with display properties for error messages.
     /// See `TypeInterner::object_fresh_with_display` for details.
     #[inline]

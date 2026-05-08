@@ -949,6 +949,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         match self.interner.lookup(arg_type) {
             Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
+                if shape.all_properties_context_sensitive() {
+                    return true;
+                }
                 !shape
                     .properties
                     .iter()
@@ -985,6 +988,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let source_shape = self.interner.object_shape(source_obj);
         let target_shape = self.interner.object_shape(target_obj);
+        if source_shape.all_properties_context_sensitive() {
+            return None;
+        }
 
         let mut target_props_by_name: FxHashMap<_, _> = FxHashMap::default();
         for prop in &target_shape.properties {
