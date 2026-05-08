@@ -74,6 +74,98 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Walk exported `var`/`let`/`const` declarations whose type comes from
+    /// initializer inference (no annotation) and pull every local type alias
+    /// that the inferred type names into `used_symbols`. Without this, an
+    /// `export const item = make()` whose return type is a *local* alias
+    /// `Box` would leave the `.d.ts` referencing `Box` even though no `type
+    /// Box = ...` declaration was emitted. See issue #3755.
+    pub(in crate::declaration_emitter) fn retain_synthetic_variable_declaration_dependencies_in_statements(
+        &mut self,
+        statements: &NodeList,
+    ) {
+        for &stmt_idx in &statements.nodes {
+            self.retain_synthetic_variable_declaration_dependencies_for_statement(stmt_idx);
+        }
+    }
+
+    fn retain_synthetic_variable_declaration_dependencies_for_statement(
+        &mut self,
+        stmt_idx: NodeIndex,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        let var_stmt_idx = match stmt_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                if !self.statement_has_effective_export(stmt_idx) {
+                    return;
+                }
+                stmt_idx
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                    return;
+                };
+                let Some(clause_node) = self.arena.get(export.export_clause) else {
+                    return;
+                };
+                if clause_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                    return;
+                }
+                export.export_clause
+            }
+            _ => return,
+        };
+        let Some(var_stmt_node) = self.arena.get(var_stmt_idx) else {
+            return;
+        };
+        let Some(var_stmt) = self.arena.get_variable(var_stmt_node) else {
+            return;
+        };
+
+        let decl_list_indices: Vec<NodeIndex> = var_stmt.declarations.nodes.to_vec();
+        for decl_list_idx in decl_list_indices {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            let var_decl_indices: Vec<NodeIndex> = decl_list.declarations.nodes.to_vec();
+            for var_decl_idx in var_decl_indices {
+                let Some(var_decl_node) = self.arena.get(var_decl_idx) else {
+                    continue;
+                };
+                let Some(var_decl) = self.arena.get_variable_declaration(var_decl_node) else {
+                    continue;
+                };
+                if var_decl.type_annotation.is_some() {
+                    continue;
+                }
+                if !var_decl.initializer.is_some() {
+                    continue;
+                }
+                // For call-expression initializers, retain identifiers
+                // referenced in the callee's declared return-type
+                // annotation text. The annotation source text preserves
+                // local alias names verbatim — without this pass an
+                // `export const item = make()` whose callee returns a
+                // local alias `Box` would leave the .d.ts referencing
+                // `Box` even though no `type Box = ...` was emitted. See
+                // issue #3755. This path is intentionally narrower than
+                // a structural inference walk so it does not over-retain
+                // siblings on test sources where the public-API filter
+                // already preserves what's needed.
+                if let Some(return_type_text) =
+                    self.call_expression_declared_return_type_text(var_decl.initializer)
+                {
+                    self.retain_local_type_names_for_public_api(&return_type_text);
+                }
+            }
+        }
+    }
+
     pub(in crate::declaration_emitter) fn retain_asserted_class_property_type_dependencies_in_statements(
         &mut self,
         statements: &NodeList,

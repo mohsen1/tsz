@@ -106,6 +106,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.retain_synthetic_function_return_dependencies_in_statements(
                 &source_file.statements,
             );
+            self.retain_synthetic_variable_declaration_dependencies_in_statements(
+                &source_file.statements,
+            );
             self.retain_asserted_class_property_type_dependencies_in_statements(
                 &source_file.statements,
             );
