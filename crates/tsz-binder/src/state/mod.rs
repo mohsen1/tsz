@@ -231,7 +231,14 @@ impl ModuleAugmentation {
 }
 
 /// Binder state using `NodeArena`.
-#[derive(Clone, Debug)]
+///
+/// `Serialize`/`Deserialize` impls round-trip the bound state to disk for
+/// the lib snapshot cache (see `docs/plan/perf-lib-snapshot-design.md`).
+/// Two `CloneableRwLock<...>` fields below carry resolution caches that
+/// are intentionally `#[serde(skip)]` — they're regenerable on first
+/// access (the `clear_resolution_caches` method confirms the lazy-rebuild
+/// invariant), and serialising lock state isn't meaningful.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BinderState {
     /// Binder options (ES target, etc.)
     pub options: BinderOptions,
@@ -493,11 +500,21 @@ pub struct BinderState {
     /// This cache dramatically speeds up barrel file imports where the same export
     /// is looked up multiple times across different files.
     /// Uses `RwLock` for thread-safety in parallel compilation.
+    ///
+    /// `#[serde(skip)]`: lock state isn't meaningful to serialize, and the
+    /// cache content is regenerable on first access. `clear_resolution_caches`
+    /// confirms this — the field is treated as a pure cache. Snapshot-loaded
+    /// binders start with an empty cache and lazily repopulate.
+    #[serde(skip)]
     pub(crate) resolved_export_cache: ExportCacheStorage,
     /// Cache for identifier resolution by AST node.
     /// Key: (`arena_pointer`, `node_index`) -> resolved `SymbolId` (or None if not found).
     /// This avoids repeated scope walks for hot checker paths that ask for the same
     /// identifier symbol many times (e.g. large switch/flow analysis files).
+    ///
+    /// `#[serde(skip)]`: see `resolved_export_cache`. Same lazy-rebuild
+    /// rationale.
+    #[serde(skip)]
     pub(crate) resolved_identifier_cache: IdentifierCacheStorage,
 
     /// Shorthand ambient modules: modules declared with just `declare module "xxx"` (no body)
