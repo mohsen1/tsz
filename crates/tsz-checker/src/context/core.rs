@@ -1503,7 +1503,9 @@ impl<'a> CheckerContext<'a> {
             || code == 18048
             || code == 18049
             || code == 2322
+            || code == 2374
             || code == 2411
+            || code == 2413
             || code == 2416
             || code == 2430
             || code == 2536
@@ -1547,8 +1549,12 @@ impl<'a> CheckerContext<'a> {
     /// Add an error diagnostic (with deduplication).
     /// Diagnostics with the same (start, code) are only emitted once.
     /// Exceptions:
+    /// - TS2374 uses (start ^ `message_hash`, code) because union index
+    ///   signatures can duplicate several key components at one span.
     /// - TS2411 uses (start ^ `message_hash`, code) to allow a single property to
     ///   fail against both string and number index signatures at the same span.
+    /// - TS2413 uses the same scheme because one index signature can violate
+    ///   multiple wider index signatures at the same span.
     /// - TS2430 uses (start ^ `message_hash`, code) to allow multiple
     ///   "incorrectly extends" errors at the same interface name when an interface
     ///   incompatibly extends several distinct bases.

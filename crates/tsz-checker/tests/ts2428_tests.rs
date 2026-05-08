@@ -354,6 +354,101 @@ interface A {
     );
 }
 
+#[test]
+fn ts2374_expands_union_index_signature_keys_for_duplicate_checks() {
+    let source = r#"
+type Duplicates = {
+    [key: string | number]: any;
+    [key: number | symbol]: any;
+    [key: symbol | `foo${string}`]: any;
+    [key: `foo${string}`]: any;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let duplicate_msgs: Vec<_> = diags
+        .iter()
+        .filter_map(|(code, message)| (*code == 2374).then_some(message.as_str()))
+        .collect();
+
+    assert_eq!(
+        duplicate_msgs
+            .iter()
+            .filter(|message| message.contains("'number'"))
+            .count(),
+        2,
+        "expected both number index signatures to be flagged, got {duplicate_msgs:#?}"
+    );
+    assert_eq!(
+        duplicate_msgs
+            .iter()
+            .filter(|message| message.contains("'symbol'"))
+            .count(),
+        2,
+        "expected both symbol index signatures to be flagged, got {duplicate_msgs:#?}"
+    );
+    assert_eq!(
+        duplicate_msgs
+            .iter()
+            .filter(|message| message.contains("'`foo${string}`'"))
+            .count(),
+        2,
+        "expected both template index signatures to be flagged, got {duplicate_msgs:#?}"
+    );
+}
+
+#[test]
+fn ts2374_reports_duplicate_generic_index_signature_key_components() {
+    let source = r#"
+type Invalid<T extends string> = {
+    [key: T | number]: string;
+    [key: T & string]: string;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let duplicate_t_count = diags
+        .iter()
+        .filter(|(code, message)| *code == 2374 && message.contains("'T'"))
+        .count();
+    assert_eq!(
+        duplicate_t_count, 2,
+        "expected both generic-key index signatures to be flagged, got {diags:#?}"
+    );
+}
+
+#[test]
+fn ts2413_checks_template_index_signature_subpattern_values() {
+    let source = r#"
+type Conflicting = {
+    [key: `a${string}`]: 'a';
+    [key: `${string}a`]: 'b';
+    [key: `a${string}a`]: 'c';
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2413_msgs: Vec<_> = diags
+        .iter()
+        .filter_map(|(code, message)| (*code == 2413).then_some(message.as_str()))
+        .collect();
+
+    assert_eq!(
+        ts2413_msgs.len(),
+        2,
+        "expected conflicts against both wider template patterns, got {diags:#?}"
+    );
+    assert!(
+        ts2413_msgs.iter().any(
+            |message| message.contains("'`a${string}a`'") && message.contains("'`a${string}`'")
+        ),
+        "expected conflict against the prefix template index, got {ts2413_msgs:#?}"
+    );
+    assert!(
+        ts2413_msgs.iter().any(
+            |message| message.contains("'`a${string}a`'") && message.contains("'`${string}a`'")
+        ),
+        "expected conflict against the suffix template index, got {ts2413_msgs:#?}"
+    );
+}
+
 // ── TS2515 abstract member satisfaction via declaration merging ──────────
 
 #[test]

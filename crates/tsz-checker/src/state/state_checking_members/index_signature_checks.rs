@@ -5,67 +5,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn property_type_assignable_to_index_type(
-        &mut self,
-        prop_type: TypeId,
-        index_value_type: TypeId,
-    ) -> bool {
-        if let Some(list_id) = crate::query_boundaries::common::union_list_id(
-            self.ctx.types,
-            self.resolve_lazy_type(prop_type),
-        ) {
-            let members: Vec<TypeId> = self.ctx.types.type_list(list_id).to_vec();
-            return members
-                .into_iter()
-                .all(|member| self.is_assignable_to(member, index_value_type));
-        }
-
-        self.is_assignable_to(prop_type, index_value_type)
-    }
-
-    fn format_ts2411_type(&mut self, type_id: TypeId) -> String {
-        let type_queries =
-            crate::query_boundaries::common::collect_type_queries(self.ctx.types, type_id);
-        let mut replacements = Vec::new();
-        for symbol_ref in type_queries {
-            let sym_id = tsz_binder::SymbolId(symbol_ref.0);
-            let value_type = self.get_type_of_symbol(sym_id);
-            if value_type != TypeId::ANY
-                && value_type != TypeId::ERROR
-                && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
-            {
-                env.insert(symbol_ref, value_type);
-            }
-            if value_type != TypeId::ANY
-                && value_type != TypeId::ERROR
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            {
-                let mut value_display = self.format_type(value_type);
-                if value_display == symbol.escaped_name {
-                    let constructor_name = format!("{}Constructor", symbol.escaped_name);
-                    let has_constructor_symbol =
-                        self.ctx.binder.file_locals.get(&constructor_name).is_some()
-                            || self.ctx.lib_contexts.iter().any(|lib_ctx| {
-                                lib_ctx.binder.file_locals.get(&constructor_name).is_some()
-                            });
-                    if has_constructor_symbol {
-                        value_display = constructor_name;
-                    }
-                }
-                replacements.push((format!("typeof {}", symbol.escaped_name), value_display));
-            }
-        }
-        let evaluated = self.evaluate_type_with_env(type_id);
-        let resolved = self.resolve_type_query_type(evaluated);
-        let mut formatted = self.format_type(resolved);
-        for (from, to) in replacements {
-            if from != to {
-                formatted = formatted.replace(&from, &to);
-            }
-        }
-        formatted
-    }
-
     /// Check index signature parameter type (TS1268).
     /// An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.
     pub(crate) fn check_index_signature_parameter_type(&mut self, member_idx: NodeIndex) {
@@ -285,6 +224,9 @@ impl<'a> CheckerState<'a> {
         let mut static_string_index_nodes: Vec<NodeIndex> = Vec::new();
         let mut static_number_index_nodes: Vec<NodeIndex> = Vec::new();
         let mut static_symbol_index_nodes: Vec<NodeIndex> = Vec::new();
+        let mut other_index_nodes: Vec<(TypeId, NodeIndex)> = Vec::new();
+        let mut static_other_index_nodes: Vec<(TypeId, NodeIndex)> = Vec::new();
+        let mut pattern_index_signatures: Vec<(TypeId, TypeId, NodeIndex, bool)> = Vec::new();
         let mut synthesized_instance_string_index_types: Vec<TypeId> = Vec::new();
         let mut synthesized_instance_number_index_types: Vec<TypeId> = Vec::new();
         let mut synthesized_static_string_index_types: Vec<TypeId> = Vec::new();
@@ -365,38 +307,59 @@ impl<'a> CheckerState<'a> {
             }
 
             let param_type = self.get_type_from_type_node(param.type_annotation);
+            let key_components = self.index_signature_key_components(param.type_annotation);
 
             // Store the index signature based on parameter type and static-ness
             // Own index signatures take priority over inherited ones
-            if param_type == TypeId::NUMBER {
-                if is_static {
-                    static_number_index_nodes.push(member_idx);
-                } else {
-                    number_index_nodes.push(member_idx);
-                    index_info.number_index = Some(tsz_solver::IndexSignature {
-                        key_type: TypeId::NUMBER,
-                        value_type,
-                        readonly: false,
-                        param_name: None,
-                    });
-                }
-            } else if param_type == TypeId::STRING {
-                if is_static {
-                    static_string_index_nodes.push(member_idx);
-                } else {
-                    string_index_nodes.push(member_idx);
-                    index_info.string_index = Some(tsz_solver::IndexSignature {
-                        key_type: TypeId::STRING,
-                        value_type,
-                        readonly: false,
-                        param_name: None,
-                    });
-                }
-            } else if param_type == TypeId::SYMBOL {
-                if is_static {
-                    static_symbol_index_nodes.push(member_idx);
-                } else {
-                    symbol_index_nodes.push(member_idx);
+            let key_components = if key_components.is_empty() {
+                vec![param_type]
+            } else {
+                key_components
+            };
+            for key_type in key_components {
+                if key_type == TypeId::NUMBER {
+                    if is_static {
+                        static_number_index_nodes.push(member_idx);
+                    } else {
+                        number_index_nodes.push(member_idx);
+                        index_info.number_index = Some(tsz_solver::IndexSignature {
+                            key_type: TypeId::NUMBER,
+                            value_type,
+                            readonly: false,
+                            param_name: None,
+                        });
+                    }
+                } else if key_type == TypeId::STRING {
+                    if is_static {
+                        static_string_index_nodes.push(member_idx);
+                    } else {
+                        string_index_nodes.push(member_idx);
+                        index_info.string_index = Some(tsz_solver::IndexSignature {
+                            key_type: TypeId::STRING,
+                            value_type,
+                            readonly: false,
+                            param_name: None,
+                        });
+                    }
+                } else if key_type == TypeId::SYMBOL {
+                    if is_static {
+                        static_symbol_index_nodes.push(member_idx);
+                    } else {
+                        symbol_index_nodes.push(member_idx);
+                    }
+                } else if key_type != TypeId::ERROR && key_type != TypeId::NONE {
+                    if is_static {
+                        static_other_index_nodes.push((key_type, member_idx));
+                    } else {
+                        other_index_nodes.push((key_type, member_idx));
+                    }
+                    if crate::query_boundaries::common::is_template_literal_type(
+                        self.ctx.types,
+                        key_type,
+                    ) {
+                        pattern_index_signatures
+                            .push((key_type, value_type, member_idx, is_static));
+                    }
                 }
             }
         }
@@ -458,6 +421,42 @@ impl<'a> CheckerState<'a> {
                     crate::diagnostics::diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
                     &["symbol"],
                 );
+            }
+        }
+        self.report_duplicate_other_index_signatures(&other_index_nodes);
+        self.report_duplicate_other_index_signatures(&static_other_index_nodes);
+
+        // Template pattern index signatures compose like narrower string
+        // indexes: a pattern whose key type is assignable to an earlier pattern
+        // must have a value type assignable to that earlier pattern's value.
+        for i in 0..pattern_index_signatures.len() {
+            let (key_type, value_type, node_idx, is_static) = pattern_index_signatures[i];
+            for j in (0..i).rev() {
+                let (previous_key_type, previous_value_type, _, previous_is_static) =
+                    pattern_index_signatures[j];
+                if is_static != previous_is_static || key_type == previous_key_type {
+                    continue;
+                }
+
+                let key_assignable = self.is_assignable_to(key_type, previous_key_type)
+                    || self.template_pattern_key_is_subset(key_type, previous_key_type);
+                let value_assignable = self.is_assignable_to(value_type, previous_value_type);
+                if key_assignable && !value_assignable {
+                    let key_type_str = self.format_type(key_type);
+                    let value_type_str = self.format_type(value_type);
+                    let previous_key_type_str = self.format_type(previous_key_type);
+                    let previous_value_type_str = self.format_type(previous_value_type);
+                    self.error_at_node_msg(
+                        node_idx,
+                        diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                        &[
+                            &key_type_str,
+                            &value_type_str,
+                            &previous_key_type_str,
+                            &previous_value_type_str,
+                        ],
+                    );
+                }
             }
         }
 
