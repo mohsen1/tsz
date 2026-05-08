@@ -2784,11 +2784,18 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        let alias_text = if namespace_path.is_empty() {
-            alias_name
-        } else {
-            format!("{}.{}", namespace_path.join("."), alias_name)
-        };
+        // Top-level exported import aliases (`export import xc = x.c;` at the
+        // file root) are always in scope wherever the d.ts is consumed, and
+        // tsc prefers the alias spelling over the qualified target. Only
+        // namespace-local aliases need a target rewrite — when an outer scope
+        // references them, the alias name is not in scope, so the printer's
+        // qualified path (`m2.m3.c`) must canonicalize back to its target
+        // (`x.c`). Skipping the top-level case prevents the rewrite from
+        // clobbering a printer output of `xc` with the longer `x.c`.
+        if namespace_path.is_empty() {
+            return;
+        }
+        let alias_text = format!("{}.{}", namespace_path.join("."), alias_name);
         aliases.push((alias_text, target_text));
     }
 
