@@ -96,6 +96,15 @@ fn primitive_key_union_registered_to_type_alias_formats_structurally_without_ori
 }
 
 #[test]
+fn primitive_key_union_formats_as_property_key_in_diagnostic_mode() {
+    let db = TypeInterner::new();
+    let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
+
+    let mut fmt = TypeFormatter::new(&db).with_diagnostic_mode();
+    assert_eq!(fmt.format(primitive_key_union), "PropertyKey");
+}
+
+#[test]
 fn needs_property_name_quotes_basic() {
     // Valid identifiers: no quotes needed
     assert!(!super::needs_property_name_quotes("foo"));

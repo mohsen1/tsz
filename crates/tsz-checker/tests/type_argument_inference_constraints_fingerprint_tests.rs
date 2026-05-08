@@ -15,6 +15,7 @@ const LIB_NAMES: &[&str] = &[
     "es2015.reflect.d.ts",
     "es2015.symbol.d.ts",
     "es2015.symbol.wellknown.d.ts",
+    "es2024.object.d.ts",
 ];
 
 fn diagnostics(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
@@ -118,5 +119,30 @@ someGenerics3<number>(() => 3);
             .iter()
             .any(|diagnostic| diagnostic.message_text.contains("Window")),
         "expected explicit type argument to be checked against Window, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn object_group_by_key_constraint_uses_property_key_in_diagnostic() {
+    let source = r#"
+interface Employee {
+    name: string;
+}
+
+const employees: Employee[] = [];
+Object.groupBy(employees, employee => employee);
+"#;
+
+    let diagnostics = diagnostics_with_libs(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2322)
+        .collect();
+
+    assert!(
+        ts2322.iter().any(|diagnostic| diagnostic
+            .message_text
+            .contains("Type 'Employee' is not assignable to type 'PropertyKey'.")),
+        "expected Object.groupBy key constraint to display PropertyKey, got: {diagnostics:#?}"
     );
 }

@@ -93,6 +93,8 @@ pub struct TypeFormatter<'a> {
     /// This should be set for error-message formatting (tsc doesn't optionalize
     /// union members in diagnostics, only in quickinfo/hover).
     skip_union_optionalize: bool,
+    /// When true, format types using tsc's diagnostic display surface.
+    diagnostic_mode: bool,
     /// When true, preserve the declared surface syntax of optional properties
     /// instead of appending synthetic `| undefined`.
     preserve_optional_property_surface_syntax: bool,
@@ -349,6 +351,7 @@ impl<'a> TypeFormatter<'a> {
             current_depth: 0,
             atom_cache: FxHashMap::default(),
             skip_union_optionalize: false,
+            diagnostic_mode: false,
             preserve_optional_property_surface_syntax: false,
             preserve_optional_parameter_surface_syntax: true,
             use_display_properties: false,
@@ -561,6 +564,7 @@ impl<'a> TypeFormatter<'a> {
             current_depth: 0,
             atom_cache: FxHashMap::default(),
             skip_union_optionalize: false,
+            diagnostic_mode: false,
             preserve_optional_property_surface_syntax: false,
             preserve_optional_parameter_surface_syntax: true,
             use_display_properties: false,
@@ -628,6 +632,7 @@ impl<'a> TypeFormatter<'a> {
     /// Should be set when formatting types for error messages (not hover/quickinfo).
     pub const fn with_diagnostic_mode(mut self) -> Self {
         self.skip_union_optionalize = true;
+        self.diagnostic_mode = true;
         self
     }
 
@@ -1401,6 +1406,9 @@ impl<'a> TypeFormatter<'a> {
                 self.format_object_with_index(shape.as_ref()).into()
             }
             TypeData::Union(members) => {
+                if self.diagnostic_mode && self.is_primitive_key_union_data(key) {
+                    return Cow::Borrowed("PropertyKey");
+                }
                 // tsc preserves top-level alias names that would otherwise be
                 // lost during union flattening (e.g., `T | null` should not
                 // expand to T's body). The checker records the unflattened
