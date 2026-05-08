@@ -2119,6 +2119,8 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_inputs_ready(&[source, target]);
         let source = self.substitute_this_type_if_needed(source);
         let target = self.substitute_this_type_if_needed(target);
+        let raw_source = source;
+        let raw_target = target;
 
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
@@ -2346,6 +2348,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if !result && self.is_assignable_with_target_this_bound_to_source(raw_source, raw_target) {
+            return true;
+        }
+
         // Post-check: keyof type checking logic
         if let Some(keyof_type) = get_keyof_type(self.ctx.types, target)
             && let Some(source_atom) = get_string_literal_value(self.ctx.types, source)
@@ -2361,6 +2367,42 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn is_assignable_with_target_this_bound_to_source(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if source.is_intrinsic()
+            || target.is_intrinsic()
+            || !crate::query_boundaries::common::contains_this_type(self.ctx.types, target)
+        {
+            return false;
+        }
+
+        // In a target interface, polymorphic `this` stands for the concrete
+        // subtype being assigned to that interface, not the interface itself.
+        let rebound_target =
+            crate::query_boundaries::common::substitute_this_type(self.ctx.types, target, source);
+        if rebound_target == target {
+            return false;
+        }
+
+        let source_eval = self.evaluate_type_for_assignability(source);
+        let target_eval = self.evaluate_type_for_assignability(rebound_target);
+        let source = if source_eval == TypeId::ERROR && source != TypeId::ERROR {
+            source
+        } else {
+            source_eval
+        };
+        let target = if target_eval == TypeId::ERROR && rebound_target != TypeId::ERROR {
+            rebound_target
+        } else {
+            target_eval
+        };
+
+        self.check_assignability_cached(source, target, 0, "target_this_bound_to_source")
     }
 
     fn same_type_alias_application_args_reject(&mut self, source: TypeId, target: TypeId) -> bool {
