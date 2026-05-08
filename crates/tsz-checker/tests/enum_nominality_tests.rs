@@ -297,3 +297,51 @@ x = y;
 ";
     test_enum_assignability(source, 1);
 }
+
+// Regression: numeric enum literal initializers must keep enum identity so
+// cross-enum assignments still emit TS2322. Issue #3659.
+#[test]
+fn test_let_with_numeric_literal_initializer_preserves_cross_enum_check() {
+    let source = r"
+enum A { X, Y }
+enum B { X, Y }
+let a: A = 1;
+let b: B = a;
+";
+    test_enum_assignability(source, 1);
+}
+
+#[test]
+fn test_const_with_numeric_literal_initializer_preserves_cross_enum_check() {
+    let source = r"
+enum A { X, Y }
+enum B { X, Y }
+const a: A = 1;
+let b: B = a;
+";
+    test_enum_assignability(source, 1);
+}
+
+#[test]
+fn test_let_enum_literal_initializer_still_assignable_to_number() {
+    // Sanity: keeping enum identity must not break the numeric-enum -> number
+    // structural assignability rule. `let n: number = a` stays valid.
+    let source = r"
+enum A { X, Y }
+let a: A = 1;
+let n: number = a;
+";
+    test_enum_assignability(source, 0);
+}
+
+#[test]
+fn test_let_with_member_initializer_preserves_member_identity() {
+    // `let a: A = A.Y` should still narrow `a` to `A.Y` so a same-enum member
+    // assignment to a different member fails (TS2322).
+    let source = r"
+enum A { X, Y }
+let a: A = A.Y;
+let other: A.X = a;
+";
+    test_enum_assignability(source, 1);
+}

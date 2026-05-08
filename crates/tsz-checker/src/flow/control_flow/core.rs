@@ -1690,6 +1690,11 @@ impl<'a> FlowAnalyzer<'a> {
                                     // `const e: E = E.ONE` where e should have type E.ONE.
                                     // Only applies to const (not var/let) to avoid changing
                                     // mutable variable semantics.
+                                    //
+                                    // The assigned value must preserve nominal enum identity:
+                                    // bare literals (e.g. `const a: E = 1`) collapse back to
+                                    // the declared enum so cross-enum assignments still report
+                                    // TS2322.
                                     if self.is_const_variable_declaration(flow.node)
                                         && crate::query_boundaries::common::enum_components(
                                             self.interner,
@@ -1698,7 +1703,11 @@ impl<'a> FlowAnalyzer<'a> {
                                         .is_some()
                                         && self.is_assignable_to(assigned_type, narrowing_base)
                                     {
-                                        return assigned_type;
+                                        return self.narrow_enum_assignment_target(
+                                            narrowing_base,
+                                            assigned_type,
+                                            narrowing_base,
+                                        );
                                     }
                                     if self
                                         .is_unannotated_conditional_variable_initializer(flow.node)

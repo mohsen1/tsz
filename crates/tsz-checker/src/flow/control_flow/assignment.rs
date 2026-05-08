@@ -5,8 +5,8 @@
 
 use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::common::{
-    is_assignment_operator as boundary_is_assignment_operator, is_compound_assignment_operator,
-    map_compound_assignment_to_binary,
+    enum_components, is_assignment_operator as boundary_is_assignment_operator,
+    is_compound_assignment_operator, map_compound_assignment_to_binary,
 };
 use crate::query_boundaries::flow_analysis::{
     array_type, enum_member_domain, evaluate_application_type, fallback_compound_assignment_result,
@@ -1701,16 +1701,21 @@ impl<'a> FlowAnalyzer<'a> {
         let resolved_initial = self.resolve_assignment_reduction_type(initial_type);
 
         // For enum types, narrow directly to the assigned type when it is
-        // assignable to the enum. This preserves the enum member identity
-        // (e.g. `E.ONE` stays `E.ONE`, not decomposed to `0`).
-        // E.g. `let e: E = E.ONE` narrows the flow type from `E` to `E.ONE`.
+        // assignable to the enum AND the assignment preserves enum-member
+        // identity. This keeps `let e: E = E.ONE` narrowed to `E.ONE`
+        // (not decomposed to `0`), while `let e: E = 1` keeps the declared
+        // enum type `E` so that a subsequent cross-enum assignment like
+        // `let f: F = e` still triggers TS2322 (numeric-enum nominal mismatch).
         if enum_member_domain(self.interner, resolved_initial) != resolved_initial {
-            let assigned_type = self.resolve_assignment_reduction_type(assigned_type);
-            return if is_assignable(self.interner, assigned_type, resolved_initial) {
-                assigned_type
-            } else {
-                initial_type
-            };
+            let assigned_resolved = self.resolve_assignment_reduction_type(assigned_type);
+            if !is_assignable(self.interner, assigned_resolved, resolved_initial) {
+                return initial_type;
+            }
+            return self.narrow_enum_assignment_target(
+                resolved_initial,
+                assigned_resolved,
+                initial_type,
+            );
         }
 
         let members_opt = union_members_for_type(self.interner, resolved_initial);
@@ -1792,5 +1797,52 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             is_assignable(self.interner, source, member)
         }
+    }
+
+    /// Narrow an enum-typed declaration by an assigned value while preserving
+    /// nominal enum identity.
+    ///
+    /// Returns `assigned_type` only when it carries the same nominal enum
+    /// identity as `initial_type` (same enum, a member of that enum, or a
+    /// union of such members). Bare literals or values of unrelated enum
+    /// types collapse back to `initial_type` so that subsequent assignments
+    /// still see the declared enum and report cross-enum TS2322.
+    pub(crate) fn narrow_enum_assignment_target(
+        &self,
+        initial_resolved: TypeId,
+        assigned_resolved: TypeId,
+        initial_type: TypeId,
+    ) -> TypeId {
+        let Some((initial_def, _)) = enum_components(self.interner, initial_resolved) else {
+            return initial_type;
+        };
+        if self.assigned_value_preserves_enum_identity(assigned_resolved, initial_def) {
+            assigned_resolved
+        } else {
+            initial_type
+        }
+    }
+
+    pub(crate) fn assigned_value_preserves_enum_identity(
+        &self,
+        assigned_type: TypeId,
+        initial_enum_def: tsz_solver::def::DefId,
+    ) -> bool {
+        if let Some(members) = union_members_for_type(self.interner, assigned_type) {
+            return !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&m| self.assigned_value_preserves_enum_identity(m, initial_enum_def));
+        }
+        let Some((def_id, _)) = enum_components(self.interner, assigned_type) else {
+            return false;
+        };
+        if def_id == initial_enum_def {
+            return true;
+        }
+        let Some(env) = &self.type_environment else {
+            return false;
+        };
+        env.borrow().get_enum_parent(def_id) == Some(initial_enum_def)
     }
 }
