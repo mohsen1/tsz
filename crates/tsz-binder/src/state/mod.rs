@@ -164,7 +164,7 @@ pub struct LibContext {
 /// and `map` from File B's arena.
 /// Represents a global augmentation declaration from a `declare global {}` block.
 /// For cross-file merging, the arena tracks which file's AST contains the declaration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GlobalAugmentation {
     /// Declaration node for this augmentation (interface/type alias inside `declare global {}`)
     pub node: NodeIndex,
@@ -198,7 +198,7 @@ impl GlobalAugmentation {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ModuleAugmentation {
     /// Name of the augmented interface/type member (e.g., "map", "filter")
     pub name: String,
@@ -616,7 +616,7 @@ pub enum SemanticDefKind {
 /// Contains exactly the information needed for the checker to create a solver
 /// `DefId` + `DefinitionInfo` without re-examining the AST or symbol table.
 /// This is populated during binding and consumed during checker construction.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SemanticDefEntry {
     /// What kind of declaration this is.
     pub kind: SemanticDefKind,
