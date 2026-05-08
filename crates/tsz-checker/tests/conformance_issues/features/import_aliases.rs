@@ -711,6 +711,40 @@ new Foo2();
 }
 
 #[test]
+fn test_esm_module_exports_named_import_uses_default_hint_over_hidden_local_suggestion() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"
+export default class Foo {}
+const oops = "oops";
+export { oops as "module.exports" };
+                "#,
+            ),
+            ("importer.cts", r#"import { Oops } from "./exporter.mjs";"#),
+        ],
+        "importer.cts",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::Node20,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2614).count(),
+        1,
+        "Expected TS2614 for named import from a Node20 module.exports interop binding. Got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2724).count(),
+        0,
+        "Hidden module.exports locals should not produce TS2724 spelling suggestions. Got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_no_false_ts2339_on_generic_class_computed_property_self_reference() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

@@ -547,6 +547,23 @@ impl<'a> CheckerState<'a> {
 
             // Check if this name is exported from the source module
             if export_name != "*" && !module_exports.has(&export_name) {
+                let has_default_like_export = has_json_default_export
+                    || module_exports.has("default")
+                    || module_exports.has("export=")
+                    || module_exports.has("module.exports");
+                if module_exports.has("module.exports") && has_default_like_export {
+                    let message = format_message(
+                        diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                        &[&quoted_module, &export_name],
+                    );
+                    self.error_at_node(
+                        specifier_idx,
+                        &message,
+                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                    );
+                    continue;
+                }
+
                 // Check for spelling suggestions (TS2724) before TS2305 and TS2614.
                 let export_names: Vec<&str> = module_exports
                     .iter()
@@ -566,10 +583,7 @@ impl<'a> CheckerState<'a> {
                         &message,
                         diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
                     );
-                } else if has_json_default_export
-                    || module_exports.has("default")
-                    || module_exports.has("export=")
-                {
+                } else if has_default_like_export {
                     // TS2614: Symbol doesn't exist but a default export does
                     let message = format_message(
                         diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
