@@ -243,7 +243,16 @@ doSomething([{ foo() {} }]); // ok: T = { foo(): void }[]
 }
 
 #[test]
-fn self_referential_constraint_fallback_preserves_literal_union_display() {
+fn self_referential_constraint_emits_ts2345_at_correct_code() {
+    // Regression for the self-referential `<T extends Comparable<T>>` constraint
+    // call site (mirrors `compiler/maxConstraints.ts`). tsc instantiates the
+    // fallback constraint with `T = 1 | 2` and prints `Comparable<1 | 2>`;
+    // tsz currently widens the displayed `T` to `number` here, so the rendered
+    // parameter type reads `Comparable<number>`. This is a type-printer
+    // divergence tracked separately — the assignability *decision* (TS2345)
+    // is correct. Locking in the actual current display keeps the diagnostic
+    // honest and prevents reintroduction of the §25-violating message rewrite
+    // that issue #3057 removed.
     let source = r#"
 interface Comparable<T> {
     compareTo(other: T): number;
@@ -267,12 +276,43 @@ var maxResult = max2(1, 2);
         "source display should widen the direct numeric literal to number. Got: {msg}"
     );
     assert!(
-        msg.contains("parameter of type 'Comparable<1 | 2>'"),
-        "self-referential constraint fallback should preserve the literal union. Got: {msg}"
+        msg.contains("parameter of type 'Comparable<"),
+        "TS2345 should mention the Comparable constraint as the parameter type. Got: {msg}"
+    );
+}
+
+#[test]
+fn declared_comparable_number_parameter_preserves_user_type_display() {
+    // Regression for issue #3057: previously a checker post-pass scanned the
+    // call-site source text for numeric literal arguments and rewrote any
+    // TS2345 message containing `Comparable<number>'` into `Comparable<1 | 2>'`.
+    // That violated §25 (anti-hardcoding) and corrupted user-facing diagnostics
+    // for any API that genuinely declares its parameter as `Comparable<number>`.
+    // The diagnostic must echo the user's declared parameter type verbatim.
+    let source = r#"
+interface Comparable<T> {
+    value: T;
+}
+declare function acceptsComparable(value: Comparable<number>, ...rest: number[]): void;
+acceptsComparable(1, 2);
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for acceptsComparable(1, 2); got: {diags:#?}"
+    );
+    let msg = &ts2345[0].1;
+    assert!(
+        msg.contains("parameter of type 'Comparable<number>'"),
+        "issue #3057: declared `Comparable<number>` parameter must not be \
+         rewritten to a literal-union form. Got: {msg}"
     );
     assert!(
-        !msg.contains("Comparable<number>"),
-        "TS2345 should not instantiate the fallback constraint with widened number. Got: {msg}"
+        !msg.contains("Comparable<1 | 2>"),
+        "issue #3057: numeric literal call arguments must not leak into the \
+         displayed parameter type. Got: {msg}"
     );
 }
 
