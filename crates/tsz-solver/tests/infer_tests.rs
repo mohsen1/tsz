@@ -16241,3 +16241,133 @@ fn test_inference_from_array_against_mixed_variadic_tuple_does_not_match() {
         "single-rest rule must not fire on multi-element variadic tuples"
     );
 }
+
+/// Extract Inference Improvement (TypeScript issue #25065): inferring a type
+/// parameter K from a source against a target shaped like `Extract<K, U>`
+/// (`K extends U ? K : never`) must infer K = source. Without this, K is left
+/// unresolved and falls back to its constraint, which produces wrong-shape
+/// diagnostics like `Argument of type 'unique symbol' is not assignable to
+/// parameter of type 'keyof StrNum'` instead of tsc's
+/// `... parameter of type 'never'` on `Extract<K, string>` parameter sites.
+#[test]
+fn test_inference_through_extract_pattern_conditional() {
+    use crate::types::InferencePriority;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let k_name = interner.intern_string("K");
+    let var_k = ctx.fresh_type_param(k_name, false);
+    let k_type = interner.intern(TypeData::TypeParameter(crate::types::TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Source: a unique symbol stand-in (any concrete type works for this rule;
+    // the rule should propagate whatever the argument type is).
+    let source = TypeId::SYMBOL;
+
+    // Target: `K extends string ? K : never` — the canonical Extract shape
+    // after the type alias is inlined during inference.
+    let target = interner.conditional(ConditionalType {
+        check_type: k_type,
+        extends_type: TypeId::STRING,
+        true_type: k_type,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let resolved = ctx.resolve_with_constraints(var_k).unwrap();
+    assert_eq!(
+        resolved, source,
+        "inferring K from `Extract<K, U>`-shaped target must yield K = source"
+    );
+}
+
+/// Same rule under a different type-parameter name to guarantee the fix is
+/// structural and does not depend on `K` (or any other name) being hardcoded.
+#[test]
+fn test_inference_through_extract_pattern_conditional_alt_name() {
+    use crate::types::InferencePriority;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    // Use a name that has no special meaning in the compiler.
+    let p_name = interner.intern_string("P");
+    let var_p = ctx.fresh_type_param(p_name, false);
+    let p_type = interner.intern(TypeData::TypeParameter(crate::types::TypeParamInfo {
+        name: p_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let source = TypeId::NUMBER;
+
+    // `P extends string ? P : never`
+    let target = interner.conditional(ConditionalType {
+        check_type: p_type,
+        extends_type: TypeId::STRING,
+        true_type: p_type,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let resolved = ctx.resolve_with_constraints(var_p).unwrap();
+    assert_eq!(
+        resolved, source,
+        "Extract-pattern inference rule must be structural, not name-dependent"
+    );
+}
+
+/// The Extract-pattern rule must NOT fire when the conditional is
+/// non-distributive (e.g. `[T] extends [U] ? T : never`). Non-distributive
+/// conditionals carry different semantics in tsc and must not be reduced to
+/// a naked-parameter inference site.
+#[test]
+fn test_inference_skips_non_distributive_extract_pattern() {
+    use crate::types::InferencePriority;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let t_type = interner.intern(TypeData::TypeParameter(crate::types::TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let source = TypeId::NUMBER;
+
+    // `T extends string ? T : never` but flagged non-distributive — the rule
+    // must not reduce this to inference on T.
+    let target = interner.conditional(ConditionalType {
+        check_type: t_type,
+        extends_type: TypeId::STRING,
+        true_type: t_type,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let resolved = ctx.resolve_with_constraints(var_t).unwrap_or(TypeId::ERROR);
+    assert_ne!(
+        resolved, source,
+        "non-distributive conditionals must not be treated as Extract-like \
+         inference sites"
+    );
+}

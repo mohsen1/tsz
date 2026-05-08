@@ -628,9 +628,9 @@ impl<'a> CheckerState<'a> {
             if evaluated_application != evaluated
                 && let Some(shape) =
                     call_checker::get_contextual_signature(self.ctx.types, evaluated_application)
-                {
-                    return Some(shape);
-                }
+            {
+                return Some(shape);
+            }
         }
 
         let evaluated_application = self.evaluate_application_type(type_id);
