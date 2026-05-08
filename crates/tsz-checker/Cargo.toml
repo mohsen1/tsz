@@ -630,6 +630,10 @@ name = "lib_type_spelling_suggestions_tests"
 path = "tests/lib_type_spelling_suggestions_tests.rs"
 
 [[test]]
+name = "required_constraint_local_alias_tests"
+path = "tests/required_constraint_local_alias_tests.rs"
+
+[[test]]
 name = "jsdoc_typedef_lib_global_conflict_tests"
 path = "tests/jsdoc_typedef_lib_global_conflict_tests.rs"
 
