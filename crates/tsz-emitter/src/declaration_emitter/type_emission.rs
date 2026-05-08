@@ -242,16 +242,29 @@ impl<'a> DeclarationEmitter<'a> {
             // Tuple type
             k if k == syntax_kind_ext::TUPLE_TYPE => {
                 if let Some(tuple) = self.arena.get_tuple_type(type_node) {
-                    self.write("[");
-                    let mut first = true;
-                    for &elem_idx in &tuple.elements.nodes {
-                        if !first {
-                            self.write(", ");
+                    // tsc preserves JSDoc comments inline before tuple
+                    // members (commonly seen on named tuple types like
+                    // `[/** size */ length: number, /** count */ count:
+                    // number]`) by emitting the tuple in multi-line form.
+                    // Only switch to multi-line when at least one element
+                    // has a leading JSDoc comment — otherwise tsc's
+                    // d.ts keeps the compact one-line shape.
+                    if self
+                        .tuple_type_has_jsdoc_leading_member(type_node.pos, &tuple.elements.nodes)
+                    {
+                        self.emit_tuple_type_multiline(type_idx);
+                    } else {
+                        self.write("[");
+                        let mut first = true;
+                        for &elem_idx in &tuple.elements.nodes {
+                            if !first {
+                                self.write(", ");
+                            }
+                            first = false;
+                            self.emit_type(elem_idx);
                         }
-                        first = false;
-                        self.emit_type(elem_idx);
+                        self.write("]");
                     }
-                    self.write("]");
                 }
             }
 
@@ -736,6 +749,102 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    /// Emit any JSDoc comments preceding a tuple element, each on its
+    /// own indented line.  Used by `emit_tuple_type_multiline` so the
+    /// `[/** … */ length: number, …]` shape survives d.ts emit.
+    /// `lower_bound` excludes comments before the previous element's
+    /// end so a leading comment on element 0 doesn't get duplicated on
+    /// element 1.
+    fn emit_tuple_member_jsdoc_comments(&mut self, lower_bound: u32, elem_pos: u32) {
+        if self.remove_comments {
+            return;
+        }
+        let Some(text) = self.source_file_text.as_ref().map(|s| s.clone()) else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = elem_pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+        let actual_start_u32 = actual_start as u32;
+        let mut comments: Vec<(u32, u32)> = Vec::new();
+        for comment in &self.all_comments {
+            if comment.pos < lower_bound
+                || comment.end > actual_start_u32
+                || comment.pos >= elem_pos
+            {
+                continue;
+            }
+            let raw = &text[comment.pos as usize..comment.end as usize];
+            if raw.starts_with("/**") && raw != "/**/" {
+                comments.push((comment.pos, comment.end));
+            }
+        }
+        for (c_pos, c_end) in comments {
+            self.write_indent();
+            let raw = &text[c_pos as usize..c_end as usize];
+            // Re-indent multi-line JSDoc bodies to align with the current
+            // output indentation, mirroring how parameter/property
+            // JSDoc blocks are re-emitted elsewhere in the d.ts pipeline.
+            // Trim trailing whitespace from each emitted line so source-
+            // style `/** ` (with trailing space before the newline)
+            // collapses to `/**`, matching tsc's d.ts output.
+            let mut first = true;
+            for line in raw.split('\n') {
+                if !first {
+                    self.write_line();
+                    self.write_indent();
+                    let trimmed = line.trim_start().trim_end();
+                    if !trimmed.is_empty() {
+                        self.write(" ");
+                        self.write(trimmed);
+                    }
+                } else {
+                    self.write(line.trim_start().trim_end());
+                    first = false;
+                }
+            }
+            self.write_line();
+        }
+    }
+
+    /// Whether any element of a tuple type has a JSDoc comment
+    /// immediately preceding it.  Used to switch the `TUPLE_TYPE` printer
+    /// into the multi-line shape so the comments survive d.ts emit.
+    /// `tuple_pos` lower-bounds the comment search so unrelated JSDoc
+    /// blocks earlier in the source file aren't mis-attributed.
+    fn tuple_type_has_jsdoc_leading_member(&self, tuple_pos: u32, elements: &[NodeIndex]) -> bool {
+        let Some(text) = self.source_file_text.as_deref() else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        elements.iter().copied().any(|elem_idx| {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                return false;
+            };
+            let mut actual_start = elem_node.pos as usize;
+            while actual_start < bytes.len()
+                && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+            {
+                actual_start += 1;
+            }
+            let actual_start_u32 = actual_start as u32;
+            self.all_comments.iter().any(|comment| {
+                if comment.pos < tuple_pos
+                    || comment.end > actual_start_u32
+                    || comment.pos >= elem_node.pos
+                {
+                    return false;
+                }
+                let raw = &text[comment.pos as usize..comment.end as usize];
+                raw.starts_with("/**") && raw != "/**/"
+            })
+        })
+    }
+
     fn tuple_type_should_break_multiline(&self, tuple_idx: NodeIndex) -> bool {
         self.arena
             .get(tuple_idx)
@@ -763,13 +872,28 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("[");
         self.write_line();
         self.increase_indent();
+        let mut previous_elem_end: u32 = tuple_node.pos;
         for (index, &elem_idx) in tuple.elements.nodes.iter().enumerate() {
+            // Emit any JSDoc comment that precedes this tuple element on
+            // its own indented line(s) before the element itself.  Done
+            // up-front (rather than via the parameter inline path) so the
+            // comment shape is preserved as tsc renders it: each comment
+            // on its own line, followed by the element.  Scope the
+            // search to comments that come *after* the previous
+            // element's end so a leading comment on element 0 isn't
+            // re-attributed to element 1.
+            if let Some(elem_node) = self.arena.get(elem_idx) {
+                self.emit_tuple_member_jsdoc_comments(previous_elem_end, elem_node.pos);
+            }
             self.write_indent();
             self.emit_type(elem_idx);
             if index + 1 < tuple.elements.nodes.len() {
                 self.write(",");
             }
             self.write_line();
+            if let Some(elem_node) = self.arena.get(elem_idx) {
+                previous_elem_end = elem_node.end;
+            }
         }
         self.decrease_indent();
         self.write_indent();
