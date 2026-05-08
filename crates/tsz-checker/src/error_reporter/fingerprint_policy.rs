@@ -337,6 +337,13 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
+                if self.should_suppress_missing_property_for_callable_source(
+                    source,
+                    *source_type,
+                    target,
+                ) {
+                    return None;
+                }
                 if crate::query_boundaries::common::is_primitive_type(self.ctx.types, *source_type)
                 {
                     return None;
@@ -399,6 +406,13 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
+                if self.should_suppress_missing_property_for_callable_source(
+                    source,
+                    *source_type,
+                    target,
+                ) {
+                    return None;
+                }
                 if crate::query_boundaries::common::is_primitive_type(self.ctx.types, *source_type)
                 {
                     return None;

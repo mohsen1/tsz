@@ -12,7 +12,7 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 use super::assignability::{
-    is_builtin_wrapper_name, is_function_type_display, is_object_prototype_method,
+    is_builtin_wrapper_name, is_object_prototype_method,
     is_object_prototype_method_for_array_target, is_primitive_type_name,
 };
 mod type_mismatch;
@@ -1034,30 +1034,7 @@ impl<'a> CheckerState<'a> {
 
         // Pure function sources against non-callable targets use TS2322; class
         // constructors still keep the missing-property path.
-        let source_eval_for_fn = self.evaluate_type_with_env(source);
-        let target_eval_for_fn = self.evaluate_type_with_env(target);
-        let is_source_fn =
-            crate::query_boundaries::common::has_call_signatures(self.ctx.types, source)
-                || crate::query_boundaries::common::has_call_signatures(
-                    self.ctx.types,
-                    source_eval_for_fn,
-                )
-                || crate::query_boundaries::common::has_call_signatures(
-                    self.ctx.types,
-                    source_type,
-                )
-                || crate::query_boundaries::common::has_call_signatures(
-                    self.ctx.types,
-                    self.evaluate_type_with_env(source_type),
-                )
-                || is_function_type_display(&display_src_str);
-        let target_has_call_sigs =
-            crate::query_boundaries::common::has_call_signatures(self.ctx.types, target)
-                || crate::query_boundaries::common::has_call_signatures(
-                    self.ctx.types,
-                    target_eval_for_fn,
-                );
-        if is_source_fn && !target_has_call_sigs {
+        if self.should_suppress_missing_property_for_callable_source(source, source_type, target) {
             let src_str = if depth == 0 {
                 self.format_type_for_diagnostic_role(
                     source,
@@ -1774,44 +1751,11 @@ impl<'a> CheckerState<'a> {
         // have call signatures. Class constructors (with construct-only signatures) should
         // still produce TS2741 for missing properties.
         {
-            let source_eval = self.evaluate_type_with_env(source);
-            let target_eval = self.evaluate_type_with_env(target);
-            let display_src = self.format_type_diagnostic(source_type);
-            let is_src_fn =
-                crate::query_boundaries::common::has_call_signatures(self.ctx.types, source)
-                    || crate::query_boundaries::common::has_call_signatures(
-                        self.ctx.types,
-                        source_eval,
-                    )
-                    || crate::query_boundaries::common::has_call_signatures(
-                        self.ctx.types,
-                        source_type,
-                    )
-                    || crate::query_boundaries::common::has_call_signatures(
-                        self.ctx.types,
-                        self.evaluate_type_with_env(source_type),
-                    )
-                    || is_function_type_display(&display_src);
-            // Types with construct signatures (class constructors like DateConstructor)
-            // are NOT pure function types — they should still produce TS2740/TS2741
-            // for missing properties instead of being downgraded to TS2322.
-            let src_has_construct =
-                crate::query_boundaries::common::has_construct_signatures(self.ctx.types, source)
-                    || crate::query_boundaries::common::has_construct_signatures(
-                        self.ctx.types,
-                        source_eval,
-                    )
-                    || crate::query_boundaries::common::has_construct_signatures(
-                        self.ctx.types,
-                        source_type,
-                    );
-            let tgt_has_call =
-                crate::query_boundaries::common::has_call_signatures(self.ctx.types, target)
-                    || crate::query_boundaries::common::has_call_signatures(
-                        self.ctx.types,
-                        target_eval,
-                    );
-            if is_src_fn && !tgt_has_call && !src_has_construct {
+            if self.should_suppress_missing_property_for_callable_source(
+                source,
+                source_type,
+                target,
+            ) {
                 let src_str = if depth == 0 {
                     self.format_type_for_diagnostic_role(
                         source,
