@@ -26,6 +26,7 @@ env:
   BENCH_FULL: "1"
   BENCH_COLD: "1"
   BENCH_PGO: "1"
+  BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS: "300"
   TSC_NPM_SPEC: "6.0.2"
   GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -53,6 +54,11 @@ jobs:
               echo "CI conclusion was '${{ github.event.workflow_run.conclusion }}'; skipping bench."
               should_run=false
             else
+              if [[ "${BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS}" != "0" ]]; then
+                echo "Waiting ${BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS}s for main to settle before starting bench."
+                sleep "${BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS}"
+              fi
+
               latest_main_sha=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" \
                 --jq '.object.sha' 2>/dev/null || true)
               if [[ -n "$latest_main_sha" && "${BENCH_TARGET_SHA}" != "$latest_main_sha" ]]; then
