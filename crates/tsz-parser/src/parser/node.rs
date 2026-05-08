@@ -198,7 +198,7 @@ pub struct IdentifierData {
     /// Atom indices are stable within a single arena because they are
     /// allocated by the arena's per-arena `Interner`. Round-tripping the
     /// arena (parser snapshot pipeline, see
-    /// `docs/plan/perf-lib-snapshot-design.md`) requires the atom to
+    /// `docs/plan/PERFORMANCE_PLAN.md`) requires the atom to
     /// survive — otherwise identifier resolution silently breaks. The
     /// `Atom::none` `default` is retained for backward-compatible
     /// JSON inputs that omit the field (e.g. snapshots produced before

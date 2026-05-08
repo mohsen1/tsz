@@ -143,7 +143,7 @@ impl<'a, 'b> tsz_solver::AssignabilityOverrideProvider for CheckerOverrideProvid
 impl<'a> CheckerState<'a> {
     #[inline]
     fn record_root_checker_construction() {
-        // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Count every
+        // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Count every
         // standalone/per-file checker constructor. Child checkers created via
         // `with_parent_cache` are counted separately with call-site attribution.
         tsz_common::perf_counters::inc(
@@ -257,7 +257,7 @@ impl<'a> CheckerState<'a> {
         // we want to track in the per-reason counter dump (PR #1631).
         // Sites that still call this raw form attribute to
         // `CheckerCreationReason::Other`. See
-        // `docs/plan/PERF_ARCHITECTURAL_PLAN.md`.
+        // `docs/plan/PERFORMANCE_PLAN.md`.
         Self::with_parent_cache_attributed(
             arena,
             binder,

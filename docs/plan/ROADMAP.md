@@ -521,6 +521,14 @@ Exit criteria:
 
 Goal: finish the large-repo architecture pivot from file-resident execution to stable semantic identity and bounded residency.
 
+> **Plan document**: see [`PERFORMANCE_PLAN.md`](./PERFORMANCE_PLAN.md) for the
+> consolidated, evidence-based perf workplan (T1 instrumentation → T2 scale
+> cliff → T3 small-fixture polish → T4 long-tail). It supersedes the now-deleted
+> `PERF_ARCHITECTURAL_PLAN.md`, `perf-lib-snapshot-design.md`, and
+> `perf-vite-small-fixture-investigation.md`. This Workstream 5 entry remains
+> the day-to-day status surface; the plan document holds the longer-form
+> rationale, file:line work units, and migration sequences.
+
 Current status:
 
 1. Stable identity work has landed in multiple steps, including `StableLocation` and syntax rehydration helpers.
