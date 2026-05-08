@@ -8,6 +8,7 @@
 use crate::SyntaxKind;
 use crate::char_codes::CharacterCodes;
 use std::sync::Arc;
+use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 use tsz_common::interner::{Atom, Interner};
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -133,6 +134,8 @@ pub struct ScannerState {
     regex_flag_errors: Vec<RegexFlagError>,
     /// General scanner diagnostics (e.g., conflict markers)
     scanner_diagnostics: Vec<ScannerDiagnostic>,
+    /// Whether identifier scanning should admit non-BMP code points.
+    allow_astral_identifier_chars: bool,
     /// Whether to skip trivia (whitespace, comments)
     skip_trivia: bool,
     /// String interner for identifier deduplication
@@ -169,6 +172,7 @@ impl ScannerState {
             token_invalid_separator_is_consecutive: false,
             regex_flag_errors: Vec::new(),
             scanner_diagnostics: Vec::new(),
+            allow_astral_identifier_chars: true,
             skip_trivia,
             interner,
             token_atom: Atom::NONE,
@@ -902,7 +906,7 @@ impl ScannerState {
                 CharacterCodes::HASH => {
                     self.pos += 1;
                     if self.pos < self.end
-                        && is_identifier_start(self.char_code_unchecked(self.pos))
+                        && self.is_identifier_start(self.char_code_unchecked(self.pos))
                     {
                         self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
                         // Check for unicode escapes in the continuation
@@ -918,7 +922,7 @@ impl ScannerState {
                     {
                         // Private identifier starting with unicode escape: #\u0078
                         if let Some(code_point) = self.peek_unicode_escape()
-                            && is_identifier_start(code_point)
+                            && self.is_identifier_start(code_point)
                         {
                             self.scan_private_identifier_with_escapes();
                         } else {
@@ -942,7 +946,7 @@ impl ScannerState {
                     // e.g., \u0041 is 'A', so `let \u0041 = 1;` is valid
                     let escaped_ch = self.peek_unicode_escape();
                     if let Some(code_point) = escaped_ch
-                        && is_identifier_start(code_point)
+                        && self.is_identifier_start(code_point)
                     {
                         self.scan_identifier_with_escapes();
                         return self.token;
@@ -993,7 +997,7 @@ impl ScannerState {
                         self.token = SyntaxKind::WhitespaceTrivia;
                         return self.token;
                     }
-                    if is_identifier_start(ch) {
+                    if self.is_identifier_start(ch) {
                         self.scan_identifier();
                         return self.token;
                     }
@@ -1550,7 +1554,7 @@ impl ScannerState {
         // Only check the raw character code, not unicode escapes.
         // TSC uses `codePointAt(text, pos)` here which reads the literal char,
         // so `\u005F` (backslash) is NOT treated as an identifier start.
-        let starts_identifier = is_identifier_start(self.char_code_unchecked(self.pos));
+        let starts_identifier = self.is_identifier_start(self.char_code_unchecked(self.pos));
 
         if !starts_identifier {
             return false;
@@ -1611,7 +1615,7 @@ impl ScannerState {
 
         if self.char_code_unchecked(self.pos) == CharacterCodes::BACKSLASH {
             if let Some(code_point) = self.peek_unicode_escape() {
-                if is_identifier_start(code_point) {
+                if self.is_identifier_start(code_point) {
                     let _ = self.scan_unicode_escape_value();
                 } else {
                     return;
@@ -1619,7 +1623,7 @@ impl ScannerState {
             } else {
                 return;
             }
-        } else if is_identifier_start(self.char_code_unchecked(self.pos)) {
+        } else if self.is_identifier_start(self.char_code_unchecked(self.pos)) {
             self.pos += self.char_len_at(self.pos);
         } else {
             return;
@@ -1629,14 +1633,14 @@ impl ScannerState {
             let ch = self.char_code_unchecked(self.pos);
             if ch == CharacterCodes::BACKSLASH {
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_part(code_point)
+                    && self.is_identifier_part(code_point)
                 {
                     let _ = self.scan_unicode_escape_value();
                     continue;
                 }
                 break;
             }
-            if !is_identifier_part(ch) {
+            if !self.is_identifier_part(ch) {
                 break;
             }
             self.pos += self.char_len_at(self.pos);
@@ -1747,7 +1751,7 @@ impl ScannerState {
             if ch == CharacterCodes::BACKSLASH {
                 // Check if this is a unicode escape that produces an identifier part
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_part(code_point)
+                    && self.is_identifier_part(code_point)
                 {
                     // Switch to allocation mode and continue scanning with escapes
                     self.continue_identifier_with_escapes(start);
@@ -1756,7 +1760,7 @@ impl ScannerState {
                 // Invalid escape or not an identifier part - stop here
                 break;
             }
-            if !is_identifier_part(ch) {
+            if !self.is_identifier_part(ch) {
                 break;
             }
             self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
@@ -1789,7 +1793,7 @@ impl ScannerState {
             if ch == CharacterCodes::BACKSLASH {
                 // Check for unicode escape
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_part(code_point)
+                    && self.is_identifier_part(code_point)
                 {
                     // Consume the escape and add the character
                     if let Some(c) = char::from_u32(self.scan_unicode_escape_value().unwrap_or(0)) {
@@ -1800,7 +1804,7 @@ impl ScannerState {
                 // Invalid escape or not an identifier part - stop here
                 break;
             }
-            if !is_identifier_part(ch) {
+            if !self.is_identifier_part(ch) {
                 break;
             }
             if let Some(c) = char::from_u32(ch) {
@@ -1870,7 +1874,7 @@ impl ScannerState {
             if ch == CharacterCodes::BACKSLASH {
                 // Another unicode escape in identifier
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_part(code_point)
+                    && self.is_identifier_part(code_point)
                 {
                     if let Some(c) = char::from_u32(self.scan_unicode_escape_value().unwrap_or(0)) {
                         result.push(c);
@@ -1879,7 +1883,7 @@ impl ScannerState {
                 }
                 break;
             }
-            if !is_identifier_part(ch) {
+            if !self.is_identifier_part(ch) {
                 break;
             }
             if let Some(c) = char::from_u32(ch) {
@@ -1904,7 +1908,7 @@ impl ScannerState {
             if ch == CharacterCodes::BACKSLASH {
                 // Found a unicode escape in the continuation
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_part(code_point)
+                    && self.is_identifier_part(code_point)
                 {
                     // Build the decoded value from the start
                     let prefix = self.substring(self.token_start, self.pos);
@@ -1920,7 +1924,7 @@ impl ScannerState {
                         let ch2 = self.char_code_unchecked(self.pos);
                         if ch2 == CharacterCodes::BACKSLASH {
                             if let Some(cp2) = self.peek_unicode_escape()
-                                && is_identifier_part(cp2)
+                                && self.is_identifier_part(cp2)
                             {
                                 if let Some(cp2) = self.scan_unicode_escape_value()
                                     && let Some(c) = char::from_u32(cp2)
@@ -1931,7 +1935,7 @@ impl ScannerState {
                             }
                             break;
                         }
-                        if !is_identifier_part(ch2) {
+                        if !self.is_identifier_part(ch2) {
                             break;
                         }
                         if let Some(c) = char::from_u32(ch2) {
@@ -1945,7 +1949,7 @@ impl ScannerState {
                 }
                 break;
             }
-            if !is_identifier_part(ch) {
+            if !self.is_identifier_part(ch) {
                 break;
             }
             self.pos += self.char_len_at(self.pos);
@@ -1970,7 +1974,7 @@ impl ScannerState {
             if ch == CharacterCodes::BACKSLASH {
                 // Another unicode escape in identifier
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_part(code_point)
+                    && self.is_identifier_part(code_point)
                 {
                     if let Some(c) = char::from_u32(self.scan_unicode_escape_value().unwrap_or(0)) {
                         result.push(c);
@@ -1979,7 +1983,7 @@ impl ScannerState {
                 }
                 break;
             }
-            if !is_identifier_part(ch) {
+            if !self.is_identifier_part(ch) {
                 break;
             }
             if let Some(c) = char::from_u32(ch) {
@@ -2497,7 +2501,7 @@ impl ScannerState {
                     let part_start = self.char_code_unchecked(self.pos);
                     if part_start == CharacterCodes::BACKSLASH {
                         if let Some(code_point) = self.peek_unicode_escape()
-                            && is_identifier_part(code_point)
+                            && self.is_identifier_part(code_point)
                         {
                             let text =
                                 decoded.get_or_insert_with(|| self.source[start..self.pos].into());
@@ -2510,7 +2514,7 @@ impl ScannerState {
                                 let ch = self.char_code_unchecked(self.pos);
                                 if ch == CharacterCodes::BACKSLASH {
                                     if let Some(code_point) = self.peek_unicode_escape()
-                                        && is_identifier_part(code_point)
+                                        && self.is_identifier_part(code_point)
                                     {
                                         if let Some(c) = char::from_u32(
                                             self.scan_unicode_escape_value().unwrap_or(0),
@@ -2521,7 +2525,7 @@ impl ScannerState {
                                     }
                                     break;
                                 }
-                                if !is_identifier_part(ch) {
+                                if !self.is_identifier_part(ch) {
                                     break;
                                 }
                                 if let Some(c) = char::from_u32(ch) {
@@ -2530,10 +2534,10 @@ impl ScannerState {
                                 self.pos += self.char_len_at(self.pos);
                             }
                         }
-                    } else if is_identifier_part(part_start) {
+                    } else if self.is_identifier_part(part_start) {
                         loop {
                             let ch = self.char_code_unchecked(self.pos);
-                            if !is_identifier_part(ch) {
+                            if !self.is_identifier_part(ch) {
                                 break;
                             }
                             if let Some(text) = decoded.as_mut()
@@ -2773,7 +2777,7 @@ impl ScannerState {
     pub fn re_scan_hash_token(&mut self) -> SyntaxKind {
         if self.token == SyntaxKind::HashToken && self.pos < self.end {
             let ch = self.char_code_unchecked(self.pos);
-            if is_identifier_start(ch) {
+            if self.is_identifier_start(ch) {
                 // Properly handle multi-byte UTF-8 characters in private identifiers
                 self.pos += self.char_len_at(self.pos);
                 let has_escapes = self.scan_private_identifier_rest();
@@ -2784,7 +2788,7 @@ impl ScannerState {
             } else if ch == CharacterCodes::BACKSLASH {
                 // Unicode escape starting a private identifier: #\u0078
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_start(code_point)
+                    && self.is_identifier_start(code_point)
                 {
                     self.scan_private_identifier_with_escapes();
                 }
@@ -2867,7 +2871,7 @@ impl ScannerState {
         }
 
         // Check for identifier
-        if is_identifier_start(ch) {
+        if self.is_identifier_start(ch) {
             return self.scan_jsdoc_identifier();
         }
 
@@ -2942,7 +2946,7 @@ impl ScannerState {
 
     fn scan_jsdoc_identifier(&mut self) -> SyntaxKind {
         self.pos += self.char_len_at(self.pos);
-        while self.pos < self.end && is_identifier_part(self.char_code_unchecked(self.pos)) {
+        while self.pos < self.end && self.is_identifier_part(self.char_code_unchecked(self.pos)) {
             self.pos += self.char_len_at(self.pos);
         }
         self.token_value = self.substring(self.token_start, self.pos);
@@ -3094,6 +3098,21 @@ impl ScannerState {
 // =============================================================================
 
 impl ScannerState {
+    /// Set the ECMAScript language version used by target-sensitive scanning.
+    pub const fn set_language_version(&mut self, language_version: ScriptTarget) {
+        self.allow_astral_identifier_chars = language_version.supports_es2015();
+    }
+
+    #[inline]
+    fn is_identifier_start(&self, ch: u32) -> bool {
+        (self.allow_astral_identifier_chars || ch <= 0xFFFF) && is_identifier_start(ch)
+    }
+
+    #[inline]
+    fn is_identifier_part(&self, ch: u32) -> bool {
+        (self.allow_astral_identifier_chars || ch <= 0xFFFF) && is_identifier_part(ch)
+    }
+
     /// Save the current scanner state for look-ahead.
     #[must_use]
     pub fn save_state(&self) -> ScannerSnapshot {

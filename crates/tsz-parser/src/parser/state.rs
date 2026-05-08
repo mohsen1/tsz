@@ -11,6 +11,7 @@
 //! - Node data is stored in separate typed pools
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
 
+use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::file_extensions::is_ts_declaration_file_name;
 use tsz_common::limits::MAX_PARSER_RECURSION_DEPTH;
@@ -127,6 +128,8 @@ pub struct ParserState {
     pub arena: NodeArena,
     /// Source file name
     pub(crate) file_name: String,
+    /// ECMAScript target used by target-sensitive scanner recovery.
+    pub(crate) language_version: ScriptTarget,
     /// Parser context flags
     pub context_flags: u32,
     /// Current token
@@ -255,14 +258,26 @@ impl ParserState {
     /// Create a new Parser for the given source text.
     #[must_use]
     pub fn new(file_name: String, source_text: String) -> Self {
+        Self::new_with_language_version(file_name, source_text, ScriptTarget::default())
+    }
+
+    /// Create a new Parser for the given source text and ECMAScript target.
+    #[must_use]
+    pub fn new_with_language_version(
+        file_name: String,
+        source_text: String,
+        language_version: ScriptTarget,
+    ) -> Self {
         let estimated_nodes = source_text.len() / 20; // Rough estimate
         // Zero-copy: Pass source_text directly to scanner without cloning
         // This eliminates the 2x memory overhead from duplicating the source
-        let scanner = ScannerState::new(source_text, true);
+        let mut scanner = ScannerState::new(source_text, true);
+        scanner.set_language_version(language_version);
         Self {
             scanner,
             arena: NodeArena::with_capacity(estimated_nodes),
             file_name,
+            language_version,
             context_flags: 0,
             current_token: SyntaxKind::Unknown,
             parse_diagnostics: Vec::new(),
@@ -302,6 +317,7 @@ impl ParserState {
     pub fn reset(&mut self, file_name: String, source_text: String) {
         self.file_name = file_name;
         self.scanner.set_text(source_text, None, None);
+        self.scanner.set_language_version(self.language_version);
         self.arena.clear();
         self.context_flags = 0;
         self.current_token = SyntaxKind::Unknown;

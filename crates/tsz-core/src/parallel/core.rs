@@ -1350,10 +1350,26 @@ pub fn parse_and_bind_parallel_with_libs(
     files: Vec<(String, String)>,
     lib_files: &[Arc<lib_loader::LibFile>],
 ) -> Vec<BindResult> {
+    parse_and_bind_parallel_with_libs_and_target(files, lib_files, ScriptTarget::default())
+}
+
+/// Parse and bind multiple files in parallel with lib contexts and a compiler target.
+pub fn parse_and_bind_parallel_with_libs_and_target(
+    files: Vec<(String, String)>,
+    lib_files: &[Arc<lib_loader::LibFile>],
+    language_version: ScriptTarget,
+) -> Vec<BindResult> {
     if files.len() <= 1 {
         return files
             .into_iter()
-            .map(|(file_name, source_text)| bind_file_with_libs(file_name, source_text, lib_files))
+            .map(|(file_name, source_text)| {
+                bind_file_with_libs_with_language_version(
+                    file_name,
+                    source_text,
+                    lib_files,
+                    language_version,
+                )
+            })
             .collect();
     }
 
@@ -1361,14 +1377,22 @@ pub fn parse_and_bind_parallel_with_libs(
     ensure_rayon_global_pool();
 
     maybe_parallel_into!(files)
-        .map(|(file_name, source_text)| bind_file_with_libs(file_name, source_text, lib_files))
+        .map(|(file_name, source_text)| {
+            bind_file_with_libs_with_language_version(
+                file_name,
+                source_text,
+                lib_files,
+                language_version,
+            )
+        })
         .collect()
 }
 
-fn bind_file_with_libs(
+fn bind_file_with_libs_with_language_version(
     file_name: String,
     source_text: String,
     lib_files: &[Arc<lib_loader::LibFile>],
+    language_version: ScriptTarget,
 ) -> BindResult {
     // Skip parsing .json files - they should not be parsed as TypeScript.
     // JSON module imports should be resolved during module resolution and
@@ -1378,7 +1402,8 @@ fn bind_file_with_libs(
     }
 
     // Parse
-    let mut parser = ParserState::new(file_name.clone(), source_text);
+    let mut parser =
+        ParserState::new_with_language_version(file_name.clone(), source_text, language_version);
     let source_file = parser.parse_source_file();
 
     let (arena, parse_diagnostics) = parser.into_parts();
