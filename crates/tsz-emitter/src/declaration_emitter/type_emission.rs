@@ -627,27 +627,18 @@ impl<'a> DeclarationEmitter<'a> {
 
                     self.write(" extends ");
 
-                    // extends_type needs parens for conditional types.
-                    // Function/constructor types also need parens when their return
-                    // type is a conditional (the inner `extends` would be mis-parsed
-                    // as the outer conditional's extends clause). The parser doesn't
-                    // create PARENTHESIZED_TYPE nodes, so we must add parens here.
-                    let extends_needs_parens =
-                        if let Some(node) = self.arena.get(conditional.extends_type) {
-                            if node.kind == syntax_kind_ext::CONDITIONAL_TYPE {
-                                true
-                            } else if node.kind == syntax_kind_ext::FUNCTION_TYPE
-                                || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-                            {
-                                // Only parenthesize function/constructor types whose
-                                // return type is itself a conditional (contains `extends`)
-                                self.function_type_has_conditional_return(node)
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        };
+                    // extends_type needs parens for nested conditional
+                    // types only.  tsc does *not* parenthesise
+                    // `FUNCTION_TYPE`/`CONSTRUCTOR_TYPE` here, even when
+                    // their body contains a conditional — the outer
+                    // conditional's `?`/`:` always terminates the
+                    // function body's greedy parse, so adding parens
+                    // diverges from tsc's d.ts (e.g. round-tripping
+                    // `(<T>() => …) extends <T>() => T extends Y ? 1 : 2 ? A : B`).
+                    let extends_needs_parens = self
+                        .arena
+                        .get(conditional.extends_type)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::CONDITIONAL_TYPE);
 
                     if extends_needs_parens {
                         self.write("(");
@@ -959,19 +950,6 @@ impl<'a> DeclarationEmitter<'a> {
                 .is_some_and(|type_ref| self.entity_name_contains_import_call(type_ref.type_name)),
             _ => false,
         }
-    }
-
-    /// Check if a function type has a conditional type as its return type.
-    fn function_type_has_conditional_return(
-        &self,
-        func_node: &tsz_parser::parser::node::Node,
-    ) -> bool {
-        let Some(func) = self.arena.get_function_type(func_node) else {
-            return false;
-        };
-        self.arena
-            .get(func.type_annotation)
-            .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_TYPE)
     }
 
     fn emit_import_type_argument(&mut self, arg_idx: NodeIndex) {
