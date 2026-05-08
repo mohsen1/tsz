@@ -361,3 +361,44 @@ fn jsdoc_legacy_constructor_function_suffix_does_not_cascade() {
         "JSDoc `function(new: R): T` should only emit TS8020, got {unexpected:?}"
     );
 }
+
+/// Regression: a `TYPE_PREDICATE` node's source span must end at its
+/// inner type, not at whatever token follows.  The parser used
+/// `token_end()` after consuming the inner type, which reflected the
+/// *next* token (e.g. `=>` in `(x): x is string => …`), so an
+/// emit-side source-slice helper picked up `x is string =>` and
+/// re-emitted it as `… => x is string =>;` in d.ts.
+#[test]
+fn parse_type_predicate_does_not_overshoot_into_following_arrow() {
+    let source = "const f = (x: any): x is string => true;";
+    let (parser, _root) = crate::parser::test_fixture::parse_source(source);
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+    let arena = &parser.arena;
+    let predicate_text = "x is string";
+    let predicate_offset = source.find(predicate_text).expect("predicate in source");
+    let predicate_end = predicate_offset + predicate_text.len();
+    let mut found = false;
+    for index in 0..arena.len() {
+        let Some(node) = arena.get(crate::parser::NodeIndex(index as u32)) else {
+            continue;
+        };
+        if node.kind == crate::parser::syntax_kind_ext::TYPE_PREDICATE
+            && node.pos as usize == predicate_offset
+        {
+            assert_eq!(
+                node.end as usize, predicate_end,
+                "TypePredicate node end {} should equal `string`'s end position {} (anchored on inner type, not next token)",
+                node.end, predicate_end
+            );
+            found = true;
+        }
+    }
+    assert!(
+        found,
+        "expected to find a TypePredicate node at {predicate_offset}"
+    );
+}

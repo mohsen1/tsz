@@ -188,7 +188,21 @@ impl ParserState {
 
                 self.next_token(); // consume 'is'
                 let type_node = self.parse_type();
-                let end_pos = self.token_end();
+                // The inner type already captured its own end before the
+                // scanner advanced past it; calling `token_end()` here
+                // would reflect the *next* token (e.g. `=>` in
+                // `(x): x is string => …`), so the TYPE_PREDICATE's
+                // source span would overshoot into the surrounding
+                // syntax and leak `=>` into emit-side source-slice
+                // helpers (`call_expression_declared_return_type_text`
+                // observed `x is string =>`, then re-emitted that into
+                // d.ts as `… => x is string =>;`).  Anchor on the
+                // inner type instead.
+                let end_pos = self
+                    .arena
+                    .get(type_node)
+                    .map(|n| n.end)
+                    .unwrap_or_else(|| self.token_end());
 
                 return self.arena.add_type_predicate(
                     syntax_kind_ext::TYPE_PREDICATE,
