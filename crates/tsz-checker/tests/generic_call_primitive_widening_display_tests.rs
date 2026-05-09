@@ -123,10 +123,11 @@ bar(1, "");
     );
 }
 
-// `<T, U extends T>` (free function) where `T` has no primitive constraint:
-// the chain ends at `T` (no primitive), so literal displays are preserved.
+// `<T, U extends T>` (free function) where `T` is fixed from an earlier
+// argument: tsc widens the later mismatch to the primitive bases even though
+// the declared constraint chain ends at an unconstrained type parameter.
 #[test]
-fn nested_type_param_constraint_without_primitive_preserves_literals() {
+fn nested_type_param_constraint_to_inferred_param_widens_literals() {
     let source = r#"
 function f<T, U extends T>(x: T, y: U): void {}
 f(2, "");
@@ -134,8 +135,27 @@ f(2, "");
     let msgs = ts2345_messages(source);
     assert_eq!(msgs.len(), 1, "expected one TS2345, got: {msgs:#?}");
     assert!(
-        msgs[0].contains("Argument of type '\"\"'") && msgs[0].contains("parameter of type '2'"),
-        "constraint chain not bottoming at a primitive must preserve literals, got: {msgs:#?}"
+        msgs[0].contains("Argument of type 'string'")
+            && msgs[0].contains("parameter of type 'number'"),
+        "constraint chain through an inferred type parameter should widen, got: {msgs:#?}"
+    );
+}
+
+#[test]
+fn implemented_return_type_mentions_generic_name_exactly() {
+    let source = r#"
+interface Test {}
+function bar<T>(item1: T, item2: T): Test {
+    return {};
+}
+bar(1, "");
+"#;
+    let msgs = ts2345_messages(source);
+    assert_eq!(msgs.len(), 1, "expected one TS2345, got: {msgs:#?}");
+    assert!(
+        msgs[0].contains("Argument of type 'string'")
+            && msgs[0].contains("parameter of type 'number'"),
+        "return type `Test` must not be treated as mentioning generic `T`, got: {msgs:#?}"
     );
 }
 

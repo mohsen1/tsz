@@ -1341,6 +1341,91 @@ setup({
 }
 
 #[test]
+fn ts2345_widens_literals_when_constraint_chains_to_unconstrained_type_param() {
+    // For `<T, U extends T>(x: T, y: U)` called with two fresh literal
+    // arguments that widen to different primitives (e.g. `foo(1, '')`),
+    // tsc widens both sides of the TS2345 diagnostic to their primitive
+    // bases, regardless of whether the return annotation exposes `U`.
+    //
+    // Use two name choices for the bound variables to guard against
+    // hardcoded-name regressions (per the anti-hardcoding directive).
+    for (t_name, u_name, return_type) in &[
+        ("T", "U", "U"),
+        ("T", "U", "void"),
+        ("X", "P", "P"),
+        ("X", "P", "void"),
+    ] {
+        let source = format!(
+            "function foo<{t_name}, {u_name} extends {t_name}>\
+             (x: {t_name}, y: {u_name}): {return_type} {{ return y as any; }}\nfoo(1, '');\n"
+        );
+        let diagnostics = check_source_with_strict_null(&source);
+        let diag = diagnostics
+            .iter()
+            .find(|d| d.code == 2345)
+            .unwrap_or_else(|| {
+                panic!("expected TS2345 for {t_name}/{u_name} variant, got: {diagnostics:?}")
+            });
+        assert!(
+            diag.message_text.contains(
+                "Argument of type 'string' is not assignable to parameter of type 'number'."
+            ),
+            "TS2345 must widen both source and target to their primitive bases when the \
+             type parameter's declared-constraint chain ends at an unconstrained type \
+             parameter ({t_name}/{u_name} variant), got: {diag:?}"
+        );
+    }
+}
+
+#[test]
+fn ts2345_preserves_literals_when_type_param_has_no_declared_constraint() {
+    // Inverse of the widening case above: for `<T>(x: T, y: T)` called
+    // with two fresh literal arguments whose primitive bases differ
+    // (`foo(1, '')`), tsc preserves the literal candidate display
+    // (`'""' / '1'`). T has no declared constraint at all, so the
+    // first-wins inference picks `1` and the literal `''` is reported
+    // against it without widening.
+    let source = r#"
+function foo<T>(x: T, y: T): T { return y; }
+foo(1, '');
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345 for unconstrained type parameter");
+    assert!(
+        diag.message_text
+            .contains("Argument of type '\"\"' is not assignable to parameter of type '1'."),
+        "TS2345 must preserve literal candidate display when the type parameter has no \
+         declared constraint, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2345_widens_unconstrained_implementation_param_hidden_from_return() {
+    // `fixTypeParameterInSignatureWithRestParameters.ts`: for an implemented
+    // generic function whose type parameter is not exposed through the return
+    // type, tsc widens the second fresh literal candidate after the first
+    // argument fixes the primitive base.
+    let source = r#"
+function bar<T>(item1: T, item2: T) { }
+bar(1, "");
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345 for unconstrained implementation parameter");
+    assert!(
+        diag.message_text
+            .contains("Argument of type 'string' is not assignable to parameter of type 'number'."),
+        "TS2345 must widen source and target when the implementation signature hides the \
+         unconstrained type parameter from its return surface, got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2322_skips_arrow_body_elaboration_for_object_property_in_generic_call() {
     // Guard against the indirect-caller variant of the unresolved-holes regression:
     // when the arrow appears as a property value inside an object literal that is
