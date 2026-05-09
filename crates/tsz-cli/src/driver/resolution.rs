@@ -3390,7 +3390,8 @@ fn resolve_exports_subpath(
             let has_subpath_keys = map.keys().any(|key| key.starts_with('.'));
             if has_subpath_keys {
                 if let Some(value) = map.get(subpath_key)
-                    && let Some(target) = resolve_exports_target(value, conditions, compiler_version)
+                    && let Some(target) =
+                        resolve_exports_target(value, conditions, compiler_version)
                 {
                     return Some(target);
                 }
@@ -3411,7 +3412,8 @@ fn resolve_exports_subpath(
                 }
 
                 if let Some((_, wildcard, value)) = best_match
-                    && let Some(target) = resolve_exports_target(value, conditions, compiler_version)
+                    && let Some(target) =
+                        resolve_exports_target(value, conditions, compiler_version)
                 {
                     return Some(apply_exports_subpath(&target, &wildcard));
                 }
