@@ -588,6 +588,65 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn jsdoc_extends_type_arguments_for_heritage_expr(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<Vec<TypeId>> {
+        if !self.ctx.is_js_file() {
+            return None;
+        }
+
+        let mut current = expr_idx;
+        for _ in 0..16 {
+            let parent = self.ctx.arena.get_extended(current)?.parent.into_option()?;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.is_class_like() {
+                return self.jsdoc_extends_type_arguments_for_heritage(parent, expr_idx);
+            }
+            current = parent;
+        }
+        None
+    }
+
+    pub(crate) fn jsdoc_extends_type_arguments_for_heritage(
+        &mut self,
+        class_idx: NodeIndex,
+        expr_idx: NodeIndex,
+    ) -> Option<Vec<TypeId>> {
+        if !self.ctx.is_js_file() {
+            return None;
+        }
+
+        let (_tag, type_expr, _type_pos) =
+            self.attached_jsdoc_extends_or_augments_tag(class_idx)?;
+        let type_expr = type_expr.trim();
+        let angle_idx = type_expr.find('<')?;
+        if !type_expr.ends_with('>') {
+            return None;
+        }
+
+        let base_name = type_expr[..angle_idx].trim();
+        let heritage_name = self.heritage_name_text(expr_idx)?;
+        if base_name != heritage_name {
+            return None;
+        }
+
+        let inner = &type_expr[angle_idx + 1..type_expr.len() - 1];
+        let mut args = Vec::new();
+        for raw_arg in Self::split_jsdoc_type_arguments(inner) {
+            let cleaned = Self::normalize_jsdoc_type_fragment(raw_arg);
+            if cleaned.is_empty() {
+                return None;
+            }
+            let arg_type = self
+                .jsdoc_type_from_expression(&cleaned)
+                .or_else(|| self.resolve_jsdoc_type_str(&cleaned))?;
+            args.push(arg_type);
+        }
+
+        (!args.is_empty()).then_some(args)
+    }
+
     /// Returns `true` when the class has a JSDoc `@augments`/`@extends` tag
     /// whose type argument is empty (e.g. `/** @augments */`).  tsc treats
     /// such a tag as an invalid override of the structural `extends` clause,

@@ -40,14 +40,20 @@ impl<'a> CheckerState<'a> {
         self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments, true)
     }
 
+    pub(crate) fn apply_type_argument_ids_to_constructor_type_for_extends(
+        &mut self,
+        ctor_type: TypeId,
+        type_args: &[TypeId],
+    ) -> TypeId {
+        self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false, true)
+    }
+
     fn apply_type_arguments_to_constructor_type_inner(
         &mut self,
         ctor_type: TypeId,
         type_arguments: Option<&NodeList>,
         strip_on_non_generic_mismatch: bool,
     ) -> TypeId {
-        use tsz_solver::CallableShape;
-
         let explicit_type_arg_count = type_arguments.map_or(0, |args| args.nodes.len());
         let missing_type_args_become_any = self.is_js_file() && explicit_type_arg_count == 0;
 
@@ -70,6 +76,27 @@ impl<'a> CheckerState<'a> {
             return ctor_type;
         }
 
+        self.apply_type_argument_ids_to_constructor_type_inner(
+            ctor_type,
+            &type_args,
+            missing_type_args_become_any,
+            strip_on_non_generic_mismatch,
+        )
+    }
+
+    fn apply_type_argument_ids_to_constructor_type_inner(
+        &mut self,
+        ctor_type: TypeId,
+        type_args: &[TypeId],
+        missing_type_args_become_any: bool,
+        strip_on_non_generic_mismatch: bool,
+    ) -> TypeId {
+        use tsz_solver::CallableShape;
+
+        if type_args.is_empty() && !missing_type_args_become_any {
+            return ctor_type;
+        }
+
         // Handle intersection types: for `T & Constructor<MyMixin>`, decompose
         // the intersection, apply type args to members with generic construct
         // signatures, and rebuild the intersection.
@@ -78,9 +105,10 @@ impl<'a> CheckerState<'a> {
             let mut new_members = Vec::with_capacity(members.len());
             let mut any_applied = false;
             for member in &members {
-                let applied = self.apply_type_arguments_to_constructor_type_inner(
+                let applied = self.apply_type_argument_ids_to_constructor_type_inner(
                     *member,
-                    type_arguments,
+                    type_args,
+                    missing_type_args_become_any,
                     strip_on_non_generic_mismatch,
                 );
                 if applied != *member {
@@ -92,6 +120,63 @@ impl<'a> CheckerState<'a> {
                 return factory.intersection(new_members);
             }
             return ctor_type;
+        }
+
+        if let Some(function_shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ctor_type)
+            && function_shape.is_constructor
+        {
+            let sig = tsz_solver::CallSignature {
+                type_params: function_shape.type_params.clone(),
+                params: function_shape.params.clone(),
+                this_type: function_shape.this_type,
+                return_type: function_shape.return_type,
+                type_predicate: function_shape.type_predicate,
+                is_method: function_shape.is_method,
+            };
+            if sig.type_params.is_empty() {
+                return ctor_type;
+            }
+
+            let mut args = type_args.to_vec();
+            if args.len() < sig.type_params.len() {
+                for (param_index, param) in sig.type_params.iter().enumerate().skip(args.len()) {
+                    let fallback = if missing_type_args_become_any {
+                        TypeId::ANY
+                    } else {
+                        param
+                            .default
+                            .or(param.constraint)
+                            .unwrap_or(TypeId::UNKNOWN)
+                    };
+                    let substitution = tsz_solver::TypeSubstitution::from_args(
+                        self.ctx.types,
+                        &sig.type_params[..param_index],
+                        &args,
+                    );
+                    args.push(
+                        crate::query_boundaries::common::instantiate_type_preserving_meta(
+                            self.ctx.types,
+                            fallback,
+                            &substitution,
+                        ),
+                    );
+                }
+            }
+            if args.len() > sig.type_params.len() {
+                args.truncate(sig.type_params.len());
+            }
+            let instantiated_construct = self.instantiate_signature(&sig, &args);
+            let new_shape = CallableShape {
+                call_signatures: vec![],
+                construct_signatures: vec![instantiated_construct],
+                properties: vec![],
+                string_index: None,
+                number_index: None,
+                symbol: None,
+                is_abstract: false,
+            };
+            return self.ctx.types.factory().callable(new_shape);
         }
 
         let Some(shape) = query::callable_shape_for_type(self.ctx.types, ctor_type) else {
@@ -145,7 +230,7 @@ impl<'a> CheckerState<'a> {
         let instantiated_constructs: Vec<tsz_solver::CallSignature> = matching
             .iter()
             .map(|sig| {
-                let mut args = type_args.clone();
+                let mut args = type_args.to_vec();
                 if args.len() < sig.type_params.len() {
                     for (param_index, param) in sig.type_params.iter().enumerate().skip(args.len())
                     {
@@ -721,8 +806,17 @@ impl<'a> CheckerState<'a> {
             let factory = self.ctx.types.factory();
             factory.intersection(ctor_types)
         };
-        let ctor_type =
-            self.apply_type_arguments_to_constructor_type_for_extends(ctor_type, type_arguments);
+        let has_syntactic_type_args = type_arguments.is_some_and(|args| !args.nodes.is_empty());
+        let ctor_type = if !has_syntactic_type_args {
+            if let Some(jsdoc_args) = self.jsdoc_extends_type_arguments_for_heritage_expr(expr_idx)
+            {
+                self.apply_type_argument_ids_to_constructor_type_for_extends(ctor_type, &jsdoc_args)
+            } else {
+                self.apply_type_arguments_to_constructor_type_for_extends(ctor_type, type_arguments)
+            }
+        } else {
+            self.apply_type_arguments_to_constructor_type_for_extends(ctor_type, type_arguments)
+        };
 
         // Preserve non-constructor static members on call-expression heritage
         // bases (e.g. mixin-style intersections like `CoreObject.extend(...)`

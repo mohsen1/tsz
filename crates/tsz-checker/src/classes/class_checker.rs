@@ -530,8 +530,10 @@ impl<'a> CheckerState<'a> {
 
                         if should_report {
                             if info.is_static {
+                                let error_idx =
+                                    class_data.name.into_option().unwrap_or(info.name_idx);
                                 self.error_at_node(
-                                    info.name_idx,
+                                    error_idx,
                                     &format!(
                                         "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side 'typeof {base_class_name}'."
                                     ),

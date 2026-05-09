@@ -36,6 +36,8 @@ pub(crate) use tsz_solver::instantiate_generic;
 pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
 
+pub(crate) use super::construct_signatures::construct_signatures_for_type;
+
 /// Re-export of the solver's property access result type.
 ///
 /// Wraps `tsz_solver::operations::property::PropertyAccessResult`.
@@ -378,13 +380,6 @@ pub(crate) fn is_generic_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> 
     } else {
         false
     }
-}
-
-pub(crate) fn construct_signatures_for_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<Vec<CallSignature>> {
-    tsz_solver::type_queries::get_construct_signatures(db, type_id)
 }
 
 pub(crate) fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
