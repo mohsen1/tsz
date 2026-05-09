@@ -2,26 +2,27 @@ use crate::emitter::ScriptTarget;
 use crate::output::printer::{PrintOptions, Printer};
 use tsz_parser::ParserState;
 
-fn parse_and_print(source: &str) -> String {
+fn parse_and_print_with_opts(source: &str, opts: PrintOptions) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    let mut printer = Printer::new(&parser.arena, opts);
     printer.set_source_text(source);
     printer.print(root);
     printer.finish().code
 }
 
+fn parse_and_print(source: &str) -> String {
+    parse_and_print_with_opts(source, PrintOptions::default())
+}
+
 fn parse_and_print_for_target(source: &str, target: ScriptTarget) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let opts = PrintOptions {
-        target,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    printer.finish().code
+    parse_and_print_with_opts(
+        source,
+        PrintOptions {
+            target,
+            ..Default::default()
+        },
+    )
 }
 
 /// Regression test: trailing comments on static class fields must be
@@ -434,18 +435,14 @@ fn no_extra_blank_line_cjs_default_export_with_static_field() {
 
     let source = "export default class MyComponent {\n    static create = 1;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2017,
-        module: ModuleKind::CommonJS,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_with_opts(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2017,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
 
     // Should have `MyComponent.create = 1;\n` followed by
     // `exports.default = MyComponent;` with NO blank line.
