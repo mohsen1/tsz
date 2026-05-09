@@ -787,7 +787,15 @@ x = y;
 y = x;
 "#;
 
-    let diagnostics = get_all_diagnostics(source);
+    let diagnostics = with_lib_contexts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_function_types: true,
+            ..CheckerOptions::default()
+        },
+    );
     let ts2322_errors: Vec<_> = diagnostics
         .into_iter()
         .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
@@ -803,6 +811,60 @@ y = x;
             "Type '<T extends I2<T>>(z: T) => void' is not assignable to type '<T extends I2<I2<T>>>(z: T) => void'"
         ),
         "Expected the y = x diagnostic to match TypeScript, got: {ts2322_errors:?}"
+    );
+}
+
+#[test]
+fn polymorphic_this_constraint_invariance_reports_ts2322() {
+    let source = r#"
+const wat: Runtype<any> = Num;
+const Foo = Obj({ foo: Num })
+
+interface Runtype<A> {
+  constraint: Constraint<this>
+  witness: A
+}
+
+interface Num extends Runtype<number> {
+  tag: 'number'
+}
+declare const Num: Num
+
+interface Obj<O extends { [_ in string]: Runtype<any> }> extends Runtype<{[K in keyof O]: O[K]['witness'] }> {}
+declare function Obj<O extends { [_: string]: Runtype<any> }>(fields: O): Obj<O>;
+
+interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
+  underlying: A,
+  check: (x: A['witness']) => void,
+}
+"#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    let ts2345_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| {
+            *code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .collect();
+
+    assert_eq!(
+        ts2322_errors.len(),
+        2,
+        "Expected the assignment and object property to report TS2322, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2345_errors.is_empty(),
+        "Expected no whole-argument TS2345 diagnostic, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322_errors.iter().all(|(_, message)| {
+            message.contains("Type 'Num' is not assignable to type 'Runtype<any>'")
+        }),
+        "Expected both TS2322 diagnostics to explain Num vs Runtype<any>, got: {diagnostics:?}"
     );
 }
 

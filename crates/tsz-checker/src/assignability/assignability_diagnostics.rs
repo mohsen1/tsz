@@ -11,6 +11,23 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn has_explicit_any_generic_variable_annotation(&self, diag_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(diag_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        let Some(decl) = self.ctx.arena.get_variable_declaration(node) else {
+            return false;
+        };
+        if decl.type_annotation == NodeIndex::NONE {
+            return false;
+        }
+        let annotation_text = self.get_source_text_for_node(decl.type_annotation);
+        annotation_text.contains('<') && annotation_text.contains("any")
+    }
+
     fn excess_property_target_score(&self, type_id: TypeId) -> (u8, usize) {
         match classify_for_excess_properties(self.ctx.types, type_id) {
             ExcessPropertiesKind::NotObject => (0, 0),
@@ -627,7 +644,6 @@ impl<'a> CheckerState<'a> {
         // can detect fresh depth exceedance from this particular relation.
         self.ctx.relation_depth_exceeded.set(false);
         let assignable = self.is_assignable_to(source, target);
-
         // TS2859: if the solver hit its recursion/complexity limit during the check
         // (including the constituent-count overflow guard in check_subtype_inner),
         // emit "Excessive complexity comparing types" regardless of whether the
@@ -651,6 +667,11 @@ impl<'a> CheckerState<'a> {
         }
 
         if assignable {
+            if self.has_explicit_any_generic_variable_annotation(diag_idx)
+                && self.emit_polymorphic_this_property_assignment_error(source, target, diag_idx)
+            {
+                return false;
+            }
             if self.emit_polymorphic_this_call_assignment_error(source_idx, target, diag_idx) {
                 return false;
             }
