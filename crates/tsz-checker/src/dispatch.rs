@@ -1943,6 +1943,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             {
                 TypeId::VOID
             }
+            k if k == syntax_kind_ext::METHOD_SIGNATURE => {
+                self.checker.get_type_of_interface_member_simple(idx)
+            }
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(
