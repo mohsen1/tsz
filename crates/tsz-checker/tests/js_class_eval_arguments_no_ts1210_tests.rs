@@ -9,30 +9,13 @@
 //! `compiler/jsFileCompilationBindStrictModeErrors.ts` would emit a spurious
 //! TS1210 on `class c { a(eval) {} }` in `b.js`.
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
 use tsz_checker::context::CheckerOptions;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn diagnostics_with_options(source: &str, file_name: &str, opts: CheckerOptions) -> Vec<u32> {
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        opts,
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    tsz_checker::test_utils::check_source(source, file_name, opts)
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
 }
 
 fn js_options() -> CheckerOptions {

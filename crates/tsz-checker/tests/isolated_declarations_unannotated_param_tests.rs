@@ -4,35 +4,21 @@
 //! so the `function f(x) { ... }` shape — the most common case — was
 //! silently accepted and a `.d.ts` was emitted.
 
-use crate::CheckerState;
 use crate::context::CheckerOptions;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn check_isolated(source: &str) -> Vec<u32> {
-    let mut parser = ParserState::new("repro.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        isolated_declarations: true,
-        emit_declarations: true,
-        ..CheckerOptions::default()
-    };
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "repro.ts".to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    crate::test_utils::check_source(
+        source,
+        "repro.ts",
+        CheckerOptions {
+            isolated_declarations: true,
+            emit_declarations: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| d.code)
+    .collect()
 }
 
 /// `export function f(x) { return x; }` — `x` is unannotated and there

@@ -10,28 +10,10 @@
 //! Mirrors the `quickinfoTypeAtReturnPositionsInaccurate.ts` conformance
 //! reproducer.
 
-use tsz_checker::CheckerState;
-use tsz_common::checker_options::CheckerOptions;
 use tsz_common::diagnostics::Diagnostic;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn check(source: &str) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    let opts = CheckerOptions::default();
-    let interner = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &interner,
-        "test.ts".to_string(),
-        opts,
-    );
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    tsz_checker::test_utils::check_source_diagnostics(source)
 }
 
 /// `class Store<E extends { [k: string]: A | B }>` with a method that
