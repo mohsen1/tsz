@@ -1,29 +1,10 @@
-use crate::CheckerState;
 use crate::context::CheckerOptions;
 use crate::diagnostics::diagnostic_codes;
-use tsz_binder::BinderState;
 use tsz_common::common::ScriptTarget;
 use tsz_common::diagnostics::Diagnostic;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn full_diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    crate::test_utils::check_source(source, "test.ts", options)
 }
 
 fn diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
@@ -213,24 +194,9 @@ fn test_ts2564_constructor_assignment_summary_handles_parameter_property_flow() 
 /// Helper: parse a `.tsx` source so the parser enables JSX productions, then
 /// run the checker with the supplied options.
 fn diagnostics_for_tsx(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.tsx".to_string(),
-        options,
-    );
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
+    crate::test_utils::check_source(source, "test.tsx", options)
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
         .collect()
 }
 
