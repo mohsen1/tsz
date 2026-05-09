@@ -9,6 +9,23 @@ use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::TokenFlags;
 
+/// Map a UTF-8 `start` byte offset and a (possibly surrogate-pair) `char`
+/// into the UTF-16 code-unit offsets used by regex range-order analysis.
+///
+/// Pathological inputs whose absolute offset does not fit in `u32` would
+/// otherwise panic on the inner `u32::try_from`. We drop unrepresentable
+/// offsets rather than panic — range-order analysis tolerates a shorter
+/// offset vector and simply skips the affected atoms. See issue #4787.
+fn split_non_unicode_atom_offsets(start: usize, ch: char) -> Vec<u32> {
+    let utf16_len = ch.len_utf16();
+    let utf8_len = ch.len_utf8();
+    ch.encode_utf16(&mut [0; 2])
+        .iter()
+        .enumerate()
+        .filter_map(|(i, _)| u32::try_from(start + (i * utf8_len) / utf16_len).ok())
+        .collect()
+}
+
 impl ParserState {
     fn regex_literal_follows_invalid_shebang(&self, start_pos: u32) -> bool {
         let source = self.scanner.source_text().as_bytes();
@@ -70,19 +87,6 @@ impl ParserState {
                 .and_then(|slice| u32::from_str_radix(slice, 16).ok())
         }
 
-        fn split_non_unicode_atom_offsets(start: usize, ch: char) -> Vec<u32> {
-            let utf16_len = ch.len_utf16();
-            let utf8_len = ch.len_utf8();
-            ch.encode_utf16(&mut [0; 2])
-                .iter()
-                .enumerate()
-                .map(|(i, _)| {
-                    u32::try_from(start + (i * utf8_len) / utf16_len)
-                        .expect("regex offsets must fit in u32")
-                })
-                .collect()
-        }
-
         fn regex_range_order_errors(raw_text: &str, body_end: usize) -> Vec<(u32, u32)> {
             #[derive(Clone, Copy)]
             enum ClassToken {
@@ -120,11 +124,7 @@ impl ParserState {
                                     parse_hex_u32(raw_text, hex_start, hex_end - hex_start)
                             {
                                 return Some((
-                                    vec![(
-                                        value,
-                                        u32::try_from(start)
-                                            .expect("regex offsets must fit in u32"),
-                                    )],
+                                    vec![(value, u32::try_from(start).ok()?)],
                                     hex_end + 1,
                                 ));
                             }
@@ -137,21 +137,11 @@ impl ParserState {
                                 && let Some(code_point) = decode_surrogate_pair(value, low)
                             {
                                 return Some((
-                                    vec![(
-                                        code_point,
-                                        u32::try_from(start)
-                                            .expect("regex offsets must fit in u32"),
-                                    )],
+                                    vec![(code_point, u32::try_from(start).ok()?)],
                                     next_index + 6,
                                 ));
                             }
-                            return Some((
-                                vec![(
-                                    value,
-                                    u32::try_from(start).expect("regex offsets must fit in u32"),
-                                )],
-                                next_index,
-                            ));
+                            return Some((vec![(value, u32::try_from(start).ok()?)], next_index));
                         }
                     }
 
@@ -162,10 +152,7 @@ impl ParserState {
                     }
                     if unicode_mode {
                         Some((
-                            vec![(
-                                escaped as u32,
-                                u32::try_from(start).expect("regex offsets must fit in u32"),
-                            )],
+                            vec![(escaped as u32, u32::try_from(start).ok()?)],
                             escaped_start + escaped.len_utf8(),
                         ))
                     } else {
@@ -181,10 +168,7 @@ impl ParserState {
                     }
                 } else if unicode_mode {
                     Some((
-                        vec![(
-                            ch as u32,
-                            u32::try_from(start).expect("regex offsets must fit in u32"),
-                        )],
+                        vec![(ch as u32, u32::try_from(start).ok()?)],
                         start + ch.len_utf8(),
                     ))
                 } else {
@@ -1507,5 +1491,64 @@ impl ParserState {
         }
 
         missing
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression for issue #4787: the regex range-order helper used
+    // `u32::try_from(start).expect(...)` for absolute UTF-8 offsets, so a
+    // sufficiently large absolute offset (in pathological / crafted input)
+    // would panic the parser instead of degrading gracefully. After the
+    // fix, oversized offsets simply produce an empty offset vector — the
+    // range-order pass loses precision for those atoms but the parser
+    // does not crash.
+    #[test]
+    fn split_non_unicode_atom_offsets_returns_empty_vec_when_offset_overflows_u32() {
+        // start near usize::MAX guarantees `start + ...` cannot fit in u32
+        // on 64-bit platforms.
+        let offsets = split_non_unicode_atom_offsets(usize::MAX, 'a');
+        assert!(
+            offsets.is_empty(),
+            "expected empty offset vec on u32 overflow, got {offsets:?}",
+        );
+    }
+
+    #[test]
+    fn split_non_unicode_atom_offsets_returns_offsets_for_bmp_chars() {
+        // BMP char: one UTF-16 code unit, one UTF-8 byte. Offsets should
+        // round-trip the start position unchanged.
+        let offsets = split_non_unicode_atom_offsets(7, 'a');
+        assert_eq!(offsets, vec![7]);
+    }
+
+    #[test]
+    fn split_non_unicode_atom_offsets_returns_two_offsets_for_surrogate_pair() {
+        // U+1F600 (😀) encodes to two UTF-16 code units and four UTF-8
+        // bytes; the helper should yield two distinct offsets that both
+        // fit in u32 for normal inputs.
+        let offsets = split_non_unicode_atom_offsets(0, '\u{1F600}');
+        assert_eq!(offsets.len(), 2);
+        assert_eq!(offsets[0], 0);
+        // Second surrogate's offset = (1 * 4) / 2 = 2.
+        assert_eq!(offsets[1], 2);
+    }
+
+    #[test]
+    fn split_non_unicode_atom_offsets_drops_only_overflowing_entries() {
+        // Pick a `start` such that the FIRST surrogate fits in u32 but the
+        // SECOND does not. With a surrogate-pair char the second offset is
+        // `start + 2`, so a start of `u32::MAX as usize - 1` makes the
+        // first offset = u32::MAX - 1 (fits) and the second = u32::MAX + 1
+        // (overflows). filter_map drops only the overflowing entry.
+        let start = u32::MAX as usize - 1;
+        let offsets = split_non_unicode_atom_offsets(start, '\u{1F600}');
+        assert_eq!(
+            offsets,
+            vec![u32::MAX - 1],
+            "first surrogate kept, second dropped",
+        );
     }
 }
