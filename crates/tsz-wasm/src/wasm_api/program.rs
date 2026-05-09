@@ -85,7 +85,7 @@ impl TsCompilerOptions {
             no_implicit_this: self.no_implicit_this.unwrap_or(strict),
             use_unknown_in_catch_variables: self.strict_null_checks.unwrap_or(strict),
             isolated_modules: false,
-            emit_declarations: false,
+            emit_declarations: self.declaration.unwrap_or(false),
             no_unchecked_indexed_access: false,
             no_unchecked_side_effect_imports: false,
             strict_bind_call_apply: false,
@@ -110,7 +110,7 @@ impl TsCompilerOptions {
             always_strict: strict,
             resolve_json_module: false,
             check_js: self.check_js.unwrap_or(false),
-            allow_js: false,
+            allow_js: self.allow_js.unwrap_or(false),
             no_resolve: self.no_resolve.unwrap_or(false),
             isolated_declarations: false,
             no_implicit_override: false,
@@ -526,6 +526,8 @@ impl TsProgram {
         // Determine target and module from options
         let target = target_kind_from_u8(self.options.target);
         let module = module_kind_from_u8(self.options.module);
+        let declaration = self.options.declaration.unwrap_or(false);
+        let source_map = self.options.source_map.unwrap_or(false);
 
         // Emit each file
         for (idx, bound_file) in merged.files.iter().enumerate() {
@@ -549,8 +551,8 @@ impl TsProgram {
             emitted_files.push(serde_json::json!({
                 "name": output_name,
                 "text": output,
-                "declaration": false,
-                "sourceMap": false,
+                "declaration": declaration,
+                "sourceMap": source_map,
             }));
         }
 
