@@ -12,9 +12,36 @@ use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tsz_common::Atom;
 
 use crate::type_queries::traversal::collect_property_name_atoms_for_diagnostics;
+
+// Reusable scratch `FxHashSet<TypeId>` for `collect_exact_literal_property_keys`'s
+// recursive DFS. Mirrors the pool pattern from #4722 / #4790 and follow-up PRs.
+thread_local! {
+    static SIGS_ADV_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_sigs_adv_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = SIGS_ADV_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    SIGS_ADV_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 /// Get the type parameter info if this is a type parameter.
 ///
@@ -909,8 +936,10 @@ pub fn collect_exact_literal_property_keys(
     type_id: TypeId,
 ) -> Option<FxHashSet<Atom>> {
     let mut keys = FxHashSet::default();
-    let mut visited = FxHashSet::default();
-    collect_exact_literal_property_keys_inner(db, type_id, &mut keys, &mut visited)?;
+    let success = with_sigs_adv_visited(|visited| {
+        collect_exact_literal_property_keys_inner(db, type_id, &mut keys, visited)
+    });
+    success?;
     Some(keys)
 }
 
