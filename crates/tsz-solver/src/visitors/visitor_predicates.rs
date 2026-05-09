@@ -14,8 +14,45 @@
 
 use crate::types::{IntrinsicKind, ObjectShapeId};
 use crate::{TypeData, TypeDatabase, TypeId};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tsz_common::Atom;
+
+// Reusable scratch buffers for the four predicate DFS walkers in this
+// module (`contains_type_parameter_named`, `_shallow`, the
+// identity-target variants). Each call previously allocated a fresh
+// `FxHashSet<TypeId>` + `Vec<TypeId>`; pooling them in a thread-local
+// shaves the allocator round-trip and the 2–4 grow reallocations.
+// Reentrant calls (predicate from within another predicate's
+// callback chain) fall through to fresh allocations because `take()`
+// has already emptied the slot. Mirrors PR #4722's
+// `walk_referenced_types` pool.
+type PredicatePool = (FxHashSet<TypeId>, Vec<TypeId>);
+
+thread_local! {
+    static PREDICATE_POOL: RefCell<Option<PredicatePool>> = const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_predicate_buffers<R>(f: impl FnOnce(&mut FxHashSet<TypeId>, &mut Vec<TypeId>) -> R) -> R {
+    let mut pool = PREDICATE_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_else(|| (FxHashSet::default(), Vec::new()));
+    pool.0.clear();
+    pool.1.clear();
+    let r = f(&mut pool.0, &mut pool.1);
+    PREDICATE_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some((existing, _)) => pool.0.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(pool);
+        }
+    });
+    r
+}
 
 // =============================================================================
 // Specialized Type Predicate Visitors
@@ -760,61 +797,59 @@ pub fn contains_type_parameter_named_shallow(
     type_id: TypeId,
     name: Atom,
 ) -> bool {
-    use rustc_hash::FxHashSet;
-
-    let mut visited = FxHashSet::default();
-    let mut stack = vec![type_id];
-
-    while let Some(current) = stack.pop() {
-        if current.is_intrinsic() || !visited.insert(current) {
-            continue;
-        }
-
-        let Some(data) = types.lookup(current) else {
-            continue;
-        };
-
-        // Check predicate
-        if matches!(&data, TypeData::TypeParameter(info) if info.name == name) {
-            return true;
-        }
-
-        // Visit children but skip TypeParameter/Infer constraints/defaults.
-        // For TypeParameter/Infer, we only care about identity (name match),
-        // not what their constraints contain.
-        if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
-            continue;
-        }
-        // Terminal kinds have no children to enumerate. Skipping
-        // `for_each_child_by_id` (which would iterate an empty child set)
-        // saves the closure setup and visitor dispatch on the very common
-        // input shape where the predicate is the entry-point lookup result.
-        // The kinds listed here match the leaf arms of every other walker
-        // that returns `false` for them — see `ContainsTypeChecker.check_key`,
-        // `FreeTypeParamChecker.check_key`, and `FreeInferChecker.check_key`.
-        if matches!(
-            &data,
-            TypeData::Literal(_)
-                | TypeData::Error
-                | TypeData::ThisType
-                | TypeData::BoundParameter(_)
-                | TypeData::Lazy(_)
-                | TypeData::Recursive(_)
-                | TypeData::TypeQuery(_)
-                | TypeData::UniqueSymbol(_)
-                | TypeData::ModuleNamespace(_)
-                | TypeData::UnresolvedTypeName(_)
-        ) {
-            continue;
-        }
-        // For all other types, use the generic child visitor.
-        super::visitor::for_each_child_by_id(types, current, |child| {
-            if !visited.contains(&child) {
-                stack.push(child);
+    with_predicate_buffers(|visited, stack| {
+        stack.push(type_id);
+        while let Some(current) = stack.pop() {
+            if current.is_intrinsic() || !visited.insert(current) {
+                continue;
             }
-        });
-    }
-    false
+
+            let Some(data) = types.lookup(current) else {
+                continue;
+            };
+
+            // Check predicate
+            if matches!(&data, TypeData::TypeParameter(info) if info.name == name) {
+                return true;
+            }
+
+            // Visit children but skip TypeParameter/Infer constraints/defaults.
+            // For TypeParameter/Infer, we only care about identity (name match),
+            // not what their constraints contain.
+            if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
+                continue;
+            }
+            // Terminal kinds have no children to enumerate. Skipping
+            // `for_each_child_by_id` (which would iterate an empty child set)
+            // saves the closure setup and visitor dispatch on the very common
+            // input shape where the predicate is the entry-point lookup result.
+            // The kinds listed here match the leaf arms of every other walker
+            // that returns `false` for them — see `ContainsTypeChecker.check_key`,
+            // `FreeTypeParamChecker.check_key`, and `FreeInferChecker.check_key`.
+            if matches!(
+                &data,
+                TypeData::Literal(_)
+                    | TypeData::Error
+                    | TypeData::ThisType
+                    | TypeData::BoundParameter(_)
+                    | TypeData::Lazy(_)
+                    | TypeData::Recursive(_)
+                    | TypeData::TypeQuery(_)
+                    | TypeData::UniqueSymbol(_)
+                    | TypeData::ModuleNamespace(_)
+                    | TypeData::UnresolvedTypeName(_)
+            ) {
+                continue;
+            }
+            // For all other types, use the generic child visitor.
+            super::visitor::for_each_child_by_id(types, current, |child| {
+                if !visited.contains(&child) {
+                    stack.push(child);
+                }
+            });
+        }
+        false
+    })
 }
 
 fn type_parameter_identity_matches(
@@ -837,50 +872,47 @@ pub fn contains_type_parameter_identity_shallow(
     type_id: TypeId,
     target: TypeId,
 ) -> bool {
-    use rustc_hash::FxHashSet;
-
-    let mut visited = FxHashSet::default();
-    let mut stack = vec![type_id];
-
-    while let Some(current) = stack.pop() {
-        if current.is_intrinsic() || !visited.insert(current) {
-            continue;
-        }
-
-        if type_parameter_identity_matches(def_store, current, target) {
-            return true;
-        }
-
-        let Some(data) = types.lookup(current) else {
-            continue;
-        };
-
-        if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
-            continue;
-        }
-        if matches!(
-            &data,
-            TypeData::Literal(_)
-                | TypeData::Error
-                | TypeData::ThisType
-                | TypeData::BoundParameter(_)
-                | TypeData::Lazy(_)
-                | TypeData::Recursive(_)
-                | TypeData::TypeQuery(_)
-                | TypeData::UniqueSymbol(_)
-                | TypeData::ModuleNamespace(_)
-                | TypeData::UnresolvedTypeName(_)
-        ) {
-            continue;
-        }
-        super::visitor::for_each_child_by_id(types, current, |child| {
-            if !visited.contains(&child) {
-                stack.push(child);
+    with_predicate_buffers(|visited, stack| {
+        stack.push(type_id);
+        while let Some(current) = stack.pop() {
+            if current.is_intrinsic() || !visited.insert(current) {
+                continue;
             }
-        });
-    }
 
-    false
+            if type_parameter_identity_matches(def_store, current, target) {
+                return true;
+            }
+
+            let Some(data) = types.lookup(current) else {
+                continue;
+            };
+
+            if matches!(&data, TypeData::TypeParameter(_) | TypeData::Infer(_)) {
+                continue;
+            }
+            if matches!(
+                &data,
+                TypeData::Literal(_)
+                    | TypeData::Error
+                    | TypeData::ThisType
+                    | TypeData::BoundParameter(_)
+                    | TypeData::Lazy(_)
+                    | TypeData::Recursive(_)
+                    | TypeData::TypeQuery(_)
+                    | TypeData::UniqueSymbol(_)
+                    | TypeData::ModuleNamespace(_)
+                    | TypeData::UnresolvedTypeName(_)
+            ) {
+                continue;
+            }
+            super::visitor::for_each_child_by_id(types, current, |child| {
+                if !visited.contains(&child) {
+                    stack.push(child);
+                }
+            });
+        }
+        false
+    })
 }
 
 /// Check if a type transitively references any type parameter whose name
@@ -925,55 +957,53 @@ pub fn constraint_references_type_param_in_resolution_path(
     type_id: TypeId,
     param_name: Atom,
 ) -> bool {
-    use rustc_hash::FxHashSet;
+    with_predicate_buffers(|visited, stack| {
+        stack.push(type_id);
+        while let Some(current) = stack.pop() {
+            if current.is_intrinsic() || !visited.insert(current) {
+                continue;
+            }
 
-    let mut visited = FxHashSet::default();
-    let mut stack = vec![type_id];
+            let Some(data) = types.lookup(current) else {
+                continue;
+            };
 
-    while let Some(current) = stack.pop() {
-        if current.is_intrinsic() || !visited.insert(current) {
-            continue;
-        }
+            // Found the type parameter we're looking for
+            if matches!(&data, TypeData::TypeParameter(info) if info.name == param_name) {
+                return true;
+            }
 
-        let Some(data) = types.lookup(current) else {
-            continue;
-        };
-
-        // Found the type parameter we're looking for
-        if matches!(&data, TypeData::TypeParameter(info) if info.name == param_name) {
-            return true;
-        }
-
-        // Follow only resolution-path children (not type reference args)
-        match &data {
-            // Union/intersection: descend into all members
-            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-                for &member in types.type_list(*list_id).iter() {
-                    stack.push(member);
+            // Follow only resolution-path children (not type reference args)
+            match &data {
+                // Union/intersection: descend into all members
+                TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+                    for &member in types.type_list(*list_id).iter() {
+                        stack.push(member);
+                    }
                 }
+                // Mapped type: descend into the constraint (key source) only.
+                // This catches `T extends { [P in T]: number }` (genuinely circular)
+                // while NOT false-positiving on `T extends { [K in keyof T]: V }`
+                // because we don't follow through KeyOf (see below).
+                TypeData::Mapped(mapped_id) => {
+                    let mapped = types.get_mapped(*mapped_id);
+                    stack.push(mapped.constraint);
+                }
+                // Index access: descend into object and index.
+                // Catches `T extends Foo | T["hello"]` (circular through index access).
+                TypeData::IndexAccess(obj, idx) => {
+                    stack.push(*obj);
+                    stack.push(*idx);
+                }
+                // KeyOf, Conditional, and everything else (Application, Object,
+                // Function, Array, Tuple, ReadonlyType, NoInfer, etc.) are opaque
+                // at the constraint-resolution level. `T extends { [K in keyof T]: V }`
+                // is NOT circular in tsc, and neither is `T extends null extends T ? any : never`.
+                _ => {}
             }
-            // Mapped type: descend into the constraint (key source) only.
-            // This catches `T extends { [P in T]: number }` (genuinely circular)
-            // while NOT false-positiving on `T extends { [K in keyof T]: V }`
-            // because we don't follow through KeyOf (see below).
-            TypeData::Mapped(mapped_id) => {
-                let mapped = types.get_mapped(*mapped_id);
-                stack.push(mapped.constraint);
-            }
-            // Index access: descend into object and index.
-            // Catches `T extends Foo | T["hello"]` (circular through index access).
-            TypeData::IndexAccess(obj, idx) => {
-                stack.push(*obj);
-                stack.push(*idx);
-            }
-            // KeyOf, Conditional, and everything else (Application, Object,
-            // Function, Array, Tuple, ReadonlyType, NoInfer, etc.) are opaque
-            // at the constraint-resolution level. `T extends { [K in keyof T]: V }`
-            // is NOT circular in tsc, and neither is `T extends null extends T ? any : never`.
-            _ => {}
         }
-    }
-    false
+        false
+    })
 }
 
 /// Identity-based variant of `constraint_references_type_param_in_resolution_path`.
@@ -983,40 +1013,37 @@ pub fn constraint_references_type_param_identity_in_resolution_path(
     type_id: TypeId,
     target: TypeId,
 ) -> bool {
-    use rustc_hash::FxHashSet;
-
-    let mut visited = FxHashSet::default();
-    let mut stack = vec![type_id];
-
-    while let Some(current) = stack.pop() {
-        if current.is_intrinsic() || !visited.insert(current) {
-            continue;
-        }
-
-        if type_parameter_identity_matches(def_store, current, target) {
-            return true;
-        }
-
-        let Some(data) = types.lookup(current) else {
-            continue;
-        };
-
-        match &data {
-            TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-                stack.extend(types.type_list(*list_id).iter().copied());
+    with_predicate_buffers(|visited, stack| {
+        stack.push(type_id);
+        while let Some(current) = stack.pop() {
+            if current.is_intrinsic() || !visited.insert(current) {
+                continue;
             }
-            TypeData::Mapped(mapped_id) => {
-                stack.push(types.get_mapped(*mapped_id).constraint);
-            }
-            TypeData::IndexAccess(obj, idx) => {
-                stack.push(*obj);
-                stack.push(*idx);
-            }
-            _ => {}
-        }
-    }
 
-    false
+            if type_parameter_identity_matches(def_store, current, target) {
+                return true;
+            }
+
+            let Some(data) = types.lookup(current) else {
+                continue;
+            };
+
+            match &data {
+                TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+                    stack.extend(types.type_list(*list_id).iter().copied());
+                }
+                TypeData::Mapped(mapped_id) => {
+                    stack.push(types.get_mapped(*mapped_id).constraint);
+                }
+                TypeData::IndexAccess(obj, idx) => {
+                    stack.push(*obj);
+                    stack.push(*idx);
+                }
+                _ => {}
+            }
+        }
+        false
+    })
 }
 
 /// Check if a type transitively contains a specific `TypeId`.
