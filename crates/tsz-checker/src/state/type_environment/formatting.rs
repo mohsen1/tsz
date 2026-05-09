@@ -125,6 +125,27 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    /// Format a type for use as the `constraint` slot of TS2344 diagnostics.
+    /// tsc strips `aliasSymbol` from the constraint when formatting "Type 'X'
+    /// does not satisfy the constraint 'Y'", so the canonical
+    /// `string | number | symbol` union (the body of `PropertyKey` and of
+    /// `keyof any`) renders structurally rather than as `'PropertyKey'`.
+    pub fn format_type_diagnostic_constraint(&self, type_id: TypeId) -> String {
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
+            && let Some(parent) = self.ctx.binder.get_symbol(symbol.parent)
+        {
+            return format!("{}.{}", parent.escaped_name, symbol.escaped_name);
+        }
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties()
+            .with_expand_primitive_key_union();
+        formatter.format(type_id).into_owned()
+    }
+
     fn evaluate_call_signature_for_instantiation_display(
         &mut self,
         sig: &tsz_solver::CallSignature,

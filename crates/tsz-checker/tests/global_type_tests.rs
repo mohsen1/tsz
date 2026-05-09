@@ -17,9 +17,9 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 /// Check source with `@noLib` semantics (no lib symbols merged, no
-/// lib_contexts on the checker). Routes through the shared
+/// `lib_contexts` on the checker). Routes through the shared
 /// `test_utils::check_with_options` — that helper also leaves
-/// lib_contexts empty by default, matching the original local helper.
+/// `lib_contexts` empty by default, matching the original local helper.
 fn check_without_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
     check_without_lib_with_options(source, CheckerOptions::default())
 }
