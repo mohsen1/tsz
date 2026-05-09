@@ -6,11 +6,12 @@
 
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_emitter::output::printer::{PrintOptions, lower_and_print};
-use tsz_parser::parser::ParserState;
+
+#[path = "test_support.rs"]
+mod test_support;
 
 fn parse_lower_emit(source: &str, opts: PrintOptions) -> String {
-    let mut parser = ParserState::new("main.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = test_support::parse_source_named("main.ts", source);
     lower_and_print(&parser.arena, root, opts).code
 }
 
