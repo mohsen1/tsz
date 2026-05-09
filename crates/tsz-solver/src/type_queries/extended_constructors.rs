@@ -7,6 +7,34 @@
 use crate::def::DefId;
 use crate::{TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashSet;
+use std::cell::RefCell;
+
+// Reusable scratch `FxHashSet<TypeId>` for `resolve_abstract_constructor_anchor`'s
+// visited tracking. Mirrors the pool pattern from #4722 / #4790 and follow-up PRs.
+thread_local! {
+    static EXTENDED_CONSTRUCTORS_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_extended_constructors_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = EXTENDED_CONSTRUCTORS_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    EXTENDED_CONSTRUCTORS_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 // =============================================================================
 // Abstract Class Type Classification
@@ -316,29 +344,28 @@ pub fn resolve_abstract_constructor_anchor(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> AbstractConstructorAnchor {
-    let mut current = type_id;
-    let mut visited = FxHashSet::default();
-
-    while visited.insert(current) {
-        match classify_for_abstract_constructor(db, current) {
-            AbstractConstructorKind::TypeQuery(sym_ref) => {
-                return AbstractConstructorAnchor::TypeQuery(sym_ref);
-            }
-            AbstractConstructorKind::Callable(_) => {
-                return AbstractConstructorAnchor::CallableType(current);
-            }
-            AbstractConstructorKind::Application(app_id) => {
-                let app = db.type_application(app_id);
-                if app.base == current {
-                    break;
+    with_extended_constructors_visited(|visited| {
+        let mut current = type_id;
+        while visited.insert(current) {
+            match classify_for_abstract_constructor(db, current) {
+                AbstractConstructorKind::TypeQuery(sym_ref) => {
+                    return AbstractConstructorAnchor::TypeQuery(sym_ref);
                 }
-                current = app.base;
+                AbstractConstructorKind::Callable(_) => {
+                    return AbstractConstructorAnchor::CallableType(current);
+                }
+                AbstractConstructorKind::Application(app_id) => {
+                    let app = db.type_application(app_id);
+                    if app.base == current {
+                        break;
+                    }
+                    current = app.base;
+                }
+                AbstractConstructorKind::NotAbstract => break,
             }
-            AbstractConstructorKind::NotAbstract => break,
         }
-    }
-
-    AbstractConstructorAnchor::NotAbstract
+        AbstractConstructorAnchor::NotAbstract
+    })
 }
 
 // =============================================================================
