@@ -330,7 +330,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // This prevents false positive TS2554 errors for generic functions with optional/rest params
         let (min_args, max_args) = self.arg_count_bounds(&func.params);
 
-        if arg_types.len() < min_args {
+        // Skip the pre-inference arity early-return when the rest parameter is a
+        // variadic tuple (e.g. `...args: [...T, number]`) or `never`. In those
+        // cases tsc reports the args-as-tuple vs rest-tuple type mismatch
+        // (TS2345) instead of an arity error (TS2554/TS2555). Continuing to
+        // inference lets the post-substitution path emit the correct
+        // ArgumentTypeMismatch with the resolved rest type.
+        let rest_demands_aggregate_check = self.rest_param_demands_aggregate_check(&func.params);
+
+        if arg_types.len() < min_args && !rest_demands_aggregate_check {
             return CallResult::ArgumentCountMismatch {
                 expected_min: min_args,
                 expected_max: max_args,
@@ -2422,6 +2430,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if !rest_param_from_constraint_fallback {
             let (min_args, max_args) = self.arg_count_bounds(&instantiated_params);
             if arg_types.len() < min_args {
+                // For variadic tuple rest params (e.g. `...args: [...T, number]`)
+                // tsc reports TS2345 (args tuple vs rest tuple) instead of
+                // TS2554/TS2555. Mirror that here using the substituted rest
+                // type so the printer renders T as its inferred default
+                // (typically the constraint, e.g. `unknown[]`).
+                if let Some(result) = self.build_variadic_rest_type_mismatch(
+                    &instantiated_params,
+                    arg_types,
+                    func.return_type,
+                ) {
+                    return result;
+                }
                 return CallResult::ArgumentCountMismatch {
                     expected_min: min_args,
                     expected_max: max_args,
