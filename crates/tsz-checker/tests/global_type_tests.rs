@@ -16,44 +16,19 @@ use tsz_binder::lib_loader::LibFile;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
-/// Helper function to create a checker without lib.d.ts and check source code.
-/// This creates the checker with the parser's arena directly to ensure proper node resolution.
+/// Check source with `@noLib` semantics (no lib symbols merged, no
+/// lib_contexts on the checker). Routes through the shared
+/// `test_utils::check_with_options` — that helper also leaves
+/// lib_contexts empty by default, matching the original local helper.
 fn check_without_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
     check_without_lib_with_options(source, CheckerOptions::default())
 }
 
-/// Helper function to create a checker without lib.d.ts with custom options.
 fn check_without_lib_with_options(
     source: &str,
     options: CheckerOptions,
 ) -> Vec<crate::checker::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    // No parse errors expected in these tests
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    // Don't merge any lib symbols - simulates @noLib
-
-    let types = TypeInterner::new();
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(), // Use parser's arena directly
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-    // Don't set lib_contexts - no lib files loaded
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    crate::checker::test_utils::check_with_options(source, options)
 }
 
 const MINIMAL_CORE_GLOBAL_DECLS: &[(&str, &str)] = &[
