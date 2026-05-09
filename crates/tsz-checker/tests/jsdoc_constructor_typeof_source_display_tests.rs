@@ -17,40 +17,25 @@
 //! to decide whether to short-circuit to `typeof <name>`.
 
 use tsz_binder::BinderState;
+use tsz_checker::CheckerState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn diagnostics_for_js(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("functions.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        allow_js: true,
-        check_js: true,
-        no_implicit_any: true,
-        ..CheckerOptions::default()
-    };
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "functions.js".to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    tsz_checker::test_utils::check_source(
+        source,
+        "functions.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 /// JS-style constructor declared as `var E = function(n) { this.x = n; };`
