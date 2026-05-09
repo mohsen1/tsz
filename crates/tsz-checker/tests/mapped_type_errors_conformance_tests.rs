@@ -84,6 +84,11 @@ let f: Foo2<O, "x"> = {
 
 #[test]
 fn record_key_constraint_displays_primitive_key_union() {
+    // tsc strips the `aliasSymbol` from the constraint type before formatting
+    // the TS2344 message, so `Record<object, _>` reports the structural
+    // `string | number | symbol` form rather than the registered `PropertyKey`
+    // alias. Other diagnostic surfaces still keep `PropertyKey` (see
+    // `object_group_by_key_constraint_uses_property_key_in_diagnostic`).
     let source = r#"
 type AudioData = string | number | symbol;
 type Record<K extends keyof any, T> = { [P in K]: T };
@@ -100,12 +105,18 @@ type T = Record<object, number>;
     assert!(
         ts2344
             .iter()
-            .any(|message| message.contains("constraint 'PropertyKey'")),
-        "Record's key constraint should display PropertyKey, got: {diagnostics:#?}"
+            .any(|message| message.contains("constraint 'string | number | symbol'")),
+        "Record's key constraint should display 'string | number | symbol', got: {diagnostics:#?}"
     );
     assert!(
         ts2344.iter().all(|message| !message.contains("AudioData")),
         "Record's key constraint must not be repainted by unrelated lib names: {diagnostics:#?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .all(|message| !message.contains("constraint 'PropertyKey'")),
+        "Record's key constraint must not be displayed as PropertyKey in TS2344: {diagnostics:#?}"
     );
 }
 
@@ -243,5 +254,37 @@ createMachine({
         ),
         "TS2353 should display the narrowed mapped member and wildcard branch, got: {}",
         ts2353.message_text
+    );
+}
+
+#[test]
+fn ts2344_constraint_message_expands_keyof_any_to_primitive_key_union_when_arg_is_user_alias() {
+    // Regression for `compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx`
+    // and `conformance/types/mapped/mappedTypeErrors.ts`. Iteration variable
+    // name doesn't matter (anti-hardcoding §25): swapping `K`/`P` for
+    // `Element`/`Q` must keep the structural form.
+    let source = r#"
+type RecordA<Element extends keyof any, T> = { [Q in Element]: T };
+type Bad = RecordA<object, number>;
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2344: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2344)
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+
+    assert!(
+        ts2344
+            .iter()
+            .any(|message| message.contains("constraint 'string | number | symbol'")),
+        "TS2344 against keyof any should display structurally, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .all(|message| !message.contains("constraint 'PropertyKey'")),
+        "TS2344 against keyof any must not collapse to PropertyKey: {diagnostics:#?}"
     );
 }

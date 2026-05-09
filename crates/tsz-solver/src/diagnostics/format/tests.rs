@@ -105,6 +105,21 @@ fn primitive_key_union_formats_as_property_key_in_diagnostic_mode() {
 }
 
 #[test]
+fn primitive_key_union_formats_structurally_when_alias_collapse_is_opted_out() {
+    // tsc strips the `aliasSymbol` from the constraint type before formatting
+    // the TS2344 message, so opt-in callers (the constraint-not-satisfied
+    // emitter) get the structural form. The default diagnostic surface still
+    // collapses to `PropertyKey`; the opt-in is narrow and intentional.
+    let db = TypeInterner::new();
+    let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
+
+    let mut fmt = TypeFormatter::new(&db)
+        .with_diagnostic_mode()
+        .with_expanded_primitive_key_union();
+    assert_eq!(fmt.format(primitive_key_union), "string | number | symbol");
+}
+
+#[test]
 fn needs_property_name_quotes_basic() {
     // Valid identifiers: no quotes needed
     assert!(!super::needs_property_name_quotes("foo"));
