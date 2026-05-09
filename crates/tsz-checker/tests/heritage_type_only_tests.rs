@@ -5,35 +5,13 @@
 
 use crate::context::{CheckerOptions, LibContext};
 use crate::state::CheckerState;
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::{BinderState, lib_loader::LibFile, state::LibContext as BinderLibContext};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../scripts/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
-    ];
-
-    let mut lib_files = Vec::new();
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
-            let lib_file = LibFile::from_source(file_name, content);
-            lib_files.push(Arc::new(lib_file));
-        }
-    }
-    lib_files
+    crate::test_utils::load_compiled_lib_files(&["lib.es5.d.ts", "lib.dom.d.ts"])
 }
 
 /// Non-ambient class extending a type-only symbol (interface) should emit TS2689,
