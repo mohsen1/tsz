@@ -642,6 +642,10 @@ impl<'a> CheckerState<'a> {
             // See `docs/plan/PERFORMANCE_PLAN.md`.
             let perf = tsz_common::perf_counters::counters();
             tsz_common::perf_counters::inc(&perf.delegate_cross_arena_calls);
+            // Track the running peak recursion depth via an RAII guard. Drop
+            // decrements when this call returns / unwinds. Per
+            // PERFORMANCE_PLAN.md §4.1.1 site #11.
+            let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
 
             // Fast path: check lib delegation cache by SymbolId.
             // Each lib SymbolId is delegated at most once; subsequent lookups

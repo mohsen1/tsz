@@ -506,6 +506,40 @@ pub fn record_max(counter: &AtomicU64, value: u64) {
     }
 }
 
+/// RAII guard that tracks recursion depth into
+/// `delegate_cross_arena_symbol_resolution`. Each `enter_delegate()` increments
+/// a thread-local counter and updates `delegate_max_recursion_depth` to the
+/// running peak; the guard's `Drop` impl decrements when the call returns.
+/// The whole thing short-circuits when counters are disabled, so timing builds
+/// pay one branch per call.
+pub struct DelegateDepthGuard(());
+
+thread_local! {
+    static DELEGATE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+#[inline]
+pub fn enter_delegate() -> DelegateDepthGuard {
+    if !enabled_fast() {
+        return DelegateDepthGuard(());
+    }
+    DELEGATE_DEPTH.with(|d| {
+        let next = d.get().saturating_add(1);
+        d.set(next);
+        record_max(&counters().delegate_max_recursion_depth, u64::from(next));
+    });
+    DelegateDepthGuard(())
+}
+
+impl Drop for DelegateDepthGuard {
+    fn drop(&mut self) {
+        if !enabled_fast() {
+            return;
+        }
+        DELEGATE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
 /// Returns true when `TSZ_PERF_COUNTERS` is set. Use this to gate the
 /// expensive bookkeeping; the simple `inc` calls are always cheap enough
 /// that gating them is more expensive than just doing them.
