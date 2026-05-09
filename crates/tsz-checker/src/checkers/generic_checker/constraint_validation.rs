@@ -1647,6 +1647,21 @@ impl<'a> CheckerState<'a> {
             return Some(template);
         }
 
+        // For the built-in utility alias `Record<K, V>` and its equivalent
+        // user-facing aliases, evaluate the alias body before falling back to
+        // structural/object-shape checks. Without this, patterns like
+        // `{ [K in keyof O]: Record<O[K], K> }[keyof O]` can still retain
+        // an `Application` form and fail TS2344 checks even though
+        // `Record`'s template is provably valid for the key space.
+        if let Some(alias_object_type) =
+            self.resolve_record_alias_type_for_indexed_access_value(object_type)
+            && alias_object_type != object_type
+            && let Some(value_type) =
+                self.constraint_check_indexed_access_value_type(alias_object_type, index_type)
+        {
+            return Some(value_type);
+        }
+
         // For concrete object maps like `HTMLElementTagNameMap`, an indexed access
         // `Map[K]` with `K extends keyof Map` has a base constraint equal to the
         // union of all mapped property value types. tsc eagerly uses that union for
@@ -1700,6 +1715,34 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn resolve_record_alias_type_for_indexed_access_value(
+        &mut self,
+        object_type: TypeId,
+    ) -> Option<TypeId> {
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, object_type)?;
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return None;
+        }
+        if self.ctx.types.resolve_atom(def.name) != "Record" {
+            return None;
+        }
+        if def.type_params.len() != app.args.len() || def.type_params.is_empty() {
+            return None;
+        }
+        let body = def.body?;
+        let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &def.type_params,
+            &app.args,
+        );
+        let instantiated =
+            crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
+        let evaluated = self.evaluate_type_for_assignability(instantiated);
+        Some(self.resolve_lazy_type(evaluated))
     }
 
     fn concrete_indexed_access_property_union(&mut self, type_id: TypeId) -> Option<TypeId> {
