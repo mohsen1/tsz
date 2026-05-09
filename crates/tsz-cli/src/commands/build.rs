@@ -587,8 +587,8 @@ mod tests {
     // be reported as up-to-date. Pre-fix, the strict `>` comparison
     // returned false here and silently skipped a needed rebuild.
     #[test]
-    fn is_project_up_to_date_returns_false_when_referenced_dts_matches_build_time_at_second_resolution(
-    ) {
+    fn is_project_up_to_date_returns_false_when_referenced_dts_matches_build_time_at_second_resolution()
+     {
         let temp = create_project_dir("same_second_dts");
         let root_dir = temp.path().join("main");
         let ref_dir = temp.path().join("ref");
