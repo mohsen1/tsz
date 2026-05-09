@@ -43,6 +43,7 @@ pub(crate) mod class_type;
     clippy::manual_map
 )]
 pub(crate) mod common;
+pub(crate) mod construct_signatures;
 #[allow(
     dead_code,
     clippy::missing_const_for_fn,
