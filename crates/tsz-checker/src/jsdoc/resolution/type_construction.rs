@@ -100,9 +100,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let type_expr = Self::extract_jsdoc_enum_type_expression(&jsdoc)?.trim();
+        self.jsdoc_enum_type_from_comment(&jsdoc, node.pos)
+    }
+
+    fn jsdoc_enum_type_from_comment(&mut self, jsdoc: &str, anchor_pos: u32) -> Option<TypeId> {
+        let type_expr = Self::extract_jsdoc_enum_type_expression(jsdoc)?.trim();
         let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
-        self.ctx.jsdoc_typedef_anchor_pos.set(node.pos);
+        self.ctx.jsdoc_typedef_anchor_pos.set(anchor_pos);
         let result = self.resolve_jsdoc_reference(type_expr);
         self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
         result.filter(|ty| *ty != TypeId::ERROR && *ty != TypeId::UNKNOWN)
@@ -250,6 +254,24 @@ impl<'a> CheckerState<'a> {
                 }
             };
 
+            // `@enum` on a property assignment contributes the enum element
+            // type in JSDoc type-position lookup, but value-space reads still
+            // need the assigned object type for member access.
+            if allow_rhs_assignment_fallback
+                && let Some(stmt_idx) = self.enclosing_expression_statement(idx)
+                && let Some(jsdoc_type) = (|| {
+                    let sf = self.source_file_data_for_node(stmt_idx)?;
+                    let source_text = sf.text.to_string();
+                    let comments = sf.comments.clone();
+                    let jsdoc =
+                        self.try_jsdoc_with_ancestor_walk(stmt_idx, &comments, &source_text)?;
+                    self.jsdoc_enum_type_from_comment(&jsdoc, self.ctx.arena.get(stmt_idx)?.pos)
+                })()
+            {
+                let combined =
+                    self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type);
+                return Some(self.relabel_jsdoc_assigned_value_type(name, combined));
+            }
             if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(idx) {
                 let combined =
                     self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type);
