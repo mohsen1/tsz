@@ -276,6 +276,30 @@ fn source_map_duplicate_name() {
 }
 
 #[test]
+fn add_source_assigns_sequential_zero_based_indices() {
+    let mut smg = SourceMapGenerator::new("out.js".to_string());
+    assert_eq!(smg.add_source("a.ts".to_string()), 0);
+    assert_eq!(smg.add_source("b.ts".to_string()), 1);
+    assert_eq!(
+        smg.add_source_with_content("c.ts".to_string(), "/* c */".to_string()),
+        2
+    );
+    assert_eq!(smg.add_source("d.ts".to_string()), 3);
+}
+
+#[test]
+fn add_name_assigns_sequential_indices_and_dedupes_existing() {
+    let mut smg = SourceMapGenerator::new("out.js".to_string());
+    assert_eq!(smg.add_name("alpha".to_string()), 0);
+    assert_eq!(smg.add_name("beta".to_string()), 1);
+    assert_eq!(smg.add_name("gamma".to_string()), 2);
+    // Dedupe must return the original index, not the next slot.
+    assert_eq!(smg.add_name("beta".to_string()), 1);
+    // Adding a fresh name continues from the real length, not from the deduped slot.
+    assert_eq!(smg.add_name("delta".to_string()), 3);
+}
+
+#[test]
 fn source_map_shift_generated_lines() {
     let mut smg = SourceMapGenerator::new("out.js".to_string());
     let _ = smg.add_source("in.ts".to_string());

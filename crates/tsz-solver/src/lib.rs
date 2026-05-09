@@ -49,7 +49,6 @@ pub mod recursion;
 pub mod relations;
 #[cfg(test)]
 mod sound_prototype;
-pub mod ts_type_flags;
 pub mod type_queries;
 // type_resolver moved into def/resolver.rs
 pub mod types;
@@ -94,7 +93,6 @@ pub mod type_handles {
 /// These functions inspect types but don't modify or create them.
 /// Safe for any consumer to import directly.
 pub mod query {
-    pub use crate::ts_type_flags::{is_nullable_type, type_id_ts_flags};
     pub use crate::visitors::visitor::{
         application_id, array_element_type, bound_parameter_index, callable_shape_id,
         collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,
@@ -177,7 +175,6 @@ pub mod construction {
     pub use crate::intern::TypeInterner;
     pub use crate::intern::type_factory::*;
 }
-pub use crate::ts_type_flags::{is_nullable_type, type_id_ts_flags};
 pub use intern::TypeInterner;
 pub use intern::clear_thread_local_cache;
 pub use operations::infer_generic_function;
