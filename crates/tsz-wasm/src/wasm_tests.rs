@@ -11,7 +11,7 @@ use crate::wasm_api::language_service::TsLanguageService;
 use crate::wasm_api::program::create_ts_program;
 use crate::wasm_api::utilities::{
     create_source_file, is_keyword, is_punctuation, parse_config_file_text_to_json,
-    parse_json_text, syntax_kind_to_name, token_to_string,
+    parse_json_text, scan_tokens, syntax_kind_to_name, token_to_string,
 };
 use crate::{Parser, TsDiagnostic, TsProgram, TsSourceFile, TsSymbol, TsType};
 use tsz_scanner::SyntaxKind;
@@ -542,7 +542,7 @@ fn test_byte_offset_to_utf16_conversion() {
     assert_eq!(TsProgram::byte_offset_to_utf16("hello world", 0), 0);
 
     // Em dash (U+2014) is 3 bytes in UTF-8 but 1 UTF-16 code unit
-    // "ab—cd" = [61 62 E2 80 94 63 64] (7 bytes, 5 chars)
+    // "ab\u{2014}cd" = [61 62 E2 80 94 63 64] (7 bytes, 5 chars)
     let s = "ab\u{2014}cd";
     assert_eq!(s.len(), 7); // 7 UTF-8 bytes
     assert_eq!(s.chars().count(), 5); // 5 characters
@@ -591,5 +591,86 @@ fn test_ts_program_target_drives_semantic_diagnostics() {
     assert!(
         !codes_es2020.contains(&2737),
         "ES2020 target must not surface TS2737 for BigInt literal, got {codes_es2020:?}"
+    );
+}
+
+#[test]
+fn test_scan_tokens_empty_input_returns_empty_array() {
+    // Issue #4746: scanTokens previously hardcoded `"[]"`. The empty-input
+    // case must still return an empty array, but as the genuine result of
+    // scanning rather than a placeholder.
+    let json = scan_tokens("");
+    let value: Value = serde_json::from_str(&json).expect("scan_tokens must return valid JSON");
+    let arr = value
+        .as_array()
+        .expect("scan_tokens must return a JSON array");
+    assert!(
+        arr.is_empty(),
+        "empty source should yield no tokens, got {value:?}"
+    );
+}
+
+#[test]
+fn test_scan_tokens_returns_real_tokens_with_spans() {
+    // Issue #4746: scanTokens must produce real token records with kind,
+    // text, start, end — not the previous hardcoded `"[]"` placeholder.
+    let source = "let x = 1;";
+    let json = scan_tokens(source);
+    let value: Value = serde_json::from_str(&json).expect("scan_tokens must return valid JSON");
+    let arr = value
+        .as_array()
+        .expect("scan_tokens must return a JSON array");
+
+    assert!(
+        !arr.is_empty(),
+        "non-empty source must produce at least one token, got {value:?}"
+    );
+
+    // Every token entry has the documented shape: kind/text/start/end.
+    for tok in arr {
+        let obj = tok.as_object().expect("each token entry must be an object");
+        assert!(obj.contains_key("kind"), "token missing kind: {tok:?}");
+        assert!(obj.contains_key("text"), "token missing text: {tok:?}");
+        assert!(obj.contains_key("start"), "token missing start: {tok:?}");
+        assert!(obj.contains_key("end"), "token missing end: {tok:?}");
+    }
+
+    // The non-trivia tokens must reproduce the original source verbatim
+    // when concatenated by start position. We don't skip trivia in
+    // scan_tokens, so the entire source should round-trip.
+    let mut sorted = arr.clone();
+    sorted.sort_by_key(|t| t["start"].as_u64().unwrap_or(0));
+    let mut reconstructed = String::new();
+    for tok in &sorted {
+        reconstructed.push_str(tok["text"].as_str().unwrap_or(""));
+    }
+    assert_eq!(
+        reconstructed, source,
+        "concatenated token text must reproduce the source"
+    );
+
+    // The first non-trivia token must be the `let` keyword (kind 121).
+    let first_non_trivia = arr
+        .iter()
+        .find(|t| {
+            let k = t["kind"].as_u64().unwrap_or(0) as u16;
+            !(2..=8).contains(&k)
+        })
+        .expect("at least one non-trivia token expected");
+    assert_eq!(
+        first_non_trivia["kind"].as_u64().unwrap(),
+        SyntaxKind::LetKeyword as u64,
+        "first non-trivia token should be `let`, got {first_non_trivia:?}"
+    );
+    assert_eq!(first_non_trivia["text"].as_str().unwrap(), "let");
+    assert_eq!(first_non_trivia["start"].as_u64().unwrap(), 0);
+    assert_eq!(first_non_trivia["end"].as_u64().unwrap(), 3);
+
+    // No EndOfFileToken (kind 1) should appear in the output — iteration
+    // must stop before recording the synthetic EOF.
+    assert!(
+        arr.iter()
+            .all(|t| t["kind"].as_u64().unwrap_or(0) != SyntaxKind::EndOfFileToken as u64),
+        "EOF token must not be included in scan_tokens output"
     );
 }
