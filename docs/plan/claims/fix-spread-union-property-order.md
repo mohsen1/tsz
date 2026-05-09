@@ -60,19 +60,31 @@ seen via the type annotation `{ a: number, b: number }` (declaration_order
 Store the spread-result property order as a side-table keyed on TypeId,
 similar to the existing `display_properties` mechanism for fresh object
 literals. Wire `format_object` to consult it before falling back to the
-shape's stored properties. Specifically:
+shape's stored properties.
 
-- After `factory().object(properties)` in `finalize_object_literal_type`'s
-  `has_spread` branch, also call
-  `interner.store_display_properties(type_id, properties_in_spread_order)`.
-- The existing `format_object` code path at
-  `crates/tsz-solver/src/diagnostics/format/mod.rs:1404-1408` already
-  uses `display_properties` when `use_display_properties` is true; that
-  flag already fires for diagnostic-mode formatters.
+### Attempted partial fix (2026-05-09)
 
-Caveat: `display_properties` is currently FRESH_LITERAL-only by design;
-adding spread-result usage may need to gate with a separate flag to
-avoid affecting unrelated formatters.
+Adding `store_display_properties(type_id, properties_in_spread_order)`
+after `factory().object(properties)` in the non-union `has_spread`
+branch made `{ ...y, ...x }` (where x={a}, y={b}) emit `{ b, a }` —
+but only for the non-union case. **The union-spread branches at
+computation.rs:2696-2722 build types via a separate code path** (one
+`factory().object(branch_props)` per cross-product branch) and do NOT
+go through the same store_display_properties wiring. So
+`{ ...undefinedUnion, ...nullUnion }` (where each spread is itself a
+union containing an object) emits the same `{ b?, a? }` regardless
+of spread order — the fix needs to be applied to the union-branch
+loop too.
+
+### Concrete next steps
+
+1. Apply the `store_display_properties` call inside the inner loop at
+   `computation.rs:2696-2722` (after each `factory().object(branch_props)`).
+2. Verify both non-union spread (`{...x, ...y}`) and union spread
+   (`{...optionalA, ...optionalB}`) cases respect spread order in
+   the diagnostic display.
+3. Run `cargo nextest run -p tsz-checker --lib` to catch any places
+   that depend on alphabetic display order.
 
 ## Verification
 
