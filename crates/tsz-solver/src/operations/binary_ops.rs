@@ -884,8 +884,13 @@ impl<'a> BinaryOpEvaluator<'a> {
                 right
             } else {
                 let result = self.union2_subtype_reduce(truthy_left, right);
+                // tsc displays the truthy-narrowed left first, then the right
+                // operand: `(options || {}).a` produces
+                //   `{ a: string; b: number; } | {}`
+                // (not the reverse). Record that order as the union origin so
+                // diagnostic display follows source order.
                 self.interner
-                    .replace_union_origin_for_display(result, vec![right, truthy_left]);
+                    .replace_union_origin_for_display(result, vec![truthy_left, right]);
                 result
             }
         } else {

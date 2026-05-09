@@ -717,6 +717,33 @@ fn test_logical_or_never_left() {
 }
 
 #[test]
+fn test_logical_or_union_origin_orders_truthy_left_before_right() {
+    // tsc displays `(options || X).a` errors with the truthy-narrowed left
+    // operand FIRST, then the right operand. Locks the union_origin order
+    // recorded by `||`: [truthy_left, right]. Uses two distinct primitives
+    // so subtype reduction can't collapse the union to one side; that keeps
+    // the test focused on the order recorded for the surviving union.
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+    let truthy_left = TypeId::NUMBER;
+    let right = TypeId::STRING;
+    let result = eval.evaluate(truthy_left, right, "||");
+    let result_id = match result {
+        BinaryOpResult::Success(t) => t,
+        _ => panic!("Expected Success for || operation"),
+    };
+    let origin = interner
+        .get_union_origin(result_id)
+        .expect("|| should record a union_origin for display order");
+    assert_eq!(
+        &**origin,
+        &[truthy_left, right],
+        "union_origin must record [truthy_left, right] so diagnostics display \
+         the truthy-narrowed left operand first"
+    );
+}
+
+#[test]
 fn test_logical_nullish_coalescing() {
     let interner = TypeInterner::new();
     let eval = BinaryOpEvaluator::new(&interner);
