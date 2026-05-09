@@ -1004,7 +1004,18 @@ impl<'a> TypePrinter<'a> {
         let return_str = if let Some(ref pred) = func_shape.type_predicate {
             scoped.print_type_predicate(pred)
         } else {
-            scoped.print_type(func_shape.return_type)
+            let inner = scoped.print_type(func_shape.return_type);
+            // tsc parenthesises a conditional return when emitting an
+            // arrow-form callable so the printed text round-trips
+            // unambiguously through the parser even when nested inside
+            // a larger conditional or extends position (the outer
+            // conditional's `? : ` would otherwise capture the inner's
+            // `? :`).  Mirror that here.
+            if tsz_solver::is_conditional_type(self.interner, func_shape.return_type) {
+                format!("({inner})")
+            } else {
+                inner
+            }
         };
 
         format!(
@@ -1279,7 +1290,18 @@ impl<'a> TypePrinter<'a> {
         let return_str = if let Some(ref pred) = sig.type_predicate {
             nested.print_type_predicate(pred)
         } else {
-            nested.print_type(sig.return_type)
+            let inner = nested.print_type(sig.return_type);
+            // tsc parenthesises a conditional return when emitting an
+            // arrow-form callable so the printed text round-trips
+            // unambiguously through the parser even when nested inside
+            // a larger conditional or extends position (the outer
+            // conditional's `? : ` would otherwise capture the inner's
+            // `? :`).  Mirror that here.
+            if tsz_solver::is_conditional_type(self.interner, sig.return_type) {
+                format!("({inner})")
+            } else {
+                inner
+            }
         };
         format!(
             "{}({}) => {}",
