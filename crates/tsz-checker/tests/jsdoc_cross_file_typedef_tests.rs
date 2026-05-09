@@ -598,6 +598,69 @@ var y = "ok";
 }
 
 #[test]
+fn cross_file_jsdoc_enum_member_is_assignable_to_enum_param() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "enumDef.js",
+        r#"
+var Host = {};
+Host.UserMetrics = {};
+/** @enum {number} */
+Host.UserMetrics.Action = {
+    WindowDocked: 1,
+    WindowUndocked: 2,
+};
+/**
+ * @typedef {string} Host.UserMetrics.Bargh
+ */
+/**
+ * @typedef {string}
+ */
+Host.UserMetrics.Blah = {
+    x: 12
+}
+"#,
+        "index.js",
+        r#"
+var Other = {};
+Other.Cls = class {
+    /**
+     * @param {!Host.UserMetrics.Action} p
+     */
+    method(p) {}
+    usage() {
+        this.method(Host.UserMetrics.Action.WindowDocked);
+    }
+}
+
+/**
+ * @type {Host.UserMetrics.Bargh}
+ */
+var x = "ok";
+
+/**
+ * @type {Host.UserMetrics.Blah}
+ */
+var y = "ok";
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let rendered: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no diagnostics for cross-file JSDoc @enum member calls and sibling typedefs, got diagnostics: {rendered:?}"
+    );
+}
+
+#[test]
 fn jsdoc_import_defer_namespace_reports_from_expected_and_missing_namespace() {
     let diagnostics = check_js_file_with_types_diagnostics(
         "types.ts",
