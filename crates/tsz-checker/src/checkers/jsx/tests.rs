@@ -1765,7 +1765,7 @@ fn jsx_defaultize_with_alternate_param_names_no_false_ts2322() {
 /// Regression for #3734: when the component has NO defaultProps, the LMA
 /// fallback must NOT fire — passing `<NoDefaults />` without the required
 /// `count` prop must still emit TS2741 (missing required prop). This locks
-/// the trigger condition to "default_props_type is Some".
+/// the trigger condition to "`default_props_type` is Some".
 #[test]
 fn jsx_no_default_props_still_emits_required_prop_diagnostic() {
     let diagnostics = check_jsx_codes(
