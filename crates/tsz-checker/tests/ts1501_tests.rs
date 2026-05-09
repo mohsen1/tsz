@@ -3,35 +3,17 @@
 //! TypeScript 6.0 still emits TS1501 for the `v` regular-expression flag
 //! when targeting below ES2024.
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
 use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ScriptTarget;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn diagnostics_for(source: &str, target: ScriptTarget) -> Vec<tsz_common::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    tsz_checker::test_utils::check_with_options(
+        source,
         CheckerOptions {
             target,
             ..Default::default()
         },
-    );
-
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics
+    )
 }
 
 fn has_ts1501(source: &str, target: ScriptTarget) -> bool {
