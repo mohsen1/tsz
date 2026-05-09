@@ -1439,6 +1439,18 @@ impl<'a> CheckerState<'a> {
                 &exports_table,
                 &mut props,
             );
+            // CommonJS object-literal exports — `module.exports = { foo, bar }` —
+            // bind only an `export=` symbol (or no entries at all in `module_exports`),
+            // so the binder-driven loop above and `append_export_equals_…` together
+            // produce an empty namespace shape. Merge in the JS export surface so
+            // `typeof import("./mod").foo` resolves to the value-side member instead
+            // of a false TS2694, while existing binder-driven props still take
+            // precedence.
+            self.merge_js_export_surface_into_typeof_import_namespace_props(
+                module_name,
+                exports_table_target.or(Some(self.ctx.current_file_idx)),
+                &mut props,
+            );
             Self::normalize_namespace_export_declaration_order(&mut props);
             let namespace_type = self.ctx.types.factory().object(props);
             self.ctx.namespace_module_names.insert(

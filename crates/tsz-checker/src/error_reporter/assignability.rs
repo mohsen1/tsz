@@ -1064,8 +1064,10 @@ impl<'a> CheckerState<'a> {
         let mut target_str =
             self.rewrite_target_display_for_non_literal_assignability(target, target_str);
 
-        (source_str, target_str) = self
-            .apply_ts2739_unfold_pair_with_wrapper_guard(source, target, source_str, target_str);
+        source_str = self.apply_ts2739_nonliteral(source, source_str);
+        if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
+            target_str = self.format_type_diagnostic(unfolded);
+        }
 
         let should_prefer_authoritative_name = |display: &str| {
             display.starts_with("{ ")
@@ -1374,10 +1376,13 @@ impl<'a> CheckerState<'a> {
             target,
             DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
         );
-        let (source_str, target_str) =
+        let (source_str, mut target_str) =
             self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
-        let (mut source_str, mut target_str) = self
-            .apply_ts2739_unfold_pair_with_wrapper_guard(source, target, source_str, target_str);
+        let mut source_str = source_str;
+        source_str = self.apply_ts2739_nonliteral(source, source_str);
+        if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
+            target_str = self.format_type_diagnostic(unfolded);
+        }
         if let Some(display) = self.static_schema_array_structural_display(source, target) {
             source_str = display;
         }

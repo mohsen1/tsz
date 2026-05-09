@@ -15,8 +15,8 @@ FAIL TypeScript/tests/cases/compiler/strictFunctionTypesErrors.ts | expected:[TS
 FAIL TypeScript/tests/cases/compiler/strictOptionalProperties1.ts | expected:[TS2322,TS2375,TS2411,TS2412,TS2451] actual:[TS2322,TS2375,TS2411,TS2412,TS2451]
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts | expected:[TS2322,TS2344,TS2416,TS2744] actual:[TS2322,TS2344,TS2416,TS2744]
 FAIL TypeScript/tests/cases/compiler/typeOfEnumAndVarRedeclarations.ts | expected:[TS2374,TS2403] actual:[TS2374,TS2403]
-FAIL TypeScript/tests/cases/compiler/typeVariableConstraintedToAliasNotAssignableToUnion.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts | expected:[TS1005,TS1068,TS1127,TS1128,TS1134,TS1351,TS1389,TS1434,TS2809] actual:[TS1005,TS1068,TS1127,TS1128,TS1134,TS1351,TS1389,TS1434,TS2809]
+FAIL TypeScript/tests/cases/compiler/varianceReferences.ts | expected:[TS2322,TS2637] actual:[TS2322,TS2637]
 FAIL TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers8.ts | expected:[TS2339,TS2683] actual:[TS2339,TS2683]
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/typeArgumentInferenceWithConstraints.ts | expected:[TS2322,TS2344,TS2345,TS2349,TS2403] actual:[TS2322,TS2344,TS2345,TS2349,TS2403]
 FAIL TypeScript/tests/cases/conformance/expressions/objectLiterals/objectLiteralNormalization.ts | expected:[TS2322] actual:[TS2322]
@@ -6168,6 +6168,7 @@ PASS TypeScript/tests/cases/compiler/typeVal.ts
 PASS TypeScript/tests/cases/compiler/typeValueConflict1.ts
 PASS TypeScript/tests/cases/compiler/typeValueConflict2.ts
 PASS TypeScript/tests/cases/compiler/typeVariableConstraintIntersections.ts
+PASS TypeScript/tests/cases/compiler/typeVariableConstraintedToAliasNotAssignableToUnion.ts
 PASS TypeScript/tests/cases/compiler/typeVariableTypeGuards.ts
 PASS TypeScript/tests/cases/compiler/typecheckCommaExpression.ts
 PASS TypeScript/tests/cases/compiler/typecheckIfCondition.ts
@@ -6486,7 +6487,6 @@ PASS TypeScript/tests/cases/compiler/varianceCantBeStrictWhileStructureIsnt.ts
 PASS TypeScript/tests/cases/compiler/varianceMeasurement.ts
 PASS TypeScript/tests/cases/compiler/varianceProblingAndZeroOrderIndexSignatureRelationsAlign.ts
 PASS TypeScript/tests/cases/compiler/varianceProblingAndZeroOrderIndexSignatureRelationsAlign2.ts
-PASS TypeScript/tests/cases/compiler/varianceReferences.ts
 PASS TypeScript/tests/cases/compiler/variancePropagation.ts
 PASS TypeScript/tests/cases/compiler/varianceRepeatedlyPropegatesWithUnreliableFlag.ts
 PASS TypeScript/tests/cases/compiler/verbatim-declarations-parameters.ts

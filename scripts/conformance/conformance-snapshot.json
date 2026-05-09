@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-05-09T11:24:48Z",
-  "git_sha": "85e92945975e98018c5b70045844a0e14e72e594",
+  "timestamp": "2026-05-09T20:47:11Z",
+  "git_sha": "40b918ebc4d2cb4941b04bb386d6d18e0c007dda",
   "summary": {
     "total_tests": 12582,
     "passed": 12538,
     "failed": 44,
-    "pass_rate": 99.65
+    "pass_rate": 99.7
   },
   "areas_by_pass_rate": [
     {
@@ -109,9 +109,9 @@
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6496,
-      "failed": 24,
-      "pass_rate": 99.63
+      "passed": 6497,
+      "failed": 23,
+      "pass_rate": 99.65
     },
     {
       "area": "ambient",
