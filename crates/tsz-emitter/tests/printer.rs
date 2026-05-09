@@ -303,17 +303,13 @@ fn test_exponentiation_assignment_property_access_temps_simple_base() {
 #[test]
 fn test_optional_call_downlevel_to_conditional() {
     let source = "const fn = () => 1;\nconst obj = { m() { return this; } };\nfn?.();\nobj?.m();\nobj.m?.();\nobj?.m?.();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2019,
             ..Default::default()
         },
-    )
-    .code;
+    );
     assert!(output.contains("fn === null || fn === void 0 ? void 0 : fn()"));
     assert!(output.matches(".call(").count() >= 2);
     assert!(!output.contains("?.("));

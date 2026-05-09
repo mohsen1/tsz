@@ -14,6 +14,7 @@ and limitations under the License.
 ***************************************************************************** */
 
 
+/// <reference lib="es2020.intl" />
 declare namespace Intl {
     interface DateTimeFormatPartTypesRegistry {
         fractionalSecond: any;
@@ -25,6 +26,15 @@ declare namespace Intl {
         timeStyle?: "full" | "long" | "medium" | "short" | undefined;
         dayPeriod?: "narrow" | "short" | "long" | undefined;
         fractionalSecondDigits?: 1 | 2 | 3 | undefined;
+    }
+
+    // `DateTimeFormatPart` is declared in `lib.es2017.intl.d.ts`. Forward-declare
+    // it here so this file is self-contained for tsz's per-file checker —
+    // declaration-merging across the bundled lib files does not yet rediscover
+    // sibling-file types when a forward reference appears in the same namespace.
+    interface DateTimeFormatPart {
+        type: DateTimeFormatPartTypes;
+        value: string;
     }
 
     interface DateTimeRangeFormatPart extends DateTimeFormatPart {

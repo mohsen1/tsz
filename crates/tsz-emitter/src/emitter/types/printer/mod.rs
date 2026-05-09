@@ -69,7 +69,7 @@ impl<'a> TypePrinter<'a> {
             symbol_arena: None,
             type_cache: None,
             current_depth: 0,
-            max_depth: 10,
+            max_depth: 128,
             indent_level: None,
             enclosing_symbol: None,
             node_arena: None,
