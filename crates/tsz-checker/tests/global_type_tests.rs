@@ -8,7 +8,6 @@
 
 use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
-use crate::test_fixtures::TestContext;
 use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
@@ -454,50 +453,14 @@ fn load_lib_files_for_global_type_tests() -> Vec<Arc<LibFile>> {
 }
 
 /// Helper function to create a checker WITH lib.d.ts and check source code.
-/// This creates the checker with the parser's arena directly and loads lib files.
 fn check_with_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
-    let ctx = TestContext::new_with_libs(load_lib_files_for_global_type_tests());
-
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    // No parse errors expected in these tests
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions::default();
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(), // Use parser's arena directly
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(ctx.lib_files.len());
-    }
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    let lib_files = load_lib_files_for_global_type_tests();
+    crate::checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    )
 }
 
 #[test]

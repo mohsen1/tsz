@@ -11,37 +11,14 @@
 //! - Anyish inference detection across composite types
 //! - Return context substitution through tuples, arrays, and generics
 
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::context::LibContext as CheckerLibContext;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::lib_loader::LibFile;
 
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
+    tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
         .into_iter()
         .map(|d| (d.code, d.message_text))
         .collect()
@@ -68,37 +45,15 @@ fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
 
 fn compile_with_es5_lib_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     let lib_files = load_es5_lib_files_for_test();
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
         CheckerOptions::default(),
-    );
-
-    let lib_contexts = lib_files
-        .iter()
-        .map(|lib| CheckerLibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    checker.ctx.set_lib_contexts(lib_contexts);
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+        &lib_files,
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 fn relevant_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
@@ -109,60 +64,32 @@ fn relevant_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 fn compile_strict_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
         CheckerOptions {
             strict: true,
             ..CheckerOptions::default()
         },
-    );
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 fn compile_js_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
         CheckerOptions {
             allow_js: true,
             check_js: true,
             ..CheckerOptions::default()
         },
-    );
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 fn relevant_diagnostics(source: &str) -> Vec<(u32, String)> {
