@@ -1695,14 +1695,23 @@ impl TypeInterner {
         &self,
         conditional: ConditionalType,
     ) -> ConditionalTypeId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_conditional_intern_calls,
+        );
         ConditionalTypeId(self.conditional_types.intern(conditional))
     }
 
     pub(super) fn intern_mapped_type(&self, mapped: MappedType) -> MappedTypeId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_mapped_intern_calls,
+        );
         MappedTypeId(self.mapped_types.intern(mapped))
     }
 
     pub(super) fn intern_application(&self, application: TypeApplication) -> TypeApplicationId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_application_intern_calls,
+        );
         TypeApplicationId(self.applications.intern(application))
     }
 
