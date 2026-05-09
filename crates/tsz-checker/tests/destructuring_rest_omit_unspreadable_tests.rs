@@ -9,39 +9,10 @@
 //! as `Omit<T, "method" | "getter" | "setter" | <explicit destructured>>`.
 //! The K order is methods first, then accessors in source declaration order.
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
-use tsz_common::checker_options::CheckerOptions;
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn checker_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let file_name = "test.ts";
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let options = CheckerOptions::default();
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    tsz_checker::test_utils::check_source_code_messages(source)
 }
 
 fn ts2339_messages(diags: &[(u32, String)]) -> Vec<String> {
