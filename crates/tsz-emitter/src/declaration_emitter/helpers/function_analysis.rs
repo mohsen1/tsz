@@ -1084,7 +1084,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(expr_node)?;
-            if let Some(sym_id) = binder.get_node_symbol(access.name_or_argument) {
+            let is_super_access = self
+                .arena
+                .get(access.expression)
+                .is_some_and(|base| base.kind == SyntaxKind::SuperKeyword as u16);
+            if !is_super_access
+                && let Some(sym_id) = binder.get_node_symbol(access.name_or_argument)
+            {
                 return Some(sym_id);
             }
             if self
