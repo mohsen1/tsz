@@ -101,9 +101,14 @@ KYSELY_DIR="$EXTERNAL_BENCH_DIR/kysely"
 LARGE_TS_REPO="${LARGE_TS_REPO:-https://github.com/mohsen1/large-ts-repo.git}"
 LARGE_TS_REF="${LARGE_TS_REF:-e1b22bda18664a507ed0da19c155e0365d585b18}"
 LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
+# The local fallback was previously implicit, which silently contaminated
+# PR-quality numbers on any developer machine that happened to have a
+# checkout. Gate it behind TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1 so the default
+# is the pinned external clone. See docs/plan/PERFORMANCE_PLAN.md §3.5.1.
 if [ -n "${LARGE_TS_DIR:-}" ]; then
     LARGE_TS_DIR="$LARGE_TS_DIR"
-elif [ -d "$LARGE_TS_LOCAL_DIR/.git" ]; then
+elif [ "${TSZ_BENCH_ALLOW_LOCAL_FIXTURE:-0}" = "1" ] \
+     && [ -d "$LARGE_TS_LOCAL_DIR/.git" ]; then
     LARGE_TS_DIR="$LARGE_TS_LOCAL_DIR"
 else
     LARGE_TS_DIR="$EXTERNAL_BENCH_DIR/large-ts-repo"

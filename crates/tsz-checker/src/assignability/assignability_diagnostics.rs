@@ -1023,6 +1023,9 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_partial_self_argument_mismatch(source, target) {
             return true;
         }
+        if self.should_suppress_self_referential_generic_function_arg_mismatch(source, target) {
+            return true;
+        }
         if self.should_suppress_self_referential_mapped_constraint_arg_mismatch(
             source, target, arg_idx,
         ) {
@@ -1127,6 +1130,59 @@ impl<'a> CheckerState<'a> {
         }
 
         self.partial_inner_alias_instantiates_to_source(inner, source)
+    }
+
+    fn should_suppress_self_referential_generic_function_arg_mismatch(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let Some(source_sig) = crate::query_boundaries::common::callable_shape_for_type_extended(
+            self.ctx.types,
+            source,
+        )
+        .and_then(|shape| {
+            (shape.call_signatures.len() == 1).then(|| shape.call_signatures[0].clone())
+        }) else {
+            return false;
+        };
+        if !source_sig.type_params.iter().any(|tp| {
+            tp.constraint.is_some_and(|constraint| {
+                crate::query_boundaries::common::contains_type_parameter_named(
+                    self.ctx.types,
+                    constraint,
+                    tp.name,
+                )
+            })
+        }) {
+            return false;
+        }
+
+        let Some(target_sig) = crate::query_boundaries::common::callable_shape_for_type_extended(
+            self.ctx.types,
+            target,
+        )
+        .and_then(|shape| {
+            (shape.call_signatures.len() == 1).then(|| shape.call_signatures[0].clone())
+        }) else {
+            return false;
+        };
+        if target_sig.return_type != TypeId::UNKNOWN {
+            return false;
+        }
+        let Some(rest_param) = target_sig.params.last().filter(|param| param.rest) else {
+            return false;
+        };
+        if rest_param.type_id == TypeId::UNKNOWN {
+            return true;
+        }
+        crate::query_boundaries::common::tuple_elements(self.ctx.types, rest_param.type_id)
+            .is_some_and(|elements| {
+                !elements.is_empty()
+                    && elements
+                        .iter()
+                        .all(|element| element.type_id == TypeId::UNKNOWN)
+            })
     }
 
     pub(crate) fn should_suppress_self_referential_mapped_constraint_arg_mismatch(
