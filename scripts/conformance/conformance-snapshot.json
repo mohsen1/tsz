@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-09T08:40:52Z",
-  "git_sha": "f67c3038989b525034b5a08bef8053fd8f06c67b",
+  "timestamp": "2026-05-09T10:29:19Z",
+  "git_sha": "6b672cf25468acb953fdd113ee61f03e8cbdc6e7",
   "summary": {
     "total_tests": 12582,
-    "passed": 12533,
-    "failed": 49,
+    "passed": 12536,
+    "failed": 46,
     "pass_rate": 99.6
   },
   "areas_by_pass_rate": [
@@ -14,6 +14,13 @@
       "passed": 8,
       "failed": 2,
       "pass_rate": 80.0
+    },
+    {
+      "area": "types/mapped",
+      "total": 26,
+      "passed": 24,
+      "failed": 2,
+      "pass_rate": 92.31
     },
     {
       "area": "classes",
@@ -28,13 +35,6 @@
       "passed": 15,
       "failed": 1,
       "pass_rate": 93.75
-    },
-    {
-      "area": "types/typeParameters",
-      "total": 46,
-      "passed": 44,
-      "failed": 2,
-      "pass_rate": 95.65
     },
     {
       "area": "expressions/functionCalls",
@@ -58,13 +58,6 @@
       "pass_rate": 96.0
     },
     {
-      "area": "types/mapped",
-      "total": 26,
-      "passed": 25,
-      "failed": 1,
-      "pass_rate": 96.15
-    },
-    {
       "area": "types/members",
       "total": 34,
       "passed": 33,
@@ -77,6 +70,13 @@
       "passed": 33,
       "failed": 1,
       "pass_rate": 97.06
+    },
+    {
+      "area": "types/typeParameters",
+      "total": 46,
+      "passed": 45,
+      "failed": 1,
+      "pass_rate": 97.83
     },
     {
       "area": "salsa",
@@ -109,9 +109,9 @@
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6493,
-      "failed": 27,
-      "pass_rate": 99.59
+      "passed": 6496,
+      "failed": 24,
+      "pass_rate": 99.63
     },
     {
       "area": "ambient",
@@ -720,30 +720,15 @@
   "not_implemented_codes": [],
   "partial_codes": [],
   "one_missing_zero_extra": [],
-  "one_extra_zero_missing": [
-    {
-      "code": "TS2345",
-      "count": 1
-    }
-  ],
-  "false_positive_codes": [
-    {
-      "code": "TS2345",
-      "count": 1
-    }
-  ],
+  "one_extra_zero_missing": [],
+  "false_positive_codes": [],
   "top_missing_codes": [],
-  "top_extra_codes": [
-    {
-      "code": "TS2345",
-      "count": 1
-    }
-  ],
+  "top_extra_codes": [],
   "categories": {
-    "false_positive": 1,
+    "false_positive": 0,
     "all_missing": 0,
     "wrong_code": 0,
-    "fingerprint_only": 48,
+    "fingerprint_only": 46,
     "same_code_count_drift": 0,
     "close_to_passing": 0
   }
