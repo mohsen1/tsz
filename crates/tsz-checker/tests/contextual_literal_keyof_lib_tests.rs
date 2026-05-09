@@ -12,93 +12,31 @@
 //! through the contextual property API.
 //!
 //! Repro for the original arrayToLocaleStringES2015 / ES2020 conformance cases.
-use tsz_binder::BinderState;
-use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::context::ScriptTarget;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::state::CheckerState;
-use tsz_checker::test_utils::check_source;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-use rustc_hash::FxHashSet;
-use std::path::Path;
-use std::sync::Arc;
+use tsz_checker::test_utils::{check_source, check_source_with_libs, load_lib_files};
 
 fn check(source: &str) -> Vec<Diagnostic> {
     check_source(source, "test.ts", CheckerOptions::default())
 }
 
-fn load_named_lib_files_for_test(lib_names: &[&str]) -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../TypeScript/lib"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if !seen_files.insert((*file_name).to_string()) {
-                    break;
-                }
-                lib_files.push(Arc::new(LibFile::from_source(
-                    (*file_name).to_string(),
-                    content,
-                )));
-                break;
-            }
-        }
-    }
-
-    lib_files
-}
-
 fn check_with_named_libs(source: &str, lib_names: &[&str]) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let lib_files = load_named_lib_files_for_test(lib_names);
+    let lib_files = load_lib_files(lib_names);
     assert!(
         !lib_files.is_empty(),
         "test libs should be available for {lib_names:?}"
     );
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    check_source_with_libs(
+        source,
+        "test.ts",
         CheckerOptions {
             strict: true,
             target: ScriptTarget::ES2020,
             ..CheckerOptions::default()
         },
-    );
-
-    let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
-        .iter()
-        .map(|lib| tsz_checker::context::LibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    checker.ctx.set_lib_contexts(lib_contexts);
-    checker.ctx.set_actual_lib_file_count(lib_files.len());
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+        &lib_files,
+    )
 }
 
 const NS_PRELUDE: &str = r#"
