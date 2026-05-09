@@ -11,7 +11,7 @@ use crate::wasm_api::language_service::TsLanguageService;
 use crate::wasm_api::program::{TsCompilerOptions, create_ts_program};
 use crate::wasm_api::utilities::{
     create_source_file, is_keyword, is_punctuation, parse_config_file_text_to_json,
-    parse_json_text, syntax_kind_to_name, token_to_string,
+    parse_json_text, scan_tokens, syntax_kind_to_name, token_to_string,
 };
 use crate::{Parser, TsDiagnostic, TsProgram, TsSourceFile, TsSymbol, TsType};
 use tsz_scanner::SyntaxKind;
@@ -377,6 +377,57 @@ fn test_wasm_utility_kind_predicates_and_token_text() {
     assert!(is_punctuation(SyntaxKind::SlashToken as u16));
     assert_eq!(token_to_string(42), Some("/".to_string()));
     assert!(is_keyword(SyntaxKind::ClassKeyword as u16));
+}
+
+#[test]
+fn test_wasm_scan_tokens_returns_token_stream() {
+    let json = scan_tokens("const x = 1;");
+    let tokens: Vec<Value> = serde_json::from_str(&json).unwrap();
+
+    assert!(
+        tokens.len() >= 5,
+        "expected token stream for `const x = 1;`, got {tokens:?}"
+    );
+
+    // Trivia should be skipped: there should be no whitespace token
+    // between `const` and `x`.
+    let kinds: Vec<u64> = tokens.iter().map(|t| t["kind"].as_u64().unwrap()).collect();
+    assert_eq!(kinds[0], SyntaxKind::ConstKeyword as u64);
+    assert_eq!(kinds[1], SyntaxKind::Identifier as u64);
+    assert_eq!(kinds[2], SyntaxKind::EqualsToken as u64);
+    assert_eq!(kinds[3], SyntaxKind::NumericLiteral as u64);
+    assert_eq!(kinds[4], SyntaxKind::SemicolonToken as u64);
+
+    // Spans round-trip back to the source text and are non-decreasing.
+    let mut last_end: u64 = 0;
+    for token in &tokens {
+        let start = token["start"].as_u64().unwrap();
+        let end = token["end"].as_u64().unwrap();
+        let text = token["text"].as_str().unwrap();
+        assert!(start >= last_end, "tokens overlap: {tokens:?}");
+        assert!(end > start, "empty-span token: {token:?}");
+        assert_eq!(
+            &"const x = 1;"[start as usize..end as usize],
+            text,
+            "token text does not match span: {token:?}"
+        );
+        last_end = end;
+    }
+
+    // EOF is not emitted as an explicit token in the stream.
+    assert!(
+        kinds
+            .iter()
+            .all(|k| *k != SyntaxKind::EndOfFileToken as u64),
+        "EOF should not appear in the token stream: {kinds:?}"
+    );
+}
+
+#[test]
+fn test_wasm_scan_tokens_empty_input() {
+    let json = scan_tokens("");
+    let tokens: Vec<Value> = serde_json::from_str(&json).unwrap();
+    assert!(tokens.is_empty());
 }
 
 #[test]
