@@ -40,6 +40,7 @@ pub mod traversal;
 // Re-export shared predicates from visitor_predicates to avoid duplication.
 // These are the canonical implementations; type_queries re-exports them so
 // callers can use a single `type_queries::*` import.
+pub use crate::ts_type_flags::{is_nullable_type, type_id_ts_flags};
 pub use crate::visitors::visitor_predicates::{
     contains_any_type, is_array_type, is_conditional_type, is_empty_object_type, is_function_type,
     is_generic_application, is_index_access_type, is_intersection_type, is_literal_type,
