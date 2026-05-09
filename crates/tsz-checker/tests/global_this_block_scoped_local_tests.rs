@@ -14,7 +14,6 @@
 //! Fix: reject lib candidates whose `parent` is a callable
 //! (FUNCTION / METHOD / CONSTRUCTOR / `GET_ACCESSOR` / `SET_ACCESSOR` / SIGNATURE).
 
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
@@ -25,27 +24,7 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn load_lib_files() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../scripts/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
-    ];
-
-    let mut lib_files = Vec::new();
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let lib = LibFile::from_source(
-                lib_path.file_name().unwrap().to_string_lossy().to_string(),
-                content,
-            );
-            lib_files.push(Arc::new(lib));
-        }
-    }
-    lib_files
+    tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts", "lib.dom.d.ts"])
 }
 
 fn diagnostics(source: &str) -> Vec<(u32, String)> {
