@@ -83,33 +83,52 @@ impl SourceMapGenerator {
     }
 
     /// Add a source file
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of sources would exceed `u32::MAX`. Source-map
+    /// indices are emitted as VLQ-encoded `i32` values, so silently saturating
+    /// the index would corrupt the generated mapping; the panic surfaces the
+    /// overflow loudly instead.
     #[must_use]
     pub fn add_source(&mut self, source: String) -> u32 {
-        let index = u32::try_from(self.sources.len()).unwrap_or(u32::MAX);
+        let index =
+            u32::try_from(self.sources.len()).expect("source map source index overflowed u32");
         self.sources.push(source);
         self.sources_content.push(None);
         index
     }
 
     /// Add a source file with content
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of sources would exceed `u32::MAX`. See
+    /// [`SourceMapGenerator::add_source`] for the rationale.
     #[must_use]
     pub fn add_source_with_content(&mut self, source: String, content: String) -> u32 {
-        let index = u32::try_from(self.sources.len()).unwrap_or(u32::MAX);
+        let index =
+            u32::try_from(self.sources.len()).expect("source map source index overflowed u32");
         self.sources.push(source);
         self.sources_content.push(Some(content));
         index
     }
 
     /// Add a name to the names array
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of names would exceed `u32::MAX`. See
+    /// [`SourceMapGenerator::add_source`] for the rationale.
     #[must_use]
     pub fn add_name(&mut self, name: String) -> u32 {
         // Check if name already exists
         for (i, n) in self.names.iter().enumerate() {
             if n == &name {
-                return u32::try_from(i).unwrap_or(u32::MAX);
+                return u32::try_from(i).expect("source map name index overflowed u32");
             }
         }
-        let index = u32::try_from(self.names.len()).unwrap_or(u32::MAX);
+        let index = u32::try_from(self.names.len()).expect("source map name index overflowed u32");
         self.names.push(name);
         index
     }
