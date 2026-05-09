@@ -1588,13 +1588,14 @@ impl<'a> CheckerContext<'a> {
             self.emitted_diagnostics.remove(&(start, 2663));
         }
 
-        // TS2304 and TS2552 are mutually exclusive at the same position.
-        // TS2552 (with spelling suggestion) takes priority over TS2304 (without).
-        // Multiple code paths can emit these for the same unresolved name.
-        if code == 2304 && self.emitted_diagnostics.contains(&(start, 2552)) {
+        // Prefer specific name suggestions over generic "Cannot find name".
+        if code == 2304
+            && (self.emitted_diagnostics.contains(&(start, 2552))
+                || self.emitted_diagnostics.contains(&(start, 2663)))
+        {
             return;
         }
-        if code == 2552 {
+        if code == 2552 || code == 2663 {
             self.diagnostics
                 .retain(|diag| !(diag.start == start && diag.code == 2304));
             self.emitted_diagnostics.remove(&(start, 2304));
@@ -1667,12 +1668,14 @@ impl<'a> CheckerContext<'a> {
             self.emitted_diagnostics.remove(&(diag.start, 2552));
             self.emitted_diagnostics.remove(&(diag.start, 2663));
         }
-        // TS2304 and TS2552 are mutually exclusive at the same position.
-        // TS2552 (with spelling suggestion) takes priority over TS2304 (without).
-        if diag.code == 2304 && self.emitted_diagnostics.contains(&(diag.start, 2552)) {
+        // Prefer specific name suggestions over generic "Cannot find name".
+        if diag.code == 2304
+            && (self.emitted_diagnostics.contains(&(diag.start, 2552))
+                || self.emitted_diagnostics.contains(&(diag.start, 2663)))
+        {
             return;
         }
-        if diag.code == 2552 {
+        if diag.code == 2552 || diag.code == 2663 {
             self.diagnostics
                 .retain(|existing| !(existing.start == diag.start && existing.code == 2304));
             self.emitted_diagnostics.remove(&(diag.start, 2304));
