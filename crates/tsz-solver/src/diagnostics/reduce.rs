@@ -19,11 +19,38 @@
 //! properties, and it is safe to call from diagnostic paths.
 
 use rustc_hash::FxHashSet;
+use std::cell::RefCell;
 
 use crate::TypeDatabase;
 use crate::TypeResolver;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::types::{PropertyInfo, TypeData, TypeId};
+
+// Reusable scratch `FxHashSet<TypeId>` for `deep_reduce_for_display`'s
+// recursive DFS. Mirrors the pool pattern from #4722 / #4790 and follow-up PRs.
+thread_local! {
+    static REDUCE_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_reduce_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = REDUCE_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    REDUCE_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 /// Deeply reduce meta-type applications inside `type_id` using `resolver`.
 ///
@@ -41,9 +68,8 @@ pub fn deep_reduce_for_display<R: TypeResolver>(
     resolver: &R,
     type_id: TypeId,
 ) -> TypeId {
-    let mut visited = FxHashSet::default();
     let mut evaluator = TypeEvaluator::with_resolver(db, resolver);
-    reduce_inner(db, &mut evaluator, type_id, &mut visited)
+    with_reduce_visited(|visited| reduce_inner(db, &mut evaluator, type_id, visited))
 }
 
 fn reduce_inner<R: TypeResolver>(
