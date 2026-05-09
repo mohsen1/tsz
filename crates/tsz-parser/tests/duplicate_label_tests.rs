@@ -1,6 +1,6 @@
 //! Tests for duplicate label detection (TS1114)
 
-use crate::parser::state::ParserState;
+use crate::parser::test_fixture::parse_source;
 
 #[test]
 fn test_duplicate_label_nested() {
@@ -9,8 +9,7 @@ target:
 target:
 while (true) {}
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should have one TS1114 error for duplicate label
     let errors: Vec<_> = parser
@@ -34,8 +33,7 @@ while (true) {}
 target:
 while (true) {}
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should have NO TS1114 error - sequential labels are allowed
     let errors: Vec<_> = parser
@@ -61,8 +59,7 @@ while (true) {
   }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should have NO TS1114 error - labels in different function scopes are allowed
     let errors: Vec<_> = parser
@@ -88,8 +85,7 @@ for (;;) {
   };
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should have NO TS1114 error - labels in arrow function have separate scope
     let errors: Vec<_> = parser
@@ -114,8 +110,7 @@ fn test_duplicate_label_in_nested_blocks() {
   target: while (true) {}
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
 
     // Should have NO TS1114 error - labels in separate blocks are sequential
     let errors: Vec<_> = parser
