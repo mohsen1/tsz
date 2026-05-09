@@ -1939,7 +1939,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // but they also should not poison checking with TypeId::ERROR.
             k if k == syntax_kind_ext::BLOCK
                 || k == syntax_kind_ext::NAMED_IMPORTS
-                || k == syntax_kind_ext::NAMED_EXPORTS =>
+                || k == syntax_kind_ext::NAMED_EXPORTS
+                || k == syntax_kind_ext::METHOD_SIGNATURE =>
             {
                 TypeId::VOID
             }
