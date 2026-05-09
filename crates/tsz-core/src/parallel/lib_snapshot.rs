@@ -268,6 +268,7 @@ mod tests {
     /// reconstituted arena AND that bound symbols (Promise, greeting,
     /// declared modules) are intact.
     #[test]
+    #[allow(unsafe_code)]
     fn disk_round_trip_resolves_identifier_text_and_symbols() {
         // SAFETY: nextest runs each test in its own process, so the env
         // mutations don't race other threads.
