@@ -42,6 +42,7 @@ use crate::def::DefId;
 use crate::types::{IntrinsicKind, StringIntrinsicKind, TupleElement, TypeParamInfo};
 use crate::{LiteralValue, SymbolRef, TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashSet;
+use std::cell::RefCell;
 
 // Re-export type data extraction helpers (extracted to visitor_extract.rs)
 pub use super::visitor_extract::*;
@@ -564,13 +565,30 @@ where
     }
 }
 
+// Reusable scratch buffers for `walk_referenced_types`. The visited-set and
+// stack are both keyed by `TypeId` and have no per-call state to preserve, so
+// pool them across calls to avoid one fresh `FxHashSet` + `Vec` allocation
+// per invocation. Reentrant calls (when `f` itself calls
+// `walk_referenced_types`) fall through to fresh allocations because `take()`
+// has already emptied the slot. Per docs/plan/PERFORMANCE_PLAN.md §6.3.
+type WalkPool = (FxHashSet<TypeId>, Vec<TypeId>);
+
+thread_local! {
+    static WALK_POOL: RefCell<Option<WalkPool>> = const { RefCell::new(None) };
+}
+
 /// The callback is invoked once per unique reachable type (including `root`).
 pub fn walk_referenced_types<F>(types: &dyn TypeDatabase, root: TypeId, mut f: F)
 where
     F: FnMut(TypeId),
 {
-    let mut visited = FxHashSet::default();
-    let mut stack = vec![root];
+    let mut pool = WALK_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_else(|| (FxHashSet::default(), Vec::new()));
+    let (visited, stack) = &mut pool;
+    visited.clear();
+    stack.clear();
+    stack.push(root);
 
     while let Some(current) = stack.pop() {
         if !visited.insert(current) {
@@ -592,6 +610,21 @@ where
         };
         for_each_child(types, &key, |child| stack.push(child));
     }
+
+    // Return the pool, keeping whichever allocation has the larger visited-set
+    // capacity (a proxy for "saw the bigger graph"). Reentrant inner calls
+    // race with us here; if they have already deposited their smaller pool,
+    // we still win.
+    WALK_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some((existing, _)) => pool.0.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(pool);
+        }
+    });
 }
 
 /// Collect all unique lazy `DefIds` reachable from `root`.

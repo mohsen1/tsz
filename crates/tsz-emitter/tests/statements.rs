@@ -18,10 +18,8 @@ fn parse_and_lower_print(source: &str, opts: PrintOptions) -> String {
     lower_and_print(&parser.arena, root, opts).code
 }
 
-#[test]
-fn recovered_jsx_unary_type_assertion_preserves_trailing_less_than() {
-    let source = "~< <\n";
-    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
+fn parse_and_emit_strict_es2015(source: &str, file_name: &str) -> String {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
     let mut printer = EmitterPrinter::with_options(
         &parser.arena,
@@ -33,68 +31,30 @@ fn recovered_jsx_unary_type_assertion_preserves_trailing_less_than() {
     );
     printer.set_source_text(source);
     printer.emit(root);
-    let output = printer.get_output().to_string();
+    printer.get_output().to_string()
+}
 
+#[test]
+fn recovered_jsx_unary_type_assertion_preserves_trailing_less_than() {
+    let output = parse_and_emit_strict_es2015("~< <\n", "a.js");
     assert_eq!(output.trim_end(), "\"use strict\";\n~< /> <\n;");
 }
 
 #[test]
 fn invalid_jsx_closing_fragment_drops_recovered_slash() {
-    let source = "</>;";
-    let mut parser = ParserState::new("a.tsx".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut printer = EmitterPrinter::with_options(
-        &parser.arena,
-        PrinterOptions {
-            always_strict: true,
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-    printer.set_source_text(source);
-    printer.emit(root);
-    let output = printer.get_output().to_string();
-
+    let output = parse_and_emit_strict_es2015("</>;", "a.tsx");
     assert_eq!(output.trim_end(), "\"use strict\";\n > ;");
 }
 
 #[test]
 fn js_satisfies_binary_expression_is_erased() {
-    let source = "var v = undefined satisfies 1;";
-    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut printer = EmitterPrinter::with_options(
-        &parser.arena,
-        PrinterOptions {
-            always_strict: true,
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-    printer.set_source_text(source);
-    printer.emit(root);
-    let output = printer.get_output().to_string();
-
+    let output = parse_and_emit_strict_es2015("var v = undefined satisfies 1;", "a.js");
     assert_eq!(output.trim_end(), "\"use strict\";\nvar v = undefined;");
 }
 
 #[test]
 fn recovered_regex_close_bracket_slash_tail_emits_slash_statement() {
-    let source = "var v = /[]/]/";
-    let mut parser = ParserState::new("a.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut printer = EmitterPrinter::with_options(
-        &parser.arena,
-        PrinterOptions {
-            always_strict: true,
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-    printer.set_source_text(source);
-    printer.emit(root);
-    let output = printer.get_output().to_string();
-
+    let output = parse_and_emit_strict_es2015("var v = /[]/]/", "a.ts");
     assert_eq!(output.trim_end(), "\"use strict\";\nvar v = /[]/;\n/;");
 }
 
