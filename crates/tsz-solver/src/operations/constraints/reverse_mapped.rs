@@ -12,7 +12,36 @@ use crate::types::{
     TypeId, TypeListId, Visibility,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tracing::trace;
+
+// Reusable scratch `FxHashSet<TypeId>` for `type_contains_placeholder` calls
+// in this module. Mirrors the pool pattern from #4722 / #4790 / #4801 /
+// #4805 / #4807 / #4810 / #4816 / #4818 / #4820.
+thread_local! {
+    static REVERSE_MAPPED_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_reverse_mapped_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = REVERSE_MAPPED_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    REVERSE_MAPPED_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 /// Detect a property source type shaped `Inferable | null | undefined | void` —
 /// the union pattern produced by DOM types like `Document | null` for
@@ -224,8 +253,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if var_map.contains_key(&keyof_target) {
                     return Some(keyof_target);
                 }
-                let mut visited = FxHashSet::default();
-                if self.type_contains_placeholder(keyof_target, var_map, &mut visited) {
+                let contains_placeholder = with_reverse_mapped_visited(|visited| {
+                    self.type_contains_placeholder(keyof_target, var_map, visited)
+                });
+                if contains_placeholder {
                     return Some(keyof_target);
                 }
                 None
