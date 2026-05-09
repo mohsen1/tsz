@@ -4,40 +4,16 @@
 //! even when the values are the same. This validates TypeScript's nominal
 //! typing for enums.
 
-use tsz_binder::BinderState;
-use tsz_checker::state::CheckerState;
-use tsz_checker::test_utils::check_source_code_messages as collect_diagnostics;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::{
+    check_source_code_messages as collect_diagnostics, check_source_diagnostics,
+};
 
 fn test_enum_assignability(source: &str, expected_errors: usize) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        tsz_checker::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    let error_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .count();
+    let diagnostics = check_source_diagnostics(source);
+    let error_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         error_count, expected_errors,
-        "Expected {} TS2322 errors, got {}: {:?}",
-        expected_errors, error_count, checker.ctx.diagnostics
+        "Expected {expected_errors} TS2322 errors, got {error_count}: {diagnostics:?}",
     );
 }
 
