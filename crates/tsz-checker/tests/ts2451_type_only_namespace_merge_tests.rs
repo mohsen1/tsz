@@ -16,7 +16,6 @@
 //! value-instantiating and emitted a duplicate-identifier error against
 //! both the const and the namespace.
 
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
@@ -26,23 +25,7 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn load_lib_files() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.es2015.d.ts"),
-    ];
-    lib_paths
-        .iter()
-        .filter_map(|p| {
-            if p.exists() {
-                let content = std::fs::read_to_string(p).ok()?;
-                let name = p.file_name()?.to_string_lossy().to_string();
-                Some(Arc::new(LibFile::from_source(name, content)))
-            } else {
-                None
-            }
-        })
-        .collect()
+    tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts", "lib.es2015.d.ts"])
 }
 
 fn check(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
