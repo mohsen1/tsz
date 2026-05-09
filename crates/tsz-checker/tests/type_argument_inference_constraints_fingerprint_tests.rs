@@ -146,3 +146,38 @@ Object.groupBy(employees, employee => employee);
         "expected Object.groupBy key constraint to display PropertyKey, got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn ts2344_constraint_message_expands_keyof_any_to_primitive_key_union() {
+    // tsc strips `aliasSymbol` from the constraint when emitting TS2344
+    // ("does not satisfy the constraint 'X'"), so a `Record<K extends
+    // keyof any, T>` (or any other constraint that evaluates to the
+    // primitive-key union) renders as `string | number | symbol` rather
+    // than as the lib alias `PropertyKey`. This mirrors tsc's behaviour for
+    // tests like `compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx` and
+    // `conformance/types/mapped/mappedTypeErrors.ts`, both of which expect
+    // the structural union in the TS2344 fingerprint.
+    let source = r#"
+type Record<K extends keyof any, T> = { [P in K]: T };
+type T = Record<object, number>;
+"#;
+
+    let diagnostics = diagnostics(source);
+    let ts2344: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2344)
+        .collect();
+
+    assert!(
+        ts2344.iter().any(|diagnostic| diagnostic
+            .message_text
+            .contains("does not satisfy the constraint 'string | number | symbol'.")),
+        "expected TS2344 to print the structural primitive-key union, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .all(|diagnostic| !diagnostic.message_text.contains("constraint 'PropertyKey'")),
+        "TS2344 must not collapse `keyof any` to the `PropertyKey` alias, got: {diagnostics:#?}"
+    );
+}

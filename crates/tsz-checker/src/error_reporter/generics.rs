@@ -561,7 +561,7 @@ impl<'a> CheckerState<'a> {
         {
             type_str = format!("typeof {type_str}");
         }
-        let constraint_str = self.format_type_diagnostic(constraint);
+        let constraint_str = self.format_type_diagnostic_constraint(constraint);
         // Structural check: `IndexedAccess(M, K)` where K is a bounded
         // type parameter satisfies any constraint that ALL of M's property
         // value types are assignable to. tsc's `getApparentType` reduces
