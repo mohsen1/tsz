@@ -278,6 +278,142 @@ b.func4;
 }
 
 #[test]
+fn import_equals_require_uses_export_equals_object_value_for_property_access() {
+    let diagnostics = check_commonjs_two_files(
+        "m.ts",
+        r#"
+const c = { a: 1, b: "ok" };
+export = c;
+"#,
+        "a.ts",
+        r#"
+import c1 = require("./m");
+c1.a;
+c1.b;
+c1.missing;
+"#,
+        "./m",
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected only c1.missing to report TS2339, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339[0].1.contains("Property 'missing' does not exist"),
+        "Expected TS2339 to target c1.missing, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn import_equals_require_uses_direct_export_equals_object_literal_for_property_access() {
+    let diagnostics = check_commonjs_two_files(
+        "c.ts",
+        r#"
+export = { a: true, b: "hello" };
+"#,
+        "file1.ts",
+        r#"
+import c1 = require("./c");
+c1.a;
+c1.b;
+c1.missing;
+"#,
+        "./c",
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected only c1.missing to report TS2339, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339[0].1.contains("Property 'missing' does not exist"),
+        "Expected TS2339 to target c1.missing, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn import_equals_require_uses_direct_export_equals_primitive_for_bare_value() {
+    let diagnostics = check_commonjs_two_files(
+        "f.ts",
+        r#"
+export = 10;
+"#,
+        "file1.ts",
+        r#"
+import f = require("f");
+let fnumber: number = f;
+let fstring: string = f;
+"#,
+        "f",
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only string assignment to report TS2322, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0]
+            .1
+            .contains("Type 'number' is not assignable to type 'string'"),
+        "Expected TS2322 to use the export= number value, got: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn import_equals_require_uses_direct_export_equals_class_expression_in_type_position() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.ts",
+        r#"
+export = class {
+    chunk = 1;
+}
+"#,
+        "use.ts",
+        r#"
+import Chunk = require("./mod1");
+declare var c: Chunk;
+c.chunk;
+c.missing;
+"#,
+        "./mod1",
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2749),
+        "Expected Chunk to be accepted in type position, got: {diagnostics:#?}"
+    );
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected only c.missing to report TS2339, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339[0].1.contains("Property 'missing' does not exist"),
+        "Expected TS2339 to target c.missing, got: {ts2339:#?}"
+    );
+}
+
+#[test]
 fn test_chain_assignment_alias() {
     // var multipleDeclarationAlias1 = exports = module.exports;
     let diagnostics = check_commonjs_two_files(
