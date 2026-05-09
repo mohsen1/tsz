@@ -1047,12 +1047,32 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        let value_decl = self
+            .checked_js_constructor_value_declaration(
+                symbol_id,
+                symbol.value_declaration,
+                &symbol.declarations,
+            )
+            .unwrap_or(symbol.value_declaration);
         let symbol_arena = self
             .ctx
             .binder
-            .symbol_arenas
-            .get(&symbol_id)
-            .map_or(self.ctx.arena, |arena| arena.as_ref());
+            .declaration_arenas
+            .get(&(symbol_id, value_decl))
+            .and_then(|arenas| arenas.first().map(|arena| arena.as_ref()))
+            .or_else(|| {
+                self.ctx
+                    .resolve_symbol_file_index(symbol_id)
+                    .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            })
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&symbol_id)
+                    .map(|arena| arena.as_ref())
+            })
+            .unwrap_or(self.ctx.arena);
         let Some(source_file) = symbol_arena.source_files.first() else {
             return false;
         };
@@ -1060,7 +1080,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let value_decl = symbol.value_declaration;
         let Some(node) = symbol_arena.get(value_decl) else {
             return false;
         };

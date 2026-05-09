@@ -141,3 +141,56 @@ SomeClass.prop = 0;
         "Expected no TS18046/TS2339 for cross-file class/constructor merge, but got: {offenders:?}\nAll diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn cross_file_script_constructor_base_keeps_instance_surface_for_override_check() {
+    let diagnostics = check_project(&[
+        (
+            "first.js",
+            r#"
+/**
+ * @constructor
+ * @param {number} numberOxen
+ */
+function Wagon(numberOxen) {
+    this.numberOxen = numberOxen;
+}
+class Drakkhen extends Dragon {}
+"#,
+        ),
+        (
+            "second.ts",
+            r#"
+function Dragon(numberEaten: number) {
+    this.numberEaten = numberEaten;
+}
+class Conestoga extends Wagon {
+    numberOxen: string = "";
+    constructor() { super(4); }
+}
+"#,
+        ),
+    ]);
+
+    let mut second_ts2416_count = 0;
+    let mut false_cross_file_errors = Vec::new();
+    for (file_name, codes) in &diagnostics {
+        for &code in codes {
+            if file_name == "second.ts" && code == 2416 {
+                second_ts2416_count += 1;
+            }
+            if code == 2304 || code == 2339 || (file_name == "second.ts" && code == 2507) {
+                false_cross_file_errors.push((file_name.clone(), code));
+            }
+        }
+    }
+
+    assert_eq!(
+        second_ts2416_count, 1,
+        "Expected exactly one TS2416 in second.ts for Conestoga.numberOxen overriding Wagon.numberOxen, got: {diagnostics:#?}"
+    );
+    assert!(
+        false_cross_file_errors.is_empty(),
+        "Expected no false TS2304/TS2339 or second.ts TS2507 for script-global constructor bases, got: {false_cross_file_errors:?}\nAll diagnostics: {diagnostics:#?}"
+    );
+}
