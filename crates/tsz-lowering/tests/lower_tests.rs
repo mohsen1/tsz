@@ -729,8 +729,10 @@ fn test_lower_deduplicates_identical_types() {
 // Type Parameter Lowering Tests
 // =============================================================================
 
-/// Helper to parse a type alias and return the type node index
-fn parse_type_alias(source: &str) -> (NodeArena, tsz_parser::parser::base::NodeIndex) {
+/// Parse `source` as TypeScript, assert that there are no parse errors,
+/// and return the populated `NodeArena`. Shared preamble for the
+/// `parse_*` lookup helpers below.
+fn parse_and_take_arena(source: &str) -> NodeArena {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
     assert!(
@@ -738,9 +740,12 @@ fn parse_type_alias(source: &str) -> (NodeArena, tsz_parser::parser::base::NodeI
         "Parse errors: {:?}",
         parser.get_diagnostics()
     );
+    std::mem::take(&mut parser.arena)
+}
 
-    // Find the type alias declaration and extract its type_node
-    let arena = std::mem::take(&mut parser.arena);
+/// Helper to parse a type alias and return the type node index
+fn parse_type_alias(source: &str) -> (NodeArena, tsz_parser::parser::base::NodeIndex) {
+    let arena = parse_and_take_arena(source);
 
     // The type alias is typically node 1 (after source file at 0)
     // We need to find the FunctionType node
@@ -759,15 +764,7 @@ fn parse_type_alias(source: &str) -> (NodeArena, tsz_parser::parser::base::NodeI
 
 /// Helper to parse a type alias and return its type node index
 fn parse_type_alias_type_node(source: &str) -> (NodeArena, tsz_parser::parser::base::NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let arena = std::mem::take(&mut parser.arena);
+    let arena = parse_and_take_arena(source);
     let mut type_node = tsz_parser::parser::base::NodeIndex::NONE;
     for i in 0..arena.len() {
         let idx = tsz_parser::parser::base::NodeIndex(i as u32);
@@ -789,15 +786,7 @@ fn parse_type_alias_type_node(source: &str) -> (NodeArena, tsz_parser::parser::b
 
 /// Helper to parse a type alias and return the tuple type node index
 fn parse_tuple_type(source: &str) -> (NodeArena, tsz_parser::parser::base::NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let arena = std::mem::take(&mut parser.arena);
+    let arena = parse_and_take_arena(source);
     for i in 0..arena.len() {
         let idx = tsz_parser::parser::base::NodeIndex(i as u32);
         if let Some(node) = arena.get(idx)
@@ -812,15 +801,7 @@ fn parse_tuple_type(source: &str) -> (NodeArena, tsz_parser::parser::base::NodeI
 
 /// Helper to parse a type alias and return the template literal type node index
 fn parse_template_literal_type(source: &str) -> (NodeArena, tsz_parser::parser::base::NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let arena = std::mem::take(&mut parser.arena);
+    let arena = parse_and_take_arena(source);
     for i in 0..arena.len() {
         let idx = tsz_parser::parser::base::NodeIndex(i as u32);
         if let Some(node) = arena.get(idx)
@@ -835,15 +816,7 @@ fn parse_template_literal_type(source: &str) -> (NodeArena, tsz_parser::parser::
 
 /// Helper to parse a type alias and return the mapped type node index.
 fn parse_mapped_type(source: &str) -> (NodeArena, tsz_parser::parser::base::NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let arena = std::mem::take(&mut parser.arena);
+    let arena = parse_and_take_arena(source);
     for i in 0..arena.len() {
         let idx = tsz_parser::parser::base::NodeIndex(i as u32);
         if let Some(node) = arena.get(idx)
@@ -861,15 +834,7 @@ fn parse_type_reference(
     source: &str,
     name: &str,
 ) -> (NodeArena, tsz_parser::parser::base::NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let arena = std::mem::take(&mut parser.arena);
+    let arena = parse_and_take_arena(source);
     for i in 0..arena.len() {
         let idx = tsz_parser::parser::base::NodeIndex(i as u32);
         if let Some(node) = arena.get(idx)
@@ -888,15 +853,7 @@ fn parse_type_reference(
 
 /// Helper to parse a type alias and return the type literal node index.
 fn parse_type_literal(source: &str) -> (NodeArena, tsz_parser::parser::base::NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let arena = std::mem::take(&mut parser.arena);
+    let arena = parse_and_take_arena(source);
     for i in 0..arena.len() {
         let idx = tsz_parser::parser::base::NodeIndex(i as u32);
         if let Some(node) = arena.get(idx)
@@ -911,15 +868,7 @@ fn parse_type_literal(source: &str) -> (NodeArena, tsz_parser::parser::base::Nod
 
 /// Helper to parse interface declarations by name.
 fn parse_interface_declarations(source: &str, name: &str) -> (NodeArena, Vec<NodeIndex>) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let arena = std::mem::take(&mut parser.arena);
+    let arena = parse_and_take_arena(source);
     let mut declarations = Vec::new();
     for i in 0..arena.len() {
         let idx = tsz_parser::parser::base::NodeIndex(i as u32);
