@@ -589,3 +589,56 @@ let a = 2;
         "Expected TS2503 because invalid JSDoc @import should not bind namespace 'ns', got diagnostics: {rendered:?}"
     );
 }
+
+#[test]
+fn jsdoc_generic_interface_type_rebinds_polymorphic_this_across_files() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "tile1.ts",
+        r#"
+interface Lifecycle<Attrs, State extends Lifecycle<Attrs, State>> {
+    oninit?(vnode: Vnode<Attrs, State>): number;
+    [_: number]: any;
+}
+interface Vnode<Attrs, State extends Lifecycle<Attrs, State>> {
+    tag: Component<Attrs, State>;
+}
+interface Component<Attrs, State extends Lifecycle<Attrs, State>> {
+    view(this: State, vnode: Vnode<Attrs, State>): number;
+}
+interface ClassComponent<A> extends Lifecycle<A, ClassComponent<A>> {
+    oninit?(vnode: Vnode<A, this>): number;
+    view(vnode: Vnode<A, this>): number;
+}
+interface MyAttrs {
+    id: number;
+}
+class C implements ClassComponent<MyAttrs> {
+    view(v: Vnode<MyAttrs, C>) { return 0; }
+    [_: number]: unknown;
+}
+"#,
+        "file1.js",
+        r#"
+/** @type {ClassComponent<any>} */
+const test9 = new C();
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let rendered: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "Expected no TS2322 for JSDoc ClassComponent<any> preserving polymorphic this, got diagnostics: {rendered:?}"
+    );
+}

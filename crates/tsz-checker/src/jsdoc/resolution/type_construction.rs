@@ -639,9 +639,12 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            use crate::query_boundaries::common::instantiate_generic;
-            let instantiated =
-                instantiate_generic(self.ctx.types, body_type, &type_params, &type_args);
+            let instantiated = self.instantiate_jsdoc_generic_symbol_type(
+                sym_id,
+                body_type,
+                &type_params,
+                &type_args,
+            );
             self.register_jsdoc_generic_display_name(base_name, &type_args, instantiated);
             return Some(instantiated);
         }
@@ -690,8 +693,8 @@ impl<'a> CheckerState<'a> {
         // Do NOT evaluate here — the caller (jsdoc_satisfies_annotation_with_pos)
         // calls judge_evaluate, which will expand mapped types while preserving
         // Lazy(DefId) references in value positions for correct type name display.
-        use crate::query_boundaries::common::instantiate_generic;
-        let instantiated = instantiate_generic(self.ctx.types, body_type, &type_params, &type_args);
+        let instantiated =
+            self.instantiate_jsdoc_generic_symbol_type(sym_id, body_type, &type_params, &type_args);
         // Register a display def `Name<Args>` so diagnostics format the
         // instantiated type with its original alias plus the supplied args
         // (`ClassComponent<any>`), matching tsc behavior. The typedef path
@@ -719,6 +722,31 @@ impl<'a> CheckerState<'a> {
             .join(", ");
         let display_name = format!("{base_name}<{args_display}>");
         let _ = self.ensure_jsdoc_instantiated_display_def(&display_name, instantiated);
+    }
+
+    fn instantiate_jsdoc_generic_symbol_type(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        body_type: TypeId,
+        type_params: &[tsz_solver::TypeParamInfo],
+        type_args: &[TypeId],
+    ) -> TypeId {
+        use crate::query_boundaries::common::{
+            contains_this_type, instantiate_generic, substitute_this_type,
+        };
+
+        let mut instantiated =
+            instantiate_generic(self.ctx.types, body_type, type_params, type_args);
+        if contains_this_type(self.ctx.types, instantiated) {
+            let base_type = self.ctx.create_lazy_type_ref(sym_id);
+            let self_type = self
+                .ctx
+                .types
+                .factory()
+                .application(base_type, type_args.to_vec());
+            instantiated = substitute_this_type(self.ctx.types, instantiated, self_type);
+        }
+        instantiated
     }
     pub(in crate::jsdoc::resolution) fn parse_jsdoc_tuple_type(
         &mut self,
