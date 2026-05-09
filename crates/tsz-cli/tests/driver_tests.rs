@@ -1418,7 +1418,7 @@ export type SomeType = import('./inner').SomeType;
 }
 
 #[test]
-fn declaration_emit_default_object_assign_reports_nested_reference_ts2883_for_named_and_default() {
+fn declaration_emit_default_object_assign_reports_nested_reference_ts2883_for_default_only() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
 
@@ -1495,20 +1495,20 @@ export default Object.assign(A, {
 
     assert_eq!(
         ts2883_messages.len(),
-        2,
-        "expected TS2883 diagnostics for both Object.assign named and default exports, got: {ts2883_messages:#?}"
-    );
-    assert!(
-        ts2883_messages
-            .iter()
-            .any(|message| message.contains("inferred type of 'C'")),
-        "expected TS2883 for named export C, got: {ts2883_messages:#?}"
+        1,
+        "expected only the default Object.assign export to report TS2883, got: {ts2883_messages:#?}"
     );
     assert!(
         ts2883_messages
             .iter()
             .any(|message| message.contains("inferred type of 'default'")),
         "expected TS2883 for default export, got: {ts2883_messages:#?}"
+    );
+    assert!(
+        ts2883_messages
+            .iter()
+            .all(|message| !message.contains("inferred type of 'C'")),
+        "named export C has a reusable public surface type and should not report TS2883: {ts2883_messages:#?}"
     );
 }
 
