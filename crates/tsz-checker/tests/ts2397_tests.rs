@@ -1,33 +1,9 @@
 //! Tests for TS2397: Declaration name conflicts with built-in global identifier.
 
-use crate::CheckerState;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
 fn get_diagnostics(source: &str, filename: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new(filename.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        filename.to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
+    crate::test_utils::check_source(source, filename, crate::context::CheckerOptions::default())
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
         .collect()
 }
 
