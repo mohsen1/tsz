@@ -1633,6 +1633,78 @@ z.t = 2
 }
 
 #[test]
+fn test_jsdoc_extends_type_args_specialize_inherited_constructor() {
+    let source = r#"
+/**
+ * @template T
+ * @param {T} flavour
+ */
+function Soup(flavour) {
+    this.flavour = flavour
+}
+
+/** @extends {Soup<{ claim: "ignorant" | "malicious" }>} */
+class Chowder extends Soup {
+}
+
+var chowder = new Chowder({ claim: "ignorant" });
+chowder.flavour.claim
+var errorNoArgs = new Chowder();
+var errorArgType = new Chowder(0);
+"#;
+
+    let diagnostics = check_js(source);
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2339),
+        "Expected JSDoc @extends type arguments to specialize inherited instance properties, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2554 && message.contains("Expected 1 arguments") }),
+        "Expected inherited constructor arity to require Soup's parameter, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2345 && message.contains("not assignable") }),
+        "Expected inherited constructor parameter type to use JSDoc @extends argument, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_class_method_jsdoc_params_check_against_constructor_prototype_method() {
+    let source = r#"
+/**
+ * @constructor
+ * @param {number} numberOxen
+ */
+function Wagon(numberOxen) {
+    this.numberOxen = numberOxen
+}
+/** @param {*[]=} supplies */
+Wagon.prototype.load = function (supplies) {
+}
+class Sql extends Wagon {
+    /**
+     * @param {string[]} files
+     * @param {"csv" | "json"} format
+     */
+    load(files, format) {
+    }
+}
+"#;
+
+    let diagnostics = check_js(source);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2416 && message.contains("Property 'load'") }),
+        "Expected TS2416 for incompatible JSDoc-typed method override, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_generic_constructor_function_template_self_alias_instantiation() {
     let source = r#"
 /**
