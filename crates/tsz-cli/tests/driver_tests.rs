@@ -8156,6 +8156,124 @@ fn compile_resolves_node_modules_types_versions_falls_back_to_wildcard() {
     }
 }
 
+// Regression for issue #4763: package.json `exports` versioned conditions
+// (`types@<range>`) must honor the project-level
+// `typesVersionsCompilerVersion` override. Without the fix, the resolver
+// hardcoded the fallback compiler version and ignored the override here.
+#[test]
+fn compile_resolves_package_exports_versioned_condition_respects_compiler_version_override() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "module": "node16",
+            "moduleResolution": "node16",
+            "noEmitOnError": true
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        "import { thing } from 'inner'; export { thing };",
+    );
+    write_file(
+        &base.join("node_modules/inner/package.json"),
+        r#"{
+          "name": "inner",
+          "exports": {
+            ".": {
+              "types@>=7": "./types-v7/index.d.ts",
+              "types@>=6": "./types-v6/index.d.ts",
+              "default": "./index.js"
+            }
+          }
+        }"#,
+    );
+    // Each branch points at a different declaration file. We deliberately
+    // give one branch a syntax error so the diagnostic file path makes the
+    // resolved branch directly observable.
+    write_file(
+        &base.join("node_modules/inner/types-v7/index.d.ts"),
+        "export const thing = ;",
+    );
+    write_file(
+        &base.join("node_modules/inner/types-v6/index.d.ts"),
+        "export const thing = 1;",
+    );
+
+    let mut args = default_args();
+    args.types_versions_compiler_version = Some("7.1".to_string());
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.file
+                .contains("node_modules/inner/types-v7/index.d.ts")
+        }),
+        "expected `types@>=7` branch to be selected under the override; got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+// Regression for issue #4763: package.json `imports` versioned conditions
+// share the same `resolve_exports_target_candidates` plumbing, so the
+// override must reach `imports` as well.
+#[test]
+fn compile_resolves_package_imports_versioned_condition_respects_compiler_version_override() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "module": "node16",
+            "moduleResolution": "node16",
+            "noEmitOnError": true
+          },
+          "files": ["src/index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("package.json"),
+        r##"{
+          "name": "host",
+          "imports": {
+            "#thing": {
+              "types@>=7": "./types-v7/index.d.ts",
+              "types@>=6": "./types-v6/index.d.ts",
+              "default": "./index.js"
+            }
+          }
+        }"##,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        "import { thing } from '#thing'; export { thing };",
+    );
+    write_file(&base.join("types-v7/index.d.ts"), "export const thing = ;");
+    write_file(&base.join("types-v6/index.d.ts"), "export const thing = 1;");
+
+    let mut args = default_args();
+    args.types_versions_compiler_version = Some("7.1".to_string());
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.file.contains("types-v7/index.d.ts")),
+        "expected `types@>=7` branch to be selected under the override; got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
 #[test]
 fn compile_resolves_package_imports_wildcard() {
     let temp = TempDir::new().expect("temp dir");
