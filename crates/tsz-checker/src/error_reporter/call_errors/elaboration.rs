@@ -1754,7 +1754,8 @@ impl<'a> CheckerState<'a> {
             }
 
             // Check if the property value type is assignable to the target property type
-            if !self.is_assignable_to(source_prop_type, target_prop_type) {
+            let prop_assignable = self.is_assignable_to(source_prop_type, target_prop_type);
+            if !prop_assignable {
                 if self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type) {
                     elaborated = true;
                     continue;
@@ -1917,6 +1918,13 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 elaborated = true;
+            } else if self.emit_polymorphic_this_property_assignment_error(
+                source_prop_type,
+                target_prop_type,
+                prop_name_idx,
+            ) {
+                elaborated = true;
+                continue;
             }
         }
 

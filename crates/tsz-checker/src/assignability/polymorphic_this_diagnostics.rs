@@ -19,6 +19,76 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn emit_polymorphic_this_property_assignment_error(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        if source == target {
+            return false;
+        }
+
+        let Some((base, target_args)) = self.application_info_or_display_alias(target) else {
+            return false;
+        };
+        if !target_args.contains(&TypeId::ANY) {
+            return false;
+        }
+
+        let target_with_unbound_this =
+            crate::query_boundaries::state::type_environment::evaluate_type_suppressing_this(
+                self.ctx.types,
+                &self.ctx,
+                target,
+            );
+        let Some(target_shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(
+            self.ctx.types,
+            target_with_unbound_this,
+        ) else {
+            return false;
+        };
+        let mut has_this_property = target_shape.properties.iter().any(|prop| {
+            !prop.is_method
+                && (crate::query_boundaries::common::contains_this_type(
+                    self.ctx.types,
+                    prop.type_id,
+                ) || (prop.write_type != TypeId::NONE
+                    && crate::query_boundaries::common::contains_this_type(
+                        self.ctx.types,
+                        prop.write_type,
+                    )))
+        });
+
+        if !has_this_property {
+            let base_body = self.resolve_lazy_type(base);
+            if let Some(base_shape) =
+                crate::query_boundaries::common::get_merged_object_shape_for_type(
+                    self.ctx.types,
+                    base_body,
+                )
+            {
+                has_this_property = base_shape.properties.iter().any(|prop| {
+                    !prop.is_method
+                        && (crate::query_boundaries::common::contains_this_type(
+                            self.ctx.types,
+                            prop.type_id,
+                        ) || (prop.write_type != TypeId::NONE
+                            && crate::query_boundaries::common::contains_this_type(
+                                self.ctx.types,
+                                prop.write_type,
+                            )))
+                });
+            }
+        }
+        if !has_this_property {
+            return false;
+        }
+
+        self.error_type_not_assignable_at_with_display_types(source, target, diag_idx);
+        true
+    }
+
     pub(super) fn polymorphic_this_call_assignment_source(
         &mut self,
         source_idx: NodeIndex,
