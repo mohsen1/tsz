@@ -10,18 +10,14 @@ impl<'a> CheckerState<'a> {
         member: TypeId,
         evaluated: TypeId,
     ) -> bool {
-        let alias = self.ctx.types.get_display_alias(member);
+        // Only treat the member as a generic-excess placeholder when its
+        // surface kind is a TypeParameter / Infer / BoundParameter (or an
+        // intersection containing one). `contains_type_parameters` was too
+        // broad: it walked into evaluated bodies of concrete user interfaces
+        // (e.g. `interface A extends Common`) and incorrectly stripped them
+        // from union displays like `Common | A`. tsc keeps both arms there.
         crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, member)
             || crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, evaluated)
-            || alias.is_some_and(|alias| {
-                crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, alias)
-                    || crate::query_boundaries::common::contains_type_parameters(
-                        self.ctx.types,
-                        alias,
-                    )
-            })
-            || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, evaluated)
-            || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, member)
             || self.intersection_contains_type_parameter_like(member)
             || self.intersection_contains_type_parameter_like(evaluated)
     }
@@ -74,21 +70,15 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|&member| self.format_excess_union_member(member))
             .collect::<Vec<_>>();
-        let concrete_displays = member_displays
-            .iter()
-            .filter(|display| !Self::display_looks_generic_excess_union_member_for_display(display))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !concrete_displays.is_empty() && concrete_displays.len() < member_displays.len() {
-            return Some(Self::join_excess_union_member_displays(concrete_displays));
-        }
+        // Bail out for plain-name unions (no `&` intersection arms): those
+        // formatters are upstream of the standard diagnostic pipeline and
+        // already produce the right `Common | A`-style display through
+        // `format_type_diagnostic`.  Forcing the union-wrapper from here
+        // would re-render with the wrong `&` grouping.
         if !member_displays
             .iter()
             .any(|display| display.contains(" & "))
         {
-            // Single concrete member after filtering — fall back to the
-            // standard pipeline so the union-wrapper isn't preserved as
-            // `{name:string;}` when only one member remains.
             if members.len() == 1 && member_displays.len() == 1 {
                 return Some(
                     member_displays
