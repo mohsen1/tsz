@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::sync::Arc;
 
 use tsz_binder::BinderState;
@@ -61,47 +60,11 @@ fn check_entry(
 }
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let search_roots: Vec<&Path> = {
-        let mut roots = vec![manifest_dir];
-        let mut parent = manifest_dir.parent();
-        while let Some(dir) = parent {
-            roots.push(dir);
-            parent = dir.parent();
-        }
-        roots
-    };
-    let candidates = [
-        (
-            "lib.es5.d.ts",
-            ["crates/tsz-core/src/lib-assets-stripped/es5.d.ts"],
-        ),
-        (
-            "lib.es2015.d.ts",
-            ["crates/tsz-core/src/lib-assets-stripped/es2015.d.ts"],
-        ),
-        (
-            "lib.es2015.symbol.d.ts",
-            ["crates/tsz-core/src/lib-assets-stripped/es2015.symbol.d.ts"],
-        ),
-    ];
-
-    let mut lib_files = Vec::new();
-    for (file_name, suffixes) in candidates {
-        let maybe_path = search_roots
-            .iter()
-            .flat_map(|root| suffixes.iter().map(move |suffix| root.join(suffix)))
-            .find(|path| path.exists());
-        if let Some(path) = maybe_path
-            && let Ok(content) = std::fs::read_to_string(&path)
-        {
-            lib_files.push(Arc::new(LibFile::from_source(
-                file_name.to_string(),
-                content,
-            )));
-        }
-    }
-    lib_files
+    tsz_checker::test_utils::load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.d.ts",
+        "lib.es2015.symbol.d.ts",
+    ])
 }
 
 fn check_entry_with_libs(
