@@ -5,44 +5,25 @@
 //! Supported modules: es2020, es2022, esnext, commonjs, amd, system, umd,
 //! node16, nodenext, preserve.
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
 use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ModuleKind;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn get_diagnostics_with_module_and_file(
     source: &str,
     file_name: &str,
     module: ModuleKind,
 ) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
+    tsz_checker::test_utils::check_source(
+        source,
+        file_name,
         CheckerOptions {
             module,
             ..Default::default()
         },
-    );
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 fn get_diagnostics_with_module(source: &str, module: ModuleKind) -> Vec<(u32, String)> {
@@ -50,34 +31,19 @@ fn get_diagnostics_with_module(source: &str, module: ModuleKind) -> Vec<(u32, St
 }
 
 fn get_js_diagnostics_with_module(source: &str, module: ModuleKind) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
         CheckerOptions {
             module,
             allow_js: true,
             check_js: true,
             ..Default::default()
         },
-    );
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 fn has_ts1323(source: &str, module: ModuleKind) -> bool {
