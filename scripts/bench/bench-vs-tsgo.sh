@@ -24,12 +24,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Lib assets: tsz uses embedded (comment-stripped) lib files by default.
-# Setting TSZ_LIB_DIR forces disk-based loading which can cause
-# NodeIndex mismatches between the binder and lowering arenas.
-# Only set TSZ_LIB_DIR when explicitly overridden by the user.
+# Lib assets: benchmark tsz with embedded (comment-stripped) lib files by default.
+# Setting TSZ_LIB_DIR forces disk-based loading for explicit local overrides.
 if [ -n "${TSZ_LIB_DIR:-}" ]; then
     export TSZ_LIB_DIR
+elif [ -z "${TSZ_USE_EMBEDDED_LIBS+x}" ]; then
+    export TSZ_USE_EMBEDDED_LIBS=1
+else
+    export TSZ_USE_EMBEDDED_LIBS
 fi
 
 # Dedicated target directory for benchmarks - isolated from dev builds.

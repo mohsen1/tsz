@@ -379,4 +379,12 @@ mod tests {
             "esnext.temporal.d.ts should define Temporal.ZonedDateTime"
         );
     }
+
+    #[test]
+    fn test_es2021_intl_embedded_lib_is_self_contained_for_datetime_range_parts() {
+        let content =
+            get_lib_content("es2021.intl.d.ts").expect("es2021.intl.d.ts should be embedded");
+        assert!(content.contains("interface DateTimeFormatPart"));
+        assert!(content.contains("interface DateTimeRangeFormatPart extends DateTimeFormatPart"));
+    }
 }
