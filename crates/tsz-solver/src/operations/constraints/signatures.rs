@@ -155,14 +155,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // property would incorrectly fix `T = undefined` during partial
                     // Round 1 inference (where context-sensitive properties are
                     // intentionally omitted from the source).
-                    let mut placeholder_visited = FxHashSet::default();
+                    let target_has_placeholder = with_signatures_visited(|visited| {
+                        self.type_contains_placeholder(target.type_id, var_map, visited)
+                    });
                     if target.optional
                         && !var_map.contains_key(&target.type_id)
-                        && !self.type_contains_placeholder(
-                            target.type_id,
-                            var_map,
-                            &mut placeholder_visited,
-                        )
+                        && !target_has_placeholder
                     {
                         self.constrain_types(
                             ctx,
@@ -180,14 +178,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Handle remaining target properties that are missing from source
         while target_idx < target_props.len() {
             let target = &target_props[target_idx];
-            let mut placeholder_visited = FxHashSet::default();
-            if target.optional
-                && !var_map.contains_key(&target.type_id)
-                && !self.type_contains_placeholder(
-                    target.type_id,
-                    var_map,
-                    &mut placeholder_visited,
-                )
+            let target_has_placeholder = with_signatures_visited(|visited| {
+                self.type_contains_placeholder(target.type_id, var_map, visited)
+            });
+            if target.optional && !var_map.contains_key(&target.type_id) && !target_has_placeholder
             {
                 self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id, priority);
             }
@@ -500,8 +494,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         is_constructor: bool,
     ) -> Option<usize> {
-        let mut placeholder_visited = FxHashSet::default();
-        if self.type_contains_placeholder(target_fn, var_map, &mut placeholder_visited) {
+        let target_has_placeholder = with_signatures_visited(|visited| {
+            self.type_contains_placeholder(target_fn, var_map, visited)
+        });
+        if target_has_placeholder {
             let last_idx = signatures
                 .iter()
                 .rposition(|sig| sig.type_params.is_empty())?;
@@ -953,8 +949,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // target (e.g., {kind:T} vs {kind:'a'}|{kind:'b'}) creates separate
             // upper bounds 'a' and 'b', causing false TS2345 when the covariant
             // result ('a') fails to satisfy upper bound 'b'.
-            let mut placeholder_visited = FxHashSet::default();
-            if self.type_contains_placeholder(target_param, var_map, &mut placeholder_visited) {
+            let target_has_placeholder = with_signatures_visited(|visited| {
+                self.type_contains_placeholder(target_param, var_map, visited)
+            });
+            if target_has_placeholder {
                 let was_contra = ctx.in_contra_mode;
                 ctx.in_contra_mode = true;
                 self.constrain_types(ctx, var_map, source_param, target_param, priority);
