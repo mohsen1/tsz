@@ -7,34 +7,12 @@
 //! display was already a concrete literal value (tsc never substitutes the
 //! wrapper interface here).
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
 use tsz_checker::context::CheckerOptions;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn diagnostic_messages(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
+    tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
         .collect()
 }
 
