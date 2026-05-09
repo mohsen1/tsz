@@ -1396,10 +1396,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let (s_effective, t_effective) = self.effective_param_type_pair(s_param, t_param);
             // Check parameter compatibility (contravariant in strict mode, bivariant in legacy)
             if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method_or_ctor) {
+                let inner_reason = self.explain_failure(t_effective, s_effective).map(Box::new);
                 return Some(SubtypeFailureReason::ParameterTypeMismatch {
                     param_index: i,
                     source_param: s_effective,
                     target_param: t_effective,
+                    inner_reason,
                 });
             }
         }
@@ -1412,10 +1414,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if let Some((param_index, source_param)) =
                     self.first_top_rest_unassignable_source_param(&source.params)
                 {
+                    let inner_reason = self
+                        .explain_failure(rest_elem_type, source_param)
+                        .map(Box::new);
                     return Some(SubtypeFailureReason::ParameterTypeMismatch {
                         param_index,
                         source_param,
                         target_param: rest_elem_type,
+                        inner_reason,
                     });
                 }
                 return None;
@@ -1428,10 +1434,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     rest_elem_type,
                     is_method_or_ctor,
                 ) {
+                    let inner_reason = self
+                        .explain_failure(rest_elem_type, s_param.type_id)
+                        .map(Box::new);
                     return Some(SubtypeFailureReason::ParameterTypeMismatch {
                         param_index: i,
                         source_param: s_param.type_id,
                         target_param: rest_elem_type,
+                        inner_reason,
                     });
                 }
             }
@@ -1444,10 +1454,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     rest_elem_type,
                     is_method_or_ctor,
                 ) {
+                    let inner_reason = self
+                        .explain_failure(rest_elem_type, s_rest_elem)
+                        .map(Box::new);
                     return Some(SubtypeFailureReason::ParameterTypeMismatch {
                         param_index: source_fixed_count,
                         source_param: s_rest_elem,
                         target_param: rest_elem_type,
+                        inner_reason,
                     });
                 }
             }
@@ -1462,10 +1476,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 for i in source_fixed_count..target_fixed_count {
                     let t_param = &target.params[i];
                     if !self.are_parameters_compatible(rest_elem_type, t_param.type_id) {
+                        let inner_reason = self
+                            .explain_failure(t_param.type_id, rest_elem_type)
+                            .map(Box::new);
                         return Some(SubtypeFailureReason::ParameterTypeMismatch {
                             param_index: i,
                             source_param: rest_elem_type,
                             target_param: t_param.type_id,
+                            inner_reason,
                         });
                     }
                 }

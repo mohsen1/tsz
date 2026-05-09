@@ -893,6 +893,138 @@ fn test_explain_failure_parameter_mismatch_strict() {
     ));
 }
 
+/// When the outer parameter mismatch is *itself* a callable, the
+/// `inner_reason` should describe how the inner contravariant subtype
+/// check (`target_param <: source_param`) failed. This is what lets
+/// renderers distinguish an inner-callback return-type failure from an
+/// inner-callback parameter-type failure (matching tsc's
+/// `overrideNextErrorInfo` elision logic).
+#[test]
+fn test_parameter_mismatch_carries_inner_callback_return_reason() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_strict_function_types(true);
+
+    let (animal, dog) = make_animal_dog(&interner);
+
+    // (x: Animal) => Animal
+    let cb_animal_animal = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(animal)],
+        this_type: None,
+        return_type: animal,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    // (x: Dog) => Dog
+    let cb_dog_dog = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(dog)],
+        this_type: None,
+        return_type: dog,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Outer: (f: cb_dog_dog) => void  — the source ("fc2" in tsc baseline).
+    let outer_source = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(cb_dog_dog)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    // Outer: (f: cb_animal_animal) => void  — the target ("fc1").
+    let outer_target = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(cb_animal_animal)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // `fc1 = fc2`: source=fc2, target=fc1. Inner contravariant check on
+    // param `f` is `target_f <: source_f` = `cb_animal_animal <: cb_dog_dog`,
+    // which fails on the *return type* (Animal not <: Dog).
+    let reason = checker.explain_failure(outer_source, outer_target);
+    let Some(SubtypeFailureReason::ParameterTypeMismatch { inner_reason, .. }) = reason else {
+        panic!("expected ParameterTypeMismatch, got {reason:?}");
+    };
+    let inner = inner_reason.expect("inner_reason should be populated for failed callback param");
+    assert!(
+        matches!(*inner, SubtypeFailureReason::ReturnTypeMismatch { .. }),
+        "expected inner ReturnTypeMismatch for fc1=fc2 case, got {inner:?}"
+    );
+}
+
+/// The mirror case: `fc2 = fc1` fails on the inner callback's
+/// *parameter*. The carried `inner_reason` should reflect that.
+#[test]
+fn test_parameter_mismatch_carries_inner_callback_param_reason() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_strict_function_types(true);
+
+    let (animal, dog) = make_animal_dog(&interner);
+
+    let cb_animal_animal = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(animal)],
+        this_type: None,
+        return_type: animal,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let cb_dog_dog = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(dog)],
+        this_type: None,
+        return_type: dog,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let outer_source = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(cb_animal_animal)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let outer_target = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(cb_dog_dog)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // `fc2 = fc1`: source=fc1, target=fc2. Inner contravariant check on
+    // param `f` is `target_f <: source_f` = `cb_dog_dog <: cb_animal_animal`,
+    // which fails on the *parameter* (Animal not <: Dog).
+    let reason = checker.explain_failure(outer_source, outer_target);
+    let Some(SubtypeFailureReason::ParameterTypeMismatch { inner_reason, .. }) = reason else {
+        panic!("expected ParameterTypeMismatch, got {reason:?}");
+    };
+    let inner = inner_reason.expect("inner_reason should be populated for failed callback param");
+    assert!(
+        !matches!(*inner, SubtypeFailureReason::ReturnTypeMismatch { .. }),
+        "expected non-ReturnTypeMismatch inner for fc2=fc1 case, got {inner:?}"
+    );
+}
+
 #[test]
 fn test_weak_type_rejects_no_common_properties() {
     let interner = TypeInterner::new();
@@ -1481,6 +1613,7 @@ fn test_explain_failure_reports_rest_mismatch() {
         param_index,
         source_param,
         target_param,
+        ..
     }) = reason
     {
         assert_eq!(param_index, 1);
@@ -1528,6 +1661,7 @@ fn test_explain_failure_reports_rest_mismatch_source_rest() {
         param_index,
         source_param,
         target_param,
+        ..
     }) = reason
     {
         assert_eq!(param_index, 0);
