@@ -1305,10 +1305,21 @@ impl<'a> DeclarationEmitter<'a> {
         }
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(expr_node)?;
-            if let Some(sym_id) = binder.get_node_symbol(access.name_or_argument) {
+            let is_super_access = self
+                .arena
+                .get(access.expression)
+                .is_some_and(|base| base.kind == SyntaxKind::SuperKeyword as u16);
+            if !is_super_access
+                && let Some(sym_id) = binder.get_node_symbol(access.name_or_argument)
+            {
                 return Some(sym_id);
             }
-            let base_sym_id = self.value_reference_symbol(access.expression)?;
+            let base_sym_id = if is_super_access {
+                self.super_base_symbol_for_property_access(access.expression)
+                    .or_else(|| self.value_reference_symbol(access.expression))
+            } else {
+                Some(self.value_reference_symbol(access.expression)?)
+            }?;
             let resolved_base_sym_id = self.resolve_portability_symbol(base_sym_id, binder);
             let base_symbol = binder.symbols.get(resolved_base_sym_id)?;
             let member_name = self.get_identifier_text(access.name_or_argument)?;
@@ -1334,6 +1345,42 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         binder.get_node_symbol(expr_idx)
+    }
+
+    fn super_base_symbol_for_property_access(&self, super_expr_idx: NodeIndex) -> Option<SymbolId> {
+        let binder = self.binder?;
+        if self
+            .arena
+            .get(super_expr_idx)
+            .is_none_or(|node| node.kind != SyntaxKind::SuperKeyword as u16)
+        {
+            return None;
+        }
+
+        let class_sym_id = self.resolve_enclosing_class_symbol(super_expr_idx)?;
+        let class_sym = binder.symbols.get(class_sym_id)?;
+        let class_decl_idx = class_sym
+            .declarations
+            .iter()
+            .copied()
+            .find_map(|decl_idx| {
+                let class_node = self.arena.get(decl_idx)?;
+                self.arena.get_class(class_node).and(Some(decl_idx))
+            })?;
+        let class_node = self.arena.get(class_decl_idx)?;
+        let class_decl = self.arena.get_class(class_node)?;
+        let heritage_clauses = class_decl.heritage_clauses.clone()?;
+        let extends_clause_idx = heritage_clauses.nodes.iter().copied().find_map(|clause_idx| {
+            let clause_node = self.arena.get(clause_idx)?;
+            let clause = self.arena.get_heritage_clause(clause_node)?;
+            if clause.token == SyntaxKind::ExtendsKeyword as u16 {
+                Some(clause.types.clone())
+            } else {
+                None
+            }
+        })?;
+        let base_entity = extends_clause_idx.nodes.first()?;
+        self.resolve_entity_name_to_symbol(binder, *base_entity)
     }
 
     /// Resolve `this` to the innermost enclosing class symbol by position.
