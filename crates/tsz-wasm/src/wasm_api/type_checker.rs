@@ -7,10 +7,45 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 use tsz::lib_loader::LibFile;
 use tsz::parallel::MergedProgram;
-use tsz_solver::{TypeFormatter, TypeId, TypeInterner};
+use tsz_solver::{
+    LiteralValue, TypeData, TypeFormatter, TypeId, TypeInterner, is_array_type,
+    is_intersection_type, is_tuple_type, is_type_parameter, is_union_type,
+};
 
 use super::enums::SignatureKind;
 use super::program::TsCompilerOptions;
+
+// TypeScript `TypeFlags` constants. Mirrors the public bit values from
+// `typescript`'s `TypeFlags` enum so consumers of the wasm API can match
+// against the same numeric flags they use when talking to `tsc`.
+mod type_flags {
+    pub const ANY: u32 = 1 << 0;
+    pub const UNKNOWN: u32 = 1 << 1;
+    pub const STRING: u32 = 1 << 2;
+    pub const NUMBER: u32 = 1 << 3;
+    pub const BOOLEAN: u32 = 1 << 4;
+    pub const ENUM: u32 = 1 << 5;
+    pub const BIGINT: u32 = 1 << 6;
+    pub const STRING_LITERAL: u32 = 1 << 7;
+    pub const NUMBER_LITERAL: u32 = 1 << 8;
+    pub const BOOLEAN_LITERAL: u32 = 1 << 9;
+    pub const BIGINT_LITERAL: u32 = 1 << 11;
+    pub const ES_SYMBOL: u32 = 1 << 12;
+    pub const UNIQUE_ES_SYMBOL: u32 = 1 << 13;
+    pub const VOID: u32 = 1 << 14;
+    pub const UNDEFINED: u32 = 1 << 15;
+    pub const NULL: u32 = 1 << 16;
+    pub const NEVER: u32 = 1 << 17;
+    pub const TYPE_PARAMETER: u32 = 1 << 18;
+    pub const OBJECT: u32 = 1 << 19;
+    pub const UNION: u32 = 1 << 20;
+    pub const INTERSECTION: u32 = 1 << 21;
+    pub const INDEX: u32 = 1 << 22;
+    pub const INDEXED_ACCESS: u32 = 1 << 23;
+    pub const CONDITIONAL: u32 = 1 << 24;
+    pub const NON_PRIMITIVE: u32 = 1 << 26;
+    pub const TEMPLATE_LITERAL: u32 = 1 << 27;
+}
 
 /// TypeScript `TypeChecker` - provides type information
 ///
@@ -141,19 +176,7 @@ impl TsTypeChecker {
     /// Get type flags
     #[wasm_bindgen(js_name = getTypeFlags)]
     pub fn get_type_flags(&self, type_handle: u32) -> u32 {
-        // Return appropriate flags based on type
-        match TypeId(type_handle) {
-            t if t == TypeId::ANY => 1,           // TypeFlags.Any
-            t if t == TypeId::UNKNOWN => 2,       // TypeFlags.Unknown
-            t if t == TypeId::STRING => 4,        // TypeFlags.String
-            t if t == TypeId::NUMBER => 8,        // TypeFlags.Number
-            t if t == TypeId::BOOLEAN => 16,      // TypeFlags.Boolean
-            t if t == TypeId::VOID => 16384,      // TypeFlags.Void
-            t if t == TypeId::UNDEFINED => 32768, // TypeFlags.Undefined
-            t if t == TypeId::NULL => 65536,      // TypeFlags.Null
-            t if t == TypeId::NEVER => 131072,    // TypeFlags.Never
-            _ => 0,
-        }
+        type_flags_for(&*self.interner, TypeId(type_handle))
     }
 
     /// Get symbol flags
@@ -166,40 +189,122 @@ impl TsTypeChecker {
 
     /// Check if type is a union type
     #[wasm_bindgen(js_name = isUnionType)]
-    pub fn is_union_type(&self, _type_handle: u32) -> bool {
-        false // Would check TypeFlags.Union
+    pub fn is_union_type(&self, type_handle: u32) -> bool {
+        is_union_type(&*self.interner, TypeId(type_handle))
     }
 
     /// Check if type is an intersection type
     #[wasm_bindgen(js_name = isIntersectionType)]
-    pub fn is_intersection_type(&self, _type_handle: u32) -> bool {
-        false // Would check TypeFlags.Intersection
+    pub fn is_intersection_type(&self, type_handle: u32) -> bool {
+        is_intersection_type(&*self.interner, TypeId(type_handle))
     }
 
     /// Check if type is a type parameter
     #[wasm_bindgen(js_name = isTypeParameter)]
-    pub fn is_type_parameter(&self, _type_handle: u32) -> bool {
-        false // Would check TypeFlags.TypeParameter
+    pub fn is_type_parameter(&self, type_handle: u32) -> bool {
+        is_type_parameter(&*self.interner, TypeId(type_handle))
     }
 
     /// Check if type is an array type
     #[wasm_bindgen(js_name = isArrayType)]
-    pub fn is_array_type(&self, _type_handle: u32) -> bool {
-        false
+    pub fn is_array_type(&self, type_handle: u32) -> bool {
+        is_array_type(&*self.interner, TypeId(type_handle))
     }
 
     /// Check if type is a tuple type
     #[wasm_bindgen(js_name = isTupleType)]
-    pub fn is_tuple_type(&self, _type_handle: u32) -> bool {
-        false
+    pub fn is_tuple_type(&self, type_handle: u32) -> bool {
+        is_tuple_type(&*self.interner, TypeId(type_handle))
     }
 
-    /// Check if type is nullable (includes null or undefined)
+    /// Check if type is nullable (includes `null` or `undefined`).
+    ///
+    /// Mirrors `TypeChecker.isNullableType`: returns true for the `null` and
+    /// `undefined` intrinsics directly, and for any union that contains them.
     #[wasm_bindgen(js_name = isNullableType)]
     pub fn is_nullable_type(&self, type_handle: u32) -> bool {
-        let id = TypeId(type_handle);
-        id == TypeId::NULL || id == TypeId::UNDEFINED
+        is_nullable_type_impl(&*self.interner, TypeId(type_handle))
     }
+}
+
+/// Compute TypeScript-style `TypeFlags` for a `TypeId` using its `TypeData`.
+fn type_flags_for(interner: &TypeInterner, type_id: TypeId) -> u32 {
+    // Intrinsic IDs are reserved and faster to dispatch on directly.
+    match type_id {
+        TypeId::ANY | TypeId::STRICT_ANY => return type_flags::ANY,
+        TypeId::UNKNOWN => return type_flags::UNKNOWN,
+        TypeId::STRING => return type_flags::STRING,
+        TypeId::NUMBER => return type_flags::NUMBER,
+        TypeId::BOOLEAN => return type_flags::BOOLEAN,
+        TypeId::BIGINT => return type_flags::BIGINT,
+        TypeId::SYMBOL => return type_flags::ES_SYMBOL,
+        TypeId::VOID => return type_flags::VOID,
+        TypeId::UNDEFINED => return type_flags::UNDEFINED,
+        TypeId::NULL => return type_flags::NULL,
+        TypeId::NEVER => return type_flags::NEVER,
+        TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE => return type_flags::BOOLEAN_LITERAL,
+        _ => {}
+    }
+    match interner.lookup(type_id) {
+        Some(TypeData::Intrinsic(kind)) => match kind {
+            tsz_solver::IntrinsicKind::Any => type_flags::ANY,
+            tsz_solver::IntrinsicKind::Unknown => type_flags::UNKNOWN,
+            tsz_solver::IntrinsicKind::String => type_flags::STRING,
+            tsz_solver::IntrinsicKind::Number => type_flags::NUMBER,
+            tsz_solver::IntrinsicKind::Boolean => type_flags::BOOLEAN,
+            tsz_solver::IntrinsicKind::Bigint => type_flags::BIGINT,
+            tsz_solver::IntrinsicKind::Symbol => type_flags::ES_SYMBOL,
+            tsz_solver::IntrinsicKind::Void => type_flags::VOID,
+            tsz_solver::IntrinsicKind::Undefined => type_flags::UNDEFINED,
+            tsz_solver::IntrinsicKind::Null => type_flags::NULL,
+            tsz_solver::IntrinsicKind::Never => type_flags::NEVER,
+            // The `object` (non-primitive) intrinsic and `Function` intrinsic
+            // both behave as object-like at the TypeFlags level.
+            tsz_solver::IntrinsicKind::Object => type_flags::NON_PRIMITIVE,
+            tsz_solver::IntrinsicKind::Function => type_flags::OBJECT,
+        },
+        Some(TypeData::Literal(literal)) => match literal {
+            LiteralValue::String(_) => type_flags::STRING_LITERAL,
+            LiteralValue::Number(_) => type_flags::NUMBER_LITERAL,
+            LiteralValue::BigInt(_) => type_flags::BIGINT_LITERAL,
+            LiteralValue::Boolean(_) => type_flags::BOOLEAN_LITERAL,
+        },
+        Some(TypeData::Union(_)) => type_flags::UNION,
+        Some(TypeData::Intersection(_)) => type_flags::INTERSECTION,
+        Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => type_flags::TYPE_PARAMETER,
+        Some(TypeData::Conditional(_)) => type_flags::CONDITIONAL,
+        Some(TypeData::IndexAccess(_, _)) => type_flags::INDEXED_ACCESS,
+        Some(TypeData::KeyOf(_)) => type_flags::INDEX,
+        Some(TypeData::TemplateLiteral(_)) => type_flags::TEMPLATE_LITERAL,
+        Some(TypeData::UniqueSymbol(_)) => type_flags::UNIQUE_ES_SYMBOL,
+        Some(TypeData::Enum(_, _)) => type_flags::ENUM,
+        Some(
+            TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Function(_)
+            | TypeData::Callable(_)
+            | TypeData::Mapped(_)
+            | TypeData::Application(_)
+            | TypeData::ReadonlyType(_)
+            | TypeData::ModuleNamespace(_),
+        ) => type_flags::OBJECT,
+        _ => 0,
+    }
+}
+
+fn is_nullable_type_impl(interner: &TypeInterner, type_id: TypeId) -> bool {
+    if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+        return true;
+    }
+    if let Some(TypeData::Union(list_id)) = interner.lookup(type_id) {
+        let members = interner.type_list(list_id);
+        return members
+            .iter()
+            .any(|&m| m == TypeId::NULL || m == TypeId::UNDEFINED);
+    }
+    false
 }
 
 /// Macro for intrinsic type ID getters on `TsTypeChecker`.
@@ -253,5 +358,176 @@ impl TsTypeChecker {
         _lib_files: &[Arc<LibFile>],
     ) -> Self {
         Self { interner }
+    }
+
+    /// Construct a checker from an interner alone. Test-only entrypoint that
+    /// lets unit tests build user-defined types via the interner and exercise
+    /// the predicate methods without standing up a full program.
+    #[cfg(test)]
+    pub(crate) fn from_interner_for_test(interner: Arc<TypeInterner>) -> Self {
+        Self { interner }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_solver::TupleElement;
+
+    fn checker() -> (Arc<TypeInterner>, TsTypeChecker) {
+        let interner = Arc::new(TypeInterner::new());
+        let checker = TsTypeChecker::from_interner_for_test(Arc::clone(&interner));
+        (interner, checker)
+    }
+
+    fn tuple_elem(type_id: TypeId) -> TupleElement {
+        TupleElement {
+            type_id,
+            name: None,
+            optional: false,
+            rest: false,
+        }
+    }
+
+    fn make_type_param(interner: &TypeInterner, name: &str) -> tsz_solver::TypeParamInfo {
+        tsz_solver::TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }
+    }
+
+    #[test]
+    fn predicates_match_type_data_for_unions_and_intersections() {
+        let (interner, checker) = checker();
+
+        let union_id = interner.union2(TypeId::STRING, TypeId::NUMBER);
+        assert!(checker.is_union_type(union_id.0));
+        assert!(!checker.is_intersection_type(union_id.0));
+        assert!(!checker.is_array_type(union_id.0));
+        assert!(!checker.is_tuple_type(union_id.0));
+        assert!(!checker.is_type_parameter(union_id.0));
+
+        // `intersect_types_raw2` skips most normalization, but it still
+        // collapses pairs that the solver knows are vacuous (e.g., disjoint
+        // primitives -> never). Two type-parameter references survive raw
+        // intersection unchanged, so we use those.
+        let tp_a = interner.type_param(make_type_param(&interner, "A"));
+        let tp_b = interner.type_param(make_type_param(&interner, "B"));
+        let raw_intersection = interner.intersect_types_raw2(tp_a, tp_b);
+        assert!(checker.is_intersection_type(raw_intersection.0));
+        assert!(!checker.is_union_type(raw_intersection.0));
+    }
+
+    #[test]
+    fn predicates_recognize_arrays_and_tuples() {
+        let (interner, checker) = checker();
+
+        let array_id = interner.array(TypeId::NUMBER);
+        assert!(checker.is_array_type(array_id.0));
+        assert!(!checker.is_tuple_type(array_id.0));
+        assert!(!checker.is_union_type(array_id.0));
+
+        let tuple_id = interner.tuple(vec![tuple_elem(TypeId::STRING), tuple_elem(TypeId::NUMBER)]);
+        assert!(checker.is_tuple_type(tuple_id.0));
+        assert!(!checker.is_array_type(tuple_id.0));
+    }
+
+    #[test]
+    fn intrinsic_predicates_return_false() {
+        let (_interner, checker) = checker();
+
+        for &intrinsic in &[
+            TypeId::ANY,
+            TypeId::UNKNOWN,
+            TypeId::STRING,
+            TypeId::NUMBER,
+            TypeId::BOOLEAN,
+            TypeId::VOID,
+            TypeId::NEVER,
+        ] {
+            assert!(!checker.is_union_type(intrinsic.0));
+            assert!(!checker.is_intersection_type(intrinsic.0));
+            assert!(!checker.is_array_type(intrinsic.0));
+            assert!(!checker.is_tuple_type(intrinsic.0));
+            assert!(!checker.is_type_parameter(intrinsic.0));
+        }
+    }
+
+    #[test]
+    fn is_nullable_type_covers_unions_with_null_or_undefined() {
+        let (interner, checker) = checker();
+
+        assert!(checker.is_nullable_type(TypeId::NULL.0));
+        assert!(checker.is_nullable_type(TypeId::UNDEFINED.0));
+        assert!(!checker.is_nullable_type(TypeId::STRING.0));
+
+        let nullable_string = interner.union2(TypeId::STRING, TypeId::NULL);
+        assert!(checker.is_nullable_type(nullable_string.0));
+
+        let optional_string = interner.union2(TypeId::STRING, TypeId::UNDEFINED);
+        assert!(checker.is_nullable_type(optional_string.0));
+
+        let plain_union = interner.union2(TypeId::STRING, TypeId::NUMBER);
+        assert!(!checker.is_nullable_type(plain_union.0));
+    }
+
+    #[test]
+    fn type_flags_match_typescript_constants() {
+        let (interner, checker) = checker();
+
+        assert_eq!(checker.get_type_flags(TypeId::ANY.0), type_flags::ANY);
+        assert_eq!(
+            checker.get_type_flags(TypeId::UNKNOWN.0),
+            type_flags::UNKNOWN
+        );
+        assert_eq!(checker.get_type_flags(TypeId::STRING.0), type_flags::STRING);
+        assert_eq!(checker.get_type_flags(TypeId::NUMBER.0), type_flags::NUMBER);
+        assert_eq!(
+            checker.get_type_flags(TypeId::BOOLEAN.0),
+            type_flags::BOOLEAN
+        );
+        assert_eq!(checker.get_type_flags(TypeId::BIGINT.0), type_flags::BIGINT);
+        assert_eq!(
+            checker.get_type_flags(TypeId::SYMBOL.0),
+            type_flags::ES_SYMBOL
+        );
+        assert_eq!(checker.get_type_flags(TypeId::VOID.0), type_flags::VOID);
+        assert_eq!(
+            checker.get_type_flags(TypeId::UNDEFINED.0),
+            type_flags::UNDEFINED
+        );
+        assert_eq!(checker.get_type_flags(TypeId::NULL.0), type_flags::NULL);
+        assert_eq!(checker.get_type_flags(TypeId::NEVER.0), type_flags::NEVER);
+        assert_eq!(
+            checker.get_type_flags(TypeId::BOOLEAN_TRUE.0),
+            type_flags::BOOLEAN_LITERAL
+        );
+        assert_eq!(
+            checker.get_type_flags(TypeId::BOOLEAN_FALSE.0),
+            type_flags::BOOLEAN_LITERAL
+        );
+
+        let str_lit = interner.literal_string("hello");
+        assert_eq!(
+            checker.get_type_flags(str_lit.0),
+            type_flags::STRING_LITERAL
+        );
+
+        let num_lit = interner.literal_number(42.0);
+        assert_eq!(
+            checker.get_type_flags(num_lit.0),
+            type_flags::NUMBER_LITERAL
+        );
+
+        let union_id = interner.union2(TypeId::STRING, TypeId::NUMBER);
+        assert_eq!(checker.get_type_flags(union_id.0), type_flags::UNION);
+
+        let array_id = interner.array(TypeId::NUMBER);
+        assert_eq!(checker.get_type_flags(array_id.0), type_flags::OBJECT);
+
+        let tuple_id = interner.tuple(vec![tuple_elem(TypeId::NUMBER)]);
+        assert_eq!(checker.get_type_flags(tuple_id.0), type_flags::OBJECT);
     }
 }
