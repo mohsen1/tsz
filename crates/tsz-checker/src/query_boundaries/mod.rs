@@ -116,6 +116,7 @@ pub(crate) mod name_resolution;
     clippy::manual_map
 )]
 pub(crate) mod property_access;
+pub(crate) mod recursive_alias;
 #[allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms)]
 pub(crate) mod relation_types;
 pub(crate) mod spread;
