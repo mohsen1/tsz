@@ -1262,8 +1262,30 @@ type VarianceFunction<in out Value> = (value: Value) => Value;
     );
 }
 
+/// Variance-reference TS2322 diagnostics for chained generic alias
+/// applications must match tsc's display rules:
+///
+/// - **Transparent chain** (`type Wrapper<V> = Inner<V>` where `Inner<V> = V`
+///   reduces to its argument): tsc drops every alias and shows the bare
+///   evaluated form (`2 | 1` vs `1`), because the result IS the argument.
+/// - **Structural chain** (`type Wrapper<V> = Shape<V>` where `Shape` is an
+///   interface body): tsc keeps the **outermost** wrapper alias on both sides
+///   (`Wrapper<2 | 1>` vs `Wrapper<1>`), because the result is structurally
+///   distinct from the argument.
+///
+/// Before the fix, tsz unfolded the source's outer wrapper to its body alias
+/// (`NumericConstraint<1 | 2>` / `Shape<1 | 2>`) while leaving the target as
+/// the outer wrapper, producing an asymmetric display tsc never emits. The
+/// fix is centralized in `applications_share_outer_wrapper_alias` (see
+/// `crates/tsz-checker/src/error_reporter/render_failure.rs`): when source
+/// and target are both `Application(Lazy(D), [...])` for the same generic
+/// alias `D`, the unfold path in `ts2739_alias_of_application_source_display`
+/// is suppressed for both sides.
+///
+/// Mirrors the conformance test
+/// `TypeScript/tests/cases/compiler/varianceReferences.ts`.
 #[test]
-fn test_variance_reference_assignability_preserves_literal_alias_display() {
+fn test_variance_reference_assignability_preserves_outer_wrapper_display() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
 type NumericConstraint<Value extends number> = Value;
@@ -1295,18 +1317,91 @@ vs1 = vs12;
         .map(|(_, message)| message.as_str())
         .collect();
 
-    assert!(
-        ts2322.iter().any(|message| message.contains(
-            "Type 'NumericConstraint<1 | 2>' is not assignable to type 'NumericConstraint<1>'."
-        )),
-        "Expected direct alias assignment to preserve the alias surface, got: {diagnostics:?}"
-    );
+    // Transparent chain: tsc fully unwraps to the bare type parameter.
     assert!(
         ts2322
             .iter()
-            .any(|message| message
-                .contains("Type 'Shape<1 | 2>' is not assignable to type 'Shape<1>'.")),
-        "Expected object alias assignment to preserve the object alias surface, got: {diagnostics:?}"
+            .any(|message| message.contains("Type '2 | 1' is not assignable to type '1'.")),
+        "Expected fully-unwrapped display for transparent alias chains, got: {diagnostics:?}"
+    );
+    // Structural chain: tsc preserves the outermost wrapper alias on both sides.
+    assert!(
+        ts2322.iter().any(|message| message
+            .contains("Type 'VarianceShape<2 | 1>' is not assignable to type 'VarianceShape<1>'.")),
+        "Expected outermost-wrapper display for structural alias chains, got: {diagnostics:?}"
+    );
+    // The pre-fix asymmetric source-only unfold (source becomes `Inner<X>`
+    // while target keeps `Wrapper<Y>`) must not leak through. The transparent
+    // chain must drop the alias entirely; the structural chain must keep the
+    // outermost wrapper on BOTH sides — never the bare body alias.
+    assert!(
+        !ts2322
+            .iter()
+            .any(|message| message.contains("NumericConstraint<")),
+        "Transparent chain must not surface the inner alias `NumericConstraint<...>`, got: {diagnostics:?}"
+    );
+    // The bare `Shape<...>` interface name (without the `Variance` prefix)
+    // means the wrapper was peeled — fail if any TS2322 message contains it.
+    let surfaces_bare_shape = ts2322.iter().any(|message| {
+        message
+            .match_indices("Shape<")
+            .any(|(idx, _)| !message[..idx].ends_with("Variance"))
+    });
+    assert!(
+        !surfaces_bare_shape,
+        "Structural chain must not peel the wrapper to the bare `Shape<...>` interface, got: {diagnostics:?}"
+    );
+}
+
+/// Same structural rule as
+/// [`test_variance_reference_assignability_preserves_outer_wrapper_display`]
+/// but with renamed type-parameter / alias identifiers. Guards against the
+/// hardcoded-identifier anti-pattern (CLAUDE.md §25): the fix must be
+/// expressed structurally over the type graph, not pattern-matched against
+/// specific user-chosen names.
+#[test]
+fn test_variance_reference_outer_wrapper_display_is_name_agnostic() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Inner<K extends number> = K;
+type Outer<in out K extends number> = Inner<K>;
+
+declare let a: Outer<1>;
+declare let ab: Outer<1 | 2>;
+a = ab;
+
+interface Box<X> {
+  x: X;
+}
+type BoxedOuter<in out X> = Box<X>;
+
+declare let b: BoxedOuter<1>;
+declare let bab: BoxedOuter<1 | 2>;
+b = bab;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type '2 | 1' is not assignable to type '1'.")),
+        "Expected fully-unwrapped display for transparent alias chains (renamed), got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|message| message
+            .contains("Type 'BoxedOuter<2 | 1>' is not assignable to type 'BoxedOuter<1>'.")),
+        "Expected outermost-wrapper display for structural alias chains (renamed), got: {diagnostics:?}"
     );
 }
 

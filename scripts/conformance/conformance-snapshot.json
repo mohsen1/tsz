@@ -3,9 +3,9 @@
   "git_sha": "85e92945975e98018c5b70045844a0e14e72e594",
   "summary": {
     "total_tests": 12582,
-    "passed": 12537,
-    "failed": 45,
-    "pass_rate": 99.6
+    "passed": 12538,
+    "failed": 44,
+    "pass_rate": 99.65
   },
   "areas_by_pass_rate": [
     {
@@ -728,7 +728,7 @@
     "false_positive": 0,
     "all_missing": 0,
     "wrong_code": 0,
-    "fingerprint_only": 45,
+    "fingerprint_only": 44,
     "same_code_count_drift": 0,
     "close_to_passing": 0
   }

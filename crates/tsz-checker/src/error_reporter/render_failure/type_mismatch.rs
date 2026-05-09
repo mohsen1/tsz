@@ -361,12 +361,20 @@ impl<'a> CheckerState<'a> {
         if depth == 0 {
             (source_str, target_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
-            if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
+            // For variance-reference TS2322 (`Wrapper<X>` vs `Wrapper<Y>`),
+            // tsc keeps the outer wrapper on both sides; unfolding the
+            // source's wrapper to its body alias here would emit
+            // `Inner<X>` vs `Wrapper<Y>`, an asymmetry tsc never produces.
+            let pair_shares_wrapper = self.applications_share_outer_wrapper_alias(source, target);
+            if !pair_shares_wrapper
+                && !crate::error_reporter::assignability::display_is_literal_value(&source_str)
                 && let Some(unfolded) = self.ts2739_alias_of_application_source_display(source)
             {
                 source_str = self.format_type_diagnostic(unfolded);
             }
-            if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
+            if !pair_shares_wrapper
+                && let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str)
+            {
                 target_str = self.format_type_diagnostic(unfolded);
             }
             if let Some(display) = self.static_schema_array_structural_display(source, target) {

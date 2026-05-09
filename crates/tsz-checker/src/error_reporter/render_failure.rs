@@ -1614,6 +1614,84 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Apply the source/target alias unfold pair used by TS2322 / TS2739
+    /// rewrites, but skip the unfold when source and target share the same
+    /// outer wrapper alias. Returns the (possibly unchanged) display pair.
+    ///
+    /// Variance-reference diagnostics (`Wrapper<X>` vs `Wrapper<Y>`) reach
+    /// the unfold path through `apply_ts2739_nonliteral` /
+    /// `ts2739_alias_target_display`. tsc keeps the wrapper on both sides
+    /// for these; unfolding only the source produces an asymmetric
+    /// `Inner<X>` vs `Wrapper<Y>` display tsc never emits.
+    pub(in crate::error_reporter) fn apply_ts2739_unfold_pair_with_wrapper_guard(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_display: String,
+        target_display: String,
+    ) -> (String, String) {
+        if self.applications_share_outer_wrapper_alias(source, target) {
+            return (source_display, target_display);
+        }
+        let new_source = self.apply_ts2739_nonliteral(source, source_display);
+        let new_target = self
+            .ts2739_alias_target_display(target, &target_display)
+            .map_or(target_display, |unfolded| {
+                self.format_type_diagnostic(unfolded)
+            });
+        (new_source, new_target)
+    }
+
+    /// True when `source` and `target` are both generic alias `Application`s
+    /// sharing the same outer wrapper `DefId` — e.g. `Wrapper<X>` vs
+    /// `Wrapper<Y>` produced by `let a: Wrapper<X>; let b: Wrapper<Y>; a = b`.
+    ///
+    /// For variance-reference TS2322, tsc keeps both sides labelled with the
+    /// outer wrapper (or, for transparent chains, drops the alias entirely on
+    /// both sides). The unfold path in
+    /// `ts2739_alias_of_application_source_display` is wrong here because it
+    /// would peel the wrapper on the source while the target keeps it,
+    /// producing the asymmetric `Inner<X>` vs `Wrapper<Y>` display tsc
+    /// never emits.
+    pub(in crate::error_reporter) fn applications_share_outer_wrapper_alias(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let Some(source_app_id) =
+            crate::query_boundaries::common::application_id(self.ctx.types, source)
+        else {
+            return false;
+        };
+        let Some(target_app_id) =
+            crate::query_boundaries::common::application_id(self.ctx.types, target)
+        else {
+            return false;
+        };
+        let source_app = self.ctx.types.type_application(source_app_id);
+        let target_app = self.ctx.types.type_application(target_app_id);
+        let Some(source_def_id) =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, source_app.base)
+        else {
+            return false;
+        };
+        let Some(target_def_id) =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, target_app.base)
+        else {
+            return false;
+        };
+        if source_def_id != target_def_id {
+            return false;
+        }
+        // Only the wrapping-alias case matters here. Interfaces / classes
+        // already display structurally without going through the unfold
+        // path, and their args feed directly into the structural shape.
+        let Some(def) = self.ctx.definition_store.get(source_def_id) else {
+            return false;
+        };
+        def.kind == tsz_solver::def::DefKind::TypeAlias && !def.type_params.is_empty()
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// For TS2739 source display: when `source` is a non-generic type alias
     /// (`type B = A<X1, X2, ...>`) whose body is a generic Application of a
