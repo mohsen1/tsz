@@ -45,17 +45,34 @@ to `saturating_add` correctly tags properties at finalize time
 `{ ...nullUnion, ...undefinedUnion }`).
 
 However the printer still emits properties in alphabetic order: by the
-time `format_object` runs, properties have `declaration_order = 1, 2`
-(small alphabetic-tier numbers), not the 1M/1.01M spread tags. Some
-intermediate widening or normalization path discards the spread tags
-and re-assigns ordinals via `object_with_flags_and_symbol`'s `i + 1`
-fallback. Three format_object calls all see `a=1, b=2` regardless of
-spread direction.
+time `format_object` runs, properties have `declaration_order = 1, 2`.
 
-Likely culprit: a widening or normalization step that constructs a
-fresh PropertyInfo with `declaration_order = 0` (so the `i + 1`
-fallback fires) instead of cloning the original. Needs deeper trace
-to find the specific path.
+**Root cause** (found): `PropertyInfo`'s `Hash` and `PartialEq` impls in
+`crates/tsz-solver/src/types.rs:1066-1095` deliberately *exclude*
+`declaration_order` (so structurally-identical shapes intern to the same
+TypeId). Consequence: when the spread result `{ a: number, b: number }`
+is interned, the interner returns an *existing* shape that was first
+seen via the type annotation `{ a: number, b: number }` (declaration_order
+1, 2 from source). The spread's 1M / 1.01M tags are dropped on the floor.
+
+## Proposed fix (next agent)
+
+Store the spread-result property order as a side-table keyed on TypeId,
+similar to the existing `display_properties` mechanism for fresh object
+literals. Wire `format_object` to consult it before falling back to the
+shape's stored properties. Specifically:
+
+- After `factory().object(properties)` in `finalize_object_literal_type`'s
+  `has_spread` branch, also call
+  `interner.store_display_properties(type_id, properties_in_spread_order)`.
+- The existing `format_object` code path at
+  `crates/tsz-solver/src/diagnostics/format/mod.rs:1404-1408` already
+  uses `display_properties` when `use_display_properties` is true; that
+  flag already fires for diagnostic-mode formatters.
+
+Caveat: `display_properties` is currently FRESH_LITERAL-only by design;
+adding spread-result usage may need to gate with a separate flag to
+avoid affecting unrelated formatters.
 
 ## Verification
 
