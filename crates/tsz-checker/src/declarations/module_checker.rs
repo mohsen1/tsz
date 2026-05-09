@@ -1574,6 +1574,20 @@ impl<'a> CheckerState<'a> {
                 let Some(decl_idx) = sym.primary_declaration() else {
                     continue;
                 };
+                let fallback_span = sym
+                    .first_declaration_span
+                    .or_else(|| {
+                        sym.stable_value_declaration.is_known().then_some((
+                            sym.stable_value_declaration.pos,
+                            sym.stable_value_declaration.end,
+                        ))
+                    })
+                    .or_else(|| {
+                        sym.stable_declarations
+                            .iter()
+                            .find(|stable| stable.is_known())
+                            .map(|stable| (stable.pos, stable.end))
+                    });
 
                 let mut error_node_idx = decl_idx;
 
@@ -1603,11 +1617,12 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
                     &[&sym.escaped_name],
                 );
-                self.error_at_node(
-                    error_node_idx,
-                    &message,
-                    diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
-                );
+                let code = diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS;
+                if self.get_node_span(error_node_idx).is_some() {
+                    self.error_at_node(error_node_idx, &message, code);
+                } else if let Some((start, end)) = fallback_span {
+                    self.error(start, end.saturating_sub(start), message, code);
+                }
             }
         }
     }

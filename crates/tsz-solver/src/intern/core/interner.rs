@@ -815,6 +815,9 @@ impl TypeInterner {
     /// This is used when constructing types with property names or string literals.
     #[inline]
     pub fn intern_string(&self, s: &str) -> Atom {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_string_intern_calls,
+        );
         self.string_interner.intern(s)
     }
 
