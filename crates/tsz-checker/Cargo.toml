@@ -254,6 +254,10 @@ name = "typeof_function_like_flow_tests"
 path = "tests/typeof_function_like_flow_tests.rs"
 
 [[test]]
+name = "typeof_import_commonjs_object_literal_export_tests"
+path = "tests/typeof_import_commonjs_object_literal_export_tests.rs"
+
+[[test]]
 name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
 
