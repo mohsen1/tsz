@@ -815,6 +815,9 @@ impl TypeInterner {
     /// This is used when constructing types with property names or string literals.
     #[inline]
     pub fn intern_string(&self, s: &str) -> Atom {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_string_intern_calls,
+        );
         self.string_interner.intern(s)
     }
 
@@ -1183,12 +1186,18 @@ impl TypeInterner {
     }
 
     pub(in crate::intern) fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_type_list_intern_calls,
+        );
         TypeListId(self.type_lists.intern(&members))
     }
 
     /// Intern a type list from a slice, avoiding Vec conversion when the caller
     /// already has a `SmallVec` or slice reference.
     pub(in crate::intern) fn intern_type_list_from_slice(&self, members: &[TypeId]) -> TypeListId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_type_list_intern_calls,
+        );
         TypeListId(self.type_lists.intern(members))
     }
 
