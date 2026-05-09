@@ -183,18 +183,40 @@ def fmt_codes(codes: list[str]) -> str:
     return ",".join(codes) or "-"
 
 
+def display_path(failure: Failure, root: Path | None = None) -> str:
+    """Pick the most navigable form of the test path for human output.
+
+    The detail snapshot stores absolute paths captured on the machine that
+    produced it (e.g. `/Users/<author>/code/tsz/.worktrees/<wt>/TypeScript/...`).
+    Echoing those verbatim leaves users staring at an unopenable path. When a
+    repo root is provided and the failure's path can be anchored on the
+    `TypeScript/` segment, prefer that local-relative form. Fall back to the
+    raw path so behaviour outside a repo (or for unparseable paths) is
+    unchanged.
+    """
+    if root is None:
+        return failure.path
+    parts = Path(failure.path).parts
+    if "TypeScript" in parts:
+        idx = parts.index("TypeScript")
+        return str(Path(*parts[idx:]))
+    return failure.path
+
+
 def print_human_pick(
     failure: Failure,
     *,
     pool: int,
     requested_category: str | None = None,
     include_verbose_command: bool = True,
+    root: Path | None = None,
 ) -> None:
+    shown_path = display_path(failure, root)
     if requested_category:
         print(f"category: {requested_category} (resolved: {failure.category})")
-        print(f"path:     {failure.path}")
+        print(f"path:     {shown_path}")
     else:
-        print(f"path:     {failure.path}")
+        print(f"path:     {shown_path}")
         print(f"category: {failure.category}")
     print(f"expected: {fmt_codes(failure.expected)}")
     print(f"actual:   {fmt_codes(failure.actual)}")
@@ -268,7 +290,7 @@ def command_quick(args: argparse.Namespace) -> int:
     failures = load_failures(ensure_inputs(root, ensure_submodule=True))
     picks, pool = select_failures(failures, code=args.code, seed=args.seed)
     pick = picks[0]
-    print_human_pick(pick, pool=pool)
+    print_human_pick(pick, pool=pool, root=root)
     if args.show_source:
         print_test_source(root, pick)
     if args.run:
@@ -287,7 +309,7 @@ def command_category(args: argparse.Namespace) -> int:
         seed=args.seed,
     )
     pick = picks[0]
-    print_human_pick(pick, pool=pool, requested_category=args.category)
+    print_human_pick(pick, pool=pool, requested_category=args.category, root=root)
     if args.show_source:
         print_test_source(root, pick)
     if args.run:
@@ -365,7 +387,7 @@ def command_show(args: argparse.Namespace) -> int:
     pick = picks[0]
 
     print("==================== random pick ====================")
-    print_human_pick(pick, pool=pool, include_verbose_command=False)
+    print_human_pick(pick, pool=pool, include_verbose_command=False, root=root)
     print_test_source(root, pick)
     print()
     print("==================== verbose run ====================")
