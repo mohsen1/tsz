@@ -416,6 +416,25 @@ impl BinderState {
                     if has_attributes {
                         continue;
                     }
+                    // Issue #3508: when a runtime ES `import { Foo }` already
+                    // declared `Foo` in the current scope, the JSDoc `@import`
+                    // tag must not allocate a fresh ALIAS that would shadow the
+                    // runtime symbol with `is_type_only = true`. Doing so makes
+                    // the value-bearing runtime import look type-only (false
+                    // TS18042) and hides the duplicate-identifier diagnostic.
+                    // The structural rule: in the same scope, an ALIAS already
+                    // bound to this name owns the binding; the JSDoc tag only
+                    // contributes its specifier to `file_import_sources` so
+                    // module-resolution and the duplicate-import checker can
+                    // still see the JSDoc occurrence.
+                    let already_aliased = self
+                        .current_scope
+                        .get(&local_name)
+                        .and_then(|id| self.symbols.get(id))
+                        .is_some_and(|sym| (sym.flags & symbol_flags::ALIAS) != 0);
+                    if already_aliased {
+                        continue;
+                    }
                     let sym_id =
                         self.declare_symbol(arena, &local_name, symbol_flags::ALIAS, root, false);
                     if let Some(sym) = self.symbols.get_mut(sym_id) {

@@ -438,6 +438,10 @@ name = "generic_call_inference_tests"
 path = "tests/generic_call_inference_tests.rs"
 
 [[test]]
+name = "issue_3508_jsdoc_runtime_duplicate_tests"
+path = "tests/issue_3508_jsdoc_runtime_duplicate_tests.rs"
+
+[[test]]
 name = "tuple_type_assertion_inference_tests"
 path = "tests/tuple_type_assertion_inference_tests.rs"
 
