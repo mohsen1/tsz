@@ -317,9 +317,9 @@ mod tests {
     fn byte_len_to_u32_saturating_does_not_wrap_above_u32_max() {
         // The pre-fix `as u32` cast would wrap to 0 here. Saturating
         // returns u32::MAX, preserving the end >= pos invariant.
-        let one_past = (u32::MAX as usize).checked_add(1).expect(
-            "u32::MAX + 1 must be representable in usize on 64-bit targets",
-        );
+        let one_past = (u32::MAX as usize)
+            .checked_add(1)
+            .expect("u32::MAX + 1 must be representable in usize on 64-bit targets");
         assert_eq!(byte_len_to_u32_saturating(one_past), u32::MAX);
         assert_eq!(byte_len_to_u32_saturating(usize::MAX), u32::MAX);
     }

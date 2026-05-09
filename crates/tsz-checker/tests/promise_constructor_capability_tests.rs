@@ -116,6 +116,107 @@ class C {
     );
 }
 
+// Regression for issue #4762: async METHODS were missing the same
+// async-return-must-be-Promise check that function declarations get.
+// Mirrors `ts1064_suggestion_wraps_declared_return_type` below but for
+// class methods (concrete and abstract). Pre-fix, all three method
+// arms silently accepted non-Promise return types.
+#[test]
+fn ts1064_fires_for_async_methods_with_non_promise_return() {
+    let diagnostics = check_with_libs(
+        r#"
+interface Box<T> {
+  value: T;
+}
+
+class C {
+  async primitive(): number {
+    return 1;
+  }
+
+  async generic(): Box<number> {
+    return { value: 1 };
+  }
+}
+
+abstract class D {
+  abstract async ambient(): number;
+}
+"#,
+        &["lib.es5.d.ts", "lib.es2015.promise.d.ts"],
+    );
+
+    let ts1064: Vec<_> = diagnostics.iter().filter(|d| d.code == 1064).collect();
+    // Concrete `primitive` and `generic`, and abstract `ambient` — three
+    // method-level TS1064s in total. Pre-fix, ts1064.len() was 0.
+    assert_eq!(
+        ts1064.len(),
+        3,
+        "Expected three TS1064 diagnostics for async methods, got: {diagnostics:#?}"
+    );
+
+    let messages: Vec<_> = ts1064.iter().map(|d| d.message_text.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Promise<number>")),
+        "Expected TS1064 suggestion for Promise<number>, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Promise<Box<number>>")),
+        "Expected TS1064 suggestion for Promise<Box<number>>, got: {messages:#?}"
+    );
+}
+
+// Regression: a non-async method with a non-Promise return type must
+// NOT trigger TS1064. Pins the `is_async` guard inside the validator
+// — without it the new call site would over-fire on every annotated
+// non-Promise method, including ordinary synchronous ones.
+#[test]
+fn ts1064_does_not_fire_for_non_async_methods() {
+    let diagnostics = check_with_libs(
+        r#"
+class C {
+  sync(): number {
+    return 1;
+  }
+}
+"#,
+        &["lib.es5.d.ts", "lib.es2015.promise.d.ts"],
+    );
+
+    let ts1064: Vec<_> = diagnostics.iter().filter(|d| d.code == 1064).collect();
+    assert!(
+        ts1064.is_empty(),
+        "Did not expect any TS1064 diagnostics for non-async methods, got: {diagnostics:#?}"
+    );
+}
+
+// Regression: a generator method (`async *`) must NOT trigger TS1064 —
+// generators have a different return-type protocol (AsyncGenerator)
+// that the validator's `is_generator` guard short-circuits on.
+#[test]
+fn ts1064_does_not_fire_for_async_generator_method() {
+    let diagnostics = check_with_libs(
+        r#"
+class C {
+  async *gen(): number {
+    yield 1;
+  }
+}
+"#,
+        &["lib.es5.d.ts", "lib.es2015.promise.d.ts"],
+    );
+
+    let ts1064: Vec<_> = diagnostics.iter().filter(|d| d.code == 1064).collect();
+    assert!(
+        ts1064.is_empty(),
+        "Did not expect any TS1064 diagnostics for async generator method (different protocol), got: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn ts1064_suggestion_wraps_declared_return_type() {
     let diagnostics = check_with_libs(
